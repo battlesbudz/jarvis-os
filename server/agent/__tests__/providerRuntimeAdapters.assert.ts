@@ -1702,6 +1702,54 @@ async function testAndroidLocalGemmaKeepsAllowedPackagesAfterCommaNegation() {
   }
 }
 
+async function testAndroidLocalGemmaKeepsAllowedPackagesAfterAndNegation() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [
+          { name: "daemon_action", arguments: { action: "open_youtube" } },
+          { name: "daemon_action", arguments: { action: "android_open_app", packageName: "com.google.android.apps.maps" } },
+        ],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Don't open YouTube and open Maps." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: { action: { type: "string" }, packageName: { type: "string" } },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 2);
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app"}');
+    assert.equal(result.toolCallList[1].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.apps.maps"}');
+    console.log("OK: Android Local Gemma keeps allowed packages after and-negation");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaSkipsPackageInferenceForAmbiguousOpenAppToolCalls() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -2369,6 +2417,60 @@ async function testAndroidLocalGemmaPreservesGiveMeJsonFinalReplies() {
   }
 }
 
+async function testAndroidLocalGemmaPreservesNeedJsonFinalReplies() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ message: "hello" }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "I need JSON with a message field set to hello." }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, '{"message":"hello"}');
+    console.log("OK: Android Local Gemma preserves need-JSON final replies");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesShowMeJsonFinalReplies() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ message: "hello" }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Show me JSON with a message field set to hello." }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, '{"message":"hello"}');
+    console.log("OK: Android Local Gemma preserves show-me-JSON final replies");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaUnwrapsJsonMentionTroubleshootingReplies() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -2828,6 +2930,7 @@ async function main() {
   await testAndroidLocalGemmaStripsAliasPackageForNegatedOpenAppToolCalls();
   await testAndroidLocalGemmaKeepsAllowedPackagesForMixedNegatedOpenAppToolCalls();
   await testAndroidLocalGemmaKeepsAllowedPackagesAfterCommaNegation();
+  await testAndroidLocalGemmaKeepsAllowedPackagesAfterAndNegation();
   await testAndroidLocalGemmaSkipsPackageInferenceForAmbiguousOpenAppToolCalls();
   await testAndroidLocalGemmaDoesNotRecoverNegatedRequiredActions();
   await testAndroidLocalGemmaRoutesCompoundScreenshotRequestsToNavigationFirst();
@@ -2843,6 +2946,8 @@ async function main() {
   await testAndroidLocalGemmaPreservesEmbeddedJsonInFinalReplies();
   await testAndroidLocalGemmaPreservesRequestedWholeJsonFinalReplies();
   await testAndroidLocalGemmaPreservesGiveMeJsonFinalReplies();
+  await testAndroidLocalGemmaPreservesNeedJsonFinalReplies();
+  await testAndroidLocalGemmaPreservesShowMeJsonFinalReplies();
   await testAndroidLocalGemmaUnwrapsJsonMentionTroubleshootingReplies();
   await testAndroidLocalGemmaPreservesJsonResponseFormatFinalReplies();
   await testAndroidLocalGemmaPreservesRequestedJsonInToolProtocolFinalReplies();

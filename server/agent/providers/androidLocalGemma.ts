@@ -127,8 +127,27 @@ type LocalGemmaStructuredOutput =
   | { type: "final"; content: string }
   | { type: "tool_calls"; toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] };
 
+function androidLocalGemmaEnv(name: string): string | undefined {
+  switch (name) {
+    case "ANDROID_LOCAL_GEMMA_ALLOW_CPU_FALLBACK":
+      return process.env.ANDROID_LOCAL_GEMMA_ALLOW_CPU_FALLBACK;
+    case "ANDROID_LOCAL_GEMMA_CONTEXT_TOKENS":
+      return process.env.ANDROID_LOCAL_GEMMA_CONTEXT_TOKENS;
+    case "ANDROID_LOCAL_GEMMA_MAX_COMPLETION_TOKENS":
+      return process.env.ANDROID_LOCAL_GEMMA_MAX_COMPLETION_TOKENS;
+    case "ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET":
+      return process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+    case "ANDROID_LOCAL_GEMMA_TIMEOUT_MS":
+      return process.env.ANDROID_LOCAL_GEMMA_TIMEOUT_MS;
+    case "ANDROID_LOCAL_GEMMA_TOOL_LIST_CHAR_BUDGET":
+      return process.env.ANDROID_LOCAL_GEMMA_TOOL_LIST_CHAR_BUDGET;
+    default:
+      return undefined;
+  }
+}
+
 function intEnv(name: string, fallback: number, min: number, max: number): number {
-  const raw = process.env[name];
+  const raw = androidLocalGemmaEnv(name);
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -136,7 +155,7 @@ function intEnv(name: string, fallback: number, min: number, max: number): numbe
 }
 
 function boolEnv(name: string, fallback: boolean): boolean {
-  const raw = process.env[name];
+  const raw = androidLocalGemmaEnv(name);
   if (!raw) return fallback;
   return /^(?:1|true|yes|on)$/i.test(raw.trim());
 }
@@ -525,7 +544,7 @@ function aliasPattern(alias: string): RegExp {
 
 function requestSegmentForIndex(text: string, index: number): string {
   const before = text.slice(0, index);
-  const boundaryPattern = /[,.;!?]|\b(?:but|instead)\b/gi;
+  const boundaryPattern = /[,.;!?]|\b(?:but|instead|however)\b|\b(?:and|then|also)\s+(?:please\s+)?(?:open|launch|start|browse)\b/gi;
   let start = 0;
   let match: RegExpExecArray | null;
   while ((match = boundaryPattern.exec(before))) {
@@ -574,7 +593,9 @@ function hasProhibitedDeviceActionRequest(text: string): boolean {
 
 function requestsJsonResponse(text: string): boolean {
   return /\b(?:return|respond|reply|output|provide|produce|format|write|give|create|make|generate)\b[\s\S]{0,80}\bjson\b/i.test(text) ||
-    /\bjson\b[\s\S]{0,48}\b(?:object|format|response|reply|output)\b/i.test(text) ||
+    /\b(?:need|want|require|would\s+like)\b[\s\S]{0,80}\bjson\b/i.test(text) ||
+    /\b(?:show|display|print)\s+(?:me\s+)?(?:the\s+)?json\b/i.test(text) ||
+    /\bjson\b[\s\S]{0,48}\b(?:object|format|response|reply|output|with|containing|including|include|field|key|property)\b/i.test(text) ||
     /\b(?:as|valid)\s+json\b/i.test(text);
 }
 
