@@ -476,6 +476,27 @@ function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
 }
 
+async function detectNoOpScrollByScreenshot(
+  userId: string,
+  ctx: object | undefined,
+  preScrollScreenshot: string | null,
+  toolName: string,
+  passNumber: number,
+): Promise<{ conclusive: boolean; noOp: boolean }> {
+  if (!preScrollScreenshot) return { conclusive: false, noOp: false };
+
+  const postScrollScreenshot = await captureScreenshot(userId, ctx);
+  if (!postScrollScreenshot) return { conclusive: false, noOp: false };
+
+  const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
+  if (diffRatio >= 0.02) return { conclusive: true, noOp: false };
+
+  console.log(
+    `[${toolName}] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${passNumber} — already at bottom, stopping early`,
+  );
+  return { conclusive: true, noOp: true };
+}
+
 /**
  * Parse the accessibility text from android_read_screen or android_get_focused_field
  * to check if any focusable field currently has focused=true.
@@ -2364,20 +2385,15 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // diff is below 2% the page has not moved — we are at the bottom.
         // We check this BEFORE calling buildScreenMapElements (the expensive
         // screen-map call) so we can skip it when the list is exhausted.
-        let screenshotCheckConclusive = false;
-        if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
-          if (postScrollScreenshot) {
-            screenshotCheckConclusive = true;
-            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
-            if (diffRatio < 0.02) {
-              console.log(
-                `[android_swipe_element] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
-              );
-              break;
-            }
-          }
-        }
+        const screenshotNoOp = await detectNoOpScrollByScreenshot(
+          ctx.userId,
+          ctx,
+          preScrollScreenshot,
+          "android_swipe_element",
+          scroll + 1,
+        );
+        const screenshotCheckConclusive = screenshotNoOp.conclusive;
+        if (screenshotNoOp.noOp) break;
 
         const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
@@ -3097,20 +3113,15 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // screen-map call) so we can skip it when the list is exhausted.
         // Track whether we got a conclusive screenshot-based answer so that we
         // can fall through to the hierarchy fallback when capture fails.
-        let screenshotCheckConclusive = false;
-        if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
-          if (postScrollScreenshot) {
-            screenshotCheckConclusive = true;
-            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
-            if (diffRatio < 0.02) {
-              console.log(
-                `[android_tap_element] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
-              );
-              break;
-            }
-          }
-        }
+        const screenshotNoOp = await detectNoOpScrollByScreenshot(
+          ctx.userId,
+          ctx,
+          preScrollScreenshot,
+          "android_tap_element",
+          scroll + 1,
+        );
+        const screenshotCheckConclusive = screenshotNoOp.conclusive;
+        if (screenshotNoOp.noOp) break;
 
         const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
@@ -3450,20 +3461,15 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         // ── No-op scroll detection — screenshot path ──────────────────────
-        let screenshotCheckConclusive = false;
-        if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
-          if (postScrollScreenshot) {
-            screenshotCheckConclusive = true;
-            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
-            if (diffRatio < 0.02) {
-              console.log(
-                `[android_long_press_element] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
-              );
-              break;
-            }
-          }
-        }
+        const screenshotNoOp = await detectNoOpScrollByScreenshot(
+          ctx.userId,
+          ctx,
+          preScrollScreenshot,
+          "android_long_press_element",
+          scroll + 1,
+        );
+        const screenshotCheckConclusive = screenshotNoOp.conclusive;
+        if (screenshotNoOp.noOp) break;
 
         const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
@@ -3745,20 +3751,15 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         // ── No-op scroll detection — screenshot path ──────────────────────
-        let screenshotCheckConclusive = false;
-        if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
-          if (postScrollScreenshot) {
-            screenshotCheckConclusive = true;
-            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
-            if (diffRatio < 0.02) {
-              console.log(
-                `[android_select_option] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
-              );
-              break;
-            }
-          }
-        }
+        const screenshotNoOp = await detectNoOpScrollByScreenshot(
+          ctx.userId,
+          ctx,
+          preScrollScreenshot,
+          "android_select_option",
+          scroll + 1,
+        );
+        const screenshotCheckConclusive = screenshotNoOp.conclusive;
+        if (screenshotNoOp.noOp) break;
 
         const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
@@ -3900,20 +3901,15 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         // ── No-op scroll detection — screenshot path ──────────────────────
-        let screenshotCheckConclusive = false;
-        if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
-          if (postScrollScreenshot) {
-            screenshotCheckConclusive = true;
-            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
-            if (diffRatio < 0.02) {
-              console.log(
-                `[android_select_option] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
-              );
-              break;
-            }
-          }
-        }
+        const screenshotNoOp = await detectNoOpScrollByScreenshot(
+          ctx.userId,
+          ctx,
+          preScrollScreenshot,
+          "android_select_option",
+          scroll + 1,
+        );
+        const screenshotCheckConclusive = screenshotNoOp.conclusive;
+        if (screenshotNoOp.noOp) break;
 
         const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
