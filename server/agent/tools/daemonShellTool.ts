@@ -522,6 +522,89 @@ function extractFocusedFieldText(data: unknown): { focused: boolean; text?: stri
   return { focused, text: textMatch?.[1] };
 }
 
+type VerifyAndroidTextInputOptions = {
+  userId: string;
+  expectedText: string;
+  fieldDescription: string;
+  methodUsed: string | null;
+  daemonVerified: boolean;
+  fieldText: string | null;
+  steps: string[];
+  verificationStep: string;
+  escalationStep: (fieldText: string | null) => string;
+  escalationSuccessStep: (method: string, verified: boolean) => string;
+  escalationFailureStep: (error: string) => string;
+  successStep: string;
+  inconclusiveStep: (fieldText: string | null) => string;
+  onVerifying?: () => void;
+  onEscalating?: () => void;
+  onVerified?: () => void;
+  onInconclusive?: () => void;
+  onAlreadyVerified?: () => void;
+};
+
+async function verifyAndroidTextInput(options: VerifyAndroidTextInputOptions): Promise<{
+  methodUsed: string | null;
+  daemonVerified: boolean;
+  fieldText: string | null;
+  verified: boolean;
+}> {
+  let { methodUsed, daemonVerified, fieldText } = options;
+  let verified = daemonVerified;
+
+  if (methodUsed !== "android_type" && daemonVerified) {
+    options.onAlreadyVerified?.();
+    return { methodUsed, daemonVerified, fieldText, verified };
+  }
+
+  await sleep(200);
+  options.steps.push(options.verificationStep);
+  options.onVerifying?.();
+  const verifyResult = await sendDaemonOp(options.userId, { type: "android_get_focused_field" }, 8000);
+  const verifyInfo = extractFocusedFieldText(verifyResult.data);
+  fieldText = verifyInfo.text ?? null;
+
+  const isPassword = (verifyResult.data as Record<string, unknown> | null)?.isPassword === true;
+  verified = isPassword
+    ? verifyInfo.focused
+    : typeof fieldText === "string" && (
+        fieldText === options.expectedText ||
+        fieldText.trim() === options.expectedText.trim() ||
+        fieldText.includes(options.expectedText)
+      );
+
+  if (!verified && methodUsed === "android_type") {
+    options.steps.push(options.escalationStep(fieldText));
+    options.onEscalating?.();
+    const escalateResult = await sendDaemonOp(
+      options.userId,
+      { type: "android_paste_text", text: options.expectedText, fieldDescription: options.fieldDescription },
+      15000,
+    );
+    if (escalateResult.ok) {
+      const esc = (escalateResult.data || {}) as Record<string, unknown>;
+      const escMethod = typeof esc.method_used === "string" ? esc.method_used : "unknown";
+      methodUsed = `android_paste_text:${escMethod}:escalated`;
+      daemonVerified = esc.verified === true;
+      fieldText = typeof esc.field_text === "string" ? esc.field_text : null;
+      verified = daemonVerified;
+      options.steps.push(options.escalationSuccessStep(escMethod, verified));
+    } else {
+      options.steps.push(options.escalationFailureStep(escalateResult.error || "unknown"));
+    }
+  }
+
+  if (verified) {
+    options.steps.push(options.successStep);
+    options.onVerified?.();
+  } else {
+    options.steps.push(options.inconclusiveStep(fieldText));
+    options.onInconclusive?.();
+  }
+
+  return { methodUsed, daemonVerified, fieldText, verified };
+}
+
 /** Check if serialised read_screen output contains any of the given keywords (case-insensitive) */
 function screenContains(raw: string, keywords: string[]): boolean {
   const lower = raw.toLowerCase();
@@ -1893,53 +1976,27 @@ Requires android_tap_type permission to be enabled.`,
     }
 
     //        Step 3: Server-side verification                                                                                                                   
-    let verified = daemonVerified;
-
-    if (methodUsed === "android_type" || !daemonVerified) {
-      await sleep(200);
-      steps.push("Verifying text appeared in field via android_get_focused_field...");
-      emitProgress(`Verifying text in ${fieldDesc}…`);
-      const verifyResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
-      const verifyInfo = extractFocusedFieldText(verifyResult.data);
-      fieldText = verifyInfo.text ?? null;
-
-      const isPassword = (verifyResult.data as Record<string, unknown> | null)?.isPassword === true;
-      verified = isPassword
-        ? verifyInfo.focused
-        : typeof fieldText === "string" && (
-            fieldText === text ||
-            fieldText.trim() === text.trim() ||
-            fieldText.includes(text)
-          );
-
-      if (!verified && methodUsed === "android_type") {
-        steps.push(`Verification failed after android_type (field: "${fieldText ?? "empty"}")     escalating to android_paste_text...`);
-        emitProgress(`Text not confirmed — escalating to clipboard paste…`);
-        const escalateResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text, fieldDescription: fieldDesc }, 15000);
-        if (escalateResult.ok) {
-          const esc = (escalateResult.data || {}) as Record<string, unknown>;
-          const escMethod = typeof esc.method_used === "string" ? esc.method_used : "unknown";
-          methodUsed = `android_paste_text:${escMethod}:escalated`;
-          daemonVerified = esc.verified === true;
-          fieldText = typeof esc.field_text === "string" ? esc.field_text : null;
-          verified = daemonVerified;
-          steps.push(`Escalation to android_paste_text succeeded via ${escMethod}. Verified: ${verified}.`);
-        } else {
-          steps.push(`android_paste_text escalation failed: ${escalateResult.error || "unknown"}`);
-        }
-      }
-
-      if (verified) {
-        steps.push("Verification passed: text confirmed in field.");
-        emitProgress(`Text verified in ${fieldDesc} ✓`);
-      } else {
-        steps.push(`Verification inconclusive: field text="${fieldText ?? "empty"}". Field may hide text (custom IME, password) or accessibility tree not updated yet.`);
-        emitProgress(`Input sent to ${fieldDesc} (verification inconclusive)`);
-      }
-    } else {
-      // Daemon already verified the text on its side — skip server-side check
-      emitProgress(`Text input complete ✓`);
-    }
+    let verified: boolean;
+    ({ methodUsed, daemonVerified, fieldText, verified } = await verifyAndroidTextInput({
+      userId: ctx.userId,
+      expectedText: text,
+      fieldDescription: fieldDesc,
+      methodUsed,
+      daemonVerified,
+      fieldText,
+      steps,
+      verificationStep: "Verifying text appeared in field via android_get_focused_field...",
+      escalationStep: (currentText) => `Verification failed after android_type (field: "${currentText ?? "empty"}")     escalating to android_paste_text...`,
+      escalationSuccessStep: (method, wasVerified) => `Escalation to android_paste_text succeeded via ${method}. Verified: ${wasVerified}.`,
+      escalationFailureStep: (error) => `android_paste_text escalation failed: ${error}`,
+      successStep: "Verification passed: text confirmed in field.",
+      inconclusiveStep: (currentText) => `Verification inconclusive: field text="${currentText ?? "empty"}". Field may hide text (custom IME, password) or accessibility tree not updated yet.`,
+      onVerifying: () => emitProgress(`Verifying text in ${fieldDesc}...`),
+      onEscalating: () => emitProgress("Text not confirmed; escalating to clipboard paste..."),
+      onVerified: () => emitProgress(`Text verified in ${fieldDesc}`),
+      onInconclusive: () => emitProgress(`Input sent to ${fieldDesc} (verification inconclusive)`),
+      onAlreadyVerified: () => emitProgress("Text input complete"),
+    }));
 
     //        Step 4: Optional submit                                                                                                                                                 
     if (args.submit && inputOk) {
@@ -5831,46 +5888,22 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
     }
 
     // ── Step 6: Server-side verification ──────────────────────────────────────
-    let verified = daemonVerified;
-
-    if (methodUsed === "android_type" || !daemonVerified) {
-      await sleep(200);
-      steps.push("Verifying text appeared in field via android_get_focused_field...");
-      const verifyResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
-      const verifyInfo = extractFocusedFieldText(verifyResult.data);
-      fieldText = verifyInfo.text ?? null;
-
-      const isPassword = (verifyResult.data as Record<string, unknown> | null)?.isPassword === true;
-      verified = isPassword
-        ? verifyInfo.focused
-        : typeof fieldText === "string" && (
-            fieldText === text ||
-            fieldText.trim() === text.trim() ||
-            fieldText.includes(text)
-          );
-
-      if (!verified && methodUsed === "android_type") {
-        steps.push(`Verification failed after android_type (field: "${fieldText ?? "empty"}") — escalating to android_paste_text...`);
-        const escalateResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text, fieldDescription: fieldDesc }, 15000);
-        if (escalateResult.ok) {
-          const esc = (escalateResult.data || {}) as Record<string, unknown>;
-          const escMethod = typeof esc.method_used === "string" ? esc.method_used : "unknown";
-          methodUsed = `android_paste_text:${escMethod}:escalated`;
-          daemonVerified = esc.verified === true;
-          fieldText = typeof esc.field_text === "string" ? esc.field_text : null;
-          verified = daemonVerified;
-          steps.push(`Escalation to android_paste_text succeeded via ${escMethod}. Verified: ${verified}.`);
-        } else {
-          steps.push(`android_paste_text escalation failed: ${escalateResult.error || "unknown"}`);
-        }
-      }
-
-      if (verified) {
-        steps.push("Verification passed: text confirmed in field.");
-      } else {
-        steps.push(`Verification inconclusive: field text="${fieldText ?? "empty"}". Field may hide text (custom IME, password) or accessibility tree not updated yet.`);
-      }
-    }
+    let verified: boolean;
+    ({ methodUsed, daemonVerified, fieldText, verified } = await verifyAndroidTextInput({
+      userId: ctx.userId,
+      expectedText: text,
+      fieldDescription: fieldDesc,
+      methodUsed,
+      daemonVerified,
+      fieldText,
+      steps,
+      verificationStep: "Verifying text appeared in field via android_get_focused_field...",
+      escalationStep: (currentText) => `Verification failed after android_type (field: "${currentText ?? "empty"}") — escalating to android_paste_text...`,
+      escalationSuccessStep: (method, wasVerified) => `Escalation to android_paste_text succeeded via ${method}. Verified: ${wasVerified}.`,
+      escalationFailureStep: (error) => `android_paste_text escalation failed: ${error}`,
+      successStep: "Verification passed: text confirmed in field.",
+      inconclusiveStep: (currentText) => `Verification inconclusive: field text="${currentText ?? "empty"}". Field may hide text (custom IME, password) or accessibility tree not updated yet.`,
+    }));
 
     // ── Step 7: Optional submit ────────────────────────────────────────────────
     if (args.submit && inputOk) {
