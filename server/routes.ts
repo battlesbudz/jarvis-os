@@ -2,7 +2,6 @@ import "./agent/providers/envAliases";
 import { createHash } from 'crypto';
 import { activeCoachRuns } from "./runRegistry";
 import { registerCoachRunLifecycle } from "./coachRunLifecycle";
-import { registerCoachMorningBriefRoute, registerCoachWeeklyReviewRoute } from "./routes/coachReviewRoutes";
 import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSourceId";
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
@@ -44,70 +43,27 @@ import { registerCodeProposalsRoutes } from "./agent/codeProposalsRoutes";
 import { registerProjectRoutes } from "./projectRoutes";
 import { registerDoctorRoutes } from "./doctor/doctorRoutes";
 import { registerVaultRoutes } from "./vaultRoutes";
-import { registerLocalWorkerRoutes } from "./routes/localWorkerRoutes";
-import { registerMcpRoutes } from "./routes/mcpRoutes";
-import { registerCommitmentRoutes } from "./routes/commitmentRoutes";
-import { registerSettingsRoutes } from "./routes/settingsRoutes";
-import { registerDocumentRoutes } from "./routes/documentsRoutes";
 import { registerIntegrationRoutes } from "./routes/integrationRoutes";
-import { registerProfileMemoryRoutes } from "./routes/profileMemoryRoutes";
 import { registerPlanGenerationRoutes } from "./routes/planGenerationRoutes";
-import { registerPredictionRoutes } from "./routes/predictionRoutes";
-import { registerPreferenceRoutes } from "./routes/preferenceRoutes";
-import { registerJarvisObservabilityRoutes } from "./routes/jarvisObservabilityRoutes";
-import { registerGoalPacingRoutes } from "./routes/goalPacingRoutes";
-import { registerDeliverableRoutes } from "./routes/deliverableRoutes";
-import { registerWebsiteCrawlRoutes } from "./routes/websiteCrawlRoutes";
-import { registerGutRoutes } from "./routes/gutRoutes";
-import { registerGoalTaskHandoffRoutes } from "./routes/goalTaskHandoffRoutes";
-import { registerGoalTreeCoreRoutes } from "./routes/goalTreeCoreRoutes";
-import { registerInboxRoutes } from "./routes/inboxRoutes";
-import { registerNervousSystemWatchRoutes } from "./routes/nervousSystemWatchRoutes";
 import { registerDailyCommandRoutes } from "./dailyCommand/routes";
 import { registerMindTraceRoutes } from "./routes/mindTraceRoutes";
 import { registerMissionControlQueueRoutes } from "./routes/missionControlQueueRoutes";
 import { registerConnectionsRoutes } from "./routes/connectionsRoutes";
 import { registerDesktopConnectorRoutes } from "./routes/desktopConnectorRoutes";
-import { registerAgentJobMutationRoutes } from "./routes/agentJobMutationRoutes";
-import { registerAgentJobQueryRoutes } from "./routes/agentJobQueryRoutes";
 import { registerWebchatInviteRoutes } from "./routes/webchatInviteRoutes";
-import { registerRuntimeDiagnosticsRoutes } from "./routes/runtimeDiagnosticsRoutes";
-import { registerDiagnosticsRoutes } from "./routes/diagnosticsRoutes";
-import { registerScheduledTaskBasicRoutes } from "./routes/scheduledTaskBasicRoutes";
-import { registerScheduledTaskAttentionRoutes } from "./routes/scheduledTaskAttentionRoutes";
-import { registerScheduledTaskRunRoutes } from "./routes/scheduledTaskRunRoutes";
 import { registerEgoRoutes } from "./routes/egoRoutes";
 import { registerDiscordConnectionRoutes } from "./routes/discordConnectionRoutes";
 import { registerGoalSummaryRoutes } from "./routes/goalSummaryRoutes";
-import { registerButtonLocationRoutes } from "./routes/buttonLocationRoutes";
-import { registerGitHubDeviceRoutes } from "./routes/githubDeviceRoutes";
-import { registerGitHubSettingsRoutes } from "./routes/githubSettingsRoutes";
-import { registerWriteSafetyRoutes } from "./routes/writeSafetyRoutes";
-import { registerIntegrationsStatusRoutes } from "./routes/integrationsStatusRoutes";
-import { registerCapabilityGapRoutes } from "./routes/capabilityGapRoutes";
-import { registerSkillCandidateRoutes } from "./routes/skillCandidateRoutes";
-import { registerSkillStoreRoutes } from "./routes/skillStoreRoutes";
-import { registerMorningVoiceNoteRoutes } from "./routes/morningVoiceNoteRoutes";
-import { registerUserSkillLibraryRoutes } from "./routes/userSkillLibraryRoutes";
-import { registerUserSkillMutationRoutes } from "./routes/userSkillMutationRoutes";
-import { registerJarvisSystemStateRoutes } from "./routes/jarvisSystemStateRoutes";
-import { registerVoiceRoutes } from "./routes/voiceRoutes";
 import { registerBrainDumpRoutes } from "./routes/brainDumpRoutes";
 import { registerCoachAudioRoutes } from "./routes/coachAudioRoutes";
-import { registerChatGptImportRoutes } from "./routes/chatgptImportRoutes";
 import { registerCoachActionConfirmationRoutes } from "./routes/coachActionConfirmationRoutes";
 import { registerCoachInsightRoutes } from "./routes/coachInsightRoutes";
 import { registerCoachSessionRoutes } from "./routes/coachSessionRoutes";
 import { registerWebchatEventsRoutes } from "./routes/webchatEventsRoutes";
 import { formatRuntimeShadowPreviewSummary, previewRuntimeShadowForMessage } from "./core/runtime";
 import { buildYoutubeTranscriptCoachTools } from "./youtubeTranscriptCoachTools";
-import {
-  registerOpenAIProviderAuthRoutes,
-} from "./routes/openaiProviderAuthRoutes";
-import {
-  registerAuthenticatedCoachRuntimeRoutes,
-} from "./routes/coachRuntimeRoutes";
 import { registerPreAuthRoutes } from "./routes/preAuthRoutes";
+import { registerPostCoachRoutes } from "./routes/postCoachRouteRegistry";
 import { createJarvisScheduledTask } from "./jarvisScheduledTasks";
 import { claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter } from "./oauthRoutes";
@@ -2793,123 +2749,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
     }
   });
 
-  registerCommitmentRoutes(app, openai);
-
-
-  // Returns today's morning brief if one was generated and stored by the
-  // proactive scheduler. The frontend uses this to show the exact same text
-  // in the Insights chat that was already sent to Telegram/daemon — no re-generation.
-  registerCoachMorningBriefRoute(app);
-
-  registerAuthenticatedCoachRuntimeRoutes(app);
-  registerRuntimeDiagnosticsRoutes(app);
-  registerInboxRoutes(app);
-
-  registerCoachWeeklyReviewRoute(app, openai);
-
-  registerProfileMemoryRoutes(app);
-  registerPredictionRoutes(app);
-  registerPreferenceRoutes(app);
-
-  registerMorningVoiceNoteRoutes(app);
-
-  // ── Jarvis Scheduled Tasks (Mission Control calendar) ──────────────────
-  registerScheduledTaskBasicRoutes(app);
-  registerJarvisObservabilityRoutes(app);
-
-  registerScheduledTaskAttentionRoutes(app);
-  registerScheduledTaskRunRoutes(app);
-
-  registerJarvisSystemStateRoutes(app);
-
-  // ── Phase 3: Sub-agent goals API ──────────────────────────────
-  registerGoalTreeCoreRoutes(app);
-  registerGoalPacingRoutes(app);
-  registerGoalTaskHandoffRoutes(app);
-
-  registerAgentJobMutationRoutes(app);
-  registerAgentJobQueryRoutes(app);
-
-  registerDeliverableRoutes(app);
-
-  const { registerDeliverableReviewRoutes } = await import("./agent/deliverableReviewHttpRoutes");
-  registerDeliverableReviewRoutes(app, { db });
-
-  registerDocumentRoutes(app);
-
-  registerWebsiteCrawlRoutes(app);
-
-  registerChatGptImportRoutes(app, openai);
-
-  // ── Nervous System — Watch Topics ────────────────────────────────────────
-
-  registerNervousSystemWatchRoutes(app);
-
-  // ── Jarvis Gut — Reflexive Anomaly Detection ────────────────────────────────
-
-  registerGutRoutes(app);
-
-  registerSettingsRoutes(app);
-  // The provider endpoints keep the /api/auth contract but authMiddleware skips
-  // that prefix, so authenticate them explicitly with the bearer-token helper.
-  registerOpenAIProviderAuthRoutes(app, {
-    includeCallbackRoutes: false,
-    resolveUserId: getUserIdFromRequest,
-  });
-
-  // ── Skill endpoints ──────────────────────────────────────────────────────
-  registerSkillStoreRoutes(app);
-
-  // ── User Skills (Task #502) — DB-backed personalisation skills ───────────
-  // Built-in library of curated skills + user-authored custom skills.
-  // Active skills are injected into Jarvis's system prompt at session start.
-
-  registerUserSkillLibraryRoutes(app);
-  registerUserSkillMutationRoutes(app);
-
-  registerSkillCandidateRoutes(app);
-
-  // ── Integration pre-flight status ────────────────────────────────────────
-  // Returns a map of { integration → { status, errorMessage, expiresAt, lastCheckedAt } }
-  // for the authenticated user. Used by the Settings screen to show health badges.
-  registerIntegrationsStatusRoutes(app);
-
-  // ── Diagnostics ──────────────────────────────────────────────────────────────
-
-  registerDiagnosticsRoutes(app);
-
-  registerLocalWorkerRoutes(app);
-
-  registerMcpRoutes(app, authMiddleware);
-
-  // ── Voice Realtime API ────────────────────────────────────────────────────
-
-  registerVoiceRoutes(app, authMiddleware);
-
-
-
-
-
-
-
-  // ── Write-budget endpoints ──────────────────────────────────────────────────
-  // GET  /api/write-budget        — returns current count, max, and tripped state.
-  // POST /api/write-budget/reset  — owner-only; clears the circuit-breaker counter.
-
-  registerWriteSafetyRoutes(app);
-
-  // ── Self-heal audit log API ───────────────────────────────────────────────
-  // ── Button locations — trained button memory ────────────────────────────
-  registerButtonLocationRoutes(app);
-
-  // ── GitHub Settings ─────────────────────────────────────────────────────────
-  registerGitHubSettingsRoutes(app);
-
-  // ── GitHub OAuth (Device Flow) ────────────────────────────────────────────────
-  registerGitHubDeviceRoutes(app);
-
-  registerCapabilityGapRoutes(app, authMiddleware);
-
+  await registerPostCoachRoutes(app, { openai, authMiddleware });
   const httpServer = createServer(app);
   return httpServer;
 }
