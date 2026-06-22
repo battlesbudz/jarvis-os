@@ -25,10 +25,12 @@ export type DaemonOp =
   | { type: "codex_oauth_app_server_prompt"; prompt: string; command?: string; timeoutMs?: number }
   | { type: "codex_oauth_cancel" }
   | { type: "notify"; title: string; body: string }
+  | { type: "android_notify"; title: string; body: string }
   | { type: "file_read"; path: string }
   | { type: "file_write"; path: string; content: string }
   | { type: "file_list"; path: string }
   | { type: "android_open_app"; packageName: string }
+  | { type: "android_list_apps" }
   | { type: "android_browse"; url: string }
   | { type: "android_screenshot" }
   | { type: "android_read_screen" }

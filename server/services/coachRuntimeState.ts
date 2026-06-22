@@ -9,12 +9,13 @@ type ScreenshotEntry = {
 
 const screenshotStore = new Map<string, ScreenshotEntry>();
 
-setInterval(() => {
+const screenshotCleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [id, entry] of screenshotStore) {
     if (entry.expires < now) screenshotStore.delete(id);
   }
 }, 5 * 60 * 1000);
+(screenshotCleanupInterval as unknown as { unref?: () => void }).unref?.();
 
 export function getDaemonScreenshot(id: string): ScreenshotEntry | undefined {
   return screenshotStore.get(id);

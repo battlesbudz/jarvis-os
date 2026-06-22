@@ -80,6 +80,7 @@ import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
 import { filterToolsByGroups, getTool, type ToolGroup } from "./agent/tools/index";
+import { ANDROID_PHONE_RUNTIME_TOOL_NAMES } from "./agent/tools/androidAppRuntime";
 import { parseNaturalTime, parseRecurringExpr } from "./agent/tools/cronTools";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 import { getPromptData, setPromptData } from "./coachSessionPromptCache";
@@ -127,6 +128,84 @@ function operatorActionPermKey(operatorAction: Record<string, unknown>): Android
 }
 
 const openai = new OpenAI(getOpenAIClientConfig());
+const ANDROID_PHONE_RUNTIME_TOOL_NAME_SET = new Set<string>(ANDROID_PHONE_RUNTIME_TOOL_NAMES);
+const SERVER_YOUTUBE_TOOL_NAMES = new Set([
+  "search_youtube",
+  "fetch_youtube_transcript",
+  "youtube_search",
+  "get_youtube_transcript",
+]);
+
+function isAndroidPhoneRuntimeToolName(name: string): boolean {
+  return ANDROID_PHONE_RUNTIME_TOOL_NAME_SET.has(name);
+}
+
+function phoneRuntimeChatToolName(tool: OpenAI.Chat.Completions.ChatCompletionTool): string | null {
+  return tool.type === "function" ? tool.function.name : null;
+}
+
+function filterPhoneRuntimeModelTools(
+  tools: OpenAI.Chat.Completions.ChatCompletionTool[],
+  options: { allowDaemonActionFallback?: boolean; allowServerYoutubeTools?: boolean } = {},
+): OpenAI.Chat.Completions.ChatCompletionTool[] {
+  return tools.filter((tool) => {
+    const name = phoneRuntimeChatToolName(tool);
+    if (!name) return true;
+    if (name === "daemon_action") return options.allowDaemonActionFallback === true;
+    if (!options.allowServerYoutubeTools && SERVER_YOUTUBE_TOOL_NAMES.has(name)) return false;
+    if (name.startsWith("android_") && !isAndroidPhoneRuntimeToolName(name)) return false;
+    return true;
+  });
+}
+
+function uniqueToolNames(names: string[]): string[] {
+  return Array.from(new Set(names));
+}
+
+function isYoutubePhoneRequest(text: string): boolean {
+  return /\b(you\s*tube|youtube|yt)\b/i.test(text);
+}
+
+function isYoutubeServerResearchRequest(text: string): boolean {
+  return isYoutubePhoneRequest(text) &&
+    /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|best video|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
+}
+
+function isPhoneRuntimeCoveredRequest(text: string): boolean {
+  if (isYoutubePhoneRequest(text)) return !isYoutubeServerResearchRequest(text);
+  return /\b(?:open|launch|start)\b/i.test(text) ||
+    /\b(?:browse to|navigate to|open (?:a )?(?:url|link|website|site))\b/i.test(text) ||
+    /\b(?:screenshot|screen shot|screen capture)\b/i.test(text) ||
+    /\b(?:read|inspect|look at|what(?:'s| is))\b.{0,48}\b(?:screen|display|phone)\b/i.test(text) ||
+    /\bnotifications?\b/i.test(text) ||
+    /\b(?:tap|swipe|scroll|type|press|back|home|recents|enter)\b/i.test(text);
+}
+
+function buildPhoneRuntimeRequiredToolNames(
+  lastUserContent: string,
+  isDeviceControlRequest: boolean,
+  phoneRuntimeCoveredRequest: boolean,
+): string[] {
+  if (!isDeviceControlRequest && !phoneRuntimeCoveredRequest && !isYoutubePhoneRequest(lastUserContent)) return [];
+  const requiredToolNames = new Set<string>();
+
+  if (phoneRuntimeCoveredRequest) {
+    ANDROID_PHONE_RUNTIME_TOOL_NAMES.forEach((name) => requiredToolNames.add(name));
+  }
+
+  if (isYoutubePhoneRequest(lastUserContent)) {
+    const youtubeResearchRequest = isYoutubeServerResearchRequest(lastUserContent);
+    if (!youtubeResearchRequest) {
+      requiredToolNames.add("android_youtube_search");
+      requiredToolNames.add("android_open_phone_url");
+    } else {
+      requiredToolNames.add("search_youtube");
+      requiredToolNames.add("fetch_youtube_transcript");
+    }
+  }
+
+  return [...requiredToolNames];
+}
 
 export { buildPlanForUser, buildPlanFromInputs } from './services/planGenerationService';
 
@@ -431,7 +510,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const isDesktop = isDesktopDaemonActive(userId);
           const daemonParts: string[] = [];
           if (isDesktop) daemonParts.push(`Desktop Daemon: ✓ online — use shell, notify, file_read, file_write, file_list actions.`);
-          if (isAndroid) daemonParts.push(`Android Device Daemon: ✓ online — use android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_file_list, android_file_read, android_notifications_list, notify, android_return_to_jarvis. After completing a multi-step phone task: (1) call notify (title:'Jarvis ✓', body: one-line summary), then (2) call android_return_to_jarvis to navigate the phone back to the Jarvis chat. If a tool returns result:error, stop and report the error immediately — do NOT fabricate success. After android_open_app or android_browse succeeds, ALWAYS call android_read_screen before describing screen content. For app searches use deep links: YouTube='vnd.youtube://results?search_query=QUERY', Maps='geo:0,0?q=QUERY', Spotify='spotify:search:QUERY'.`);
+          if (isAndroid) daemonParts.push(`Android Device Control: ✓ online — use the Phone Runtime tools: ${ANDROID_PHONE_RUNTIME_TOOL_NAMES.join(", ")}. Low-level daemon actions are internal implementation details. If a phone runtime tool returns result:error, stop and report the error immediately — do NOT fabricate success. After app navigation succeeds, read the screen before describing screen content.`);
           const daemonLabel = daemonOnline
             ? daemonParts.join(" | ")
             : `Android/Desktop Daemon: ✗ not connected — for Android device control, install/open the main Jarvis Android app, go to Profile → Android Device, then tap Enable Device Control. The app uses the configured server URL automatically.`;
@@ -1620,7 +1699,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const daemonSection = daemonPaired
         ? androidActive
-          ? `Android Device Daemon is ACTIVE and connected.\n${deviceHints}\nAvailable daemon actions: android_open_app, android_browse, android_screenshot, android_read_screen, android_tap, android_type, android_swipe, android_press_key, android_wait, android_file_list, android_file_read, android_notifications_list, notify. DO NOT use desktop shell/file actions.\nSEARCH SHORTCUTS — use android_browse with these deep links (opens native app directly to results): YouTube search → url='vnd.youtube://results?search_query=YOUR_QUERY', Google Maps → url='geo:0,0?q=YOUR_QUERY', Spotify → url='spotify:search:YOUR_QUERY'.\nUI SETTLING — use android_wait (ms: 1500–3000) after tapping interactive elements that trigger loading (videos, pages, navigation) before calling android_read_screen. This prevents read_screen from seeing a blank or transitioning state.\n\nYOUTUBE RESEARCH WORKFLOW — when the user asks to research something on YouTube, find a good video and summarize it:\n  1. Call search_youtube (server-side) with the query. This returns results with channel name, views, date, and video ID — use this to pick a reputable, high-view-count, recent video without touching the phone at all.\n  2. Call fetch_youtube_transcript with the chosen video ID — this fetches the COMPLETE transcript server-side with no truncation.\n  3. Call android_browse with url='vnd.youtube://watch?v=VIDEO_ID' to open the video on the phone so the user can watch it.\n  4. Summarize the transcript content for the user.\n  5. Call notify as the final step (see NOTIFICATIONS below).\n  NEVER navigate YouTube's transcript UI (3-dot menu, Show Transcript, scroll) — always use fetch_youtube_transcript.\n\nNOTIFICATION → YOUTUBE VIDEO WORKFLOW — when the user asks you to open a specific video from their notifications:\n  1. android_notifications_list → find the notification the user mentioned (match by channel name or partial title).\n  2. Extract the YouTube URL from the notification if present. YouTube notification bodies often contain 'youtube.com/watch?v=VIDEO_ID' or the URL is in the intent data. Use android_browse url='vnd.youtube://watch?v=VIDEO_ID' with the exact extracted ID.\n  3. If no URL in notification: use the EXACT video title from the notification as the query for search_youtube, pick the result whose title matches most closely, then open with android_browse url='vnd.youtube://watch?v=VIDEO_ID'.\n  4. android_wait(3000) → android_screenshot → VISUALLY VERIFY the correct video title is on screen before proceeding. If the wrong video loaded, go back (android_press_key: back) and retry with a more specific search query or the exact title.\n  5. NEVER open a search results page and assume the first result is the correct video — always verify the video title matches what the user asked for.\n\nYOUTUBE APP SPATIAL LAYOUT (Galaxy Z Fold 6 cover screen, portrait) — use this as your mental map when navigating:\n  SCREEN ZONES (top to bottom):\n  • Video Player (top ~0–40% of screen): The video plays here. Tapping it toggles play/pause controls.\n  • Title Zone (~40–50%): Video title text + view count + date.\n  • Channel Zone (~50–57%): Channel name + subscriber count + Subscribe/bell button.\n  • Action Row (~57–65%): Like (with count) | Dislike | Share | Ask | Save — horizontally arranged.\n  • Comments Section (~65–78%): IMMEDIATELY VISIBLE below the action row — NO SCROLLING NEEDED. Shows 'Comments [count]' header on the left, then the first comment text directly below it as a preview. This entire block is the tap target to open the full comment list.\n  • Recommended / Store content (below 78%): Sponsored sections, other videos.\n\n  READING COMMENTS STEP-BY-STEP:\n  1. After video opens: android_wait(2500), then android_screenshot to confirm the video loaded.\n  2. The comments section is ALREADY VISIBLE on screen — no scrolling required.\n  3. android_read_screen — the output will contain 'Comments [number]' and the first comment text right there in the page. You can read that first comment immediately.\n  4. To open the full comment list: android_tap at the comments block (~x=450, y=1450 on the Z Fold 6 cover screen — roughly 65% down). This opens a bottom sheet with all comments.\n  5. android_wait(1500), android_screenshot — the comment sheet should now be open.\n  6. android_read_screen to extract the comment text you need.\n  7. If tapping opened the video fullscreen instead: android_press_key(back) to exit fullscreen, then retry tapping the comments block lower on the screen.\n\n  IMPORTANT COORDINATE NOTES:\n  • The Z Fold 6 cover screen is approx 904px wide × 2316px tall. Tap x-coordinates: use x=450 (center). y=1450 targets the comments section.\n  • After every tap, ALWAYS android_wait(1000–1500) then android_screenshot before the next action. This prevents mis-taps on transitioning screens.\n  • The first comment text is readable directly from android_read_screen without tapping anything — use this to answer 'what is the first comment?' type questions instantly.\n\nACTION FLOW for multi-step tasks: Use as many tool-call turns as the task requires — there is no turn limit. For each step: (1) If unsure what is on screen, call android_read_screen first. (2) Act — call android_browse, android_tap, android_swipe, android_type, etc. as needed. (3) After acting, call android_read_screen to confirm the result, then decide the next step. Complete the FULL task end-to-end before responding — do NOT stop mid-task and ask the user to finish. NEVER re-open an app that is already on screen. NEVER describe app content without calling android_read_screen first. If an op returns result:error, tell the user what failed and what you tried.\n\n\nFLAG_SECURE APPS — android_screenshot WILL ALWAYS FAIL for these apps (OS-level block, cannot be bypassed):\n  Facebook (com.facebook.katana / .lite), Instagram (com.instagram.android), WhatsApp (com.whatsapp), Snapchat (com.snapchat.android), Netflix (com.netflix.mediaclient), Disney+ (com.disney.disneyplus), most banking apps, and camera apps.\n  For ANY of these apps, NEVER call android_screenshot — it will always fail. Use android_read_screen instead. android_read_screen reads the accessibility tree and IS available even in FLAG_SECURE apps — it gives you all visible text, button labels, and UI element positions. This is actually MORE useful for understanding content than a screenshot since it returns structured data.\n\nCAMERA TASKS — android_screenshot WILL FAIL inside camera apps (FLAG_SECURE). For any photo task: (1) android_open_app the camera package, (2) android_wait 2000ms to let it load, (3) android_read_screen to see the viewfinder UI and find the shutter button coordinates, (4) android_tap the shutter button, (5) android_wait 1500ms, (6) send notify success banner — do NOT call android_screenshot inside the camera, it will always fail. Trust the shutter tap succeeded and move on.\n\nNOTIFICATIONS — ALWAYS send a notify banner at the end of every multi-step task, success OR failure:\n- SUCCESS: notify with title:'Jarvis ✓', body: one-line summary of what was done (e.g. "Playing Lo-Fi Hip Hop — 2.1M views, posted 3 days ago")\n- FAILURE: notify with title:'Jarvis ✗', body: one-line summary of what went wrong (e.g. "Couldn't get transcript — captions disabled on this video")\nThis ensures the user always gets a phone banner and never waits silently for a task that already ended.\n\nRETURN TO JARVIS — REQUIRED FINAL STEP after every multi-step task:\nAfter calling notify, ALWAYS call android_return_to_jarvis as the very last step. This returns the phone to the Jarvis app or existing chat surface so the user can continue the conversation without having to manually switch apps. The full task loop is always: complete task → notify banner → android_return_to_jarvis. Never skip android_return_to_jarvis on multi-step tasks.\n\nSCREENSHOT DISPLAY — screenshots ARE shown inline in the Jarvis chat as viewable images:\nWhen android_screenshot succeeds, the screenshot is automatically stored and a preview URL is returned. Include a brief description of what the screenshot shows (e.g. "Here's the current Facebook screen:") before the tool result is displayed — the image will appear inline in the chat for the user to see directly.`
+        ? `Android Device Control is ACTIVE and connected.\n${deviceHints}\nUse the deterministic Phone Runtime tools for phone work: ${ANDROID_PHONE_RUNTIME_TOOL_NAMES.join(", ")}. Low-level daemon actions are internal implementation details and should not be used as the normal phone-control interface. DO NOT use desktop shell/file actions for phone work.\n\nPHONE RUNTIME WORKFLOW:\n  1. Use android_read_screen_context when you need to know what is visible before acting.\n  2. Use android_open_app_by_name for natural app names like YouTube, Facebook, LinkedIn, Maps, Camera, or Settings.\n  3. Use android_youtube_search for \"Search YouTube for X\" so the native app opens deterministically.\n  4. Use android_capture_screen when the user asks for a screenshot or screen capture. The screenshot appears as a temporary inline chat preview; direct capture is not intended as a Gallery photo, but Android fallback capture cleanup is best-effort.\n  5. Use android_tap_screen, android_type_text, android_swipe_screen, android_press_phone_key, and android_wait_for_ui for controlled UI navigation when a higher-level app runtime tool does not exist yet.\n  6. Use android_notify_user, then android_return_to_jarvis_chat at the end of multi-step phone tasks.\n\nYOUTUBE PHONE SEARCH WORKFLOW — when the user asks to search YouTube on the phone, call android_youtube_search. It opens native YouTube search results and reads visible screen context.\n\nYOUTUBE RESEARCH WORKFLOW — when the user asks to research something on YouTube and summarize a video:\n  1. Call search_youtube (server-side) with the query to pick a reputable/high-signal video without touching the phone.\n  2. Call fetch_youtube_transcript with the chosen video ID.\n  3. Call android_open_phone_url with url='vnd.youtube://watch?v=VIDEO_ID' only after the content choice is made.\n  4. Summarize the transcript content for the user.\n  5. Call android_notify_user and android_return_to_jarvis_chat as final phone steps when this was a phone task.\n\nFLAG_SECURE APPS — android_capture_screen may fail for Facebook, Instagram, WhatsApp, Snapchat, streaming, banking, and camera apps. Use android_read_screen_context instead; it reads visible text, labels, and UI element context from accessibility.\n\nACTION FLOW for multi-step tasks: Use as many Phone Runtime tool-call turns as needed. After acting, read the screen to confirm the result before describing it. If a tool returns result:error, tell the user what failed and what you tried.\n\nSCREENSHOT DISPLAY — screenshots ARE shown inline in the Jarvis chat as temporary images:\nWhen android_capture_screen succeeds, the screenshot is stored as a temporary chat preview. Use the returned screenContext for reasoning unless a vision/OCR path has explicitly provided visual details.`
           : 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing.'
         : '⚠️ NO DAEMON CONNECTED. Do NOT call daemon_action — it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone device control isn\'t connected. To fix it: (1) Install/open the main Jarvis Android app, (2) Go to Profile and scroll to Android Device, (3) Tap Enable Device Control. The app uses the configured server URL automatically. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it\'s connected.';
       const selfImprovementSection = `## Self-Improvement: Building New Jarvis Tools
@@ -1649,6 +1728,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         'notification', 'notifications', 'my notifications', 'read my notification',
         'check notification', 'show notification', 'what notification', 'any notification',
         'new notification', 'recent notification', 'latest notification',
+        'sms', 'send text', 'text message', 'send a text', 'send message',
+        'location', 'where am i', 'take photo', 'take a photo', 'snap a photo',
+        'record screen', 'screen record', 'record video', 'camera clip',
         // general phone/device read actions
         'read my phone', 'check my phone', 'what is on my phone', "what's on my phone",
         'phone screen', 'my screen', 'my phone',
@@ -1659,13 +1741,35 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         'look something up', 'look it up', 'find a video', 'find me a video',
       ];
       const isDeviceControlRequest = androidActive && deviceControlKeywords.some(k => lastUserContent.includes(k));
+      const phoneRuntimeCoveredRequest = androidActive && isPhoneRuntimeCoveredRequest(lastUserContent);
+      const keepDaemonActionFallback = androidActive && isDeviceControlRequest && !phoneRuntimeCoveredRequest;
 
       // Absolute prohibition injected at the TOP of the system message so the model
       // reads it before any other context. Without this, the model pattern-matches
       // against prior hallucinated assistant messages in the chat history and repeats them.
-      const daemonAbsoluteRule = androidActive
-        ? `\n⚠️ ABSOLUTE RULE — DEVICE CONTROL: You have ZERO physical ability to open apps, take screenshots, tap, swipe, type, or perform any action on the phone through text alone. The ONLY way ANY phone action can happen is by calling the daemon_action tool and receiving result:'success'. If daemon_action is not called, NOTHING happened on the phone. Prior conversation messages where you (the assistant) described performing phone actions without a daemon_action tool call were ERRORS — do not repeat that pattern. For EVERY phone action request, call daemon_action. Never write "I opened X" or "I took a screenshot" unless daemon_action returned result:'success' in this response.\n`
+      const daemonAbsoluteRuleBase = androidActive
+        ? `\n⚠️ ABSOLUTE RULE — DEVICE CONTROL: You have ZERO physical ability to open apps, take screenshots, tap, swipe, type, or perform any action on the phone through text alone. The ONLY normal way ANY phone action can happen is by calling an available deterministic Phone Runtime tool such as ${ANDROID_PHONE_RUNTIME_TOOL_NAMES.join(", ")} and receiving result:'success'. If no Phone Runtime tool is called, NOTHING happened on the phone. Prior conversation messages where you (the assistant) described performing phone actions without a successful phone tool call were ERRORS — do not repeat that pattern. For EVERY phone action request, call a Phone Runtime tool. Never write "I opened X" or "I took a screenshot" unless a Phone Runtime tool returned result:'success' in this response.\n`
         : '';
+
+      const daemonAbsoluteRule = keepDaemonActionFallback
+        ? daemonAbsoluteRuleBase
+            .replace(
+              /an available deterministic Phone Runtime tool such as [^.]+ and receiving result:'success'/,
+              "an available deterministic Phone Runtime tool, or the daemon_action fallback exposed for this unsupported phone action, and receiving result:'success'",
+            )
+            .replace(
+              /If no Phone Runtime tool is called/,
+              "If no phone action tool is called",
+            )
+            .replace(
+              /call a Phone Runtime tool/g,
+              "call the exposed phone action tool",
+            )
+            .replace(
+              /a Phone Runtime tool returned result:'success'/,
+              "a Phone Runtime tool or daemon_action fallback returned result:'success'",
+            )
+        : daemonAbsoluteRuleBase;
 
       const lastUserOrigText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
       const youtubeCtxBlock = lastUserOrigText
@@ -1677,6 +1781,24 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         ? "When the user asks you to build, create, edit, inspect, or test a local code project or website, use delegate_to_codex so Codex can do the implementation work. If the user explicitly asks for the change to be permanent, pushed, published, deployed, or on GitHub, delegate that commit/push/publish requirement to Codex too and set allow_external_side_effects=true only for that exact requested action. If the user did not explicitly ask for commit/push/deploy, keep the work local and say that it still needs approval to be pushed."
         : "When the user asks you to build a standalone app, website, or landing page, use queue_background_job with agentType='app_project' so Jarvis can build it persistently in the hosted workspace.";
       const toolAwareRoute = classifyToolAwareRoute(lastUserOrigText);
+      const phoneRuntimeRequiredToolNames = buildPhoneRuntimeRequiredToolNames(
+        lastUserContent,
+        isDeviceControlRequest,
+        phoneRuntimeCoveredRequest,
+      );
+      const routeRequiredToolNames = uniqueToolNames([
+        ...phoneRuntimeRequiredToolNames,
+        ...(keepDaemonActionFallback ? ["daemon_action"] : []),
+      ]);
+      const effectiveToolAwareRoute = routeRequiredToolNames.length > 0
+        ? {
+            ...toolAwareRoute,
+            priorityToolNames: uniqueToolNames([
+              ...toolAwareRoute.priorityToolNames,
+              ...routeRequiredToolNames,
+            ]),
+          }
+        : toolAwareRoute;
       if (toolAwareRoute.shouldPreferTool) {
         console.info("[Coach/ActionOntology]", {
           actionType: toolAwareRoute.actionType,
@@ -1792,6 +1914,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           "list_source_files",
           "read_source_file",
           "propose_code_change",
+          ...ANDROID_PHONE_RUNTIME_TOOL_NAMES,
         ];
         if (codexDelegationEnabled) directAgentToolNames.push("delegate_to_codex");
         directAgentToolNames.forEach((name) => addAgentTool(getTool(name)));
@@ -1799,7 +1922,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           filterToolsByGroups(toolAwareRoute.toolGroups as ToolGroup[], resolvedGmailConnected)
             .forEach((tool) => addAgentTool(tool));
         }
-        toolAwareRoute.priorityToolNames.forEach((name) => addAgentTool(getTool(name)));
+        effectiveToolAwareRoute.priorityToolNames.forEach((name) => addAgentTool(getTool(name)));
         const mcpAgentToolsMap = new Map<string, import("./agent/types").AgentTool>();
         try {
           const { mcpServerRegistry } = await import("./agent/mcp/mcpServerRegistry");
@@ -1820,7 +1943,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         }
         const focusedToolNames = new Set<string>();
         if (toolAwareRoute.shouldPreferTool) {
-          toolAwareRoute.priorityToolNames.forEach((name) => focusedToolNames.add(name));
+          effectiveToolAwareRoute.priorityToolNames.forEach((name) => focusedToolNames.add(name));
           filterToolsByGroups(toolAwareRoute.toolGroups as ToolGroup[], resolvedGmailConnected)
             .forEach((tool) => focusedToolNames.add(tool.name));
         }
@@ -1845,6 +1968,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             "browser_snapshot",
           ].forEach((name) => focusedToolNames.add(name));
         }
+        if (phoneRuntimeCoveredRequest) {
+          ANDROID_PHONE_RUNTIME_TOOL_NAMES.forEach((name) => focusedToolNames.add(name));
+        }
+        phoneRuntimeRequiredToolNames.forEach((name) => focusedToolNames.add(name));
+        if (keepDaemonActionFallback) {
+          focusedToolNames.add("daemon_action");
+        }
         if (isDiagnosticsRequest) {
           focusedToolNames.add("jarvis_self_diagnose");
         }
@@ -1857,13 +1987,22 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               })
             : requestTools;
         const firstTurnToolPolicy = buildToolExecutionPolicy({
-          route: toolAwareRoute,
+          route: effectiveToolAwareRoute,
           tools: focusedRequestTools,
           maxTurns: MAX_TOOL_TURNS,
           getToolName: (tool) => chatToolName(tool) ?? "",
           forceRequired: isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest,
         });
-        const modelRequestTools = firstTurnToolPolicy.tools;
+        const usePhoneRuntimeToolSurfaceOnly = androidActive && (
+          phoneRuntimeCoveredRequest ||
+          keepDaemonActionFallback
+        );
+        const modelRequestTools = usePhoneRuntimeToolSurfaceOnly
+          ? filterPhoneRuntimeModelTools(firstTurnToolPolicy.tools, {
+              allowDaemonActionFallback: keepDaemonActionFallback,
+              allowServerYoutubeTools: isYoutubeServerResearchRequest(lastUserContent),
+            })
+          : firstTurnToolPolicy.tools;
 
         // Shared MCP tool context (pendingAttachments accumulate across turns)
         const mcpToolCtx: import("./agent/types").ToolContext = {
@@ -1987,6 +2126,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               const hasRawToolCallBlob = androidActive && (
                 responseText.includes('"name":"daemon_action"') ||
                 responseText.includes('"name": "daemon_action"') ||
+                ANDROID_PHONE_RUNTIME_TOOL_NAMES.some((name) => responseText.includes(name)) ||
                 responseText.includes('android_notifications_list') ||
                 responseText.includes('android_open_app') ||
                 responseText.includes('android_screenshot') ||
@@ -2121,7 +2261,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             // "working" event before the op runs. This keeps the HTTP connection
             // alive during multi-turn loops (prevents 60s gateway timeout) and
             // gives the user real-time progress instead of a blank loading state.
-            if (tc.function.name === 'daemon_action') {
+            if (tc.function.name === 'daemon_action' || isAndroidPhoneRuntimeToolName(tc.function.name)) {
               hasDaemonActions = true;
               openCoachSse(res);
               const actionLabel: Record<string, string> = {
@@ -2136,13 +2276,28 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 android_notifications_list: 'Checking notifications...',
                 notify: 'Sending you a notification...',
               };
-              const workingMsg = actionLabel[String(args.action || '')] || 'Working on your phone...';
+              const highLevelActionLabel: Record<string, string> = {
+                android_open_app_by_name: 'Launching app on your phone...',
+                android_youtube_search: 'Searching YouTube on your phone...',
+                android_open_phone_url: 'Opening link on your phone...',
+                android_capture_screen: 'Capturing your phone screen...',
+                android_read_screen_context: 'Reading your phone screen...',
+                android_tap_screen: 'Tapping the screen...',
+                android_type_text: 'Typing on your phone...',
+                android_swipe_screen: 'Swiping on your phone...',
+                android_press_phone_key: 'Pressing phone key...',
+                android_wait_for_ui: 'Waiting for the phone UI...',
+                android_read_notifications: 'Checking notifications...',
+                android_notify_user: 'Sending you a notification...',
+                android_return_to_jarvis_chat: 'Returning to Jarvis...',
+              };
+              const workingMsg = highLevelActionLabel[tc.function.name] || actionLabel[String(args.action || '')] || 'Working on your phone...';
               touchVisibleProgress(workingMsg);
               emitMeaningfulProgress({
                 source: "tool",
                 stage: "tool_call",
                 message: workingMsg,
-                detail: `daemon_action:${String(args.action || "")}`,
+                detail: tc.function.name === "daemon_action" ? `daemon_action:${String(args.action || "")}` : tc.function.name,
               });
               res.write(`data: ${JSON.stringify({ type: 'working', message: workingMsg })}\n\n`);
               startKeepalive();
@@ -2152,7 +2307,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             // so far as a pending response. This handles the edge case where Chrome
             // reloads (instead of just coming to foreground): the reloaded page fetches
             // the pending response on mount and can display the screenshot immediately.
-            if (tc.function.name === 'daemon_action' && String(args.action) === 'android_return_to_jarvis' && userId) {
+            if (
+              userId &&
+              (
+                (tc.function.name === 'daemon_action' && String(args.action) === 'android_return_to_jarvis') ||
+                tc.function.name === 'android_return_to_jarvis_chat'
+              )
+            ) {
               const earlyScreenshotUrl = actionResults.find(a => a.screenshotUrl)?.screenshotUrl;
               if (earlyScreenshotUrl) {
                 savePendingCoachResponse(userId, loopFinalText || '', earlyScreenshotUrl).catch(() => {});
@@ -2361,6 +2522,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             if (tc.function.name === 'daemon_action' && String(args.action) === 'android_screenshot' && execResult.result === 'success') {
               try { const parsed = JSON.parse(execResult.detail); if (parsed.screenshotUrl) linkData.screenshotUrl = parsed.screenshotUrl; } catch {}
             }
+            if (tc.function.name === 'android_capture_screen' && execResult.result === 'success') {
+              try { const parsed = JSON.parse(execResult.detail); if (parsed.screenshotUrl) linkData.screenshotUrl = parsed.screenshotUrl; } catch {}
+            }
             if (tc.function.name === 'image_generate' && execResult.result === 'success') {
               try {
                 const parsed = JSON.parse(execResult.detail);
@@ -2387,8 +2551,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               ...(plainMcpServerName ? { mcpServerName: plainMcpServerName } : {}),
             });
             let toolResultContent: string;
-            if (tc.function.name === 'daemon_action' && execResult.result === 'error') {
-              toolResultContent = `⛔ DAEMON ACTION FAILED — THE PHONE DID NOT EXECUTE THIS COMMAND.\nAction attempted: ${String(args.action || 'unknown')}\nError: ${execResult.detail || execResult.label}\n\nYou MUST tell the user this specific action FAILED. Do NOT describe it as successful. Do NOT invent what the phone showed or did.`;
+            const isAndroidRuntimeTool = tc.function.name === 'daemon_action' ||
+              isAndroidPhoneRuntimeToolName(tc.function.name);
+            if (isAndroidRuntimeTool && execResult.result === 'error') {
+              const attemptedAction = tc.function.name === 'daemon_action'
+                ? String(args.action || 'unknown')
+                : tc.function.name;
+              toolResultContent = `⛔ ANDROID PHONE ACTION FAILED — THE PHONE DID NOT EXECUTE THIS COMMAND.\nAction attempted: ${attemptedAction}\nError: ${execResult.detail || execResult.label}\n\nYou MUST tell the user this specific action FAILED. Do NOT describe it as successful. Do NOT invent what the phone showed or did.`;
             } else {
               toolResultContent = JSON.stringify({ result: execResult.result, detail: execResult.detail });
             }
@@ -2430,7 +2599,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
       // Inject a hard error summary before the final synthesis if any daemon actions failed.
       // This prevents the AI from hallucinating success when tool calls returned errors.
-      const failedDaemonActions = actionResults.filter(a => a.tool === 'daemon_action' && a.result === 'error');
+      const failedDaemonActions = actionResults.filter((a) => (
+        a.tool === 'daemon_action' || isAndroidPhoneRuntimeToolName(a.tool)
+      ) && a.result === 'error');
       if (failedDaemonActions.length > 0) {
         // Must be "user" role — "system" injected after tool messages is silently ignored by the API.
         toolMessages.push({
