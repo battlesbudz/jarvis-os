@@ -178,6 +178,7 @@ function isIdentityFallbackQuery(query: string): boolean {
   return (
     /\b(what|which)\s+(name|nickname)\b/.test(normalized) ||
     /\bwhat\s+(is|['’]?s)\s+my\s+(name|nickname)\b/.test(normalized) ||
+    /\bwho\s+am\s+i\s*\??\s*$/.test(normalized) ||
     /\b(name|nickname)\s+(you\s+should\s+)?call\s+me\b/.test(normalized) ||
     /\b(user\s+)?(name|nickname|identity)\b.*\bwhat\s+is\s+my\s+name\b/.test(normalized) ||
     /\bwhat\s+to\s+call\s+me\b/.test(normalized) ||

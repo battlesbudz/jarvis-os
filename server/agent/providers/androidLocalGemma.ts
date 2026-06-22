@@ -352,6 +352,7 @@ function shouldUseLocalToolProtocol(params: ProviderQueryParams): boolean {
   return hasActiveToolContinuation(params.messages) ||
     looksLikeLocalToolRequest(latest) ||
     looksLikeUrlToolRequest(latest) ||
+    (hasFunctionTool(params.tools, "memory_save") && looksLikeMemorySaveRequest(latest)) ||
     (hasFunctionTool(params.tools, "memory_search") && looksLikeMemoryLookupRequest(latest)) ||
     isToolConfirmationTurn(params.messages);
 }
@@ -861,34 +862,87 @@ function filterToolCallsToAvailableTools(
   return toolCalls.filter((toolCall) => available.has(toolCall.function.name));
 }
 
+function looksLikeMemorySaveRequest(text: string): boolean {
+  return /^\s*(?:please\s+)?remember\s+(?:that|this)\b(?=[\s:,-]+\S)/i.test(text) ||
+    /^\s*(?:can|could|would)\s+you\s+(?:please\s+)?remember\s+(?:that|this)\b(?=[\s:,-]+\S)/i.test(text) ||
+    /^\s*(?:please\s+)?remember\s+my\b(?=[^?]*?(?::|=|\b(?:is|are|means?)\b))/i.test(text) ||
+    /^\s*(?:can|could|would)\s+you\s+(?:please\s+)?remember\s+my\b(?=[^?]*?(?::|=|\b(?:is|are|means?)\b))/i.test(text) ||
+    /^\s*(?:please\s+)?(?:save|store|add|write)\b.{0,80}\b(?:memory|memories)\b/i.test(text) ||
+    /^\s*(?:please\s+)?(?:correct|update)\s+(?:your\s+)?(?:memory|memories)\b/i.test(text);
+}
+
+function isStandaloneWhoAmIRequest(text: string): boolean {
+  return /\bwho\s+am\s+i\s*\??\s*$/i.test(text);
+}
+
 function looksLikeMemoryLookupRequest(text: string): boolean {
-  return /\b(?:memory|memories|remember|recall|what do you know about me|what have i told you|about me|living context)\b/i.test(text) ||
+  if (looksLikeMemorySaveRequest(text)) return false;
+  return /\b(?:memory|memories|recall|what do you know about me|what have i told you|about me|living context)\b/i.test(text) ||
+    /\b(?:do\s+you\s+)?remember\s+my\b/i.test(text) ||
+    /\b(?:do|did)\s+you\s+remember\s+(?:that|this)\b/i.test(text) ||
+    /\bwhat\s+do\s+you\s+remember\b/i.test(text) ||
     /\bwhat(?:'s| is)\s+my\s+(?:name|nickname)\b/i.test(text) ||
     /\bwhat\s+(?:name|nickname)\s+should\s+you\s+call\s+me\b/i.test(text) ||
     /\bwhat\s+should\s+you\s+call\s+me\b/i.test(text) ||
     /\bdo\s+you\s+know\s+my\s+(?:name|nickname)\b/i.test(text) ||
-    /\bwho\s+am\s+i\b/i.test(text);
+    isStandaloneWhoAmIRequest(text);
 }
 
 function memorySearchQueryFromRequest(text: string): string {
   if (
-    /\bwho\s+am\s+i\b/i.test(text) ||
+    isStandaloneWhoAmIRequest(text) ||
     /\bwhat(?:'s| is)\s+my\s+(?:name|nickname)\b/i.test(text) ||
     /\bwhat\s+(?:name|nickname)\s+should\s+you\s+call\s+me\b/i.test(text) ||
     /\bwhat\s+should\s+you\s+call\s+me\b/i.test(text) ||
     /\bdo\s+you\s+know\s+my\s+(?:name|nickname)\b/i.test(text)
   ) {
-    return "user name identity nickname profile who am i";
+    return "user name identity nickname profile what is my name who am i";
   }
   return truncateText(text.trim(), 500);
 }
 
-function recoverRequiredMemorySearchFromRequest(
+function memorySaveContentFromRequest(text: string): string {
+  const isPoliteRememberRequest = /^\s*(?:can|could|would)\s+you\s+(?:please\s+)?remember\b/i.test(text);
+  const cleaned = text.trim()
+    .replace(/^\s*(?:can|could|would)\s+you\s+(?:please\s+)?remember\s+(?:that|this)?\s*[:,-]?\s*/i, "")
+    .replace(/^\s*(?:please\s+)?remember\s+(?:that|this)?\s*[:,-]?\s*/i, "")
+    .replace(/^\s*(?:please\s+)?remember\s+/i, "")
+    .replace(/^\s*(?:please\s+)?(?:save|store|add|write)\s+(?:this|that)?\s*(?:to|in)\s+(?:memory|memories)\s*[:,-]?\s*/i, "")
+    .replace(/^\s*(?:please\s+)?(?:save|store|add|write)\s+(?:to\s+)?(?:memory|memories)\s*[:,-]?\s*/i, "")
+    .replace(/^\s*(?:please\s+)?(?:correct|update)\s+(?:your\s+)?(?:memory|memories)\s*[:,-]?\s*/i, "")
+    .trim();
+  const content = isPoliteRememberRequest ? cleaned.replace(/\?\s*$/, "").trim() : cleaned;
+  return truncateText(content, 1000);
+}
+
+function recoverRequiredMemoryToolFromRequest(
   params: ProviderQueryParams,
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
-  if (params.toolChoice !== "required" || !hasFunctionTool(params.tools, "memory_search")) return null;
+  if (params.toolChoice !== "required") return null;
   const requestText = latestUserText(params.messages).trim();
-  if (!requestText || !looksLikeMemoryLookupRequest(requestText)) return null;
+  if (!requestText) return null;
+
+  if (looksLikeMemorySaveRequest(requestText)) {
+    if (!hasFunctionTool(params.tools, "memory_save")) return null;
+    const content = memorySaveContentFromRequest(requestText);
+    if (!content) return null;
+    return {
+      id: generatedToolCallId(0),
+      type: "function",
+      function: {
+        name: "memory_save",
+        arguments: JSON.stringify({
+          content,
+          confidence: 95,
+          tier: "long_term",
+          memory_type: "semantic",
+          source_ref: "android-local-gemma-required-recovery",
+        }),
+      },
+    };
+  }
+
+  if (!hasFunctionTool(params.tools, "memory_search") || !looksLikeMemoryLookupRequest(requestText)) return null;
 
   return {
     id: generatedToolCallId(0),
@@ -905,7 +959,7 @@ function recoverRequiredToolCallFromRequest(
   finalContent = "",
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
   return recoverRequiredDaemonActionFromRequest(params, finalContent) ||
-    recoverRequiredMemorySearchFromRequest(params);
+    recoverRequiredMemoryToolFromRequest(params);
 }
 
 function recoverRequiredDaemonActionFromRequest(
