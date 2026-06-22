@@ -26,13 +26,6 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import {
   getStats,
   claimReward,
-  getLevel,
-  getLevelName,
-  getXpForNextLevel,
-  getAvailableRewards,
-  getLifetimeXp,
-  ALL_BADGES,
-  TIER_COLORS,
   getLifeContext,
   getUserName,
   getCoachingMode,
@@ -57,6 +50,7 @@ import {
   StatusDot,
 } from '@/components/settings/SettingsSectionChrome';
 import { SubsystemErrorSheet } from '@/components/settings/SubsystemErrorSheet';
+import { AchievementsSection } from '@/components/settings/AchievementsSection';
 import { BuildHistorySection } from '@/components/settings/BuildHistorySection';
 import { WakeWordSection } from '@/components/settings/WakeWordSection';
 import { drStyles } from '@/components/settings/diagnosticsRunStyles';
@@ -1879,13 +1873,6 @@ export default function SettingsScreen() {
   }, []);
 
   // ── Computed ──
-  const lifetimeXp = getLifetimeXp(stats);
-  const level = getLevel(lifetimeXp);
-  const levelName = getLevelName(lifetimeXp);
-  const xpInfo = getXpForNextLevel(lifetimeXp);
-  const xpProgress = xpInfo.progress;
-  const availableRewards = getAvailableRewards(lifetimeXp);
-  const earnedBadges = (stats.badges ?? []).map(id => ALL_BADGES.find(b => b.id === id)).filter(Boolean);
   const openAIStatus = openAIProviderStatus?.providers?.openai ?? openAIProviderStatus?.openai;
   const openAIApiKeyStatus = openAIStatus?.authTypes.api_key;
   const openAIOAuthStatus = openAIStatus?.authTypes.oauth;
@@ -3566,75 +3553,13 @@ export default function SettingsScreen() {
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── ACHIEVEMENTS ── */}
-        <SectionHeader label="ACHIEVEMENTS" accent={Colors.cyan} />
-        <View style={styles.card}>
-          {/* XP Bar */}
-          <View style={styles.xpBlock}>
-            <View style={styles.xpTopRow}>
-              <View>
-                <Text style={styles.xpLevelLabel}>LEVEL {level}</Text>
-                <Text style={styles.xpLevelName}>{levelName}</Text>
-              </View>
-              <View style={styles.xpRight}>
-                <Text style={styles.xpValue}>{lifetimeXp} XP</Text>
-                <Text style={styles.xpNext}>Next: {xpInfo.needed} XP</Text>
-              </View>
-            </View>
-            <View style={styles.xpBarTrack}>
-              <View style={[styles.xpBarFill, { width: `${Math.min(100, Math.round(xpProgress * 100))}%` }]} />
-            </View>
-            <View style={styles.xpStats}>
-              <View style={styles.xpStat}>
-                <Text style={styles.xpStatValue}>{stats.streak}</Text>
-                <Text style={styles.xpStatLabel}>Streak</Text>
-              </View>
-              <View style={styles.xpStat}>
-                <Text style={styles.xpStatValue}>{stats.totalCompleted}</Text>
-                <Text style={styles.xpStatLabel}>Completed</Text>
-              </View>
-              <View style={styles.xpStat}>
-                <Text style={styles.xpStatValue}>{stats.bestStreak}</Text>
-                <Text style={styles.xpStatLabel}>Best</Text>
-              </View>
-            </View>
-          </View>
-
-          {/* Badges */}
-          {earnedBadges.length > 0 && (
-            <View style={[styles.badgeBlock, styles.prefRowBorder]}>
-              <Text style={styles.badgeSectionTitle}>BADGES</Text>
-              <View style={styles.badgeRow}>
-                {earnedBadges.slice(0, 8).map(badge => badge && (
-                  <View key={badge.id} style={styles.badge}>
-                    <Ionicons name={badge.icon as any} size={20} color={Colors.violet} />
-                    <Text style={styles.badgeLabel} numberOfLines={1}>{badge.label}</Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-          )}
-
-          {/* Rewards */}
-          {availableRewards.length > 0 && (
-            <View style={styles.prefRowBorder}>
-              <Text style={[styles.badgeSectionTitle, { marginTop: 12, marginBottom: 8 }]}>REWARDS TO CLAIM</Text>
-              {availableRewards.slice(0, 3).map(r => (
-                <Pressable
-                  key={r.id}
-                  style={[styles.rewardRow, { borderColor: TIER_COLORS[r.tier] + '40', backgroundColor: TIER_COLORS[r.tier] + '12' }]}
-                  onPress={() => { setSelectedReward(r); setRewardModalVisible(true); }}
-                >
-                  <Ionicons name={r.icon as any} size={18} color={TIER_COLORS[r.tier]} />
-                  <View style={styles.rewardInfo}>
-                    <Text style={[styles.rewardName, { color: TIER_COLORS[r.tier] }]}>{r.title}</Text>
-                    <Text style={styles.rewardDesc} numberOfLines={1}>{r.description}</Text>
-                  </View>
-                  <Text style={[styles.rewardClaim, { color: TIER_COLORS[r.tier] }]}>Claim →</Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
-        </View>
+        <AchievementsSection
+          stats={stats}
+          onRewardPress={(reward) => {
+            setSelectedReward(reward);
+            setRewardModalVisible(true);
+          }}
+        />
         </ErrorBoundary>
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
