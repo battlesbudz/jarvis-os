@@ -2253,6 +2253,55 @@ async function readScreen(userId: string): Promise<ClickableElement[]> {
   }));
 }
 
+interface GestureVerificationBaseline {
+  hash: string | null;
+  hierarchy: HierarchyChangeBaseline;
+}
+
+async function captureGestureVerificationBaseline(userId: string, ctx?: object): Promise<GestureVerificationBaseline> {
+  let hash: string | null = null;
+  try {
+    const screenshot = await captureScreenshot(userId, ctx);
+    if (screenshot) {
+      hash = await computeScreenshotHash(screenshot);
+    }
+  } catch { /* hash capture is best-effort */ }
+
+  return {
+    hash,
+    hierarchy: captureHierarchyChangeBaseline(await readScreen(userId)),
+  };
+}
+
+async function verifyGestureChanged(
+  userId: string,
+  baseline: GestureVerificationBaseline,
+  logPrefix: string,
+  ctx?: object,
+): Promise<{ screenChanged: boolean; hashDistance: number | null }> {
+  let screenChanged = false;
+  let hashDistance: number | null = null;
+
+  if (baseline.hash !== null) {
+    try {
+      const screenshot = await captureScreenshot(userId, ctx);
+      if (screenshot) {
+        hashDistance = hammingDistance(baseline.hash, await computeScreenshotHash(screenshot));
+        if (hashDistance > 5) {
+          screenChanged = true;
+          console.log(`[${logPrefix}] perceptual hash verified (hash_distance=${hashDistance})`);
+        }
+      }
+    } catch { /* hash comparison is best-effort */ }
+  }
+
+  if (!screenChanged) {
+    screenChanged = hierarchyChangedSince(baseline.hierarchy, await readScreen(userId));
+  }
+
+  return { screenChanged, hashDistance };
+}
+
 function bestScreenElement(elements: ScreenElement[], label: string): { bestElement: ScreenElement | null; bestScore: number } {
   let bestElement: ScreenElement | null = null;
   let bestScore = 0;
@@ -2789,17 +2838,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     const SWIPE_DURATION_MS = 300;
 
     // ── Pre-pinch state capture (perceptual hash fast-path + hierarchy fallback) ─
-    let prePinchHash: string | null = null;
-    let screenChanged = false;
-    let hashDistance: number | null = null;
-    try {
-      const prePinchScreenshot = await captureScreenshot(ctx.userId, ctx);
-      if (prePinchScreenshot) {
-        prePinchHash = await computeScreenshotHash(prePinchScreenshot);
-      }
-    } catch { /* hash capture is best-effort */ }
-    const prePinchClickable = await readScreen(ctx.userId);
-    const prePinchHierarchy = captureHierarchyChangeBaseline(prePinchClickable);
+    const pinchBaseline = await captureGestureVerificationBaseline(ctx.userId, ctx);
 
     const pinchResult = await sendDaemonOp(
       ctx.userId,
@@ -2821,26 +2860,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     }
 
     // ── Post-pinch perceptual hash comparison ─────────────────────────────────
-    if (prePinchHash !== null) {
-      try {
-        const postPinchScreenshot = await captureScreenshot(ctx.userId, ctx);
-        if (postPinchScreenshot) {
-          const postPinchHash = await computeScreenshotHash(postPinchScreenshot);
-          hashDistance = hammingDistance(prePinchHash, postPinchHash);
-          if (hashDistance > 5) {
-            screenChanged = true;
-            console.log(`[android_pinch_element] perceptual hash verified (hash_distance=${hashDistance})`);
-          }
-        }
-      } catch { /* hash comparison is best-effort */ }
-    }
-
-    // Hierarchy fallback: runs only when hash check is inconclusive (e.g. FLAG_SECURE app
-    // or visual change below threshold). Mirrors the same fallback in android_swipe_element.
-    if (!screenChanged) {
-      const postPinchClickable = await readScreen(ctx.userId);
-      screenChanged = hierarchyChangedSince(prePinchHierarchy, postPinchClickable);
-    }
+    const { screenChanged, hashDistance } = await verifyGestureChanged(
+      ctx.userId,
+      pinchBaseline,
+      "android_pinch_element",
+      ctx,
+    );
 
     console.log(
       `[android_pinch_element] userId=${ctx.userId} action=${action} on "${bestElement.label}" ` +
@@ -4827,16 +4852,7 @@ Requires: android_tap_type permission. No screen-reading or screenshot permissio
       : 800;
 
     // ── Capture pre-drag screenshot hash and hierarchy snapshot (best-effort) ──
-    let preDragHash: string | null = null;
-    try {
-      const preDragScreenshot = await captureScreenshot(ctx.userId, ctx);
-      if (preDragScreenshot) {
-        preDragHash = await computeScreenshotHash(preDragScreenshot);
-      }
-    } catch { /* hash capture is best-effort */ }
-
-    const preDragClickable = await readScreen(ctx.userId);
-    const preDragHierarchy = captureHierarchyChangeBaseline(preDragClickable);
+    const dragBaseline = await captureGestureVerificationBaseline(ctx.userId, ctx);
 
     const dragResult = await sendDaemonOp(
       ctx.userId,
@@ -4856,31 +4872,12 @@ Requires: android_tap_type permission. No screen-reading or screenshot permissio
     // screen_changed is always a boolean: false when comparison is inconclusive
     // (screenshot unavailable or hash error) so downstream logic can treat a
     // missing result the same as a no-op drag.
-    let screenChanged = false;
-    let hashDistance: number | null = null;
-
-    // Fast-path: perceptual hash comparison (distance > 5 out of 64 bits confirms the drag).
-    // Skipped on FLAG_SECURE apps where captureScreenshot returns null.
-    if (preDragHash !== null) {
-      try {
-        const postDragScreenshot = await captureScreenshot(ctx.userId, ctx);
-        if (postDragScreenshot) {
-          const postDragHash = await computeScreenshotHash(postDragScreenshot);
-          hashDistance = hammingDistance(preDragHash, postDragHash);
-          if (hashDistance > 5) {
-            screenChanged = true;
-            console.log(`[android_drag_coordinates] perceptual hash verified (hash_distance=${hashDistance})`);
-          }
-        }
-      } catch { /* hash comparison is best-effort */ }
-    }
-
-    // Hierarchy fallback: runs only when hash check is inconclusive (e.g. FLAG_SECURE app
-    // or visual change below threshold due to re-used resource IDs in dragged content).
-    if (!screenChanged) {
-      const postDragClickable = await readScreen(ctx.userId);
-      screenChanged = hierarchyChangedSince(preDragHierarchy, postDragClickable);
-    }
+    const { screenChanged, hashDistance } = await verifyGestureChanged(
+      ctx.userId,
+      dragBaseline,
+      "android_drag_coordinates",
+      ctx,
+    );
 
     console.log(`[android_drag_coordinates] userId=${ctx.userId} dragged from (${x1},${y1}) to (${x2},${y2}) hold_ms=${holdMs} screen_changed=${screenChanged} hash_distance=${hashDistance}`);
 
@@ -5010,17 +5007,7 @@ Note: screen_changed verification uses screenshot hashing and accessibility hier
     }
 
     // ── Pre-pinch state capture (perceptual hash fast-path + hierarchy fallback) ─
-    let prePinchHash: string | null = null;
-    let screenChanged = false;
-    let hashDistance: number | null = null;
-    try {
-      const prePinchScreenshot = await captureScreenshot(ctx.userId, ctx);
-      if (prePinchScreenshot) {
-        prePinchHash = await computeScreenshotHash(prePinchScreenshot);
-      }
-    } catch { /* hash capture is best-effort */ }
-    const prePinchClickable = await readScreen(ctx.userId);
-    const prePinchHierarchy = captureHierarchyChangeBaseline(prePinchClickable);
+    const pinchBaseline = await captureGestureVerificationBaseline(ctx.userId, ctx);
 
     const pinchResult = await sendDaemonOp(
       ctx.userId,
@@ -5042,29 +5029,14 @@ Note: screen_changed verification uses screenshot hashing and accessibility hier
     }
 
     // ── Post-pinch perceptual hash comparison ─────────────────────────────────
-    if (prePinchHash !== null) {
-      try {
-        const postPinchScreenshot = await captureScreenshot(ctx.userId, ctx);
-        if (postPinchScreenshot) {
-          const postPinchHash = await computeScreenshotHash(postPinchScreenshot);
-          hashDistance = hammingDistance(prePinchHash, postPinchHash);
-          if (hashDistance > 5) {
-            screenChanged = true;
-            console.log(`[android_pinch_coordinates] perceptual hash verified (hash_distance=${hashDistance})`);
-          }
-        }
-      } catch { /* hash comparison is best-effort */ }
-    }
+    const { screenChanged, hashDistance } = await verifyGestureChanged(
+      ctx.userId,
+      pinchBaseline,
+      "android_pinch_coordinates",
+      ctx,
+    );
 
     // ── Hierarchy fallback ─────────────────────────────────────────────────────
-    // Runs when hash check is inconclusive (e.g. FLAG_SECURE app or visual
-    // change below threshold).  Mirrors the same fallback in android_pinch_element
-    // and android_swipe_element.
-    if (!screenChanged) {
-      const postPinchClickable = await readScreen(ctx.userId);
-      screenChanged = hierarchyChangedSince(prePinchHierarchy, postPinchClickable);
-    }
-
     console.log(
       `[android_pinch_coordinates] userId=${ctx.userId} action=${action} centre=(${cx},${cy}) reach=${reach}px ` +
       `screen_changed=${screenChanged}${hashDistance !== null ? ` hash_distance=${hashDistance}` : ""}`,
