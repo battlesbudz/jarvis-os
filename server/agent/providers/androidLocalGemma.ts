@@ -5,6 +5,9 @@ import { BaseProvider, isJsonObjectResponseFormat } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 
 type DaemonOpResult = { ok: boolean; data?: unknown; error?: string };
+type ChatCompletionFunctionTool = OpenAI.Chat.Completions.ChatCompletionFunctionTool;
+type ChatCompletionFunctionToolCall = OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall;
+type ChatCompletionFunctionParameters = ChatCompletionFunctionTool["function"]["parameters"];
 
 type AndroidLocalGemmaDaemonOp = (
   userId: string,
@@ -121,6 +124,16 @@ const ANDROID_APP_PACKAGE_ALIASES: Record<string, string> = {
   tiktok: "com.ss.android.ugc.trill",
   discord: "com.discord",
 };
+
+function isFunctionTool(tool: OpenAI.Chat.Completions.ChatCompletionTool): tool is ChatCompletionFunctionTool {
+  return tool.type === "function";
+}
+
+function isFunctionToolCall(
+  toolCall: OpenAI.Chat.Completions.ChatCompletionMessageToolCall,
+): toolCall is ChatCompletionFunctionToolCall {
+  return toolCall.type === "function";
+}
 const FLAG_SECURE_SCREENSHOT_PACKAGES = new Set([
   "com.facebook.katana",
   "com.facebook.lite",
@@ -698,7 +711,7 @@ function daemonActionResults(messages: OpenAI.Chat.Completions.ChatCompletionMes
   for (const message of messages.slice(currentTurnStart)) {
     if (message.role === "assistant" && Array.isArray(message.tool_calls)) {
       for (const toolCall of message.tool_calls) {
-        if (toolCall.function?.name !== "daemon_action") continue;
+        if (!isFunctionToolCall(toolCall) || toolCall.function.name !== "daemon_action") continue;
         const args = toolArgumentsObject(toolCall.function.arguments);
         const action = typeof args?.action === "string" ? args.action : "";
         if (toolCall.id && action) pendingActions.set(toolCall.id, action);
@@ -728,7 +741,7 @@ function normalizeDaemonActionArguments(args: Record<string, unknown>): Record<s
   }
 
   const action = ANDROID_DAEMON_ACTION_ALIASES[actionToken] || String(args.action || "").trim();
-  const normalized = { ...args, action };
+  const normalized: Record<string, unknown> = { ...args, action };
   if (action === "android_open_app") {
     const packageName = inferPackageNameForAction(actionToken, args);
     if (packageName) normalized.packageName = packageName;
@@ -813,7 +826,7 @@ function generatedToolCallId(index: number): string {
 }
 
 function hasFunctionTool(tools: ProviderQueryParams["tools"], name: string): boolean {
-  return !!tools?.some((tool) => tool.type === "function" && tool.function?.name === name);
+  return !!tools?.some((tool) => isFunctionTool(tool) && tool.function.name === name);
 }
 
 function hasDaemonActionTool(tools: ProviderQueryParams["tools"]): boolean {
@@ -962,7 +975,7 @@ function jsonEnvelopeText(data: Record<string, unknown>): string | null {
 }
 
 function parameterNames(
-  parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"],
+  parameters: ChatCompletionFunctionParameters,
 ): string[] {
   if (!parameters || typeof parameters !== "object") return [];
   const properties = (parameters as { properties?: unknown }).properties;
@@ -970,7 +983,7 @@ function parameterNames(
   return Object.keys(properties).slice(0, MAX_TOOL_ARGUMENT_NAMES);
 }
 
-function requiredParameterNames(parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"]): string[] {
+function requiredParameterNames(parameters: ChatCompletionFunctionParameters): string[] {
   if (!parameters || typeof parameters !== "object") return [];
   const required = (parameters as { required?: unknown }).required;
   return Array.isArray(required)
@@ -979,7 +992,7 @@ function requiredParameterNames(parameters: OpenAI.Chat.Completions.ChatCompleti
 }
 
 function enumValuesForParameter(
-  parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"],
+  parameters: ChatCompletionFunctionParameters,
   name: string,
 ): string[] {
   if (!parameters || typeof parameters !== "object") return [];
@@ -996,7 +1009,7 @@ function enumValuesForParameter(
     .map((value) => String(value));
 }
 
-function requiredEnumSummaries(parameters: OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"]): string[] {
+function requiredEnumSummaries(parameters: ChatCompletionFunctionParameters): string[] {
   return requiredParameterNames(parameters)
     .flatMap((name) => {
       const values = enumValuesForParameter(parameters, name);
@@ -1004,7 +1017,7 @@ function requiredEnumSummaries(parameters: OpenAI.Chat.Completions.ChatCompletio
     });
 }
 
-function argumentTextForTool(tool: OpenAI.Chat.Completions.ChatCompletionTool): string {
+function argumentTextForTool(tool: ChatCompletionFunctionTool): string {
   const required = requiredParameterNames(tool.function.parameters);
   const enumSummaries = requiredEnumSummaries(tool.function.parameters);
   if (tool.function.name === "daemon_action") {
@@ -1024,7 +1037,7 @@ function argumentTextForTool(tool: OpenAI.Chat.Completions.ChatCompletionTool): 
 }
 
 function toolRelevanceScore(tool: OpenAI.Chat.Completions.ChatCompletionTool, requestText: string): number {
-  if (tool.type !== "function") return 0;
+  if (!isFunctionTool(tool)) return 0;
   const normalizedRequest = requestText.toLowerCase();
   const searchable = `${tool.function.name} ${tool.function.description || ""}`.toLowerCase();
   let score = 0;
@@ -1043,7 +1056,7 @@ function toolSpecsForPrompt(
   budgetLimit: number = phoneGemmaToolListCharBudget(),
 ): string {
   const toolList = (tools || [])
-    .filter((tool) => tool.type === "function")
+    .filter(isFunctionTool)
     .sort((a, b) => toolRelevanceScore(b, requestText) - toolRelevanceScore(a, requestText));
 
   const budget = Math.max(160, Math.min(phoneGemmaToolListCharBudget(), budgetLimit));

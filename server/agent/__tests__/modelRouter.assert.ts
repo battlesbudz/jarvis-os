@@ -436,7 +436,9 @@ async function runSelectedAndroidLocalGemmaKeepsToolRequiredTurnsLocalAssertion(
     assert.equal(result.toolCallList[0]?.function.name, "daemon_action");
     assert.equal(result.toolCallList[0]?.function.arguments, '{"action":"screenshot"}');
     assert.equal(capturedRequest?.toolChoice, "required");
-    assert.equal(capturedRequest?.tools?.[0]?.function.name, "daemon_action");
+    const capturedTool = capturedRequest?.tools?.[0];
+    assert.equal(capturedTool?.type, "function");
+    assert.equal(capturedTool?.type === "function" ? capturedTool.function.name : undefined, "daemon_action");
     console.log("OK: selected Android Local Gemma keeps tool-required turns local");
   } finally {
     _setUserSelectedModelResolverForTesting(null);

@@ -883,19 +883,21 @@ export function registerChannelRoutes(app: Express): void {
 
   app.put("/api/voice/wake-settings", authMiddleware, async (req: Request, res: Response) => {
     const userId = req.userId!;
-    const { wakeWordEnabled, talkModeEnabled, wakeWords } = req.body as {
+    const { wakeWordEnabled, talkModeEnabled, wakeWords, softwareWakeWordFallbackEnabled } = req.body as {
       wakeWordEnabled?: boolean;
       talkModeEnabled?: boolean;
       wakeWords?: string[];
+      softwareWakeWordFallbackEnabled?: boolean;
     };
     try {
       const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq(userPreferences.userId, userId));
       const existing = (rows[0]?.data ?? {}) as Record<string, any>;
-      const updated = {
+      const updated: Record<string, any> = {
         ...existing,
         ...(wakeWordEnabled !== undefined && { wakeWordEnabled }),
         ...(talkModeEnabled !== undefined && { talkModeEnabled }),
         ...(wakeWords !== undefined && { wakeWords }),
+        ...(softwareWakeWordFallbackEnabled !== undefined && { softwareWakeWordFallbackEnabled }),
       };
       await db.insert(userPreferences)
         .values({ userId, data: updated })
@@ -910,7 +912,7 @@ export function registerChannelRoutes(app: Express): void {
 
       // Sync to Android daemon if connected — fire-and-forget
       if (isAndroidDaemonActive(userId)) {
-        if (wakeWordEnabled !== undefined || wakeWords !== undefined) {
+        if (wakeWordEnabled !== undefined || wakeWords !== undefined || softwareWakeWordFallbackEnabled !== undefined) {
           sendDaemonOp(userId, {
             type: "voice_set_wake_words",
             enabled: result.wakeWordEnabled && result.softwareWakeWordFallbackEnabled,
