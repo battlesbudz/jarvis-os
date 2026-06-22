@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Switch,
   Alert,
+  AppState,
   TextInput,
   Linking,
 } from 'react-native';
@@ -201,6 +202,10 @@ function extractApiError(error: any, fallback: string): string {
   return raw || fallback;
 }
 
+function androidDaemonServerConnectedFromChannels(channelsRes: any): boolean {
+  return channelsRes?.meta?.android_daemon?.connected ?? channelsRes?.android_daemon_connected ?? false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Screen
 // ─────────────────────────────────────────────────────────────────────────────
@@ -212,7 +217,9 @@ export default function SettingsScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const { scrollTo } = useLocalSearchParams<{ scrollTo?: string }>();
   const scrollViewRef = useRef<ScrollView>(null);
+  const appStateRef = useRef(AppState.currentState);
   const diagnosticsYRef = useRef(0);
+  const androidAccessibilityRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [highlightedIntegration, setHighlightedIntegration] = useState<string | null>(null);
 
   // ── Auth state ──
@@ -226,6 +233,7 @@ export default function SettingsScreen() {
   const [integrationErrors, setIntegrationErrors] = useState<Record<string, string | null>>({});
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [androidDaemonConnected, setAndroidDaemonConnected] = useState(false);
+  const [androidDaemonServerConnected, setAndroidDaemonServerConnected] = useState(false);
   const [androidDaemonBusy, setAndroidDaemonBusy] = useState(false);
   const [androidDaemonError, setAndroidDaemonError] = useState<string | null>(null);
   const [androidAssistantStatus, setAndroidAssistantStatus] = useState<AndroidDaemonStatus | null>(null);
@@ -1068,10 +1076,10 @@ export default function SettingsScreen() {
       configured: telegramRes.configured ?? false,
       botUsername: telegramRes.botUsername ?? null,
     });
-    const serverAndroidDaemonConnected =
-      channelsRes?.meta?.android_daemon?.connected ?? channelsRes?.android_daemon_connected ?? false;
+    const serverAndroidDaemonConnected = androidDaemonServerConnectedFromChannels(channelsRes);
     const nativeAndroidDaemonStatus = await getAndroidDaemonStatus().catch(() => null);
     setAndroidAssistantStatus(nativeAndroidDaemonStatus);
+    setAndroidDaemonServerConnected(serverAndroidDaemonConnected);
     setAndroidDaemonConnected(serverAndroidDaemonConnected || nativeAndroidDaemonStatus?.connected === true);
     if (connectionsRes) setConnectionsStatus(normalizeConnectionsStatus(connectionsRes));
     if (integrationRes && typeof integrationRes === 'object') {
@@ -1447,6 +1455,47 @@ export default function SettingsScreen() {
   }, [refreshIntegrationHealth]);
 
   // ── Android Daemon ──
+  const refreshAndroidAssistantStatus = useCallback(async () => {
+    const [nativeResult, channelsResult] = await Promise.allSettled([
+      getAndroidDaemonStatus(),
+      apiRequest('GET', '/api/channels').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+    ]);
+    const serverConnected = channelsResult.status === 'fulfilled'
+      ? androidDaemonServerConnectedFromChannels(channelsResult.value)
+      : androidDaemonServerConnected;
+    if (channelsResult.status === 'fulfilled') {
+      setAndroidDaemonServerConnected(serverConnected);
+    }
+    if (nativeResult.status === 'fulfilled') {
+      setAndroidAssistantStatus(nativeResult.value);
+      setAndroidDaemonConnected(serverConnected || nativeResult.value.connected);
+      return nativeResult.value;
+    }
+    setAndroidDaemonConnected(serverConnected);
+    throw nativeResult.reason;
+  }, [androidDaemonServerConnected]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !AndroidDaemonNative) return;
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      const previousState = appStateRef.current;
+      appStateRef.current = nextState;
+      if ((previousState === 'background' || previousState === 'inactive') && nextState === 'active') {
+        refreshAndroidAssistantStatus().catch(() => {});
+      }
+    });
+
+    return () => subscription.remove();
+  }, [refreshAndroidAssistantStatus]);
+
+  useEffect(() => () => {
+    if (androidAccessibilityRefreshTimerRef.current) {
+      clearTimeout(androidAccessibilityRefreshTimerRef.current);
+      androidAccessibilityRefreshTimerRef.current = null;
+    }
+  }, []);
+
   const handleAndroidDaemon = useCallback(async () => {
     if (androidDaemonConnected || androidDaemonBusy) return;
     setAndroidDaemonBusy(true);
@@ -1463,6 +1512,7 @@ export default function SettingsScreen() {
       if (!bootstrapToken) throw new Error('Android device bootstrap token was not returned.');
       const status = await AndroidDaemonNative.enable(getApiUrl(), bootstrapToken);
       setAndroidDaemonConnected(status.connected);
+      setAndroidAssistantStatus(status);
       await loadConnections();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
@@ -1473,6 +1523,26 @@ export default function SettingsScreen() {
       setAndroidDaemonBusy(false);
     }
   }, [androidDaemonBusy, androidDaemonConnected, loadConnections]);
+
+  const openAndroidAccessibilitySettings = useCallback(async () => {
+    if (Platform.OS !== 'android' || !AndroidDaemonNative?.openAccessibilitySettings) return;
+    setAndroidDaemonBusy(true);
+    setAndroidDaemonError(null);
+    try {
+      await AndroidDaemonNative.openAccessibilitySettings();
+      if (androidAccessibilityRefreshTimerRef.current) clearTimeout(androidAccessibilityRefreshTimerRef.current);
+      androidAccessibilityRefreshTimerRef.current = setTimeout(() => {
+        androidAccessibilityRefreshTimerRef.current = null;
+        refreshAndroidAssistantStatus().catch(() => {});
+      }, 1000);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Open Android Accessibility settings and enable Jarvis Device Control.';
+      setAndroidDaemonError(message);
+      Alert.alert('Android Accessibility', message);
+    } finally {
+      setAndroidDaemonBusy(false);
+    }
+  }, [refreshAndroidAssistantStatus]);
 
   const saveWakeSettings = useCallback(async (
     updates: { wakeWordEnabled?: boolean; talkModeEnabled?: boolean; wakeWords?: string[] }
@@ -1493,12 +1563,6 @@ export default function SettingsScreen() {
     setTalkModeEnabled(val);
     await saveWakeSettings({ talkModeEnabled: val });
   }, [saveWakeSettings]);
-
-  const refreshAndroidAssistantStatus = useCallback(async () => {
-    const next = await getAndroidDaemonStatus();
-    setAndroidAssistantStatus(next);
-    return next;
-  }, []);
 
   const openAndroidAssistantSettings = useCallback(async () => {
     if (Platform.OS !== 'android' || !AndroidDaemonNative?.openAssistantSettings) return;
@@ -1903,6 +1967,10 @@ export default function SettingsScreen() {
         : 'Jarvis default model';
   const modelProviderCards = (providerCatalog.length > 0 ? providerCatalog : MODEL_PROVIDER_CATALOG)
     .filter((provider) => provider.id !== 'openai');
+  const androidDaemonNativeAvailable = Platform.OS === 'android' && !!AndroidDaemonNative && androidAssistantStatus?.available !== false;
+  const androidDaemonNeedsAccessibility = androidDaemonNativeAvailable && androidDaemonConnected && androidAssistantStatus?.accessibilityEnabled === false;
+  const androidDaemonCheckingAccessibility = androidDaemonNativeAvailable && androidDaemonConnected && androidAssistantStatus?.accessibilityEnabled === undefined;
+  const androidDaemonReady = androidDaemonConnected && !androidDaemonNeedsAccessibility && !androidDaemonCheckingAccessibility;
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -2106,7 +2174,11 @@ export default function SettingsScreen() {
             <View style={styles.connInfo}>
               <Text style={styles.connName}>Jarvis OS Device Control</Text>
               <Text style={styles.connSub}>
-                {androidDaemonConnected
+                {androidDaemonNeedsAccessibility
+                  ? 'Connected - enable Accessibility for app control'
+                  : androidDaemonCheckingAccessibility
+                    ? 'Connected - checking Accessibility setup'
+                  : androidDaemonReady
                   ? 'Connected'
                   : Platform.OS === 'android'
                     ? 'Enable phone control in this app'
@@ -2114,15 +2186,41 @@ export default function SettingsScreen() {
               </Text>
             </View>
             <Pressable
-              style={[styles.connBtn, androidDaemonConnected ? styles.connBtnConnected : styles.connBtnDisconnected]}
-              onPress={handleAndroidDaemon}
-              disabled={androidDaemonConnected || androidDaemonBusy}
+              style={[
+                styles.connBtn,
+                androidDaemonReady ? styles.connBtnConnected : styles.connBtnDisconnected,
+                androidDaemonNeedsAccessibility && styles.connBtnWarning,
+              ]}
+              onPress={androidDaemonNeedsAccessibility ? openAndroidAccessibilitySettings : handleAndroidDaemon}
+              disabled={(androidDaemonConnected && !androidDaemonNeedsAccessibility) || androidDaemonBusy}
             >
-              <Text style={[styles.connBtnText, androidDaemonConnected && styles.connBtnTextConnected]}>
-                {androidDaemonConnected ? 'Ready' : androidDaemonBusy ? '...' : Platform.OS === 'android' ? 'Enable' : 'Install'}
+              <Text style={[
+                styles.connBtnText,
+                androidDaemonReady && styles.connBtnTextConnected,
+                androidDaemonNeedsAccessibility && styles.connBtnTextWarning,
+              ]}>
+                {androidDaemonBusy
+                  ? '...'
+                  : androidDaemonNeedsAccessibility
+                    ? 'Accessibility'
+                    : androidDaemonReady
+                      ? 'Ready'
+                      : androidDaemonCheckingAccessibility
+                        ? 'Checking'
+                        : Platform.OS === 'android' ? 'Enable' : 'Install'}
               </Text>
             </Pressable>
           </View>
+          {androidDaemonNeedsAccessibility && (
+            <View style={styles.linkCodeBlock}>
+              <Text style={styles.linkCodeLabel}>
+                Device Control is connected, but opening apps, screenshots, taps, typing, and screen reading require the Jarvis Accessibility Service.
+              </Text>
+              <Pressable style={[styles.connBtn, styles.connBtnWarning, { alignSelf: 'flex-start', marginTop: 10 }]} onPress={openAndroidAccessibilitySettings}>
+                <Text style={[styles.connBtnText, styles.connBtnTextWarning]}>Open Accessibility</Text>
+              </Pressable>
+            </View>
+          )}
           {androidDaemonError && (
             <View style={styles.linkCodeBlock}>
               <Text style={styles.linkCodeLabel}>{androidDaemonError}</Text>
@@ -4829,6 +4927,10 @@ const styles = StyleSheet.create({
     borderColor: Colors.cyan + '50',
     backgroundColor: Colors.cyanDim,
   },
+  connBtnWarning: {
+    borderColor: Colors.warning + '70',
+    backgroundColor: Colors.warning + '18',
+  },
   connBtnText: {
     fontSize: 12,
     fontFamily: 'Inter_600SemiBold',
@@ -4836,6 +4938,9 @@ const styles = StyleSheet.create({
   },
   connBtnTextConnected: {
     color: Colors.success,
+  },
+  connBtnTextWarning: {
+    color: Colors.warning,
   },
   connectionActionsRow: {
     flexDirection: 'row',

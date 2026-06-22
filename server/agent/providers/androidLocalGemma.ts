@@ -121,6 +121,15 @@ const ANDROID_APP_PACKAGE_ALIASES: Record<string, string> = {
   tiktok: "com.ss.android.ugc.trill",
   discord: "com.discord",
 };
+const FLAG_SECURE_SCREENSHOT_PACKAGES = new Set([
+  "com.facebook.katana",
+  "com.facebook.lite",
+  "com.instagram.android",
+  "com.whatsapp",
+  "com.snapchat.android",
+  "com.netflix.mediaclient",
+  "com.disney.disneyplus",
+]);
 const ANDROID_KEY_ACTION_ALIASES = new Set(["back", "home", "recents", "enter", "volume_up", "volume_down"]);
 
 type LocalGemmaStructuredOutput =
@@ -597,6 +606,37 @@ function hasProhibitedDeviceActionRequest(text: string): boolean {
   );
 }
 
+function wantsScreenshotRequest(text: string): boolean {
+  return /\b(?:screenshot|screen shot|screen capture)\b/i.test(text) ||
+    /\b(?:capture|snap)\b[\s\S]{0,24}\b(?:screen|display)\b/i.test(text) ||
+    /\btake\b[\s\S]{0,16}\b(?:screenshot|screen shot|screen capture)\b/i.test(text);
+}
+
+function targetsFlagSecureScreenshotApp(text: string): boolean {
+  return inferPackageNamesFromText(text).some((packageName) => FLAG_SECURE_SCREENSHOT_PACKAGES.has(packageName));
+}
+
+function looksLikeScreenshotRestrictionFinalAnswer(text: string): boolean {
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!/\b(?:screenshot|screen shot|screen capture|capture)\b/.test(normalized)) return false;
+  const refusal = /\b(?:unable|not able|can['’]?t|cannot|cant|could not|couldn['’]?t|won['’]?t|wont|not allowed)\b/.test(normalized);
+  const restriction = /\b(?:system restrictions?|restricted|restrictions?|secure|security|privacy|protected|blocked|not permitted)\b/.test(normalized);
+  return refusal && restriction;
+}
+
+function shouldPreserveProtectedScreenshotRefusal(
+  params: ProviderQueryParams,
+  requestText: string,
+  finalContent: string,
+): boolean {
+  if (!wantsScreenshotRequest(requestText)) return false;
+  if (!targetsFlagSecureScreenshotApp(requestText)) return false;
+  if (!looksLikeScreenshotRestrictionFinalAnswer(finalContent)) return false;
+  const completedActions = daemonActionResults(params.messages).completed;
+  const completedNavigation = completedActions.some((action) => action === "android_open_app" || action === "android_browse");
+  return completedNavigation && completedActions.includes("android_read_screen");
+}
+
 function requestsJsonResponse(text: string): boolean {
   return /\b(?:return|respond|reply|output|provide|produce|format|write|give|create|make|generate)\b[\s\S]{0,80}\bjson\b/i.test(text) ||
     /\b(?:need|want|require|would\s+like)\s+(?:a\s+|an\s+|the\s+)?(?:valid\s+|raw\s+)?json\b/i.test(text) ||
@@ -789,15 +829,12 @@ function recoverRequiredDaemonActionFromRequest(
   const requestText = latestUserText(params.messages).trim();
   if (!requestText) return null;
   if (hasProhibitedDeviceActionRequest(requestText)) return null;
-  if (hasProhibitedDeviceActionRequest(finalContent)) return null;
 
   let args: Record<string, unknown> | null = null;
   const requestToken = aliasToken(requestText);
   const url = urlFromText(requestText);
   const packageName = inferPackageNameFromText(requestText);
-  const wantsScreenshot = /\b(?:screenshot|screen shot|screen capture)\b/i.test(requestText) ||
-    /\b(?:capture|snap)\b[\s\S]{0,24}\b(?:screen|display)\b/i.test(requestText) ||
-    /\btake\b[\s\S]{0,16}\b(?:screenshot|screen shot|screen capture)\b/i.test(requestText);
+  const wantsScreenshot = wantsScreenshotRequest(requestText);
   const daemonResults = daemonActionResults(params.messages);
   if (daemonResults.failed.length > 0) return null;
   const completedActions = daemonResults.completed;
@@ -809,6 +846,10 @@ function recoverRequiredDaemonActionFromRequest(
     /\b(?:summari[sz]e|transcript|caption|captions|what\b[\s\S]{0,24}\b(?:say|said)|video)\b/i.test(requestText);
 
   if (preserveYouTubeTranscript) {
+    return null;
+  }
+
+  if (shouldPreserveProtectedScreenshotRefusal(params, requestText, finalContent)) {
     return null;
   }
 
@@ -1210,6 +1251,22 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       if (parsed.type === "tool_calls") {
         const toolCalls = enrichDaemonToolCallsFromRequest(parsed.toolCalls, requestText);
         if (toolCalls.length === 0) {
+          const recoveredToolCall = recoverRequiredDaemonActionFromRequest(params);
+          if (recoveredToolCall) {
+            yield {
+              type: "tool_call_start",
+              index: 0,
+              id: recoveredToolCall.id,
+              name: recoveredToolCall.function.name,
+            };
+            yield {
+              type: "tool_call_args",
+              index: 0,
+              args: recoveredToolCall.function.arguments,
+            };
+            yield { type: "finish", reason: "tool_calls" };
+            return;
+          }
           if (hasProhibitedDeviceActionRequest(requestText)) {
             yield { type: "text", delta: "No device action was run." };
             yield { type: "finish", reason: "stop" };
@@ -1217,6 +1274,11 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
           }
           if (/\b(?:open|launch|start)\b/i.test(requestText) && inferPackageNamesFromText(requestText).length > 1) {
             yield { type: "text", delta: "I need one app target at a time for local app opening." };
+            yield { type: "finish", reason: "stop" };
+            return;
+          }
+          if (!looksLikeLocalToolRequest(requestText) && !looksLikeUrlToolRequest(requestText)) {
+            yield { type: "text", delta: "Phone Gemma did not return a usable local answer for that request." };
             yield { type: "finish", reason: "stop" };
             return;
           }
@@ -1254,6 +1316,11 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
             args: recoveredToolCall.function.arguments,
           };
           yield { type: "finish", reason: "tool_calls" };
+          return;
+        }
+        if (shouldPreserveProtectedScreenshotRefusal(params, requestText, parsed.content)) {
+          yield { type: "text", delta: parsed.content };
+          yield { type: "finish", reason: "stop" };
           return;
         }
         throw new Error("Phone Gemma returned a final answer when the local harness required a tool call. No cloud model was used.");

@@ -1423,6 +1423,86 @@ async function testAndroidLocalGemmaRecoversRequiredOpenAppFinalAnswer() {
   }
 }
 
+async function testAndroidLocalGemmaRecoversRequiredOpenAppRefusalFinalAnswer() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I am unable to open YouTube right now due to system restrictions." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open YouTube." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: { action: { type: "string" }, packageName: { type: "string" } },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.youtube"}');
+    console.log("OK: Android Local Gemma recovers required open-app refusal final answers");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaRecoversRequiredScreenshotRefusalFinalAnswer() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I am unable to take a screenshot on your device right now due to system restrictions." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Take a screenshot." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_screenshot"}');
+    console.log("OK: Android Local Gemma recovers required screenshot refusal final answers");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaInfersPackageForDirectOpenAppToolCalls() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -1957,41 +2037,6 @@ async function testAndroidLocalGemmaDoesNotRecoverHomeScreenAsScreenshot() {
   }
 }
 
-async function testAndroidLocalGemmaDoesNotRecoverRefusalFinalAnswers() {
-  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
-    ok: true,
-    data: {
-      text: JSON.stringify({ type: "final", content: "I cannot take a screenshot." }),
-      finishReason: "stop",
-    },
-  }));
-
-  try {
-    await assert.rejects(
-      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
-        model: "android-local-gemma/gemma-4-e4b-it",
-        messages: [{ role: "user", content: "Take a screenshot." }],
-        tools: [{
-          type: "function",
-          function: {
-            name: "daemon_action",
-            description: "Perform an Android daemon action.",
-            parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
-          },
-        }],
-        toolChoice: "required",
-        maxCompletionTokens: 128,
-        stream: false,
-        userId: "user-phone",
-      })),
-      /local harness required a tool call[\s\S]*No cloud model was used/,
-    );
-    console.log("OK: Android Local Gemma does not recover refusal final answers");
-  } finally {
-    _setAndroidLocalGemmaDaemonOpForTesting(null);
-  }
-}
-
 async function testAndroidLocalGemmaReadsScreenAfterRecoveredNavigation() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -2127,6 +2172,79 @@ async function testAndroidLocalGemmaScreenshotsAfterRecoveredReadScreen() {
     assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_screenshot"}');
     assert.match(requests[0].op.prompt, /daemon_action/);
     console.log("OK: Android Local Gemma screenshots after recovered read-screen");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesProtectedAppScreenshotRefusalAfterReadScreen() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "final",
+        content: "I am unable to take a screenshot on Instagram right now due to system restrictions.",
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Open Instagram and take a screenshot." },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_open_instagram",
+            type: "function",
+            function: { name: "daemon_action", arguments: "{\"action\":\"android_open_app\",\"packageName\":\"com.instagram.android\"}" },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_open_instagram",
+          content: "{\"ok\":true,\"message\":\"Instagram opened\"}",
+        },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_read_screen",
+            type: "function",
+            function: { name: "daemon_action", arguments: "{\"action\":\"android_read_screen\"}" },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_read_screen",
+          content: "{\"ok\":true,\"text\":\"Instagram Home\"}",
+        },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: { action: { type: "string" }, packageName: { type: "string" } },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.match(result.textContent, /unable to take a screenshot/i);
+    assert.equal(result.toolCallList.length, 0);
+    console.log("OK: Android Local Gemma preserves protected-app screenshot refusals after read-screen");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -2693,6 +2811,45 @@ async function testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired() {
   }
 }
 
+async function testAndroidLocalGemmaDoesNotThrowInvalidLocalToolForPlainIdentityQuestion() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "daemon_action", arguments: { action: "android_open_app" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "What's my name?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.equal(result.textContent, "Phone Gemma did not return a usable local answer for that request.");
+    console.log("OK: Android Local Gemma does not throw invalid local tools for plain identity questions");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaPreservesToolFinalLengthFinishReason() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -2986,6 +3143,8 @@ async function main() {
   await testAndroidLocalGemmaPreservesNewestTurnWhenTrimming();
   await testAndroidLocalGemmaRecoversRequiredScreenshotFinalAnswer();
   await testAndroidLocalGemmaRecoversRequiredOpenAppFinalAnswer();
+  await testAndroidLocalGemmaRecoversRequiredOpenAppRefusalFinalAnswer();
+  await testAndroidLocalGemmaRecoversRequiredScreenshotRefusalFinalAnswer();
   await testAndroidLocalGemmaInfersPackageForDirectOpenAppToolCalls();
   await testAndroidLocalGemmaInfersPackageForInabilityOpenAppRequests();
   await testAndroidLocalGemmaDropsNegatedOpenAppToolCallsWithoutPackageInference();
@@ -2998,9 +3157,9 @@ async function main() {
   await testAndroidLocalGemmaDoesNotRecoverNegatedRequiredActions();
   await testAndroidLocalGemmaRoutesCompoundScreenshotRequestsToNavigationFirst();
   await testAndroidLocalGemmaDoesNotRecoverHomeScreenAsScreenshot();
-  await testAndroidLocalGemmaDoesNotRecoverRefusalFinalAnswers();
   await testAndroidLocalGemmaReadsScreenAfterRecoveredNavigation();
   await testAndroidLocalGemmaScreenshotsAfterRecoveredReadScreen();
+  await testAndroidLocalGemmaPreservesProtectedAppScreenshotRefusalAfterReadScreen();
   await testAndroidLocalGemmaScopesCompletedNavigationToCurrentRequest();
   await testAndroidLocalGemmaPreservesYoutubeTranscriptRouting();
   await testAndroidLocalGemmaDoesNotRepeatCompletedRecoveredActions();
@@ -3017,6 +3176,7 @@ async function main() {
   await testAndroidLocalGemmaPreservesRequestedJsonInToolProtocolFinalReplies();
   await testAndroidLocalGemmaExtractsEmbeddedProtocolFinalReplies();
   await testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired();
+  await testAndroidLocalGemmaDoesNotThrowInvalidLocalToolForPlainIdentityQuestion();
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
   await testAndroidLocalGemmaExplainsUnbundledEngine();

@@ -141,6 +141,36 @@ assert.match(
 );
 
 assert.match(
+  settingsSource,
+  /openAccessibilitySettings/,
+  "Settings Device Control row should provide a direct accessibility setup action.",
+);
+
+assert.match(
+  settingsSource,
+  /AppState\.addEventListener\('change'/,
+  "Settings should refresh Android Accessibility status when returning from system Settings.",
+);
+
+assert.match(
+  settingsSource,
+  /apiRequest\('GET', '\/api\/channels'\)/,
+  "Settings native status refresh should also refresh the server Android daemon channel state.",
+);
+
+assert.match(
+  settingsSource,
+  /setAndroidDaemonConnected\(serverConnected \|\| nativeResult\.value\.connected\)/,
+  "Settings native status refresh should merge server and native Android daemon state.",
+);
+
+assert.match(
+  settingsSource,
+  /androidDaemonNeedsAccessibility/,
+  "Settings should not treat a connected phone as ready when Accessibility is still off.",
+);
+
+assert.match(
   androidControlCardSource,
   /await onUnpair\?\.\(\)/,
   "Android control card should call the server-side unpair callback during disconnect.",
