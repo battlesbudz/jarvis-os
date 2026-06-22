@@ -510,9 +510,47 @@ function hasProhibitedDeviceActionRequest(text: string): boolean {
   );
 }
 
-function completedDaemonActions(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): string[] {
+function toolMessageTextContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (!part || typeof part !== "object") return "";
+      const record = part as Record<string, unknown>;
+      if (typeof record.text === "string") return record.text;
+      if (typeof record.content === "string") return record.content;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function daemonToolResultSucceeded(content: unknown): boolean {
+  const text = toolMessageTextContent(content).trim();
+  if (!text) return true;
+
+  const parsed = extractJsonObject(text);
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const result = parsed as Record<string, unknown>;
+    if (result.ok === false || result.success === false) return false;
+    if (typeof result.error === "string" && result.error.trim()) return false;
+    if (
+      typeof result.status === "string" &&
+      /^(?:error|failed|failure|blocked|denied)$/i.test(result.status.trim())
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  return !/\b(?:error|failed|failure|blocked|denied|disconnected|not connected)\b/i.test(text);
+}
+
+function daemonActionResults(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): { completed: string[]; failed: string[] } {
   const pendingActions = new Map<string, string>();
   const completed: string[] = [];
+  const failed: string[] = [];
   let currentTurnStart = 0;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (messages[index]?.role === "user") {
@@ -533,10 +571,16 @@ function completedDaemonActions(messages: OpenAI.Chat.Completions.ChatCompletion
     }
     if (message.role === "tool") {
       const action = pendingActions.get(message.tool_call_id);
-      if (action) completed.push(action);
+      if (action) {
+        if (daemonToolResultSucceeded(message.content)) {
+          completed.push(action);
+        } else {
+          failed.push(action);
+        }
+      }
     }
   }
-  return completed;
+  return { completed, failed };
 }
 
 function normalizeDaemonActionArguments(args: Record<string, unknown>): Record<string, unknown> {
@@ -627,7 +671,9 @@ function recoverRequiredDaemonActionFromRequest(
   const wantsScreenshot = /\b(?:screenshot|screen shot|screen capture)\b/i.test(requestText) ||
     /\b(?:capture|snap)\b[\s\S]{0,24}\b(?:screen|display)\b/i.test(requestText) ||
     /\btake\b[\s\S]{0,16}\b(?:screenshot|screen shot|screen capture)\b/i.test(requestText);
-  const completedActions = completedDaemonActions(params.messages);
+  const daemonResults = daemonActionResults(params.messages);
+  if (daemonResults.failed.length > 0) return null;
+  const completedActions = daemonResults.completed;
   const completedNavigation = completedActions.some((action) => action === "android_open_app" || action === "android_browse");
   const completedReadScreen = completedActions.includes("android_read_screen");
   const preserveYouTubeTranscript = !!url &&

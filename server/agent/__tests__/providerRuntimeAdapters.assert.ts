@@ -1883,6 +1883,57 @@ async function testAndroidLocalGemmaDoesNotRepeatCompletedRecoveredActions() {
   }
 }
 
+async function testAndroidLocalGemmaDoesNotAdvanceAfterFailedDaemonAction() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "Continuing with the screenshot." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [
+          { role: "user", content: "Open YouTube and take a screenshot." },
+          {
+            role: "assistant",
+            content: "",
+            tool_calls: [{
+              id: "call_open_youtube",
+              type: "function",
+              function: { name: "daemon_action", arguments: "{\"action\":\"android_open_app\",\"packageName\":\"com.google.android.youtube\"}" },
+            }],
+          },
+          {
+            role: "tool",
+            tool_call_id: "call_open_youtube",
+            content: "{\"ok\":false,\"error\":\"daemon disconnected\"}",
+          },
+        ],
+        tools: [{
+          type: "function",
+          function: {
+            name: "daemon_action",
+            description: "Perform an Android daemon action.",
+            parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+          },
+        }],
+        toolChoice: "required",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      /local harness required a tool call[\s\S]*No cloud model was used/,
+    );
+    console.log("OK: Android Local Gemma does not advance after failed daemon actions");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -2220,6 +2271,7 @@ async function main() {
   await testAndroidLocalGemmaScopesCompletedNavigationToCurrentRequest();
   await testAndroidLocalGemmaPreservesYoutubeTranscriptRouting();
   await testAndroidLocalGemmaDoesNotRepeatCompletedRecoveredActions();
+  await testAndroidLocalGemmaDoesNotAdvanceAfterFailedDaemonAction();
   await testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired();
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
