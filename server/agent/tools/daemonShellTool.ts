@@ -13,6 +13,11 @@ import { db } from "../../db";
 import { buttonLocations, searchBarLocations } from "@shared/schema";
 import { eq, and, desc, sql as drizzleSql } from "drizzle-orm";
 import { notifyUser } from "../../channels/registry";
+import {
+  checkAndIncrementScreenshotBudget,
+  runAndroidTextInputFallback,
+} from "./androidDaemonToolHelpers";
+export { checkAndIncrementScreenshotBudget } from "./androidDaemonToolHelpers";
 export { daemonShellTool } from "./desktopDaemonShellTool";
 export { daemonStatusTool } from "./daemonStatusTool";
 
@@ -44,13 +49,6 @@ const searchBarCoordCache = new Map<string, SearchBarCacheEntry>();
 // the learned resource ID can be tried again even after coordinate invalidation.
 export const learnedResourceIds = new Map<string, string>();
 
-// ── Per-turn screenshot budget ────────────────────────────────────────────────
-// Caps android_screenshot to MAX_SCREENSHOTS_PER_TURN per agent turn.
-// After the cap, callers should switch to android_read_screen.
-// Keyed by ToolContext (unique object per request, GC'd when the turn ends).
-const MAX_SCREENSHOTS_PER_TURN = 4;
-const screenshotCountPerCtx = new WeakMap<object, number>();
-
 type AndroidPermissionRequirement = {
   action: AndroidDaemonAction;
   deniedLabel: string;
@@ -77,82 +75,6 @@ async function requireAndroidPermissions(
   }
 
   return null;
-}
-
-type AndroidTextInputFallbackResult = {
-  methodUsed: string | null;
-  inputOk: boolean;
-  daemonVerified: boolean;
-  fieldText: string | null;
-};
-
-async function runAndroidTextInputFallback(
-  userId: string,
-  text: string,
-  fieldDescription: string,
-  steps: string[],
-): Promise<AndroidTextInputFallbackResult> {
-  let methodUsed: string | null = null;
-  let inputOk = false;
-  let daemonVerified = false;
-  let fieldText: string | null = null;
-
-  steps.push("Level 1 - android_type (accessibility ACTION_SET_TEXT)...");
-  const typeResult = await sendDaemonOp(userId, { type: "android_type", text }, 10000);
-  if (typeResult.ok) {
-    methodUsed = "android_type";
-    inputOk = true;
-    steps.push("android_type accepted by accessibility service.");
-  } else {
-    steps.push(`android_type failed (${typeResult.error || "no editable field focused"}). Moving to Level 2.`);
-  }
-
-  if (!inputOk) {
-    steps.push("Level 2 - android_paste_text (adb input text primary, clipboard fallback)...");
-    const pasteResult = await sendDaemonOp(userId, { type: "android_paste_text", text, fieldDescription }, 15000);
-    if (pasteResult.ok) {
-      const pasteData = (pasteResult.data || {}) as Record<string, unknown>;
-      const daemonMethod = typeof pasteData.method_used === "string" ? pasteData.method_used : "unknown";
-      methodUsed = `android_paste_text:${daemonMethod}`;
-      inputOk = true;
-      daemonVerified = pasteData.verified === true;
-      fieldText = typeof pasteData.field_text === "string" ? pasteData.field_text : null;
-      steps.push(`android_paste_text succeeded via ${daemonMethod}. Daemon verified: ${daemonVerified}.`);
-    } else {
-      steps.push(`android_paste_text failed (${pasteResult.error || "unknown"}). Moving to Level 3.`);
-    }
-  }
-
-  if (!inputOk) {
-    steps.push("Level 3 - android_paste_text retry (clipboard-only path)...");
-    const retryResult = await sendDaemonOp(userId, { type: "android_paste_text", text, fieldDescription }, 15000);
-    if (retryResult.ok) {
-      const retryData = (retryResult.data || {}) as Record<string, unknown>;
-      const retryMethod = typeof retryData.method_used === "string" ? retryData.method_used : "unknown";
-      methodUsed = `android_paste_text:${retryMethod}:L3`;
-      inputOk = true;
-      daemonVerified = retryData.verified === true;
-      fieldText = typeof retryData.field_text === "string" ? retryData.field_text : null;
-      steps.push(`Level 3 retry succeeded via ${retryMethod}. Daemon verified: ${daemonVerified}.`);
-    } else {
-      steps.push(`Level 3 retry failed (${retryResult.error || "unknown"}). All input methods exhausted.`);
-    }
-  }
-
-  return { methodUsed, inputOk, daemonVerified, fieldText };
-}
-
-/**
- * Returns true and increments the count if screenshots are still available this turn.
- * Pass the ToolContext object (ctx) from the tool's execute function.
- * Returns true unconditionally when ctx is not provided (no-op for internal callers).
- */
-export function checkAndIncrementScreenshotBudget(ctx: object | undefined): boolean {
-  if (!ctx) return true;
-  const current = screenshotCountPerCtx.get(ctx) ?? 0;
-  if (current >= MAX_SCREENSHOTS_PER_TURN) return false;
-  screenshotCountPerCtx.set(ctx, current + 1);
-  return true;
 }
 
 // Seed the in-memory cache from the DB immediately when this module is first loaded.
