@@ -528,6 +528,12 @@ function inferPackageNameFromText(text: string): string | null {
   return packageNames.length === 1 ? packageNames[0] : null;
 }
 
+function inferAllowedPackageNameFromText(text: string): string | null {
+  const packageNames = inferPackageNamesFromText(text)
+    .filter((packageName) => !packageTargetNegatedInText(text, packageName));
+  return packageNames.length === 1 ? packageNames[0] : null;
+}
+
 function packageAliases(packageName: string): string[] {
   return Object.entries(ANDROID_APP_PACKAGE_ALIASES)
     .filter(([, value]) => value === packageName)
@@ -741,11 +747,11 @@ function enrichDaemonToolCallsFromRequest(
     if (!args || args.action !== "android_open_app") return true;
     const packageName = typeof args.packageName === "string"
       ? packageNameFromAlias(args.packageName)
-      : inferPackageNameFromText(requestText);
-    return !(packageName && packageTargetNegatedInText(requestText, packageName));
+      : inferAllowedPackageNameFromText(requestText);
+    return !!packageName && !packageTargetNegatedInText(requestText, packageName);
   });
-  const packageName = inferPackageNameFromText(requestText);
-  if (!packageName || packageTargetNegatedInText(requestText, packageName)) return safeToolCalls;
+  const packageName = inferAllowedPackageNameFromText(requestText);
+  if (!packageName) return safeToolCalls;
 
   return safeToolCalls.map((toolCall) => {
     if (toolCall.function.name !== "daemon_action") return toolCall;
@@ -1206,6 +1212,11 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
         if (toolCalls.length === 0) {
           if (hasProhibitedDeviceActionRequest(requestText)) {
             yield { type: "text", delta: "No device action was run." };
+            yield { type: "finish", reason: "stop" };
+            return;
+          }
+          if (/\b(?:open|launch|start)\b/i.test(requestText) && inferPackageNamesFromText(requestText).length > 1) {
+            yield { type: "text", delta: "I need one app target at a time for local app opening." };
             yield { type: "finish", reason: "stop" };
             return;
           }
