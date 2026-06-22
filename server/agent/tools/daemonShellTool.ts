@@ -3247,35 +3247,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       // FLAG_SECURE apps (no screenshot) are handled correctly.
       if (!verified) {
         const postClickable = await readScreen(ctx.userId);
-        if (postClickable.length !== preHierarchy.count) {
-          verified = true;
-        } else {
-          // Check if any new labels appeared compared to the pre-tap baseline
-          const postLabels = new Set(postClickable.map((el) => el.label));
-          if ([...postLabels].some((l) => !preHierarchy.labels.has(l))) verified = true;
-          // Check if any new resource IDs appeared, or if pre-tap resource IDs disappeared
-          if (!verified) {
-            const postResourceIds = new Set(
-              postClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-            );
-            if ([...postResourceIds].some((id) => !preHierarchy.resourceIds.has(id))) verified = true;
-            if (!verified && preHierarchy.resourceIds.size > 0) {
-              if ([...preHierarchy.resourceIds].some((id) => !postResourceIds.has(id))) verified = true;
-            }
-            // Check if any element with the same resource ID changed its label text
-            // (e.g. "Show more" → "Show less") — set-based checks miss this case
-            if (!verified && preHierarchy.idToLabel && preHierarchy.idToLabel.size > 0) {
-              const postIdToLabel = new Map<string, string>(
-                postClickable
-                  .filter((el): el is typeof el & { resourceId: string } => !!el.resourceId)
-                  .map((el) => [el.resourceId, el.label]),
-              );
-              if ([...postIdToLabel.entries()].some(
-                ([id, postLabel]) => preHierarchy.idToLabel?.has(id) && preHierarchy.idToLabel.get(id) !== postLabel,
-              )) verified = true;
-            }
-          }
-        }
+        verified = hierarchyChangedSince(preHierarchy, postClickable);
       }
 
       if (verified) break;
