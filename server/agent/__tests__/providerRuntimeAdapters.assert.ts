@@ -1458,6 +1458,91 @@ async function testAndroidLocalGemmaRecoversRequiredScreenshotFinalAnswer() {
   }
 }
 
+async function testAndroidLocalGemmaRecoversRequiredScreenshotToPhoneRuntime() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({ type: "final", content: "I can take a screenshot." }),
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Take a screenshot" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_capture_screen",
+          description: "Capture the phone screen through the Phone Runtime.",
+          parameters: { type: "object", properties: {}, required: [] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_capture_screen");
+    assert.equal(result.toolCallList[0].function.arguments, "{}");
+    assert.match(requests[0].op.prompt, /android_capture_screen/);
+    assert.doesNotMatch(requests[0].op.prompt, /daemon_action/);
+    console.log("OK: Android Local Gemma recovers screenshot final answers to phone runtime");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaRewritesDaemonScreenshotToPhoneRuntime() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "daemon_action", arguments: { action: "android_screenshot" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Take a screenshot" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_capture_screen",
+          description: "Capture the phone screen through the Phone Runtime.",
+          parameters: { type: "object", properties: {}, required: [] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_capture_screen");
+    assert.equal(result.toolCallList[0].function.arguments, "{}");
+    console.log("OK: Android Local Gemma rewrites daemon screenshots to phone runtime");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaRecoversRequiredOpenAppFinalAnswer() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -1500,6 +1585,260 @@ async function testAndroidLocalGemmaRecoversRequiredOpenAppFinalAnswer() {
     assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.youtube"}');
     assert.match(requests[0].op.prompt, /daemon_action/);
     console.log("OK: Android Local Gemma recovers required open-app final answers");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaRecoversCatalogOpenAppToPhoneRuntime() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "Opening LinkedIn." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open LinkedIn." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_app_by_name",
+          description: "Open an Android app by human name.",
+          parameters: {
+            type: "object",
+            properties: { appName: { type: "string" } },
+            required: ["appName"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_open_app_by_name");
+    assert.equal(result.toolCallList[0].function.arguments, '{"appName":"LinkedIn"}');
+    console.log("OK: Android Local Gemma recovers catalog app names to phone runtime");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaRecoversCatalogSystemAppToPhoneRuntime() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "Opening Camera." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open Camera." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_app_by_name",
+          description: "Open an Android app by human name.",
+          parameters: {
+            type: "object",
+            properties: { appName: { type: "string" } },
+            required: ["appName"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_open_app_by_name");
+    assert.equal(result.toolCallList[0].function.arguments, '{"appName":"Camera"}');
+    console.log("OK: Android Local Gemma recovers catalog system app names to phone runtime");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaRecoversYoutubeSearchToPhoneRuntime() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({ type: "final", content: "Searching YouTube." }),
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Search YouTube for local Gemma on Android videos." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_youtube_search",
+          description: "Search the native YouTube app on the phone.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "search_youtube",
+          description: "Search YouTube server-side.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_youtube_search");
+    assert.equal(result.toolCallList[0].function.arguments, '{"query":"local Gemma on Android videos"}');
+    assert.match(requests[0].op.prompt, /android_youtube_search/);
+    console.log("OK: Android Local Gemma recovers YouTube search final answers to phone runtime");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaRedirectsServerYoutubeSearchToPhoneRuntime() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "search_youtube", arguments: { query: "local Gemma on Android videos" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Search YouTube for local Gemma on Android videos." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_youtube_search",
+          description: "Search the native YouTube app on the phone.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "search_youtube",
+          description: "Search YouTube server-side.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_youtube_search");
+    assert.equal(result.toolCallList[0].function.arguments, '{"query":"local Gemma on Android videos"}');
+    console.log("OK: Android Local Gemma redirects server YouTube search to phone runtime for phone-search requests");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesYoutubeResearchWorkflow() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "search_youtube", arguments: { query: "local Gemma on Android videos" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Search YouTube for local Gemma on Android videos and summarize the best video." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_youtube_search",
+          description: "Search the native YouTube app on the phone.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "search_youtube",
+          description: "Search YouTube server-side.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "search_youtube");
+    assert.equal(result.toolCallList[0].function.arguments, '{"query":"local Gemma on Android videos"}');
+    console.log("OK: Android Local Gemma preserves YouTube research workflow instead of phone search");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -2437,6 +2776,136 @@ async function testAndroidLocalGemmaPreservesYoutubeTranscriptRouting() {
       /local harness required a tool call[\s\S]*No cloud model was used/,
     );
     console.log("OK: Android Local Gemma preserves YouTube transcript routing");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesCoachYoutubeTranscriptRouting() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I can summarize that YouTube video." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Summarize this YouTube video https://youtube.com/watch?v=dQw4w9WgXcQ" }],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "daemon_action",
+              description: "Perform an Android daemon action.",
+              parameters: { type: "object", properties: { action: { type: "string" }, url: { type: "string" } }, required: ["action"] },
+            },
+          },
+          {
+            type: "function",
+            function: {
+              name: "fetch_youtube_transcript",
+              description: "Fetch a YouTube transcript for coach chat.",
+              parameters: { type: "object", properties: { videoId: { type: "string" }, url: { type: "string" } } },
+            },
+          },
+        ],
+        toolChoice: "required",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      /local harness required a tool call[\s\S]*No cloud model was used/,
+    );
+    console.log("OK: Android Local Gemma preserves coach YouTube transcript routing");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotRecoverYoutubeTranscriptUrlToPhoneOpen() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I can summarize that YouTube video." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Summarize this YouTube video https://youtube.com/watch?v=dQw4w9WgXcQ" }],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "android_open_phone_url",
+              description: "Open a URL on the Android phone.",
+              parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+            },
+          },
+          {
+            type: "function",
+            function: {
+              name: "get_youtube_transcript",
+              description: "Fetch a YouTube transcript.",
+              parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+            },
+          },
+        ],
+        toolChoice: "required",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      /local harness required a tool call[\s\S]*No cloud model was used/,
+    );
+    console.log("OK: Android Local Gemma does not recover YouTube transcript URLs to phone open");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaStillRecoversNonYoutubeUrlToPhoneOpen() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I can open that page." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open and summarize https://example.com/article" }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "android_open_phone_url",
+            description: "Open a URL on the Android phone.",
+            parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+          },
+        },
+      ],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_open_phone_url");
+    assert.equal(result.toolCallList[0].function.arguments, '{"url":"https://example.com/article"}');
+    console.log("OK: Android Local Gemma still recovers non-YouTube URLs to phone open");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -3765,7 +4234,14 @@ async function main() {
   await testAndroidLocalGemmaPreservesToolContinuationWhenTrimming();
   await testAndroidLocalGemmaPreservesNewestTurnWhenTrimming();
   await testAndroidLocalGemmaRecoversRequiredScreenshotFinalAnswer();
+  await testAndroidLocalGemmaRecoversRequiredScreenshotToPhoneRuntime();
+  await testAndroidLocalGemmaRewritesDaemonScreenshotToPhoneRuntime();
   await testAndroidLocalGemmaRecoversRequiredOpenAppFinalAnswer();
+  await testAndroidLocalGemmaRecoversCatalogOpenAppToPhoneRuntime();
+  await testAndroidLocalGemmaRecoversCatalogSystemAppToPhoneRuntime();
+  await testAndroidLocalGemmaRecoversYoutubeSearchToPhoneRuntime();
+  await testAndroidLocalGemmaRedirectsServerYoutubeSearchToPhoneRuntime();
+  await testAndroidLocalGemmaPreservesYoutubeResearchWorkflow();
   await testAndroidLocalGemmaRecoversRequiredOpenAppRefusalFinalAnswer();
   await testAndroidLocalGemmaRecoversRequiredScreenshotRefusalFinalAnswer();
   await testAndroidLocalGemmaInfersPackageForDirectOpenAppToolCalls();
@@ -3785,6 +4261,9 @@ async function main() {
   await testAndroidLocalGemmaPreservesProtectedAppScreenshotRefusalAfterReadScreen();
   await testAndroidLocalGemmaScopesCompletedNavigationToCurrentRequest();
   await testAndroidLocalGemmaPreservesYoutubeTranscriptRouting();
+  await testAndroidLocalGemmaPreservesCoachYoutubeTranscriptRouting();
+  await testAndroidLocalGemmaDoesNotRecoverYoutubeTranscriptUrlToPhoneOpen();
+  await testAndroidLocalGemmaStillRecoversNonYoutubeUrlToPhoneOpen();
   await testAndroidLocalGemmaDoesNotRepeatCompletedRecoveredActions();
   await testAndroidLocalGemmaDoesNotAdvanceAfterFailedDaemonAction();
   await testAndroidLocalGemmaDisplaysJsonShapedFinalRepliesAsText();

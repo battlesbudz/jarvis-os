@@ -146,6 +146,21 @@ const FLAG_SECURE_SCREENSHOT_PACKAGES = new Set([
   "com.disney.disneyplus",
 ]);
 const ANDROID_KEY_ACTION_ALIASES = new Set(["back", "home", "recents", "enter", "volume_up", "volume_down"]);
+const ANDROID_PHONE_RUNTIME_TOOL_NAMES = new Set([
+  "android_open_app_by_name",
+  "android_youtube_search",
+  "android_open_phone_url",
+  "android_capture_screen",
+  "android_read_screen_context",
+  "android_tap_screen",
+  "android_type_text",
+  "android_swipe_screen",
+  "android_press_phone_key",
+  "android_wait_for_ui",
+  "android_read_notifications",
+  "android_notify_user",
+  "android_return_to_jarvis_chat",
+]);
 
 type LocalGemmaStructuredOutput =
   | { type: "final"; content: string }
@@ -563,6 +578,16 @@ function inferPackageNameFromText(text: string): string | null {
   return packageNames.length === 1 ? packageNames[0] : null;
 }
 
+function openAppNameFromRequest(text: string): string | null {
+  const match = text.match(/\b(?:open|launch|start)\s+(?:the\s+)?(.+?)\s*(?:app)?[.!?]*$/i);
+  const appName = match?.[1]
+    ?.replace(/\b(?:please|for me|on my phone|on the phone)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!appName) return null;
+  return appName.replace(/\bapp$/i, "").trim() || null;
+}
+
 function inferAllowedPackageNameFromText(text: string): string | null {
   const packageNames = inferPackageNamesFromText(text)
     .filter((packageName) => !packageTargetNegatedInText(text, packageName));
@@ -834,6 +859,104 @@ function enrichDaemonToolCallsFromRequest(
   });
 }
 
+function runtimeToolCallFromDaemonAction(
+  params: ProviderQueryParams,
+  toolCall: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall,
+  daemonArgs: Record<string, unknown>,
+): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
+  const normalizedArgs = normalizeDaemonActionArguments(daemonArgs);
+  const action = typeof normalizedArgs.action === "string" ? normalizedArgs.action : "";
+  let name = "";
+  let args: Record<string, unknown> = {};
+
+  if (action === "android_open_app") {
+    name = "android_open_app_by_name";
+    const packageName = typeof normalizedArgs.packageName === "string" ? normalizedArgs.packageName : "";
+    args = { appName: packageAliases(packageName)[0]?.replace(/_/g, " ") || packageName };
+  } else if (action === "android_browse") {
+    name = "android_open_phone_url";
+    args = { url: normalizedArgs.url };
+  } else if (action === "android_screenshot") {
+    name = "android_capture_screen";
+    args = {};
+  } else if (action === "android_read_screen" || action === "android_screen_context") {
+    name = "android_read_screen_context";
+    args = {};
+  } else if (action === "android_tap") {
+    name = "android_tap_screen";
+    args = { x: normalizedArgs.x, y: normalizedArgs.y };
+  } else if (action === "android_type") {
+    name = "android_type_text";
+    args = { text: normalizedArgs.text, submit: normalizedArgs.submit };
+  } else if (action === "android_swipe") {
+    name = "android_swipe_screen";
+    args = {
+      x1: normalizedArgs.x1,
+      y1: normalizedArgs.y1,
+      x2: normalizedArgs.x2,
+      y2: normalizedArgs.y2,
+      durationMs: normalizedArgs.durationMs,
+    };
+  } else if (action === "android_press_key") {
+    name = "android_press_phone_key";
+    args = { key: normalizedArgs.key };
+  } else if (action === "android_wait") {
+    name = "android_wait_for_ui";
+    args = { ms: normalizedArgs.ms };
+  } else if (action === "android_notifications_list") {
+    name = "android_read_notifications";
+    args = { limit: normalizedArgs.limit };
+  } else if (action === "notify") {
+    name = "android_notify_user";
+    args = { title: normalizedArgs.title, body: normalizedArgs.body };
+  } else if (action === "android_return_to_jarvis") {
+    name = "android_return_to_jarvis_chat";
+    args = {};
+  }
+
+  if (!name || !ANDROID_PHONE_RUNTIME_TOOL_NAMES.has(name) || !hasFunctionTool(params.tools, name)) return null;
+  return {
+    ...toolCall,
+    function: {
+      name,
+      arguments: JSON.stringify(args),
+    },
+  };
+}
+
+function preferPhoneRuntimeToolCalls(
+  params: ProviderQueryParams,
+  toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[],
+  requestText: string,
+): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] {
+  const query = youtubeSearchQueryFromRequest(requestText);
+  const preserveServerYoutubeResearch = shouldUseServerYoutubeResearchWorkflow(requestText);
+
+  return toolCalls.map((toolCall) => {
+    if (
+      query &&
+      !preserveServerYoutubeResearch &&
+      hasFunctionTool(params.tools, "android_youtube_search") &&
+      (toolCall.function.name === "search_youtube" || toolCall.function.name === "youtube_search")
+    ) {
+      return {
+        ...toolCall,
+        function: {
+          name: "android_youtube_search",
+          arguments: JSON.stringify({ query }),
+        },
+      };
+    }
+
+    if (toolCall.function.name === "daemon_action") {
+      const args = toolArgumentsObject(toolCall.function.arguments);
+      if (args) return runtimeToolCallFromDaemonAction(params, toolCall, args) ?? toolCall;
+    }
+
+    return toolCall;
+  });
+}
+
 function generatedToolCallId(index: number): string {
   return `phone_gemma_call_${Date.now().toString(36)}_${index}`;
 }
@@ -844,6 +967,11 @@ function hasFunctionTool(tools: ProviderQueryParams["tools"], name: string): boo
 
 function hasDaemonActionTool(tools: ProviderQueryParams["tools"]): boolean {
   return hasFunctionTool(tools, "daemon_action");
+}
+
+function hasYoutubeTranscriptTool(tools: ProviderQueryParams["tools"]): boolean {
+  return hasFunctionTool(tools, "get_youtube_transcript") ||
+    hasFunctionTool(tools, "fetch_youtube_transcript");
 }
 
 function availableFunctionToolNames(tools: ProviderQueryParams["tools"]): Set<string> {
@@ -954,11 +1082,142 @@ function recoverRequiredMemoryToolFromRequest(
   };
 }
 
+function youtubeSearchQueryFromRequest(text: string): string | null {
+  if (shouldUseServerYoutubeResearchWorkflow(text)) return null;
+  const patterns = [
+    /\b(?:search|find|look\s+up|look\s+for)\s+(?:on\s+)?youtube\s+(?:for\s+)?(.+)$/i,
+    /\byoutube\s+(?:search|find|look\s+up|look\s+for)\s+(?:for\s+)?(.+)$/i,
+    /\b(?:find|show|get)\s+(?:me\s+)?(?:a\s+few\s+|some\s+)?(?:youtube\s+)?videos?\s+(?:about|on|for)\s+(.+)$/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    const query = match?.[1]?.trim().replace(/[.!?]+$/g, "").trim();
+    if (query) return query;
+  }
+
+  return null;
+}
+
+function shouldUseServerYoutubeResearchWorkflow(text: string): boolean {
+  return /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|best video|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
+}
+
+function recoverRequiredAndroidRuntimeToolFromRequest(
+  params: ProviderQueryParams,
+): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
+  if (params.toolChoice !== "required") return null;
+  const requestText = latestUserText(params.messages).trim();
+  if (!requestText) return null;
+  if (hasProhibitedDeviceActionRequest(requestText)) return null;
+
+  if (hasFunctionTool(params.tools, "android_youtube_search") && !shouldUseServerYoutubeResearchWorkflow(requestText)) {
+    const query = youtubeSearchQueryFromRequest(requestText);
+    if (query) {
+      return {
+        id: generatedToolCallId(0),
+        type: "function",
+        function: {
+          name: "android_youtube_search",
+          arguments: JSON.stringify({ query }),
+        },
+      };
+    }
+  }
+
+  const url = urlFromText(requestText);
+  if (
+    url &&
+    !(isYouTubeUrl(url) && shouldUseServerYoutubeResearchWorkflow(requestText)) &&
+    hasFunctionTool(params.tools, "android_open_phone_url")
+  ) {
+    return {
+      id: generatedToolCallId(0),
+      type: "function",
+      function: {
+        name: "android_open_phone_url",
+        arguments: JSON.stringify({ url }),
+      },
+    };
+  }
+
+  if (hasFunctionTool(params.tools, "android_open_app_by_name") && /\b(?:open|launch|start)\b/i.test(requestText)) {
+    const packageName = inferPackageNameFromText(requestText);
+    const appName = packageName
+      ? packageAliases(packageName)[0]?.replace(/_/g, " ") || requestText
+      : openAppNameFromRequest(requestText);
+    if (appName) {
+      return {
+        id: generatedToolCallId(0),
+        type: "function",
+        function: {
+          name: "android_open_app_by_name",
+          arguments: JSON.stringify({ appName }),
+        },
+      };
+    }
+  }
+
+  if (wantsScreenshotRequest(requestText) && hasFunctionTool(params.tools, "android_capture_screen")) {
+    return {
+      id: generatedToolCallId(0),
+      type: "function",
+      function: {
+        name: "android_capture_screen",
+        arguments: "{}",
+      },
+    };
+  }
+
+  if (
+    hasFunctionTool(params.tools, "android_read_screen_context") &&
+    (
+      /\b(?:what(?:'s| is)|read|show|inspect|look at)\b[\s\S]{0,48}\b(?:screen|display|phone|device)\b/i.test(requestText) ||
+      /\b(?:screen|phone|device)\b[\s\S]{0,32}\b(?:says|shows|visible)\b/i.test(requestText)
+    )
+  ) {
+    return {
+      id: generatedToolCallId(0),
+      type: "function",
+      function: {
+        name: "android_read_screen_context",
+        arguments: "{}",
+      },
+    };
+  }
+
+  if (hasFunctionTool(params.tools, "android_read_notifications") && /\bnotifications?\b/i.test(requestText)) {
+    return {
+      id: generatedToolCallId(0),
+      type: "function",
+      function: {
+        name: "android_read_notifications",
+        arguments: "{}",
+      },
+    };
+  }
+
+  const requestToken = aliasToken(requestText);
+  if (hasFunctionTool(params.tools, "android_press_phone_key") && ANDROID_KEY_ACTION_ALIASES.has(requestToken)) {
+    return {
+      id: generatedToolCallId(0),
+      type: "function",
+      function: {
+        name: "android_press_phone_key",
+        arguments: JSON.stringify({ key: requestToken }),
+      },
+    };
+  }
+
+  return null;
+}
+
 function recoverRequiredToolCallFromRequest(
   params: ProviderQueryParams,
   finalContent = "",
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
-  return recoverRequiredDaemonActionFromRequest(params, finalContent) ||
+  return recoverRequiredAndroidRuntimeToolFromRequest(params) ||
+    recoverRequiredDaemonActionFromRequest(params, finalContent) ||
     recoverRequiredMemoryToolFromRequest(params);
 }
 
@@ -984,7 +1243,7 @@ function recoverRequiredDaemonActionFromRequest(
   const completedReadScreen = completedActions.includes("android_read_screen");
   const preserveYouTubeTranscript = !!url &&
     isYouTubeUrl(url) &&
-    hasFunctionTool(params.tools, "get_youtube_transcript") &&
+    hasYoutubeTranscriptTool(params.tools) &&
     /\b(?:summari[sz]e|transcript|caption|captions|what\b[\s\S]{0,24}\b(?:say|said)|video)\b/i.test(requestText);
 
   if (preserveYouTubeTranscript) {
@@ -1392,7 +1651,11 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       if (parsed.type === "tool_calls") {
         const toolCalls = filterToolCallsToAvailableTools(
           params,
-          enrichDaemonToolCallsFromRequest(parsed.toolCalls, requestText),
+          preferPhoneRuntimeToolCalls(
+            params,
+            enrichDaemonToolCallsFromRequest(parsed.toolCalls, requestText),
+            requestText,
+          ),
         );
         if (toolCalls.length === 0) {
           const recoveredToolCall = recoverRequiredToolCallFromRequest(params);
