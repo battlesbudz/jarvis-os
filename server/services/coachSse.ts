@@ -17,6 +17,11 @@ function errorMessage(error: unknown): string {
     : "Stream interrupted";
 }
 
+type CoachActionResult = {
+  tool: string;
+  [key: string]: unknown;
+};
+
 export function openCoachSse(res: CoachStreamResponse): boolean {
   if (res.writableEnded || res.destroyed) return false;
   if (res.headersSent) return true;
@@ -37,4 +42,25 @@ export function writeCoachStreamError(res: CoachStreamResponse, error: unknown):
   } catch {
     return false;
   }
+}
+
+export function writeCoachActionResults(
+  res: Pick<CoachStreamResponse, "write">,
+  actionResults: CoachActionResult[],
+  attachments: unknown[],
+): boolean {
+  const nonSearchActions = actionResults.filter((action) => (
+    action.tool !== "web_search" && action.tool !== "search_web"
+  ));
+
+  if (nonSearchActions.length === 0 && attachments.length === 0) return false;
+
+  const actionsPayload: Record<string, unknown> = {
+    type: "actions",
+    actions: nonSearchActions,
+  };
+  if (attachments.length > 0) actionsPayload.attachments = attachments;
+
+  res.write(`data: ${JSON.stringify(actionsPayload)}\n\n`);
+  return true;
 }

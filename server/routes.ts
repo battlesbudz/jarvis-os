@@ -100,7 +100,7 @@ import { classifyComposioActionPermission } from "./connectors/composio/connecti
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
 import { createCoachChatProgressStream } from "./services/coachChatProgress";
 import { executeCoachYoutubeSearch } from "./services/coachYoutubeSearch";
-import { openCoachSse, writeCoachStreamError } from "./services/coachSse";
+import { openCoachSse, writeCoachActionResults, writeCoachStreamError } from "./services/coachSse";
 import { buildCoachPostTranscriptTools, coachFunctionTool } from "./services/coachToolDefinitions";
 import { buildCoreCoachTools } from "./services/coreCoachTools";
 import { buildConnectedServiceCoachTools } from "./services/connectedServiceCoachTools";
@@ -2371,14 +2371,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         // directly here without re-calling the model (saves one LLM round-trip).
         if (loopFinalText) {
           openCoachSse(res);
-          if (actionResults.length > 0 || allMcpAttachments.length > 0) {
-            const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search' && a.tool !== 'search_web');
-            if (nonSearchActions.length > 0 || allMcpAttachments.length > 0) {
-              const actionsPayload: Record<string, unknown> = { type: 'actions', actions: nonSearchActions };
-              if (allMcpAttachments.length > 0) actionsPayload.attachments = allMcpAttachments;
-              res.write(`data: ${JSON.stringify(actionsPayload)}\n\n`);
-            }
-          }
+          writeCoachActionResults(res, actionResults, allMcpAttachments);
           stopKeepalive();
           // Persist the response if daemon actions were involved — survives client disconnect
           if (hasDaemonActions && userId) {
@@ -2399,15 +2392,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       }
 
       openCoachSse(res);
-
-      if (actionResults.length > 0 || allMcpAttachments.length > 0) {
-        const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search' && a.tool !== 'search_web');
-        if (nonSearchActions.length > 0 || allMcpAttachments.length > 0) {
-          const actionsPayload: Record<string, unknown> = { type: 'actions', actions: nonSearchActions };
-          if (allMcpAttachments.length > 0) actionsPayload.attachments = allMcpAttachments;
-          res.write(`data: ${JSON.stringify(actionsPayload)}\n\n`);
-        }
-      }
+      writeCoachActionResults(res, actionResults, allMcpAttachments);
 
       // Inject a hard error summary before the final synthesis if any daemon actions failed.
       // This prevents the AI from hallucinating success when tool calls returned errors.
