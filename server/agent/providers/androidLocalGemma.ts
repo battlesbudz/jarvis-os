@@ -789,7 +789,6 @@ function recoverRequiredDaemonActionFromRequest(
   const requestText = latestUserText(params.messages).trim();
   if (!requestText) return null;
   if (hasProhibitedDeviceActionRequest(requestText)) return null;
-  if (hasProhibitedDeviceActionRequest(finalContent)) return null;
 
   let args: Record<string, unknown> | null = null;
   const requestToken = aliasToken(requestText);
@@ -1210,6 +1209,22 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       if (parsed.type === "tool_calls") {
         const toolCalls = enrichDaemonToolCallsFromRequest(parsed.toolCalls, requestText);
         if (toolCalls.length === 0) {
+          const recoveredToolCall = recoverRequiredDaemonActionFromRequest(params);
+          if (recoveredToolCall) {
+            yield {
+              type: "tool_call_start",
+              index: 0,
+              id: recoveredToolCall.id,
+              name: recoveredToolCall.function.name,
+            };
+            yield {
+              type: "tool_call_args",
+              index: 0,
+              args: recoveredToolCall.function.arguments,
+            };
+            yield { type: "finish", reason: "tool_calls" };
+            return;
+          }
           if (hasProhibitedDeviceActionRequest(requestText)) {
             yield { type: "text", delta: "No device action was run." };
             yield { type: "finish", reason: "stop" };
@@ -1217,6 +1232,11 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
           }
           if (/\b(?:open|launch|start)\b/i.test(requestText) && inferPackageNamesFromText(requestText).length > 1) {
             yield { type: "text", delta: "I need one app target at a time for local app opening." };
+            yield { type: "finish", reason: "stop" };
+            return;
+          }
+          if (!looksLikeLocalToolRequest(requestText) && !looksLikeUrlToolRequest(requestText)) {
+            yield { type: "text", delta: "Phone Gemma did not return a usable local answer for that request." };
             yield { type: "finish", reason: "stop" };
             return;
           }

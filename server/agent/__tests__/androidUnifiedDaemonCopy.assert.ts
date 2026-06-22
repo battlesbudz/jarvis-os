@@ -141,6 +141,18 @@ assert.match(
 );
 
 assert.match(
+  settingsSource,
+  /openAccessibilitySettings/,
+  "Settings Device Control row should provide a direct accessibility setup action.",
+);
+
+assert.match(
+  settingsSource,
+  /androidDaemonNeedsAccessibility/,
+  "Settings should not treat a connected phone as ready when Accessibility is still off.",
+);
+
+assert.match(
   androidControlCardSource,
   /await onUnpair\?\.\(\)/,
   "Android control card should call the server-side unpair callback during disconnect.",

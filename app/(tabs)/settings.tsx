@@ -1463,6 +1463,7 @@ export default function SettingsScreen() {
       if (!bootstrapToken) throw new Error('Android device bootstrap token was not returned.');
       const status = await AndroidDaemonNative.enable(getApiUrl(), bootstrapToken);
       setAndroidDaemonConnected(status.connected);
+      setAndroidAssistantStatus(status);
       await loadConnections();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
@@ -1473,6 +1474,29 @@ export default function SettingsScreen() {
       setAndroidDaemonBusy(false);
     }
   }, [androidDaemonBusy, androidDaemonConnected, loadConnections]);
+
+  const openAndroidAccessibilitySettings = useCallback(async () => {
+    if (Platform.OS !== 'android' || !AndroidDaemonNative?.openAccessibilitySettings) return;
+    setAndroidDaemonBusy(true);
+    setAndroidDaemonError(null);
+    try {
+      await AndroidDaemonNative.openAccessibilitySettings();
+      setTimeout(() => {
+        getAndroidDaemonStatus()
+          .then((next) => {
+            setAndroidAssistantStatus(next);
+            setAndroidDaemonConnected(next.connected);
+          })
+          .catch(() => {});
+      }, 1000);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Open Android Accessibility settings and enable Jarvis Device Control.';
+      setAndroidDaemonError(message);
+      Alert.alert('Android Accessibility', message);
+    } finally {
+      setAndroidDaemonBusy(false);
+    }
+  }, []);
 
   const saveWakeSettings = useCallback(async (
     updates: { wakeWordEnabled?: boolean; talkModeEnabled?: boolean; wakeWords?: string[] }
@@ -1903,6 +1927,10 @@ export default function SettingsScreen() {
         : 'Jarvis default model';
   const modelProviderCards = (providerCatalog.length > 0 ? providerCatalog : MODEL_PROVIDER_CATALOG)
     .filter((provider) => provider.id !== 'openai');
+  const androidDaemonNativeAvailable = Platform.OS === 'android' && !!AndroidDaemonNative && androidAssistantStatus?.available !== false;
+  const androidDaemonNeedsAccessibility = androidDaemonNativeAvailable && androidDaemonConnected && androidAssistantStatus?.accessibilityEnabled === false;
+  const androidDaemonCheckingAccessibility = androidDaemonNativeAvailable && androidDaemonConnected && androidAssistantStatus?.accessibilityEnabled === undefined;
+  const androidDaemonReady = androidDaemonConnected && !androidDaemonNeedsAccessibility && !androidDaemonCheckingAccessibility;
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -2106,7 +2134,11 @@ export default function SettingsScreen() {
             <View style={styles.connInfo}>
               <Text style={styles.connName}>Jarvis OS Device Control</Text>
               <Text style={styles.connSub}>
-                {androidDaemonConnected
+                {androidDaemonNeedsAccessibility
+                  ? 'Connected - enable Accessibility for app control'
+                  : androidDaemonCheckingAccessibility
+                    ? 'Connected - checking Accessibility setup'
+                  : androidDaemonReady
                   ? 'Connected'
                   : Platform.OS === 'android'
                     ? 'Enable phone control in this app'
@@ -2114,15 +2146,41 @@ export default function SettingsScreen() {
               </Text>
             </View>
             <Pressable
-              style={[styles.connBtn, androidDaemonConnected ? styles.connBtnConnected : styles.connBtnDisconnected]}
-              onPress={handleAndroidDaemon}
-              disabled={androidDaemonConnected || androidDaemonBusy}
+              style={[
+                styles.connBtn,
+                androidDaemonReady ? styles.connBtnConnected : styles.connBtnDisconnected,
+                androidDaemonNeedsAccessibility && styles.connBtnWarning,
+              ]}
+              onPress={androidDaemonNeedsAccessibility ? openAndroidAccessibilitySettings : handleAndroidDaemon}
+              disabled={(androidDaemonConnected && !androidDaemonNeedsAccessibility) || androidDaemonBusy}
             >
-              <Text style={[styles.connBtnText, androidDaemonConnected && styles.connBtnTextConnected]}>
-                {androidDaemonConnected ? 'Ready' : androidDaemonBusy ? '...' : Platform.OS === 'android' ? 'Enable' : 'Install'}
+              <Text style={[
+                styles.connBtnText,
+                androidDaemonReady && styles.connBtnTextConnected,
+                androidDaemonNeedsAccessibility && styles.connBtnTextWarning,
+              ]}>
+                {androidDaemonBusy
+                  ? '...'
+                  : androidDaemonNeedsAccessibility
+                    ? 'Accessibility'
+                    : androidDaemonReady
+                      ? 'Ready'
+                      : androidDaemonCheckingAccessibility
+                        ? 'Checking'
+                        : Platform.OS === 'android' ? 'Enable' : 'Install'}
               </Text>
             </Pressable>
           </View>
+          {androidDaemonNeedsAccessibility && (
+            <View style={styles.linkCodeBlock}>
+              <Text style={styles.linkCodeLabel}>
+                Device Control is connected, but opening apps, screenshots, taps, typing, and screen reading require the Jarvis Accessibility Service.
+              </Text>
+              <Pressable style={[styles.connBtn, styles.connBtnWarning, { alignSelf: 'flex-start', marginTop: 10 }]} onPress={openAndroidAccessibilitySettings}>
+                <Text style={[styles.connBtnText, styles.connBtnTextWarning]}>Open Accessibility</Text>
+              </Pressable>
+            </View>
+          )}
           {androidDaemonError && (
             <View style={styles.linkCodeBlock}>
               <Text style={styles.linkCodeLabel}>{androidDaemonError}</Text>
@@ -4829,6 +4887,10 @@ const styles = StyleSheet.create({
     borderColor: Colors.cyan + '50',
     backgroundColor: Colors.cyanDim,
   },
+  connBtnWarning: {
+    borderColor: Colors.warning + '70',
+    backgroundColor: Colors.warning + '18',
+  },
   connBtnText: {
     fontSize: 12,
     fontFamily: 'Inter_600SemiBold',
@@ -4836,6 +4898,9 @@ const styles = StyleSheet.create({
   },
   connBtnTextConnected: {
     color: Colors.success,
+  },
+  connBtnTextWarning: {
+    color: Colors.warning,
   },
   connectionActionsRow: {
     flexDirection: 'row',
