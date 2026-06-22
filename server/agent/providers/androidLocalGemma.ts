@@ -593,7 +593,8 @@ function hasProhibitedDeviceActionRequest(text: string): boolean {
 
 function requestsJsonResponse(text: string): boolean {
   return /\b(?:return|respond|reply|output|provide|produce|format|write|give|create|make|generate)\b[\s\S]{0,80}\bjson\b/i.test(text) ||
-    /\b(?:need|want|require|would\s+like)\b[\s\S]{0,80}\bjson\b/i.test(text) ||
+    /\b(?:need|want|require|would\s+like)\s+(?:a\s+|an\s+|the\s+)?(?:valid\s+|raw\s+)?json\b/i.test(text) ||
+    /\b(?:need|want|require|would\s+like)\b[\s\S]{0,80}\bjson\b[\s\S]{0,80}\b(?:object|format|response|reply|output|with|containing|including|include|field|key|property)\b/i.test(text) ||
     /\b(?:show|display|print)\s+(?:me\s+)?(?:the\s+)?json\b/i.test(text) ||
     /\bjson\b[\s\S]{0,48}\b(?:object|format|response|reply|output|with|containing|including|include|field|key|property)\b/i.test(text) ||
     /\b(?:as|valid)\s+json\b/i.test(text);
@@ -734,21 +735,14 @@ function enrichDaemonToolCallsFromRequest(
   toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[],
   requestText: string,
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] {
-  const safeToolCalls = toolCalls.map((toolCall) => {
-    if (toolCall.function.name !== "daemon_action") return toolCall;
+  const safeToolCalls = toolCalls.filter((toolCall) => {
+    if (toolCall.function.name !== "daemon_action") return true;
     const args = toolArgumentsObject(toolCall.function.arguments);
-    if (!args || args.action !== "android_open_app" || !args.packageName) return toolCall;
-    const packageName = packageNameFromAlias(args.packageName);
-    if (!packageName || !packageTargetNegatedInText(requestText, packageName)) return toolCall;
-    const safeArgs = { ...args };
-    delete safeArgs.packageName;
-    return {
-      ...toolCall,
-      function: {
-        ...toolCall.function,
-        arguments: JSON.stringify(safeArgs),
-      },
-    };
+    if (!args || args.action !== "android_open_app") return true;
+    const packageName = typeof args.packageName === "string"
+      ? packageNameFromAlias(args.packageName)
+      : inferPackageNameFromText(requestText);
+    return !(packageName && packageTargetNegatedInText(requestText, packageName));
   });
   const packageName = inferPackageNameFromText(requestText);
   if (!packageName || packageTargetNegatedInText(requestText, packageName)) return safeToolCalls;
@@ -1210,6 +1204,11 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       if (parsed.type === "tool_calls") {
         const toolCalls = enrichDaemonToolCallsFromRequest(parsed.toolCalls, requestText);
         if (toolCalls.length === 0) {
+          if (hasProhibitedDeviceActionRequest(requestText)) {
+            yield { type: "text", delta: "No device action was run." };
+            yield { type: "finish", reason: "stop" };
+            return;
+          }
           throw new Error("Phone Gemma returned a tool-call response without a valid local tool call.");
         }
         for (const [index, toolCall] of toolCalls.entries()) {

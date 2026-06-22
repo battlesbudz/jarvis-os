@@ -1516,7 +1516,7 @@ async function testAndroidLocalGemmaInfersPackageForInabilityOpenAppRequests() {
   }
 }
 
-async function testAndroidLocalGemmaSkipsPackageInferenceForNegatedOpenAppToolCalls() {
+async function testAndroidLocalGemmaDropsNegatedOpenAppToolCallsWithoutPackageInference() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
     data: {
@@ -1550,18 +1550,16 @@ async function testAndroidLocalGemmaSkipsPackageInferenceForNegatedOpenAppToolCa
       userId: "user-phone",
     }));
 
-    assert.equal(result.finishReason, "tool_calls");
-    assert.equal(result.textContent, "");
-    assert.equal(result.toolCallList.length, 1);
-    assert.equal(result.toolCallList[0].function.name, "daemon_action");
-    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app"}');
-    console.log("OK: Android Local Gemma skips package inference for negated open-app tool calls");
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, "No device action was run.");
+    assert.equal(result.toolCallList.length, 0);
+    console.log("OK: Android Local Gemma drops negated open-app tool calls without package inference");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
 }
 
-async function testAndroidLocalGemmaStripsAliasPackageForNegatedOpenAppToolCalls() {
+async function testAndroidLocalGemmaDropsAliasPackageForNegatedOpenAppToolCalls() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
     data: {
@@ -1595,12 +1593,10 @@ async function testAndroidLocalGemmaStripsAliasPackageForNegatedOpenAppToolCalls
       userId: "user-phone",
     }));
 
-    assert.equal(result.finishReason, "tool_calls");
-    assert.equal(result.textContent, "");
-    assert.equal(result.toolCallList.length, 1);
-    assert.equal(result.toolCallList[0].function.name, "daemon_action");
-    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app"}');
-    console.log("OK: Android Local Gemma strips alias packages for negated open-app tool calls");
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, "No device action was run.");
+    assert.equal(result.toolCallList.length, 0);
+    console.log("OK: Android Local Gemma drops alias packages for negated open-app tool calls");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -1645,10 +1641,9 @@ async function testAndroidLocalGemmaKeepsAllowedPackagesForMixedNegatedOpenAppTo
 
     assert.equal(result.finishReason, "tool_calls");
     assert.equal(result.textContent, "");
-    assert.equal(result.toolCallList.length, 2);
+    assert.equal(result.toolCallList.length, 1);
     assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.apps.maps"}');
-    assert.equal(result.toolCallList[1].function.arguments, '{"action":"android_open_app"}');
-    console.log("OK: Android Local Gemma keeps allowed packages for mixed negated open-app tool calls");
+    console.log("OK: Android Local Gemma drops negated packages from mixed open-app tool calls");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -1693,10 +1688,9 @@ async function testAndroidLocalGemmaKeepsAllowedPackagesAfterCommaNegation() {
 
     assert.equal(result.finishReason, "tool_calls");
     assert.equal(result.textContent, "");
-    assert.equal(result.toolCallList.length, 2);
-    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app"}');
-    assert.equal(result.toolCallList[1].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.apps.maps"}');
-    console.log("OK: Android Local Gemma keeps allowed packages after comma negation");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.apps.maps"}');
+    console.log("OK: Android Local Gemma drops negated packages after comma negation");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -1741,10 +1735,9 @@ async function testAndroidLocalGemmaKeepsAllowedPackagesAfterAndNegation() {
 
     assert.equal(result.finishReason, "tool_calls");
     assert.equal(result.textContent, "");
-    assert.equal(result.toolCallList.length, 2);
-    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app"}');
-    assert.equal(result.toolCallList[1].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.apps.maps"}');
-    console.log("OK: Android Local Gemma keeps allowed packages after and-negation");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.apps.maps"}');
+    console.log("OK: Android Local Gemma drops negated packages after and-negation");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -2498,6 +2491,33 @@ async function testAndroidLocalGemmaUnwrapsJsonMentionTroubleshootingReplies() {
   }
 }
 
+async function testAndroidLocalGemmaUnwrapsWantToKnowJsonTroubleshootingReplies() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ response: "The previous message was shown as raw JSON because the model returned an error envelope." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "I want to know why the phone showed raw JSON." }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, "The previous message was shown as raw JSON because the model returned an error envelope.");
+    console.log("OK: Android Local Gemma unwraps want-to-know JSON troubleshooting replies");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaPreservesJsonResponseFormatFinalReplies() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -2926,8 +2946,8 @@ async function main() {
   await testAndroidLocalGemmaRecoversRequiredOpenAppFinalAnswer();
   await testAndroidLocalGemmaInfersPackageForDirectOpenAppToolCalls();
   await testAndroidLocalGemmaInfersPackageForInabilityOpenAppRequests();
-  await testAndroidLocalGemmaSkipsPackageInferenceForNegatedOpenAppToolCalls();
-  await testAndroidLocalGemmaStripsAliasPackageForNegatedOpenAppToolCalls();
+  await testAndroidLocalGemmaDropsNegatedOpenAppToolCallsWithoutPackageInference();
+  await testAndroidLocalGemmaDropsAliasPackageForNegatedOpenAppToolCalls();
   await testAndroidLocalGemmaKeepsAllowedPackagesForMixedNegatedOpenAppToolCalls();
   await testAndroidLocalGemmaKeepsAllowedPackagesAfterCommaNegation();
   await testAndroidLocalGemmaKeepsAllowedPackagesAfterAndNegation();
@@ -2949,6 +2969,7 @@ async function main() {
   await testAndroidLocalGemmaPreservesNeedJsonFinalReplies();
   await testAndroidLocalGemmaPreservesShowMeJsonFinalReplies();
   await testAndroidLocalGemmaUnwrapsJsonMentionTroubleshootingReplies();
+  await testAndroidLocalGemmaUnwrapsWantToKnowJsonTroubleshootingReplies();
   await testAndroidLocalGemmaPreservesJsonResponseFormatFinalReplies();
   await testAndroidLocalGemmaPreservesRequestedJsonInToolProtocolFinalReplies();
   await testAndroidLocalGemmaExtractsEmbeddedProtocolFinalReplies();
