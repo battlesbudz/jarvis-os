@@ -14,7 +14,9 @@ import { buttonLocations, searchBarLocations } from "@shared/schema";
 import { eq, and, desc, sql as drizzleSql } from "drizzle-orm";
 import { notifyUser } from "../../channels/registry";
 import {
+  clearFocusedAndroidField,
   checkAndIncrementScreenshotBudget,
+  extractFocusedFieldText,
   runAndroidTextInputFallback,
 } from "./androidDaemonToolHelpers";
 export { checkAndIncrementScreenshotBudget } from "./androidDaemonToolHelpers";
@@ -495,31 +497,6 @@ async function detectNoOpScrollByScreenshot(
     `[${toolName}] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${passNumber} — already at bottom, stopping early`,
   );
   return { conclusive: true, noOp: true };
-}
-
-/**
- * Parse the accessibility text from android_read_screen or android_get_focused_field
- * to check if any focusable field currently has focused=true.
- */
-function extractFocusedFieldText(data: unknown): { focused: boolean; text?: string; hint?: string; resourceId?: string } {
-  if (!data || typeof data !== "object") return { focused: false };
-  const d = data as Record<string, unknown>;
-  // android_get_focused_field returns { focused, text, hint, resourceId }
-  if (typeof d.focused === "boolean") {
-    return {
-      focused: d.focused,
-      text: typeof d.text === "string" ? d.text : undefined,
-      hint: typeof d.hint === "string" ? d.hint : undefined,
-      resourceId: typeof d.resourceId === "string" ? d.resourceId : undefined,
-    };
-  }
-  // Fallback: android_read_screen returns raw text     look for focused="true" in XML-like output
-  const raw = typeof d.content === "string" ? d.content : typeof d === "string" ? String(d) : "";
-  const focused = /focused="true"/i.test(raw) || /\bfocused=true\b/i.test(raw);
-  // Try to extract the text from the focused node (between class=... text="..." focused="true")
-  const textMatch = raw.match(/focused="true"[^>]*text="([^"]+)"/i)
-    || raw.match(/text="([^"]+)"[^>]*focused="true"/i);
-  return { focused, text: textMatch?.[1] };
 }
 
 type VerifyAndroidTextInputOptions = {
@@ -5793,54 +5770,9 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       // If all APK steps fail (e.g. accessibility not granted), we fall back to
       // select-all + delete via android_press_key so Level 2/3 adb paste does not
       // append to existing text.
-      steps.push("Clearing field (android_clear_field)...");
-      const clearResult = await sendDaemonOp(ctx.userId, { type: "android_clear_field" }, 8000);
-      if (clearResult.ok) {
-        const clearData = (clearResult.data || {}) as Record<string, unknown>;
-        const clearMethod = typeof clearData.method === "string" ? clearData.method : "unknown";
-        const verified = clearData.verifiedEmpty === true;
-        const alreadyEmpty = clearData.fieldWasAlreadyEmpty === true;
-        if (alreadyEmpty) {
-          steps.push("Field was already empty.");
-        } else {
-          steps.push(`Field cleared via ${clearMethod}. Verified empty: ${verified}.`);
-        }
-        await sleep(150);
-      } else {
-        steps.push(`android_clear_field failed (${clearResult.error || "unknown"}); trying select-all + delete fallback...`);
-        // Fallback: send select-all (Ctrl+A) then delete via android_press_key.
-        // These route to the Android daemon (ops starting with "android_") so they
-        // reach the phone even when the accessibility service is unavailable.
-        // KEYCODE_CTRL_A (select all) + KEYCODE_DEL covers WebView inputs and custom
-        // IME fields that ACTION_SET_TEXT cannot reach.
-        const selAllResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "select_all" }, 4000);
-        await sleep(100);
-        const delResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "delete" }, 4000);
-        await sleep(150);
-        if (selAllResult.ok && delResult.ok) {
-          steps.push("Select-all + delete fallback sent successfully.");
-        } else {
-          steps.push(`Select-all + delete fallback partial/failed (select-all: ${selAllResult.ok}, delete: ${delResult.ok}); proceeding anyway.`);
-        }
-        // Verify the field is actually empty after the fallback — KEYCODE_CTRL_A
-        // may not be supported by all input types (e.g. some WebView fields), so
-        // the deletion could have silently failed even when the key-events were sent.
-        const fallbackVerifyResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 6000);
-        if (!fallbackVerifyResult.ok) {
-          steps.push("Select-all + delete fallback: verification inconclusive (android_get_focused_field failed). Proceeding with unknown clear status.");
-        } else {
-          const fallbackFieldInfo = extractFocusedFieldText(fallbackVerifyResult.data);
-          const fallbackRemainingText = fallbackFieldInfo.text;
-          if (fallbackRemainingText === undefined || fallbackRemainingText === "") {
-            steps.push("Select-all + delete fallback verified: field is empty.");
-          } else {
-            steps.push(`Select-all + delete fallback: field not empty after clear attempt. Remaining text: "${fallbackRemainingText}". Level 2/3 paste may append to existing content.`);
-          }
-        }
-      }
+      await clearFocusedAndroidField(ctx.userId, steps, { detailedSuccess: true });
     }
 
-    // ── Step 5: Three-level input fallback chain ──────────────────────────────
     let { methodUsed, inputOk, daemonVerified, fieldText } = await runAndroidTextInputFallback(
       ctx.userId,
       text,
@@ -6125,45 +6057,9 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
 
       // ── Optional clear ────────────────────────────────────────────────────────
       if (clearFirst) {
-        result.steps.push("Clearing field (android_clear_field)...");
-        const clearResult = await sendDaemonOp(ctx.userId, { type: "android_clear_field" }, 8000);
-        if (clearResult.ok) {
-          result.steps.push("Field cleared.");
-        } else {
-          result.steps.push(`android_clear_field failed (${clearResult.error || "unknown"}); trying select-all + delete fallback...`);
-          // Fallback: send select-all (Ctrl+A) then delete via android_press_key.
-          // These route to the Android daemon (ops starting with "android_") so they
-          // reach the phone even when the accessibility service is unavailable.
-          // KEYCODE_CTRL_A (select all) + KEYCODE_DEL covers WebView inputs and custom
-          // IME fields that ACTION_SET_TEXT cannot reach.
-          const selAllResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "select_all" }, 4000);
-          await sleep(100);
-          const delResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "delete" }, 4000);
-          await sleep(150);
-          if (selAllResult.ok && delResult.ok) {
-            result.steps.push("Select-all + delete fallback sent successfully.");
-          } else {
-            result.steps.push(`Select-all + delete fallback partial/failed (select-all: ${selAllResult.ok}, delete: ${delResult.ok}); proceeding anyway.`);
-          }
-          // Verify the field is actually empty after the fallback — KEYCODE_CTRL_A
-          // may not be supported by all input types (e.g. some WebView fields), so
-          // the deletion could have silently failed even when the key-events were sent.
-          const fallbackVerifyResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 6000);
-          if (!fallbackVerifyResult.ok) {
-            result.steps.push("Select-all + delete fallback: verification inconclusive (android_get_focused_field failed). Proceeding with unknown clear status.");
-          } else {
-            const fallbackFieldInfo = extractFocusedFieldText(fallbackVerifyResult.data);
-            const fallbackRemainingText = fallbackFieldInfo.text;
-            if (fallbackRemainingText === undefined || fallbackRemainingText === "") {
-              result.steps.push("Select-all + delete fallback verified: field is empty.");
-            } else {
-              result.steps.push(`Select-all + delete fallback: field not empty after clear attempt. Remaining text: "${fallbackRemainingText}". Level 2/3 paste may append to existing content.`);
-            }
-          }
-        }
+        await clearFocusedAndroidField(ctx.userId, result.steps);
       }
 
-      // ── Three-level input fallback chain ──────────────────────────────────────
       let { methodUsed, inputOk, daemonVerified, fieldText: verifiedFieldText } = await runAndroidTextInputFallback(
         ctx.userId,
         fieldText,

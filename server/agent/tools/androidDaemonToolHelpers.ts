@@ -63,6 +63,75 @@ export async function runAndroidTextInputFallback(
   return { methodUsed, inputOk, daemonVerified, fieldText };
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((res) => setTimeout(res, ms));
+}
+
+export function extractFocusedFieldText(data: unknown): { focused: boolean; text?: string; hint?: string; resourceId?: string } {
+  if (!data || typeof data !== "object") return { focused: false };
+  const d = data as Record<string, unknown>;
+  if (typeof d.focused === "boolean") {
+    return {
+      focused: d.focused,
+      text: typeof d.text === "string" ? d.text : undefined,
+      hint: typeof d.hint === "string" ? d.hint : undefined,
+      resourceId: typeof d.resourceId === "string" ? d.resourceId : undefined,
+    };
+  }
+
+  const raw = typeof d.content === "string" ? d.content : typeof d === "string" ? String(d) : "";
+  const focused = /focused="true"/i.test(raw) || /\bfocused=true\b/i.test(raw);
+  const textMatch = raw.match(/focused="true"[^>]*text="([^"]+)"/i)
+    || raw.match(/text="([^"]+)"[^>]*focused="true"/i);
+  return { focused, text: textMatch?.[1] };
+}
+
+export async function clearFocusedAndroidField(
+  userId: string,
+  steps: string[],
+  options: { detailedSuccess?: boolean } = {},
+): Promise<void> {
+  steps.push("Clearing field (android_clear_field)...");
+  const clearResult = await sendDaemonOp(userId, { type: "android_clear_field" }, 8000);
+  if (clearResult.ok) {
+    if (options.detailedSuccess) {
+      const clearData = (clearResult.data || {}) as Record<string, unknown>;
+      const clearMethod = typeof clearData.method === "string" ? clearData.method : "unknown";
+      const verified = clearData.verifiedEmpty === true;
+      const alreadyEmpty = clearData.fieldWasAlreadyEmpty === true;
+      steps.push(alreadyEmpty ? "Field was already empty." : `Field cleared via ${clearMethod}. Verified empty: ${verified}.`);
+    } else {
+      steps.push("Field cleared.");
+    }
+    await sleep(150);
+    return;
+  }
+
+  steps.push(`android_clear_field failed (${clearResult.error || "unknown"}); trying select-all + delete fallback...`);
+  const selAllResult = await sendDaemonOp(userId, { type: "android_press_key", key: "select_all" }, 4000);
+  await sleep(100);
+  const delResult = await sendDaemonOp(userId, { type: "android_press_key", key: "delete" }, 4000);
+  await sleep(150);
+  if (selAllResult.ok && delResult.ok) {
+    steps.push("Select-all + delete fallback sent successfully.");
+  } else {
+    steps.push(`Select-all + delete fallback partial/failed (select-all: ${selAllResult.ok}, delete: ${delResult.ok}); proceeding anyway.`);
+  }
+
+  const fallbackVerifyResult = await sendDaemonOp(userId, { type: "android_get_focused_field" }, 6000);
+  if (!fallbackVerifyResult.ok) {
+    steps.push("Select-all + delete fallback: verification inconclusive (android_get_focused_field failed). Proceeding with unknown clear status.");
+    return;
+  }
+
+  const fallbackRemainingText = extractFocusedFieldText(fallbackVerifyResult.data).text;
+  if (fallbackRemainingText === undefined || fallbackRemainingText === "") {
+    steps.push("Select-all + delete fallback verified: field is empty.");
+  } else {
+    steps.push(`Select-all + delete fallback: field not empty after clear attempt. Remaining text: "${fallbackRemainingText}". Level 2/3 paste may append to existing content.`);
+  }
+}
+
 const MAX_SCREENSHOTS_PER_TURN = 4;
 const screenshotCountPerCtx = new WeakMap<object, number>();
 
