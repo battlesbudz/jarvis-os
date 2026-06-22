@@ -13,6 +13,13 @@ import { db } from "../../db";
 import { buttonLocations, searchBarLocations } from "@shared/schema";
 import { eq, and, desc, sql as drizzleSql } from "drizzle-orm";
 import { notifyUser } from "../../channels/registry";
+import {
+  clearFocusedAndroidField,
+  checkAndIncrementScreenshotBudget,
+  extractFocusedFieldText,
+  runAndroidTextInputFallback,
+} from "./androidDaemonToolHelpers";
+export { checkAndIncrementScreenshotBudget } from "./androidDaemonToolHelpers";
 export { daemonShellTool } from "./desktopDaemonShellTool";
 export { daemonStatusTool } from "./daemonStatusTool";
 
@@ -44,13 +51,6 @@ const searchBarCoordCache = new Map<string, SearchBarCacheEntry>();
 // the learned resource ID can be tried again even after coordinate invalidation.
 export const learnedResourceIds = new Map<string, string>();
 
-// ── Per-turn screenshot budget ────────────────────────────────────────────────
-// Caps android_screenshot to MAX_SCREENSHOTS_PER_TURN per agent turn.
-// After the cap, callers should switch to android_read_screen.
-// Keyed by ToolContext (unique object per request, GC'd when the turn ends).
-const MAX_SCREENSHOTS_PER_TURN = 4;
-const screenshotCountPerCtx = new WeakMap<object, number>();
-
 type AndroidPermissionRequirement = {
   action: AndroidDaemonAction;
   deniedLabel: string;
@@ -77,82 +77,6 @@ async function requireAndroidPermissions(
   }
 
   return null;
-}
-
-type AndroidTextInputFallbackResult = {
-  methodUsed: string | null;
-  inputOk: boolean;
-  daemonVerified: boolean;
-  fieldText: string | null;
-};
-
-async function runAndroidTextInputFallback(
-  userId: string,
-  text: string,
-  fieldDescription: string,
-  steps: string[],
-): Promise<AndroidTextInputFallbackResult> {
-  let methodUsed: string | null = null;
-  let inputOk = false;
-  let daemonVerified = false;
-  let fieldText: string | null = null;
-
-  steps.push("Level 1 - android_type (accessibility ACTION_SET_TEXT)...");
-  const typeResult = await sendDaemonOp(userId, { type: "android_type", text }, 10000);
-  if (typeResult.ok) {
-    methodUsed = "android_type";
-    inputOk = true;
-    steps.push("android_type accepted by accessibility service.");
-  } else {
-    steps.push(`android_type failed (${typeResult.error || "no editable field focused"}). Moving to Level 2.`);
-  }
-
-  if (!inputOk) {
-    steps.push("Level 2 - android_paste_text (adb input text primary, clipboard fallback)...");
-    const pasteResult = await sendDaemonOp(userId, { type: "android_paste_text", text, fieldDescription }, 15000);
-    if (pasteResult.ok) {
-      const pasteData = (pasteResult.data || {}) as Record<string, unknown>;
-      const daemonMethod = typeof pasteData.method_used === "string" ? pasteData.method_used : "unknown";
-      methodUsed = `android_paste_text:${daemonMethod}`;
-      inputOk = true;
-      daemonVerified = pasteData.verified === true;
-      fieldText = typeof pasteData.field_text === "string" ? pasteData.field_text : null;
-      steps.push(`android_paste_text succeeded via ${daemonMethod}. Daemon verified: ${daemonVerified}.`);
-    } else {
-      steps.push(`android_paste_text failed (${pasteResult.error || "unknown"}). Moving to Level 3.`);
-    }
-  }
-
-  if (!inputOk) {
-    steps.push("Level 3 - android_paste_text retry (clipboard-only path)...");
-    const retryResult = await sendDaemonOp(userId, { type: "android_paste_text", text, fieldDescription }, 15000);
-    if (retryResult.ok) {
-      const retryData = (retryResult.data || {}) as Record<string, unknown>;
-      const retryMethod = typeof retryData.method_used === "string" ? retryData.method_used : "unknown";
-      methodUsed = `android_paste_text:${retryMethod}:L3`;
-      inputOk = true;
-      daemonVerified = retryData.verified === true;
-      fieldText = typeof retryData.field_text === "string" ? retryData.field_text : null;
-      steps.push(`Level 3 retry succeeded via ${retryMethod}. Daemon verified: ${daemonVerified}.`);
-    } else {
-      steps.push(`Level 3 retry failed (${retryResult.error || "unknown"}). All input methods exhausted.`);
-    }
-  }
-
-  return { methodUsed, inputOk, daemonVerified, fieldText };
-}
-
-/**
- * Returns true and increments the count if screenshots are still available this turn.
- * Pass the ToolContext object (ctx) from the tool's execute function.
- * Returns true unconditionally when ctx is not provided (no-op for internal callers).
- */
-export function checkAndIncrementScreenshotBudget(ctx: object | undefined): boolean {
-  if (!ctx) return true;
-  const current = screenshotCountPerCtx.get(ctx) ?? 0;
-  if (current >= MAX_SCREENSHOTS_PER_TURN) return false;
-  screenshotCountPerCtx.set(ctx, current + 1);
-  return true;
 }
 
 // Seed the in-memory cache from the DB immediately when this module is first loaded.
@@ -516,26 +440,11 @@ Results are cached for 500 ms, so two rapid calls will not double-count API usag
       };
     }
 
-    // Require both screenshot AND read_screen permissions since this tool
-    // internally calls android_screenshot and android_view_hierarchy.
-    const [screenshotAllowed, readAllowed] = await Promise.all([
-      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
+    const permissionDenied = await requireAndroidPermissions(ctx.userId, "android_screen_understand", [
+      { action: "android_screenshot", deniedLabel: "screenshot" },
+      { action: "android_read_screen", deniedLabel: "read_screen" },
     ]);
-    if (!screenshotAllowed) {
-      return {
-        ok: false,
-        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile     Connected Channels     Android Device     Permissions.",
-        label: "android_screen_understand: screenshot permission denied",
-      };
-    }
-    if (!readAllowed) {
-      return {
-        ok: false,
-        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile     Connected Channels     Android Device     Permissions.",
-        label: "android_screen_understand: read_screen permission denied",
-      };
-    }
+    if (permissionDenied) return permissionDenied;
 
     //        500ms cache check                                                                                                                                                             
     const cached = screenMapCache.get(ctx.userId);
@@ -569,29 +478,108 @@ function sleep(ms: number): Promise<void> {
   return new Promise((res) => setTimeout(res, ms));
 }
 
-/**
- * Parse the accessibility text from android_read_screen or android_get_focused_field
- * to check if any focusable field currently has focused=true.
- */
-function extractFocusedFieldText(data: unknown): { focused: boolean; text?: string; hint?: string; resourceId?: string } {
-  if (!data || typeof data !== "object") return { focused: false };
-  const d = data as Record<string, unknown>;
-  // android_get_focused_field returns { focused, text, hint, resourceId }
-  if (typeof d.focused === "boolean") {
-    return {
-      focused: d.focused,
-      text: typeof d.text === "string" ? d.text : undefined,
-      hint: typeof d.hint === "string" ? d.hint : undefined,
-      resourceId: typeof d.resourceId === "string" ? d.resourceId : undefined,
-    };
+async function detectNoOpScrollByScreenshot(
+  userId: string,
+  ctx: object | undefined,
+  preScrollScreenshot: string | null,
+  toolName: string,
+  passNumber: number,
+): Promise<{ conclusive: boolean; noOp: boolean }> {
+  if (!preScrollScreenshot) return { conclusive: false, noOp: false };
+
+  const postScrollScreenshot = await captureScreenshot(userId, ctx);
+  if (!postScrollScreenshot) return { conclusive: false, noOp: false };
+
+  const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
+  if (diffRatio >= 0.02) return { conclusive: true, noOp: false };
+
+  console.log(
+    `[${toolName}] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${passNumber} — already at bottom, stopping early`,
+  );
+  return { conclusive: true, noOp: true };
+}
+
+type VerifyAndroidTextInputOptions = {
+  userId: string;
+  expectedText: string;
+  fieldDescription: string;
+  methodUsed: string | null;
+  daemonVerified: boolean;
+  fieldText: string | null;
+  steps: string[];
+  verificationStep: string;
+  escalationStep: (fieldText: string | null) => string;
+  escalationSuccessStep: (method: string, verified: boolean) => string;
+  escalationFailureStep: (error: string) => string;
+  successStep: string;
+  inconclusiveStep: (fieldText: string | null) => string;
+  onVerifying?: () => void;
+  onEscalating?: () => void;
+  onVerified?: () => void;
+  onInconclusive?: () => void;
+  onAlreadyVerified?: () => void;
+};
+
+async function verifyAndroidTextInput(options: VerifyAndroidTextInputOptions): Promise<{
+  methodUsed: string | null;
+  daemonVerified: boolean;
+  fieldText: string | null;
+  verified: boolean;
+}> {
+  let { methodUsed, daemonVerified, fieldText } = options;
+  let verified = daemonVerified;
+
+  if (methodUsed !== "android_type" && daemonVerified) {
+    options.onAlreadyVerified?.();
+    return { methodUsed, daemonVerified, fieldText, verified };
   }
-  // Fallback: android_read_screen returns raw text     look for focused="true" in XML-like output
-  const raw = typeof d.content === "string" ? d.content : typeof d === "string" ? String(d) : "";
-  const focused = /focused="true"/i.test(raw) || /\bfocused=true\b/i.test(raw);
-  // Try to extract the text from the focused node (between class=... text="..." focused="true")
-  const textMatch = raw.match(/focused="true"[^>]*text="([^"]+)"/i)
-    || raw.match(/text="([^"]+)"[^>]*focused="true"/i);
-  return { focused, text: textMatch?.[1] };
+
+  await sleep(200);
+  options.steps.push(options.verificationStep);
+  options.onVerifying?.();
+  const verifyResult = await sendDaemonOp(options.userId, { type: "android_get_focused_field" }, 8000);
+  const verifyInfo = extractFocusedFieldText(verifyResult.data);
+  fieldText = verifyInfo.text ?? null;
+
+  const isPassword = (verifyResult.data as Record<string, unknown> | null)?.isPassword === true;
+  verified = isPassword
+    ? verifyInfo.focused
+    : typeof fieldText === "string" && (
+        fieldText === options.expectedText ||
+        fieldText.trim() === options.expectedText.trim() ||
+        fieldText.includes(options.expectedText)
+      );
+
+  if (!verified && methodUsed === "android_type") {
+    options.steps.push(options.escalationStep(fieldText));
+    options.onEscalating?.();
+    const escalateResult = await sendDaemonOp(
+      options.userId,
+      { type: "android_paste_text", text: options.expectedText, fieldDescription: options.fieldDescription },
+      15000,
+    );
+    if (escalateResult.ok) {
+      const esc = (escalateResult.data || {}) as Record<string, unknown>;
+      const escMethod = typeof esc.method_used === "string" ? esc.method_used : "unknown";
+      methodUsed = `android_paste_text:${escMethod}:escalated`;
+      daemonVerified = esc.verified === true;
+      fieldText = typeof esc.field_text === "string" ? esc.field_text : null;
+      verified = daemonVerified;
+      options.steps.push(options.escalationSuccessStep(escMethod, verified));
+    } else {
+      options.steps.push(options.escalationFailureStep(escalateResult.error || "unknown"));
+    }
+  }
+
+  if (verified) {
+    options.steps.push(options.successStep);
+    options.onVerified?.();
+  } else {
+    options.steps.push(options.inconclusiveStep(fieldText));
+    options.onInconclusive?.();
+  }
+
+  return { methodUsed, daemonVerified, fieldText, verified };
 }
 
 /** Check if serialised read_screen output contains any of the given keywords (case-insensitive) */
@@ -1965,53 +1953,27 @@ Requires android_tap_type permission to be enabled.`,
     }
 
     //        Step 3: Server-side verification                                                                                                                   
-    let verified = daemonVerified;
-
-    if (methodUsed === "android_type" || !daemonVerified) {
-      await sleep(200);
-      steps.push("Verifying text appeared in field via android_get_focused_field...");
-      emitProgress(`Verifying text in ${fieldDesc}…`);
-      const verifyResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
-      const verifyInfo = extractFocusedFieldText(verifyResult.data);
-      fieldText = verifyInfo.text ?? null;
-
-      const isPassword = (verifyResult.data as Record<string, unknown> | null)?.isPassword === true;
-      verified = isPassword
-        ? verifyInfo.focused
-        : typeof fieldText === "string" && (
-            fieldText === text ||
-            fieldText.trim() === text.trim() ||
-            fieldText.includes(text)
-          );
-
-      if (!verified && methodUsed === "android_type") {
-        steps.push(`Verification failed after android_type (field: "${fieldText ?? "empty"}")     escalating to android_paste_text...`);
-        emitProgress(`Text not confirmed — escalating to clipboard paste…`);
-        const escalateResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text, fieldDescription: fieldDesc }, 15000);
-        if (escalateResult.ok) {
-          const esc = (escalateResult.data || {}) as Record<string, unknown>;
-          const escMethod = typeof esc.method_used === "string" ? esc.method_used : "unknown";
-          methodUsed = `android_paste_text:${escMethod}:escalated`;
-          daemonVerified = esc.verified === true;
-          fieldText = typeof esc.field_text === "string" ? esc.field_text : null;
-          verified = daemonVerified;
-          steps.push(`Escalation to android_paste_text succeeded via ${escMethod}. Verified: ${verified}.`);
-        } else {
-          steps.push(`android_paste_text escalation failed: ${escalateResult.error || "unknown"}`);
-        }
-      }
-
-      if (verified) {
-        steps.push("Verification passed: text confirmed in field.");
-        emitProgress(`Text verified in ${fieldDesc} ✓`);
-      } else {
-        steps.push(`Verification inconclusive: field text="${fieldText ?? "empty"}". Field may hide text (custom IME, password) or accessibility tree not updated yet.`);
-        emitProgress(`Input sent to ${fieldDesc} (verification inconclusive)`);
-      }
-    } else {
-      // Daemon already verified the text on its side — skip server-side check
-      emitProgress(`Text input complete ✓`);
-    }
+    let verified: boolean;
+    ({ methodUsed, daemonVerified, fieldText, verified } = await verifyAndroidTextInput({
+      userId: ctx.userId,
+      expectedText: text,
+      fieldDescription: fieldDesc,
+      methodUsed,
+      daemonVerified,
+      fieldText,
+      steps,
+      verificationStep: "Verifying text appeared in field via android_get_focused_field...",
+      escalationStep: (currentText) => `Verification failed after android_type (field: "${currentText ?? "empty"}")     escalating to android_paste_text...`,
+      escalationSuccessStep: (method, wasVerified) => `Escalation to android_paste_text succeeded via ${method}. Verified: ${wasVerified}.`,
+      escalationFailureStep: (error) => `android_paste_text escalation failed: ${error}`,
+      successStep: "Verification passed: text confirmed in field.",
+      inconclusiveStep: (currentText) => `Verification inconclusive: field text="${currentText ?? "empty"}". Field may hide text (custom IME, password) or accessibility tree not updated yet.`,
+      onVerifying: () => emitProgress(`Verifying text in ${fieldDesc}...`),
+      onEscalating: () => emitProgress("Text not confirmed; escalating to clipboard paste..."),
+      onVerified: () => emitProgress(`Text verified in ${fieldDesc}`),
+      onInconclusive: () => emitProgress(`Input sent to ${fieldDesc} (verification inconclusive)`),
+      onAlreadyVerified: () => emitProgress("Text input complete"),
+    }));
 
     //        Step 4: Optional submit                                                                                                                                                 
     if (args.submit && inputOk) {
@@ -2268,6 +2230,55 @@ async function readScreen(userId: string): Promise<ClickableElement[]> {
   }));
 }
 
+interface GestureVerificationBaseline {
+  hash: string | null;
+  hierarchy: HierarchyChangeBaseline;
+}
+
+async function captureGestureVerificationBaseline(userId: string, ctx?: object): Promise<GestureVerificationBaseline> {
+  let hash: string | null = null;
+  try {
+    const screenshot = await captureScreenshot(userId, ctx);
+    if (screenshot) {
+      hash = await computeScreenshotHash(screenshot);
+    }
+  } catch { /* hash capture is best-effort */ }
+
+  return {
+    hash,
+    hierarchy: captureHierarchyChangeBaseline(await readScreen(userId)),
+  };
+}
+
+async function verifyGestureChanged(
+  userId: string,
+  baseline: GestureVerificationBaseline,
+  logPrefix: string,
+  ctx?: object,
+): Promise<{ screenChanged: boolean; hashDistance: number | null }> {
+  let screenChanged = false;
+  let hashDistance: number | null = null;
+
+  if (baseline.hash !== null) {
+    try {
+      const screenshot = await captureScreenshot(userId, ctx);
+      if (screenshot) {
+        hashDistance = hammingDistance(baseline.hash, await computeScreenshotHash(screenshot));
+        if (hashDistance > 5) {
+          screenChanged = true;
+          console.log(`[${logPrefix}] perceptual hash verified (hash_distance=${hashDistance})`);
+        }
+      }
+    } catch { /* hash comparison is best-effort */ }
+  }
+
+  if (!screenChanged) {
+    screenChanged = hierarchyChangedSince(baseline.hierarchy, await readScreen(userId));
+  }
+
+  return { screenChanged, hashDistance };
+}
+
 function bestScreenElement(elements: ScreenElement[], label: string): { bestElement: ScreenElement | null; bestScore: number } {
   let bestElement: ScreenElement | null = null;
   let bestScore = 0;
@@ -2457,20 +2468,15 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // diff is below 2% the page has not moved — we are at the bottom.
         // We check this BEFORE calling buildScreenMapElements (the expensive
         // screen-map call) so we can skip it when the list is exhausted.
-        let screenshotCheckConclusive = false;
-        if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
-          if (postScrollScreenshot) {
-            screenshotCheckConclusive = true;
-            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
-            if (diffRatio < 0.02) {
-              console.log(
-                `[android_swipe_element] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
-              );
-              break;
-            }
-          }
-        }
+        const screenshotNoOp = await detectNoOpScrollByScreenshot(
+          ctx.userId,
+          ctx,
+          preScrollScreenshot,
+          "android_swipe_element",
+          scroll + 1,
+        );
+        const screenshotCheckConclusive = screenshotNoOp.conclusive;
+        if (screenshotNoOp.noOp) break;
 
         const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
@@ -2809,17 +2815,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     const SWIPE_DURATION_MS = 300;
 
     // ── Pre-pinch state capture (perceptual hash fast-path + hierarchy fallback) ─
-    let prePinchHash: string | null = null;
-    let screenChanged = false;
-    let hashDistance: number | null = null;
-    try {
-      const prePinchScreenshot = await captureScreenshot(ctx.userId, ctx);
-      if (prePinchScreenshot) {
-        prePinchHash = await computeScreenshotHash(prePinchScreenshot);
-      }
-    } catch { /* hash capture is best-effort */ }
-    const prePinchClickable = await readScreen(ctx.userId);
-    const prePinchHierarchy = captureHierarchyChangeBaseline(prePinchClickable);
+    const pinchBaseline = await captureGestureVerificationBaseline(ctx.userId, ctx);
 
     const pinchResult = await sendDaemonOp(
       ctx.userId,
@@ -2841,26 +2837,12 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
     }
 
     // ── Post-pinch perceptual hash comparison ─────────────────────────────────
-    if (prePinchHash !== null) {
-      try {
-        const postPinchScreenshot = await captureScreenshot(ctx.userId, ctx);
-        if (postPinchScreenshot) {
-          const postPinchHash = await computeScreenshotHash(postPinchScreenshot);
-          hashDistance = hammingDistance(prePinchHash, postPinchHash);
-          if (hashDistance > 5) {
-            screenChanged = true;
-            console.log(`[android_pinch_element] perceptual hash verified (hash_distance=${hashDistance})`);
-          }
-        }
-      } catch { /* hash comparison is best-effort */ }
-    }
-
-    // Hierarchy fallback: runs only when hash check is inconclusive (e.g. FLAG_SECURE app
-    // or visual change below threshold). Mirrors the same fallback in android_swipe_element.
-    if (!screenChanged) {
-      const postPinchClickable = await readScreen(ctx.userId);
-      screenChanged = hierarchyChangedSince(prePinchHierarchy, postPinchClickable);
-    }
+    const { screenChanged, hashDistance } = await verifyGestureChanged(
+      ctx.userId,
+      pinchBaseline,
+      "android_pinch_element",
+      ctx,
+    );
 
     console.log(
       `[android_pinch_element] userId=${ctx.userId} action=${action} on "${bestElement.label}" ` +
@@ -3190,20 +3172,15 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         // screen-map call) so we can skip it when the list is exhausted.
         // Track whether we got a conclusive screenshot-based answer so that we
         // can fall through to the hierarchy fallback when capture fails.
-        let screenshotCheckConclusive = false;
-        if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
-          if (postScrollScreenshot) {
-            screenshotCheckConclusive = true;
-            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
-            if (diffRatio < 0.02) {
-              console.log(
-                `[android_tap_element] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
-              );
-              break;
-            }
-          }
-        }
+        const screenshotNoOp = await detectNoOpScrollByScreenshot(
+          ctx.userId,
+          ctx,
+          preScrollScreenshot,
+          "android_tap_element",
+          scroll + 1,
+        );
+        const screenshotCheckConclusive = screenshotNoOp.conclusive;
+        if (screenshotNoOp.noOp) break;
 
         const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
@@ -3340,35 +3317,7 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
       // FLAG_SECURE apps (no screenshot) are handled correctly.
       if (!verified) {
         const postClickable = await readScreen(ctx.userId);
-        if (postClickable.length !== preHierarchy.count) {
-          verified = true;
-        } else {
-          // Check if any new labels appeared compared to the pre-tap baseline
-          const postLabels = new Set(postClickable.map((el) => el.label));
-          if ([...postLabels].some((l) => !preHierarchy.labels.has(l))) verified = true;
-          // Check if any new resource IDs appeared, or if pre-tap resource IDs disappeared
-          if (!verified) {
-            const postResourceIds = new Set(
-              postClickable.map((el) => el.resourceId).filter((id): id is string => !!id),
-            );
-            if ([...postResourceIds].some((id) => !preHierarchy.resourceIds.has(id))) verified = true;
-            if (!verified && preHierarchy.resourceIds.size > 0) {
-              if ([...preHierarchy.resourceIds].some((id) => !postResourceIds.has(id))) verified = true;
-            }
-            // Check if any element with the same resource ID changed its label text
-            // (e.g. "Show more" → "Show less") — set-based checks miss this case
-            if (!verified && preHierarchy.idToLabel && preHierarchy.idToLabel.size > 0) {
-              const postIdToLabel = new Map<string, string>(
-                postClickable
-                  .filter((el): el is typeof el & { resourceId: string } => !!el.resourceId)
-                  .map((el) => [el.resourceId, el.label]),
-              );
-              if ([...postIdToLabel.entries()].some(
-                ([id, postLabel]) => preHierarchy.idToLabel?.has(id) && preHierarchy.idToLabel.get(id) !== postLabel,
-              )) verified = true;
-            }
-          }
-        }
+        verified = hierarchyChangedSince(preHierarchy, postClickable);
       }
 
       if (verified) break;
@@ -3571,20 +3520,15 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         // ── No-op scroll detection — screenshot path ──────────────────────
-        let screenshotCheckConclusive = false;
-        if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
-          if (postScrollScreenshot) {
-            screenshotCheckConclusive = true;
-            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
-            if (diffRatio < 0.02) {
-              console.log(
-                `[android_long_press_element] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
-              );
-              break;
-            }
-          }
-        }
+        const screenshotNoOp = await detectNoOpScrollByScreenshot(
+          ctx.userId,
+          ctx,
+          preScrollScreenshot,
+          "android_long_press_element",
+          scroll + 1,
+        );
+        const screenshotCheckConclusive = screenshotNoOp.conclusive;
+        if (screenshotNoOp.noOp) break;
 
         const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
@@ -3866,20 +3810,15 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         // ── No-op scroll detection — screenshot path ──────────────────────
-        let screenshotCheckConclusive = false;
-        if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
-          if (postScrollScreenshot) {
-            screenshotCheckConclusive = true;
-            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
-            if (diffRatio < 0.02) {
-              console.log(
-                `[android_select_option] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
-              );
-              break;
-            }
-          }
-        }
+        const screenshotNoOp = await detectNoOpScrollByScreenshot(
+          ctx.userId,
+          ctx,
+          preScrollScreenshot,
+          "android_select_option",
+          scroll + 1,
+        );
+        const screenshotCheckConclusive = screenshotNoOp.conclusive;
+        if (screenshotNoOp.noOp) break;
 
         const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
@@ -4021,20 +3960,15 @@ Requires: android_screenshot and android_read_screen permissions (same as androi
         await new Promise((resolve) => setTimeout(resolve, 500));
 
         // ── No-op scroll detection — screenshot path ──────────────────────
-        let screenshotCheckConclusive = false;
-        if (preScrollScreenshot) {
-          const postScrollScreenshot = await captureScreenshot(ctx.userId, ctx);
-          if (postScrollScreenshot) {
-            screenshotCheckConclusive = true;
-            const diffRatio = await screenshotDiff(preScrollScreenshot, postScrollScreenshot).catch(() => 1);
-            if (diffRatio < 0.02) {
-              console.log(
-                `[android_select_option] no-op scroll detected (diff=${diffRatio.toFixed(4)}) on pass ${scroll + 1} — already at bottom, stopping early`,
-              );
-              break;
-            }
-          }
-        }
+        const screenshotNoOp = await detectNoOpScrollByScreenshot(
+          ctx.userId,
+          ctx,
+          preScrollScreenshot,
+          "android_select_option",
+          scroll + 1,
+        );
+        const screenshotCheckConclusive = screenshotNoOp.conclusive;
+        if (screenshotNoOp.noOp) break;
 
         const refreshed = await buildScreenMapElements(ctx.userId, ctx);
         if (!refreshed.ok) break;
@@ -4895,16 +4829,7 @@ Requires: android_tap_type permission. No screen-reading or screenshot permissio
       : 800;
 
     // ── Capture pre-drag screenshot hash and hierarchy snapshot (best-effort) ──
-    let preDragHash: string | null = null;
-    try {
-      const preDragScreenshot = await captureScreenshot(ctx.userId, ctx);
-      if (preDragScreenshot) {
-        preDragHash = await computeScreenshotHash(preDragScreenshot);
-      }
-    } catch { /* hash capture is best-effort */ }
-
-    const preDragClickable = await readScreen(ctx.userId);
-    const preDragHierarchy = captureHierarchyChangeBaseline(preDragClickable);
+    const dragBaseline = await captureGestureVerificationBaseline(ctx.userId, ctx);
 
     const dragResult = await sendDaemonOp(
       ctx.userId,
@@ -4924,31 +4849,12 @@ Requires: android_tap_type permission. No screen-reading or screenshot permissio
     // screen_changed is always a boolean: false when comparison is inconclusive
     // (screenshot unavailable or hash error) so downstream logic can treat a
     // missing result the same as a no-op drag.
-    let screenChanged = false;
-    let hashDistance: number | null = null;
-
-    // Fast-path: perceptual hash comparison (distance > 5 out of 64 bits confirms the drag).
-    // Skipped on FLAG_SECURE apps where captureScreenshot returns null.
-    if (preDragHash !== null) {
-      try {
-        const postDragScreenshot = await captureScreenshot(ctx.userId, ctx);
-        if (postDragScreenshot) {
-          const postDragHash = await computeScreenshotHash(postDragScreenshot);
-          hashDistance = hammingDistance(preDragHash, postDragHash);
-          if (hashDistance > 5) {
-            screenChanged = true;
-            console.log(`[android_drag_coordinates] perceptual hash verified (hash_distance=${hashDistance})`);
-          }
-        }
-      } catch { /* hash comparison is best-effort */ }
-    }
-
-    // Hierarchy fallback: runs only when hash check is inconclusive (e.g. FLAG_SECURE app
-    // or visual change below threshold due to re-used resource IDs in dragged content).
-    if (!screenChanged) {
-      const postDragClickable = await readScreen(ctx.userId);
-      screenChanged = hierarchyChangedSince(preDragHierarchy, postDragClickable);
-    }
+    const { screenChanged, hashDistance } = await verifyGestureChanged(
+      ctx.userId,
+      dragBaseline,
+      "android_drag_coordinates",
+      ctx,
+    );
 
     console.log(`[android_drag_coordinates] userId=${ctx.userId} dragged from (${x1},${y1}) to (${x2},${y2}) hold_ms=${holdMs} screen_changed=${screenChanged} hash_distance=${hashDistance}`);
 
@@ -5078,17 +4984,7 @@ Note: screen_changed verification uses screenshot hashing and accessibility hier
     }
 
     // ── Pre-pinch state capture (perceptual hash fast-path + hierarchy fallback) ─
-    let prePinchHash: string | null = null;
-    let screenChanged = false;
-    let hashDistance: number | null = null;
-    try {
-      const prePinchScreenshot = await captureScreenshot(ctx.userId, ctx);
-      if (prePinchScreenshot) {
-        prePinchHash = await computeScreenshotHash(prePinchScreenshot);
-      }
-    } catch { /* hash capture is best-effort */ }
-    const prePinchClickable = await readScreen(ctx.userId);
-    const prePinchHierarchy = captureHierarchyChangeBaseline(prePinchClickable);
+    const pinchBaseline = await captureGestureVerificationBaseline(ctx.userId, ctx);
 
     const pinchResult = await sendDaemonOp(
       ctx.userId,
@@ -5110,29 +5006,14 @@ Note: screen_changed verification uses screenshot hashing and accessibility hier
     }
 
     // ── Post-pinch perceptual hash comparison ─────────────────────────────────
-    if (prePinchHash !== null) {
-      try {
-        const postPinchScreenshot = await captureScreenshot(ctx.userId, ctx);
-        if (postPinchScreenshot) {
-          const postPinchHash = await computeScreenshotHash(postPinchScreenshot);
-          hashDistance = hammingDistance(prePinchHash, postPinchHash);
-          if (hashDistance > 5) {
-            screenChanged = true;
-            console.log(`[android_pinch_coordinates] perceptual hash verified (hash_distance=${hashDistance})`);
-          }
-        }
-      } catch { /* hash comparison is best-effort */ }
-    }
+    const { screenChanged, hashDistance } = await verifyGestureChanged(
+      ctx.userId,
+      pinchBaseline,
+      "android_pinch_coordinates",
+      ctx,
+    );
 
     // ── Hierarchy fallback ─────────────────────────────────────────────────────
-    // Runs when hash check is inconclusive (e.g. FLAG_SECURE app or visual
-    // change below threshold).  Mirrors the same fallback in android_pinch_element
-    // and android_swipe_element.
-    if (!screenChanged) {
-      const postPinchClickable = await readScreen(ctx.userId);
-      screenChanged = hierarchyChangedSince(prePinchHierarchy, postPinchClickable);
-    }
-
     console.log(
       `[android_pinch_coordinates] userId=${ctx.userId} action=${action} centre=(${cx},${cy}) reach=${reach}px ` +
       `screen_changed=${screenChanged}${hashDistance !== null ? ` hash_distance=${hashDistance}` : ""}`,
@@ -5889,54 +5770,9 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       // If all APK steps fail (e.g. accessibility not granted), we fall back to
       // select-all + delete via android_press_key so Level 2/3 adb paste does not
       // append to existing text.
-      steps.push("Clearing field (android_clear_field)...");
-      const clearResult = await sendDaemonOp(ctx.userId, { type: "android_clear_field" }, 8000);
-      if (clearResult.ok) {
-        const clearData = (clearResult.data || {}) as Record<string, unknown>;
-        const clearMethod = typeof clearData.method === "string" ? clearData.method : "unknown";
-        const verified = clearData.verifiedEmpty === true;
-        const alreadyEmpty = clearData.fieldWasAlreadyEmpty === true;
-        if (alreadyEmpty) {
-          steps.push("Field was already empty.");
-        } else {
-          steps.push(`Field cleared via ${clearMethod}. Verified empty: ${verified}.`);
-        }
-        await sleep(150);
-      } else {
-        steps.push(`android_clear_field failed (${clearResult.error || "unknown"}); trying select-all + delete fallback...`);
-        // Fallback: send select-all (Ctrl+A) then delete via android_press_key.
-        // These route to the Android daemon (ops starting with "android_") so they
-        // reach the phone even when the accessibility service is unavailable.
-        // KEYCODE_CTRL_A (select all) + KEYCODE_DEL covers WebView inputs and custom
-        // IME fields that ACTION_SET_TEXT cannot reach.
-        const selAllResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "select_all" }, 4000);
-        await sleep(100);
-        const delResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "delete" }, 4000);
-        await sleep(150);
-        if (selAllResult.ok && delResult.ok) {
-          steps.push("Select-all + delete fallback sent successfully.");
-        } else {
-          steps.push(`Select-all + delete fallback partial/failed (select-all: ${selAllResult.ok}, delete: ${delResult.ok}); proceeding anyway.`);
-        }
-        // Verify the field is actually empty after the fallback — KEYCODE_CTRL_A
-        // may not be supported by all input types (e.g. some WebView fields), so
-        // the deletion could have silently failed even when the key-events were sent.
-        const fallbackVerifyResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 6000);
-        if (!fallbackVerifyResult.ok) {
-          steps.push("Select-all + delete fallback: verification inconclusive (android_get_focused_field failed). Proceeding with unknown clear status.");
-        } else {
-          const fallbackFieldInfo = extractFocusedFieldText(fallbackVerifyResult.data);
-          const fallbackRemainingText = fallbackFieldInfo.text;
-          if (fallbackRemainingText === undefined || fallbackRemainingText === "") {
-            steps.push("Select-all + delete fallback verified: field is empty.");
-          } else {
-            steps.push(`Select-all + delete fallback: field not empty after clear attempt. Remaining text: "${fallbackRemainingText}". Level 2/3 paste may append to existing content.`);
-          }
-        }
-      }
+      await clearFocusedAndroidField(ctx.userId, steps, { detailedSuccess: true });
     }
 
-    // ── Step 5: Three-level input fallback chain ──────────────────────────────
     let { methodUsed, inputOk, daemonVerified, fieldText } = await runAndroidTextInputFallback(
       ctx.userId,
       text,
@@ -5956,46 +5792,22 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
     }
 
     // ── Step 6: Server-side verification ──────────────────────────────────────
-    let verified = daemonVerified;
-
-    if (methodUsed === "android_type" || !daemonVerified) {
-      await sleep(200);
-      steps.push("Verifying text appeared in field via android_get_focused_field...");
-      const verifyResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
-      const verifyInfo = extractFocusedFieldText(verifyResult.data);
-      fieldText = verifyInfo.text ?? null;
-
-      const isPassword = (verifyResult.data as Record<string, unknown> | null)?.isPassword === true;
-      verified = isPassword
-        ? verifyInfo.focused
-        : typeof fieldText === "string" && (
-            fieldText === text ||
-            fieldText.trim() === text.trim() ||
-            fieldText.includes(text)
-          );
-
-      if (!verified && methodUsed === "android_type") {
-        steps.push(`Verification failed after android_type (field: "${fieldText ?? "empty"}") — escalating to android_paste_text...`);
-        const escalateResult = await sendDaemonOp(ctx.userId, { type: "android_paste_text", text, fieldDescription: fieldDesc }, 15000);
-        if (escalateResult.ok) {
-          const esc = (escalateResult.data || {}) as Record<string, unknown>;
-          const escMethod = typeof esc.method_used === "string" ? esc.method_used : "unknown";
-          methodUsed = `android_paste_text:${escMethod}:escalated`;
-          daemonVerified = esc.verified === true;
-          fieldText = typeof esc.field_text === "string" ? esc.field_text : null;
-          verified = daemonVerified;
-          steps.push(`Escalation to android_paste_text succeeded via ${escMethod}. Verified: ${verified}.`);
-        } else {
-          steps.push(`android_paste_text escalation failed: ${escalateResult.error || "unknown"}`);
-        }
-      }
-
-      if (verified) {
-        steps.push("Verification passed: text confirmed in field.");
-      } else {
-        steps.push(`Verification inconclusive: field text="${fieldText ?? "empty"}". Field may hide text (custom IME, password) or accessibility tree not updated yet.`);
-      }
-    }
+    let verified: boolean;
+    ({ methodUsed, daemonVerified, fieldText, verified } = await verifyAndroidTextInput({
+      userId: ctx.userId,
+      expectedText: text,
+      fieldDescription: fieldDesc,
+      methodUsed,
+      daemonVerified,
+      fieldText,
+      steps,
+      verificationStep: "Verifying text appeared in field via android_get_focused_field...",
+      escalationStep: (currentText) => `Verification failed after android_type (field: "${currentText ?? "empty"}") — escalating to android_paste_text...`,
+      escalationSuccessStep: (method, wasVerified) => `Escalation to android_paste_text succeeded via ${method}. Verified: ${wasVerified}.`,
+      escalationFailureStep: (error) => `android_paste_text escalation failed: ${error}`,
+      successStep: "Verification passed: text confirmed in field.",
+      inconclusiveStep: (currentText) => `Verification inconclusive: field text="${currentText ?? "empty"}". Field may hide text (custom IME, password) or accessibility tree not updated yet.`,
+    }));
 
     // ── Step 7: Optional submit ────────────────────────────────────────────────
     if (args.submit && inputOk) {
@@ -6104,32 +5916,12 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       };
     }
 
-    const [screenshotAllowed, readAllowed, tapAllowed] = await Promise.all([
-      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    const permissionDenied = await requireAndroidPermissions(ctx.userId, "android_fill_form", [
+      { action: "android_screenshot", deniedLabel: "screenshot" },
+      { action: "android_read_screen", deniedLabel: "read_screen" },
+      { action: "android_tap_type", deniedLabel: "tap" },
     ]);
-    if (!screenshotAllowed) {
-      return {
-        ok: false,
-        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_fill_form: screenshot permission denied",
-      };
-    }
-    if (!readAllowed) {
-      return {
-        ok: false,
-        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_fill_form: read_screen permission denied",
-      };
-    }
-    if (!tapAllowed) {
-      return {
-        ok: false,
-        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_fill_form: tap permission denied",
-      };
-    }
+    if (permissionDenied) return permissionDenied;
 
     // ── Step 1: Capture a fresh ScreenMap at the start ─────────────────────────
     let screenElements: ScreenElement[] = [];
@@ -6265,45 +6057,9 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
 
       // ── Optional clear ────────────────────────────────────────────────────────
       if (clearFirst) {
-        result.steps.push("Clearing field (android_clear_field)...");
-        const clearResult = await sendDaemonOp(ctx.userId, { type: "android_clear_field" }, 8000);
-        if (clearResult.ok) {
-          result.steps.push("Field cleared.");
-        } else {
-          result.steps.push(`android_clear_field failed (${clearResult.error || "unknown"}); trying select-all + delete fallback...`);
-          // Fallback: send select-all (Ctrl+A) then delete via android_press_key.
-          // These route to the Android daemon (ops starting with "android_") so they
-          // reach the phone even when the accessibility service is unavailable.
-          // KEYCODE_CTRL_A (select all) + KEYCODE_DEL covers WebView inputs and custom
-          // IME fields that ACTION_SET_TEXT cannot reach.
-          const selAllResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "select_all" }, 4000);
-          await sleep(100);
-          const delResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "delete" }, 4000);
-          await sleep(150);
-          if (selAllResult.ok && delResult.ok) {
-            result.steps.push("Select-all + delete fallback sent successfully.");
-          } else {
-            result.steps.push(`Select-all + delete fallback partial/failed (select-all: ${selAllResult.ok}, delete: ${delResult.ok}); proceeding anyway.`);
-          }
-          // Verify the field is actually empty after the fallback — KEYCODE_CTRL_A
-          // may not be supported by all input types (e.g. some WebView fields), so
-          // the deletion could have silently failed even when the key-events were sent.
-          const fallbackVerifyResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 6000);
-          if (!fallbackVerifyResult.ok) {
-            result.steps.push("Select-all + delete fallback: verification inconclusive (android_get_focused_field failed). Proceeding with unknown clear status.");
-          } else {
-            const fallbackFieldInfo = extractFocusedFieldText(fallbackVerifyResult.data);
-            const fallbackRemainingText = fallbackFieldInfo.text;
-            if (fallbackRemainingText === undefined || fallbackRemainingText === "") {
-              result.steps.push("Select-all + delete fallback verified: field is empty.");
-            } else {
-              result.steps.push(`Select-all + delete fallback: field not empty after clear attempt. Remaining text: "${fallbackRemainingText}". Level 2/3 paste may append to existing content.`);
-            }
-          }
-        }
+        await clearFocusedAndroidField(ctx.userId, result.steps);
       }
 
-      // ── Three-level input fallback chain ──────────────────────────────────────
       let { methodUsed, inputOk, daemonVerified, fieldText: verifiedFieldText } = await runAndroidTextInputFallback(
         ctx.userId,
         fieldText,

@@ -2,7 +2,6 @@ import "./agent/providers/envAliases";
 import { createHash } from 'crypto';
 import { activeCoachRuns } from "./runRegistry";
 import { registerCoachRunLifecycle } from "./coachRunLifecycle";
-import { registerCoachMorningBriefRoute, registerCoachWeeklyReviewRoute } from "./routes/coachReviewRoutes";
 import { buildGmailSourceId, gmailMessageIdExistsForUser } from "./utils/gmailSourceId";
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "node:http";
@@ -44,69 +43,27 @@ import { registerCodeProposalsRoutes } from "./agent/codeProposalsRoutes";
 import { registerProjectRoutes } from "./projectRoutes";
 import { registerDoctorRoutes } from "./doctor/doctorRoutes";
 import { registerVaultRoutes } from "./vaultRoutes";
-import { registerLocalWorkerRoutes } from "./routes/localWorkerRoutes";
-import { registerMcpRoutes } from "./routes/mcpRoutes";
-import { registerCommitmentRoutes } from "./routes/commitmentRoutes";
-import { registerSettingsRoutes } from "./routes/settingsRoutes";
-import { registerDocumentRoutes } from "./routes/documentsRoutes";
 import { registerIntegrationRoutes } from "./routes/integrationRoutes";
-import { registerProfileMemoryRoutes } from "./routes/profileMemoryRoutes";
 import { registerPlanGenerationRoutes } from "./routes/planGenerationRoutes";
-import { registerPredictionRoutes } from "./routes/predictionRoutes";
-import { registerPreferenceRoutes } from "./routes/preferenceRoutes";
-import { registerJarvisObservabilityRoutes } from "./routes/jarvisObservabilityRoutes";
-import { registerGoalPacingRoutes } from "./routes/goalPacingRoutes";
-import { registerDeliverableRoutes } from "./routes/deliverableRoutes";
-import { registerWebsiteCrawlRoutes } from "./routes/websiteCrawlRoutes";
-import { registerGutRoutes } from "./routes/gutRoutes";
-import { registerGoalTaskHandoffRoutes } from "./routes/goalTaskHandoffRoutes";
-import { registerGoalTreeCoreRoutes } from "./routes/goalTreeCoreRoutes";
-import { registerInboxRoutes } from "./routes/inboxRoutes";
-import { registerNervousSystemWatchRoutes } from "./routes/nervousSystemWatchRoutes";
 import { registerDailyCommandRoutes } from "./dailyCommand/routes";
 import { registerMindTraceRoutes } from "./routes/mindTraceRoutes";
 import { registerMissionControlQueueRoutes } from "./routes/missionControlQueueRoutes";
 import { registerConnectionsRoutes } from "./routes/connectionsRoutes";
 import { registerDesktopConnectorRoutes } from "./routes/desktopConnectorRoutes";
-import { registerAgentJobMutationRoutes } from "./routes/agentJobMutationRoutes";
-import { registerAgentJobQueryRoutes } from "./routes/agentJobQueryRoutes";
 import { registerWebchatInviteRoutes } from "./routes/webchatInviteRoutes";
-import { registerRuntimeDiagnosticsRoutes } from "./routes/runtimeDiagnosticsRoutes";
-import { registerDiagnosticsRoutes } from "./routes/diagnosticsRoutes";
-import { registerScheduledTaskBasicRoutes } from "./routes/scheduledTaskBasicRoutes";
-import { registerScheduledTaskAttentionRoutes } from "./routes/scheduledTaskAttentionRoutes";
-import { registerScheduledTaskRunRoutes } from "./routes/scheduledTaskRunRoutes";
 import { registerEgoRoutes } from "./routes/egoRoutes";
 import { registerDiscordConnectionRoutes } from "./routes/discordConnectionRoutes";
 import { registerGoalSummaryRoutes } from "./routes/goalSummaryRoutes";
-import { registerButtonLocationRoutes } from "./routes/buttonLocationRoutes";
-import { registerGitHubDeviceRoutes } from "./routes/githubDeviceRoutes";
-import { registerGitHubSettingsRoutes } from "./routes/githubSettingsRoutes";
-import { registerWriteSafetyRoutes } from "./routes/writeSafetyRoutes";
-import { registerIntegrationsStatusRoutes } from "./routes/integrationsStatusRoutes";
-import { registerCapabilityGapRoutes } from "./routes/capabilityGapRoutes";
-import { registerSkillCandidateRoutes } from "./routes/skillCandidateRoutes";
-import { registerSkillStoreRoutes } from "./routes/skillStoreRoutes";
-import { registerMorningVoiceNoteRoutes } from "./routes/morningVoiceNoteRoutes";
-import { registerUserSkillLibraryRoutes } from "./routes/userSkillLibraryRoutes";
-import { registerUserSkillMutationRoutes } from "./routes/userSkillMutationRoutes";
-import { registerJarvisSystemStateRoutes } from "./routes/jarvisSystemStateRoutes";
-import { registerVoiceRoutes } from "./routes/voiceRoutes";
 import { registerBrainDumpRoutes } from "./routes/brainDumpRoutes";
 import { registerCoachAudioRoutes } from "./routes/coachAudioRoutes";
-import { registerChatGptImportRoutes } from "./routes/chatgptImportRoutes";
 import { registerCoachActionConfirmationRoutes } from "./routes/coachActionConfirmationRoutes";
 import { registerCoachInsightRoutes } from "./routes/coachInsightRoutes";
 import { registerCoachSessionRoutes } from "./routes/coachSessionRoutes";
+import { registerWebchatEventsRoutes } from "./routes/webchatEventsRoutes";
 import { formatRuntimeShadowPreviewSummary, previewRuntimeShadowForMessage } from "./core/runtime";
 import { buildYoutubeTranscriptCoachTools } from "./youtubeTranscriptCoachTools";
-import {
-  registerOpenAIProviderAuthRoutes,
-} from "./routes/openaiProviderAuthRoutes";
-import {
-  registerAuthenticatedCoachRuntimeRoutes,
-} from "./routes/coachRuntimeRoutes";
 import { registerPreAuthRoutes } from "./routes/preAuthRoutes";
+import { registerPostCoachRoutes } from "./routes/postCoachRouteRegistry";
 import { createJarvisScheduledTask } from "./jarvisScheduledTasks";
 import { claimIntegrationOwnership } from "./integrationOwner";
 import { oauthRouter } from "./oauthRoutes";
@@ -124,8 +81,6 @@ import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
 import { filterToolsByGroups, getTool, type ToolGroup } from "./agent/tools/index";
 import { parseNaturalTime, parseRecurringExpr } from "./agent/tools/cronTools";
-import { registerSubscriber, removeSubscriberIfCurrent } from "./webchatSSE";
-import ytSearch from "yt-search";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 import { getPromptData, setPromptData } from "./coachSessionPromptCache";
 import { markSoulStale } from "./memory/soul";
@@ -144,9 +99,11 @@ import { getCoachAppAgentId } from "./agent/coreAgentIds";
 import { classifyComposioActionPermission } from "./connectors/composio/connectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
 import { createCoachChatProgressStream } from "./services/coachChatProgress";
-import { openCoachSse, writeCoachStreamError } from "./services/coachSse";
+import { executeCoachYoutubeSearch } from "./services/coachYoutubeSearch";
+import { openCoachSse, writeCoachActionResults, writeCoachStreamError } from "./services/coachSse";
 import { buildCoachPostTranscriptTools, coachFunctionTool } from "./services/coachToolDefinitions";
 import { buildCoreCoachTools } from "./services/coreCoachTools";
+import { buildConnectedServiceCoachTools } from "./services/connectedServiceCoachTools";
 import {
   buildCoachSystemPrompt,
   getMorningNoteSummary,
@@ -179,26 +136,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use(authMiddleware);
 
   // ── Webchat SSE push stream ─────────────────────────────────────────────────
-  // The /chat page connects here so background job results can be pushed in
-  // real time instead of accumulating in the in_app inbox.
-  app.get("/api/webchat/events", (req: Request, res: Response) => {
-    const userId = req.userId;
-    if (!userId) return res.status(401).json({ error: "Not authenticated" });
-
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache, no-transform");
-    res.setHeader("Connection", "keep-alive");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders();
-
-    res.write(": connected\n\n");
-
-    const token = registerSubscriber(userId, res);
-
-    req.on("close", () => {
-      removeSubscriberIfCurrent(userId, token);
-    });
-  });
+  registerWebchatEventsRoutes(app);
 
   app.use("/api/oauth", oauthRouter);
 
@@ -229,76 +167,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const coachTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     ...buildCoreCoachTools(),
-    coachFunctionTool({
-        name: "check_connections",
-        description: "Check which external accounts and channels the user has connected (Google/Gmail/Calendar, Microsoft/Outlook, Telegram, WhatsApp, Discord, Desktop Daemon). Always call this before claiming a service is or isn't available.",
-        parameters: { type: "object", properties: {} },
-    }),
-    coachFunctionTool({
-        name: "generate_reconnect_link",
-        description: "Generate a fresh OAuth authorization URL so the user can reconnect a disconnected Google or Microsoft account. Returns a tappable link button. Use after check_connections confirms the service is not connected.",
-        parameters: {
-          type: "object",
-          properties: {
-            provider: { type: "string", enum: ["google", "microsoft"], description: "Which provider to reconnect" },
-          },
-          required: ["provider"],
-        },
-    }),
-    coachFunctionTool({
-        name: "create_calendar_event",
-        description: "Create a calendar event on the user's Google or Outlook calendar. Use when the user asks to schedule or block time. start and end must be ISO 8601 datetime strings.",
-        parameters: {
-          type: "object",
-          properties: {
-            title: { type: "string", description: "Event title" },
-            start: { type: "string", description: "Start datetime ISO 8601 (e.g. '2025-04-22T14:00:00Z')" },
-            end: { type: "string", description: "End datetime ISO 8601 (e.g. '2025-04-22T15:00:00Z')" },
-            description: { type: "string", description: "Optional event notes" },
-            location: { type: "string", description: "Optional location or video link" },
-            provider: { type: "string", enum: ["google", "microsoft"], description: "Calendar provider, default 'google'" },
-          },
-          required: ["title", "start", "end"],
-        },
-    }),
-    coachFunctionTool({
-        name: "fetch_calendar",
-        description: "Fetch the user's Google Calendar events for a given day or date range. Use whenever the user asks about their schedule, meetings, availability, or what's coming up. Returns events with title, time, and location.",
-        parameters: {
-          type: "object",
-          properties: {
-            date: { type: "string", description: "ISO date YYYY-MM-DD. Defaults to today if omitted." },
-            days: { type: "number", description: "Number of consecutive days to fetch starting from date. Default 1, max 14." },
-          },
-        },
-    }),
-    coachFunctionTool({
-        name: "fetch_emails",
-        description: "Fetch recent emails on demand. Use when the user asks about their inbox beyond what's already in the system context. provider: 'google' (Gmail) or 'microsoft' (Outlook). count: number of emails to fetch (default 10, max 25).",
-        parameters: {
-          type: "object",
-          properties: {
-            provider: { type: "string", enum: ["google", "microsoft"], description: "Email provider" },
-            count: { type: "number", description: "Number of emails to fetch (max 25)" },
-          },
-          required: ["provider"],
-        },
-    }),
-    coachFunctionTool({
-        name: "send_email",
-        description: "Send an email immediately via Gmail or Outlook. Only use after the user explicitly confirms they want to send. Requires Google or Microsoft to be connected. If the user has multiple Google accounts, pass accountHint with the sender email address to select the correct account.",
-        parameters: {
-          type: "object",
-          properties: {
-            to: { type: "string", description: "Recipient email address" },
-            subject: { type: "string", description: "Email subject" },
-            body: { type: "string", description: "Email body (plain text)" },
-            provider: { type: "string", enum: ["google", "microsoft"], description: "Which provider to use, default 'google'" },
-            accountHint: { type: "string", description: "Optional sender account email to disambiguate when multiple accounts are connected (e.g. 'alice@gmail.com')" },
-          },
-          required: ["to", "subject", "body"],
-        },
-    }),
+    ...buildConnectedServiceCoachTools(),
     coachFunctionTool({
         name: "daemon_action",
         description: "Execute a sandboxed action on the user's paired daemon — either a desktop daemon or an Android device daemon. DESKTOP actions (when desktop daemon paired): shell, notify, file_read, file_write, file_list. ANDROID actions (when Android daemon paired): android_open_app (launch app by package name e.g. 'com.google.android.youtube'), android_browse (open URL in browser or app via deep link — for YouTube search use url='vnd.youtube://results?search_query=QUERY', for Google Maps use 'geo:0,0?q=QUERY', for Spotify use 'spotify:search:QUERY'), android_screenshot (capture screen), android_read_screen (read visible UI text), android_tap (tap at x/y), android_type (type text into focused field — set submit:true to also press Search/Go/Enter after typing), android_swipe (swipe gesture), android_press_key (back/home/recents/enter), android_file_list, android_file_read, android_notifications_list (read current phone notifications — checks server cache first; if cache is empty, AUTOMATICALLY swipes open the notification shade, reads the screen, then closes the shade; always returns real live data, never makes up notifications). CRITICAL RULES: (1) If this tool returns result:'error', STOP IMMEDIATELY and tell the user exactly what went wrong — do NOT proceed or pretend the action succeeded. (2) After android_open_app or android_browse succeeds, ALWAYS call android_read_screen next to confirm the screen state — NEVER describe app content or search results without first reading the screen. (3) For in-app searches (YouTube, Reddit, Maps, etc.) prefer android_browse with a deep link URL over open_app + navigate UI. Do NOT narrate what you plan to do before calling this tool — only confirm what actually happened after a successful result. Always call check_connections first to know which daemon type is paired.",
@@ -1010,77 +879,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           };
         }
         case 'search_youtube': {
-          const query = String(args.query || '').trim();
-          if (!query) return { result: 'error', label: 'query required', detail: 'Provide a search query.' };
-          const maxResults = Math.min(Math.max(typeof args.maxResults === 'number' ? args.maxResults : 8, 1), 10);
-          const trendingMode = !!args.trending;
-          const daysBack = typeof args.daysBack === 'number' ? args.daysBack : 5;
-          try {
-            const searchResult = await ytSearch({ query, pageStart: 1, pageEnd: 1 });
-            let videos = (searchResult.videos || []) as any[];
-
-            if (trendingMode) {
-              // Compute views-per-hour for each video and sort by velocity
-              const now = Date.now();
-              const daysMs = daysBack * 24 * 60 * 60 * 1000;
-              videos = videos
-                .map((v: any) => {
-                  const viewCount = typeof v.views === 'number' ? v.views : parseInt(String(v.views).replace(/[^0-9]/g, ''), 10) || 0;
-                  // Parse "X days ago", "X hours ago", etc. from v.ago
-                  let ageMs = daysBack * 24 * 60 * 60 * 1000; // fallback
-                  if (v.ago) {
-                    const agoMatch = v.ago.match(/(\d+)\s*(second|minute|hour|day|week|month|year)/i);
-                    if (agoMatch) {
-                      const n = parseInt(agoMatch[1], 10);
-                      const unit = agoMatch[2].toLowerCase();
-                      const unitMs: Record<string, number> = {
-                        second: 1000, minute: 60000, hour: 3600000,
-                        day: 86400000, week: 604800000, month: 2592000000, year: 31536000000,
-                      };
-                      ageMs = n * (unitMs[unit] || 86400000);
-                    }
-                  }
-                  const ageHours = Math.max(ageMs / 3600000, 1);
-                  const viewsPerHour = Math.round(viewCount / ageHours);
-                  return { ...v, viewCount, ageMs, viewsPerHour };
-                })
-                .filter((v: any) => v.ageMs <= daysMs)
-                .sort((a: any, b: any) => b.viewsPerHour - a.viewsPerHour)
-                .slice(0, maxResults);
-
-              if (videos.length === 0) return { result: 'error', label: 'No trending results', detail: `No videos found in the last ${daysBack} days for: "${query}"` };
-
-              const formatted = videos.map((v: any, i: number) => {
-                const views = v.viewCount.toLocaleString();
-                const vph = v.viewsPerHour.toLocaleString();
-                const ago = v.ago || 'unknown date';
-                return `${i + 1}. "${v.title}"\n   Channel: ${v.author?.name || 'unknown'}\n   Views/hr: ${vph} | Total: ${views} | Posted: ${ago}\n   Video ID: ${v.videoId}\n   URL: ${v.url}`;
-              }).join('\n\n');
-
-              return {
-                result: 'success',
-                label: `YouTube trending: ${videos.length} results`,
-                detail: `Trending search (views/hour): "${query}" — last ${daysBack} days\n\n${formatted}`,
-              };
-            }
-
-            // Standard mode
-            videos = videos.slice(0, maxResults);
-            if (videos.length === 0) return { result: 'error', label: 'No results', detail: `No YouTube videos found for: "${query}"` };
-            const formatted = videos.map((v: any, i: number) => {
-              const views = typeof v.views === 'number' ? v.views.toLocaleString() : (v.views || 'unknown');
-              const ago = v.ago || 'unknown date';
-              const duration = v.duration?.timestamp || v.duration || 'unknown';
-              return `${i + 1}. "${v.title}"\n   Channel: ${v.author?.name || 'unknown'}\n   Views: ${views} | Posted: ${ago} | Duration: ${duration}\n   Video ID: ${v.videoId}\n   URL: ${v.url}`;
-            }).join('\n\n');
-            return {
-              result: 'success',
-              label: `YouTube search: ${videos.length} results`,
-              detail: `Search: "${query}"\n\n${formatted}\n\nTo open a video on the phone: android_browse with url='vnd.youtube://watch?v=VIDEO_ID'\nTo get its transcript: fetch_youtube_transcript with videoId='VIDEO_ID'`,
-            };
-          } catch (err: any) {
-            return { result: 'error', label: 'YouTube search failed', detail: err?.message || String(err) };
-          }
+          return executeCoachYoutubeSearch(args);
         }
         case 'fetch_youtube_transcript': {
           const rawInput = String(args.videoId || '').trim();
@@ -2572,14 +2371,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         // directly here without re-calling the model (saves one LLM round-trip).
         if (loopFinalText) {
           openCoachSse(res);
-          if (actionResults.length > 0 || allMcpAttachments.length > 0) {
-            const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search' && a.tool !== 'search_web');
-            if (nonSearchActions.length > 0 || allMcpAttachments.length > 0) {
-              const actionsPayload: Record<string, unknown> = { type: 'actions', actions: nonSearchActions };
-              if (allMcpAttachments.length > 0) actionsPayload.attachments = allMcpAttachments;
-              res.write(`data: ${JSON.stringify(actionsPayload)}\n\n`);
-            }
-          }
+          writeCoachActionResults(res, actionResults, allMcpAttachments);
           stopKeepalive();
           // Persist the response if daemon actions were involved — survives client disconnect
           if (hasDaemonActions && userId) {
@@ -2600,15 +2392,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       }
 
       openCoachSse(res);
-
-      if (actionResults.length > 0 || allMcpAttachments.length > 0) {
-        const nonSearchActions = actionResults.filter(a => a.tool !== 'web_search' && a.tool !== 'search_web');
-        if (nonSearchActions.length > 0 || allMcpAttachments.length > 0) {
-          const actionsPayload: Record<string, unknown> = { type: 'actions', actions: nonSearchActions };
-          if (allMcpAttachments.length > 0) actionsPayload.attachments = allMcpAttachments;
-          res.write(`data: ${JSON.stringify(actionsPayload)}\n\n`);
-        }
-      }
+      writeCoachActionResults(res, actionResults, allMcpAttachments);
 
       // Inject a hard error summary before the final synthesis if any daemon actions failed.
       // This prevents the AI from hallucinating success when tool calls returned errors.
@@ -2882,123 +2666,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
     }
   });
 
-  registerCommitmentRoutes(app, openai);
-
-
-  // Returns today's morning brief if one was generated and stored by the
-  // proactive scheduler. The frontend uses this to show the exact same text
-  // in the Insights chat that was already sent to Telegram/daemon — no re-generation.
-  registerCoachMorningBriefRoute(app);
-
-  registerAuthenticatedCoachRuntimeRoutes(app);
-  registerRuntimeDiagnosticsRoutes(app);
-  registerInboxRoutes(app);
-
-  registerCoachWeeklyReviewRoute(app, openai);
-
-  registerProfileMemoryRoutes(app);
-  registerPredictionRoutes(app);
-  registerPreferenceRoutes(app);
-
-  registerMorningVoiceNoteRoutes(app);
-
-  // ── Jarvis Scheduled Tasks (Mission Control calendar) ──────────────────
-  registerScheduledTaskBasicRoutes(app);
-  registerJarvisObservabilityRoutes(app);
-
-  registerScheduledTaskAttentionRoutes(app);
-  registerScheduledTaskRunRoutes(app);
-
-  registerJarvisSystemStateRoutes(app);
-
-  // ── Phase 3: Sub-agent goals API ──────────────────────────────
-  registerGoalTreeCoreRoutes(app);
-  registerGoalPacingRoutes(app);
-  registerGoalTaskHandoffRoutes(app);
-
-  registerAgentJobMutationRoutes(app);
-  registerAgentJobQueryRoutes(app);
-
-  registerDeliverableRoutes(app);
-
-  const { registerDeliverableReviewRoutes } = await import("./agent/deliverableReviewHttpRoutes");
-  registerDeliverableReviewRoutes(app, { db });
-
-  registerDocumentRoutes(app);
-
-  registerWebsiteCrawlRoutes(app);
-
-  registerChatGptImportRoutes(app, openai);
-
-  // ── Nervous System — Watch Topics ────────────────────────────────────────
-
-  registerNervousSystemWatchRoutes(app);
-
-  // ── Jarvis Gut — Reflexive Anomaly Detection ────────────────────────────────
-
-  registerGutRoutes(app);
-
-  registerSettingsRoutes(app);
-  // The provider endpoints keep the /api/auth contract but authMiddleware skips
-  // that prefix, so authenticate them explicitly with the bearer-token helper.
-  registerOpenAIProviderAuthRoutes(app, {
-    includeCallbackRoutes: false,
-    resolveUserId: getUserIdFromRequest,
-  });
-
-  // ── Skill endpoints ──────────────────────────────────────────────────────
-  registerSkillStoreRoutes(app);
-
-  // ── User Skills (Task #502) — DB-backed personalisation skills ───────────
-  // Built-in library of curated skills + user-authored custom skills.
-  // Active skills are injected into Jarvis's system prompt at session start.
-
-  registerUserSkillLibraryRoutes(app);
-  registerUserSkillMutationRoutes(app);
-
-  registerSkillCandidateRoutes(app);
-
-  // ── Integration pre-flight status ────────────────────────────────────────
-  // Returns a map of { integration → { status, errorMessage, expiresAt, lastCheckedAt } }
-  // for the authenticated user. Used by the Settings screen to show health badges.
-  registerIntegrationsStatusRoutes(app);
-
-  // ── Diagnostics ──────────────────────────────────────────────────────────────
-
-  registerDiagnosticsRoutes(app);
-
-  registerLocalWorkerRoutes(app);
-
-  registerMcpRoutes(app, authMiddleware);
-
-  // ── Voice Realtime API ────────────────────────────────────────────────────
-
-  registerVoiceRoutes(app, authMiddleware);
-
-
-
-
-
-
-
-  // ── Write-budget endpoints ──────────────────────────────────────────────────
-  // GET  /api/write-budget        — returns current count, max, and tripped state.
-  // POST /api/write-budget/reset  — owner-only; clears the circuit-breaker counter.
-
-  registerWriteSafetyRoutes(app);
-
-  // ── Self-heal audit log API ───────────────────────────────────────────────
-  // ── Button locations — trained button memory ────────────────────────────
-  registerButtonLocationRoutes(app);
-
-  // ── GitHub Settings ─────────────────────────────────────────────────────────
-  registerGitHubSettingsRoutes(app);
-
-  // ── GitHub OAuth (Device Flow) ────────────────────────────────────────────────
-  registerGitHubDeviceRoutes(app);
-
-  registerCapabilityGapRoutes(app, authMiddleware);
-
+  await registerPostCoachRoutes(app, { openai, authMiddleware });
   const httpServer = createServer(app);
   return httpServer;
 }

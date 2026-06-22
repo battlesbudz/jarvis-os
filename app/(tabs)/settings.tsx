@@ -26,13 +26,6 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import {
   getStats,
   claimReward,
-  getLevel,
-  getLevelName,
-  getXpForNextLevel,
-  getAvailableRewards,
-  getLifetimeXp,
-  ALL_BADGES,
-  TIER_COLORS,
   getLifeContext,
   getUserName,
   getCoachingMode,
@@ -57,9 +50,18 @@ import {
   StatusDot,
 } from '@/components/settings/SettingsSectionChrome';
 import { SubsystemErrorSheet } from '@/components/settings/SubsystemErrorSheet';
+import { AchievementsSection } from '@/components/settings/AchievementsSection';
 import { BuildHistorySection } from '@/components/settings/BuildHistorySection';
 import { WakeWordSection } from '@/components/settings/WakeWordSection';
 import { drStyles } from '@/components/settings/diagnosticsRunStyles';
+import { tlStyles } from '@/components/settings/threatLogStyles';
+import type {
+  BuildLogEntry,
+  CatalogProvider,
+  McpServerInfo,
+  OpenAIProviderAuthStatus,
+  TelegramStatus,
+} from '@/components/settings/settingsTypes';
 import {
   CONNECTION_APPS,
   getConnectionStatusLabel,
@@ -88,84 +90,6 @@ import {
   type LocalGemmaModelStatus,
   type PhoneGemmaValidationProfile,
 } from '@/lib/phone-gemma-runtime';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface OAuthProviderStatus {
-  connected: boolean;
-  email?: string;
-  accounts?: { email: string; scopes?: string }[];
-}
-
-interface BuildLogEntry {
-  id: string;
-  featureName: string;
-  description: string;
-  outputCode: string;
-  success: boolean;
-  smokeTestPassed: boolean | null;
-  smokeTestArgs: Record<string, unknown> | null;
-  createdAt: string;
-}
-
-interface TelegramStatus {
-  connected: boolean;
-  username: string | null;
-  configured: boolean;
-  botUsername?: string | null;
-}
-
-interface McpServerInfo {
-  id: string;
-  name: string;
-  transport: 'stdio' | 'http';
-  command: string | null;
-  url: string | null;
-  enabled: boolean;
-  isBuiltIn: boolean;
-  connected: boolean;
-  toolCount: number;
-  error?: string;
-  isSystem: boolean;
-  credentialMode?: 'direct' | 'env-ref';
-  envKey?: string | null;
-}
-
-type OpenAIProviderAuthType = 'api_key' | 'oauth' | 'local';
-interface OpenAIProviderAuthTypeStatus {
-  connected: boolean;
-  isDefault: boolean;
-  email?: string;
-  accountId?: string;
-  expiresAt?: string;
-}
-interface OpenAIProviderAuthStatus {
-  providerCatalog?: CatalogProvider[];
-  providers?: Record<string, ProviderAuthProviderStatus>;
-  openai: {
-    connected: boolean;
-    defaultAuthType: OpenAIProviderAuthType | null;
-    fallbackEnabled: boolean;
-    authTypes: Partial<Record<OpenAIProviderAuthType, OpenAIProviderAuthTypeStatus>>;
-  };
-}
-interface ProviderAuthProviderStatus {
-  connected: boolean;
-  defaultAuthType: OpenAIProviderAuthType | null;
-  fallbackEnabled?: boolean;
-  authTypes: Partial<Record<OpenAIProviderAuthType, OpenAIProviderAuthTypeStatus>>;
-}
-interface CatalogProvider {
-  id: string;
-  label: string;
-  shortLabel: string;
-  description: string;
-  credentialKinds: Array<'api_key' | 'oauth' | 'local'>;
-  apiKeyPlaceholder?: string;
-  setupHint: string;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Section header component
@@ -1949,13 +1873,6 @@ export default function SettingsScreen() {
   }, []);
 
   // ── Computed ──
-  const lifetimeXp = getLifetimeXp(stats);
-  const level = getLevel(lifetimeXp);
-  const levelName = getLevelName(lifetimeXp);
-  const xpInfo = getXpForNextLevel(lifetimeXp);
-  const xpProgress = xpInfo.progress;
-  const availableRewards = getAvailableRewards(lifetimeXp);
-  const earnedBadges = (stats.badges ?? []).map(id => ALL_BADGES.find(b => b.id === id)).filter(Boolean);
   const openAIStatus = openAIProviderStatus?.providers?.openai ?? openAIProviderStatus?.openai;
   const openAIApiKeyStatus = openAIStatus?.authTypes.api_key;
   const openAIOAuthStatus = openAIStatus?.authTypes.oauth;
@@ -3636,75 +3553,13 @@ export default function SettingsScreen() {
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
         {/* ── ACHIEVEMENTS ── */}
-        <SectionHeader label="ACHIEVEMENTS" accent={Colors.cyan} />
-        <View style={styles.card}>
-          {/* XP Bar */}
-          <View style={styles.xpBlock}>
-            <View style={styles.xpTopRow}>
-              <View>
-                <Text style={styles.xpLevelLabel}>LEVEL {level}</Text>
-                <Text style={styles.xpLevelName}>{levelName}</Text>
-              </View>
-              <View style={styles.xpRight}>
-                <Text style={styles.xpValue}>{lifetimeXp} XP</Text>
-                <Text style={styles.xpNext}>Next: {xpInfo.needed} XP</Text>
-              </View>
-            </View>
-            <View style={styles.xpBarTrack}>
-              <View style={[styles.xpBarFill, { width: `${Math.min(100, Math.round(xpProgress * 100))}%` }]} />
-            </View>
-            <View style={styles.xpStats}>
-              <View style={styles.xpStat}>
-                <Text style={styles.xpStatValue}>{stats.streak}</Text>
-                <Text style={styles.xpStatLabel}>Streak</Text>
-              </View>
-              <View style={styles.xpStat}>
-                <Text style={styles.xpStatValue}>{stats.totalCompleted}</Text>
-                <Text style={styles.xpStatLabel}>Completed</Text>
-              </View>
-              <View style={styles.xpStat}>
-                <Text style={styles.xpStatValue}>{stats.bestStreak}</Text>
-                <Text style={styles.xpStatLabel}>Best</Text>
-              </View>
-            </View>
-          </View>
-
-          {/* Badges */}
-          {earnedBadges.length > 0 && (
-            <View style={[styles.badgeBlock, styles.prefRowBorder]}>
-              <Text style={styles.badgeSectionTitle}>BADGES</Text>
-              <View style={styles.badgeRow}>
-                {earnedBadges.slice(0, 8).map(badge => badge && (
-                  <View key={badge.id} style={styles.badge}>
-                    <Ionicons name={badge.icon as any} size={20} color={Colors.violet} />
-                    <Text style={styles.badgeLabel} numberOfLines={1}>{badge.label}</Text>
-                  </View>
-                ))}
-              </View>
-            </View>
-          )}
-
-          {/* Rewards */}
-          {availableRewards.length > 0 && (
-            <View style={styles.prefRowBorder}>
-              <Text style={[styles.badgeSectionTitle, { marginTop: 12, marginBottom: 8 }]}>REWARDS TO CLAIM</Text>
-              {availableRewards.slice(0, 3).map(r => (
-                <Pressable
-                  key={r.id}
-                  style={[styles.rewardRow, { borderColor: TIER_COLORS[r.tier] + '40', backgroundColor: TIER_COLORS[r.tier] + '12' }]}
-                  onPress={() => { setSelectedReward(r); setRewardModalVisible(true); }}
-                >
-                  <Ionicons name={r.icon as any} size={18} color={TIER_COLORS[r.tier]} />
-                  <View style={styles.rewardInfo}>
-                    <Text style={[styles.rewardName, { color: TIER_COLORS[r.tier] }]}>{r.title}</Text>
-                    <Text style={styles.rewardDesc} numberOfLines={1}>{r.description}</Text>
-                  </View>
-                  <Text style={[styles.rewardClaim, { color: TIER_COLORS[r.tier] }]}>Claim →</Text>
-                </Pressable>
-              ))}
-            </View>
-          )}
-        </View>
+        <AchievementsSection
+          stats={stats}
+          onRewardPress={(reward) => {
+            setSelectedReward(reward);
+            setRewardModalVisible(true);
+          }}
+        />
         </ErrorBoundary>
 
         <ErrorBoundary FallbackComponent={SectionFallback}>
@@ -5396,89 +5251,6 @@ const nsStyles = StyleSheet.create({
     color: Colors.textTertiary,
     marginTop: 2,
     textTransform: 'capitalize',
-  },
-});
-
-const tlStyles = StyleSheet.create({
-  header: {
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap',
-  },
-  headerText: {
-    fontSize: 10,
-    fontFamily: 'Inter_700Bold',
-    color: '#F59E0B',
-    letterSpacing: 1.5,
-  },
-  headerSub: {
-    fontSize: 11,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textSecondary,
-    width: '100%',
-    marginTop: 2,
-  },
-  loadingRow: {
-    padding: 16,
-    alignItems: 'center',
-  },
-  emptyText: {
-    paddingHorizontal: 14,
-    paddingBottom: 14,
-    fontSize: 12,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textTertiary,
-  },
-  signalRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    gap: 10,
-  },
-  signalBorder: {
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  signalIconWrap: {
-    paddingTop: 2,
-  },
-  signalBody: {
-    flex: 1,
-    gap: 3,
-  },
-  signalTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  signalType: {
-    fontSize: 13,
-    fontFamily: 'Inter_600SemiBold',
-    color: Colors.text,
-    flex: 1,
-  },
-  confidenceBadge: {
-    borderRadius: 5,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  confidenceText: {
-    fontSize: 10,
-    fontFamily: 'Inter_600SemiBold',
-  },
-  signalExplanation: {
-    fontSize: 12,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textSecondary,
-    lineHeight: 17,
-  },
-  signalDate: {
-    fontSize: 10,
-    fontFamily: 'Inter_400Regular',
-    color: Colors.textTertiary,
   },
 });
 
