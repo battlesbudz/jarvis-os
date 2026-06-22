@@ -1423,6 +1423,333 @@ async function testAndroidLocalGemmaRecoversRequiredOpenAppFinalAnswer() {
   }
 }
 
+async function testAndroidLocalGemmaInfersPackageForDirectOpenAppToolCalls() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{
+          name: "daemon_action",
+          arguments: { action: "android_open_app" },
+        }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open YouTube" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: { action: { type: "string" }, packageName: { type: "string" } },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.youtube"}');
+    console.log("OK: Android Local Gemma infers package names for direct open-app tool calls");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaInfersPackageForInabilityOpenAppRequests() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "daemon_action", arguments: { action: "android_open_app" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "I can't open YouTube; can you open it?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: { action: { type: "string" }, packageName: { type: "string" } },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.youtube"}');
+    console.log("OK: Android Local Gemma infers package names for inability open-app requests");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaSkipsPackageInferenceForNegatedOpenAppToolCalls() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "daemon_action", arguments: { action: "android_open_app" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Don't open YouTube." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: { action: { type: "string" }, packageName: { type: "string" } },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app"}');
+    console.log("OK: Android Local Gemma skips package inference for negated open-app tool calls");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaStripsAliasPackageForNegatedOpenAppToolCalls() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "daemon_action", arguments: { action: "open_youtube" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Don't open YouTube." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: { action: { type: "string" }, packageName: { type: "string" } },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app"}');
+    console.log("OK: Android Local Gemma strips alias packages for negated open-app tool calls");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaKeepsAllowedPackagesForMixedNegatedOpenAppToolCalls() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [
+          { name: "daemon_action", arguments: { action: "android_open_app", packageName: "com.google.android.apps.maps" } },
+          { name: "daemon_action", arguments: { action: "open_youtube" } },
+        ],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open Maps without opening YouTube." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: { action: { type: "string" }, packageName: { type: "string" } },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 2);
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.apps.maps"}');
+    assert.equal(result.toolCallList[1].function.arguments, '{"action":"android_open_app"}');
+    console.log("OK: Android Local Gemma keeps allowed packages for mixed negated open-app tool calls");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaKeepsAllowedPackagesAfterCommaNegation() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [
+          { name: "daemon_action", arguments: { action: "open_youtube" } },
+          { name: "daemon_action", arguments: { action: "android_open_app", packageName: "com.google.android.apps.maps" } },
+        ],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Don't open YouTube, open Maps." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: { action: { type: "string" }, packageName: { type: "string" } },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 2);
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app"}');
+    assert.equal(result.toolCallList[1].function.arguments, '{"action":"android_open_app","packageName":"com.google.android.apps.maps"}');
+    console.log("OK: Android Local Gemma keeps allowed packages after comma negation");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaSkipsPackageInferenceForAmbiguousOpenAppToolCalls() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [
+          { name: "daemon_action", arguments: { action: "android_open_app" } },
+          { name: "daemon_action", arguments: { action: "android_open_app" } },
+        ],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open YouTube and Chrome." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: { action: { type: "string" }, packageName: { type: "string" } },
+            required: ["action"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 2);
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_open_app"}');
+    assert.equal(result.toolCallList[1].function.arguments, '{"action":"android_open_app"}');
+    console.log("OK: Android Local Gemma skips package inference for ambiguous open-app tool calls");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaDoesNotRecoverNegatedRequiredActions() {
   try {
     for (const request of [
@@ -1934,6 +2261,239 @@ async function testAndroidLocalGemmaDoesNotAdvanceAfterFailedDaemonAction() {
   }
 }
 
+async function testAndroidLocalGemmaDisplaysJsonShapedFinalRepliesAsText() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ response: "I am unable to open YouTube right now due to system restrictions." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "What happened?" }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, "I am unable to open YouTube right now due to system restrictions.");
+    console.log("OK: Android Local Gemma displays JSON-shaped final replies as text");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesEmbeddedJsonInFinalReplies() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: 'Here is the JSON: {"message":"hello"}',
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Show me a JSON example." }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, 'Here is the JSON: {"message":"hello"}');
+    console.log("OK: Android Local Gemma preserves embedded JSON in final replies");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesRequestedWholeJsonFinalReplies() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ message: "hello" }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Return a JSON object with a message of hello." }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, '{"message":"hello"}');
+    console.log("OK: Android Local Gemma preserves requested whole JSON final replies");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesGiveMeJsonFinalReplies() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ message: "hello" }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Give me JSON with a message field set to hello." }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, '{"message":"hello"}');
+    console.log("OK: Android Local Gemma preserves give-me-JSON final replies");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaUnwrapsJsonMentionTroubleshootingReplies() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ response: "The previous message was shown as raw JSON because the model returned an error envelope." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Why did the phone show raw JSON?" }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, "The previous message was shown as raw JSON because the model returned an error envelope.");
+    console.log("OK: Android Local Gemma unwraps JSON-mention troubleshooting replies");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesJsonResponseFormatFinalReplies() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ message: "hello" }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Return the requested object." }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      responseFormat: { type: "json_object" },
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, '{"message":"hello"}');
+    console.log("OK: Android Local Gemma preserves JSON response format final replies");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPreservesRequestedJsonInToolProtocolFinalReplies() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ message: "hello" }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Return a JSON object with a message of hello about my phone." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, '{"message":"hello"}');
+    console.log("OK: Android Local Gemma preserves requested JSON in tool-protocol final replies");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaExtractsEmbeddedProtocolFinalReplies() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: 'Here is the answer: {"type":"final","content":"ok"}',
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "What is on my phone?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, "ok");
+    console.log("OK: Android Local Gemma extracts embedded protocol final replies");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -2262,6 +2822,13 @@ async function main() {
   await testAndroidLocalGemmaPreservesNewestTurnWhenTrimming();
   await testAndroidLocalGemmaRecoversRequiredScreenshotFinalAnswer();
   await testAndroidLocalGemmaRecoversRequiredOpenAppFinalAnswer();
+  await testAndroidLocalGemmaInfersPackageForDirectOpenAppToolCalls();
+  await testAndroidLocalGemmaInfersPackageForInabilityOpenAppRequests();
+  await testAndroidLocalGemmaSkipsPackageInferenceForNegatedOpenAppToolCalls();
+  await testAndroidLocalGemmaStripsAliasPackageForNegatedOpenAppToolCalls();
+  await testAndroidLocalGemmaKeepsAllowedPackagesForMixedNegatedOpenAppToolCalls();
+  await testAndroidLocalGemmaKeepsAllowedPackagesAfterCommaNegation();
+  await testAndroidLocalGemmaSkipsPackageInferenceForAmbiguousOpenAppToolCalls();
   await testAndroidLocalGemmaDoesNotRecoverNegatedRequiredActions();
   await testAndroidLocalGemmaRoutesCompoundScreenshotRequestsToNavigationFirst();
   await testAndroidLocalGemmaDoesNotRecoverHomeScreenAsScreenshot();
@@ -2272,6 +2839,14 @@ async function main() {
   await testAndroidLocalGemmaPreservesYoutubeTranscriptRouting();
   await testAndroidLocalGemmaDoesNotRepeatCompletedRecoveredActions();
   await testAndroidLocalGemmaDoesNotAdvanceAfterFailedDaemonAction();
+  await testAndroidLocalGemmaDisplaysJsonShapedFinalRepliesAsText();
+  await testAndroidLocalGemmaPreservesEmbeddedJsonInFinalReplies();
+  await testAndroidLocalGemmaPreservesRequestedWholeJsonFinalReplies();
+  await testAndroidLocalGemmaPreservesGiveMeJsonFinalReplies();
+  await testAndroidLocalGemmaUnwrapsJsonMentionTroubleshootingReplies();
+  await testAndroidLocalGemmaPreservesJsonResponseFormatFinalReplies();
+  await testAndroidLocalGemmaPreservesRequestedJsonInToolProtocolFinalReplies();
+  await testAndroidLocalGemmaExtractsEmbeddedProtocolFinalReplies();
   await testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired();
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
