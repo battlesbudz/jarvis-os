@@ -130,6 +130,18 @@ assert.match(
 
 assert.match(
   androidControlCardSource,
+  /needsAccessibility/,
+  "Android control card should not treat a connected phone as fully ready until Accessibility is enabled.",
+);
+
+assert.match(
+  androidControlCardSource,
+  /Open Accessibility/,
+  "Android control card should provide a direct accessibility setup action for device control.",
+);
+
+assert.match(
+  androidControlCardSource,
   /await onUnpair\?\.\(\)/,
   "Android control card should call the server-side unpair callback during disconnect.",
 );

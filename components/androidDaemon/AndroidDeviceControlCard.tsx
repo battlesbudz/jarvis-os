@@ -60,6 +60,9 @@ export function AndroidDeviceControlCard({
   const nativeConnected = status?.connected === true;
   const healthy = serverConnected || nativeConnected;
   const nativeAvailable = Platform.OS === "android" && status?.available !== false && !!AndroidDaemonNative;
+  const checkingAccessibility = nativeAvailable && healthy && status?.accessibilityEnabled === undefined;
+  const needsAccessibility = nativeAvailable && healthy && status?.accessibilityEnabled === false;
+  const statusReady = healthy && !checkingAccessibility && !needsAccessibility;
   const anyBusy = busy !== null;
   const alreadyConnected = healthy;
   const canDisconnect = !anyBusy && (nativeAvailable || !!onUnpair);
@@ -181,19 +184,38 @@ export function AndroidDeviceControlCard({
         <View style={styles.headerText}>
           <Text style={styles.title}>Android Device</Text>
           <Text style={styles.subtitle}>
-            {healthy
+            {needsAccessibility
+              ? "Connected - enable Accessibility for app control."
+              : checkingAccessibility
+              ? "Connected - checking Accessibility setup."
+              : healthy
               ? `Connected${hostname ? ` - ${hostname}` : ""}`
               : description}
           </Text>
         </View>
-        <View style={[styles.statusPill, healthy ? styles.statusPillGood : styles.statusPillNeutral]}>
+        <View style={[
+          styles.statusPill,
+          statusReady ? styles.statusPillGood : needsAccessibility ? styles.statusPillWarning : styles.statusPillNeutral,
+        ]}>
           <Ionicons
-            name={healthy ? "checkmark-circle" : "ellipse-outline"}
+            name={statusReady ? "checkmark-circle" : needsAccessibility ? "alert-circle-outline" : "ellipse-outline"}
             size={13}
-            color={healthy ? Colors.success : Colors.textSecondary}
+            color={statusReady ? Colors.success : needsAccessibility ? Colors.warning : Colors.textSecondary}
           />
-          <Text numberOfLines={1} style={[styles.statusText, healthy ? styles.statusTextGood : undefined]}>
-            {healthy ? "Ready" : status?.status ?? "Checking"}
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.statusText,
+              statusReady ? styles.statusTextGood : needsAccessibility ? styles.statusTextWarning : undefined,
+            ]}
+          >
+            {statusReady
+              ? "Ready"
+              : needsAccessibility
+              ? "Accessibility"
+              : checkingAccessibility
+              ? "Checking"
+              : status?.status ?? "Checking"}
           </Text>
         </View>
       </View>
@@ -208,10 +230,26 @@ export function AndroidDeviceControlCard({
         </View>
       )}
 
+      {needsAccessibility && (
+        <View style={styles.notice}>
+          <Text style={styles.noticeText}>Accessibility is still off. Jarvis can connect, but opening apps, reading the screen, taps, typing, and screenshots need the Jarvis Accessibility Service.</Text>
+          <Pressable style={styles.installButton} onPress={() => runPermissionAction(permissionRows[0])}>
+            <Ionicons name="settings-outline" size={14} color={Colors.warningLight} />
+            <Text style={styles.installButtonText}>Open Accessibility</Text>
+          </Pressable>
+        </View>
+      )}
+
       <View style={styles.setup}>
         <View style={styles.enableCopy}>
-          <Text style={styles.enableTitle}>Device control runs inside this app</Text>
-          <Text style={styles.enableDetail}>Jarvis uses your signed-in session to connect this phone locally.</Text>
+          <Text style={styles.enableTitle}>
+            {needsAccessibility ? "Finish Android control setup" : "Device control runs inside this app"}
+          </Text>
+          <Text style={styles.enableDetail}>
+            {needsAccessibility
+              ? "Turn on Accessibility below so Jarvis can operate the phone."
+              : "Jarvis uses your signed-in session to connect this phone locally."}
+          </Text>
         </View>
         <Pressable
           style={[styles.primaryButton, (!nativeAvailable || anyBusy || alreadyConnected) && styles.disabledButton]}
@@ -334,6 +372,10 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceAlt,
     borderColor: Colors.border,
   },
+  statusPillWarning: {
+    backgroundColor: Colors.warningDim,
+    borderColor: Colors.warning,
+  },
   statusText: {
     fontSize: 11,
     fontFamily: "Inter_500Medium",
@@ -341,6 +383,9 @@ const styles = StyleSheet.create({
   },
   statusTextGood: {
     color: Colors.success,
+  },
+  statusTextWarning: {
+    color: Colors.warning,
   },
   notice: {
     marginHorizontal: 16,

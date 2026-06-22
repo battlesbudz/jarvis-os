@@ -1,7 +1,7 @@
 import type OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import { ANDROID_LOCAL_GEMMA_MODEL } from "@shared/modelProviderCatalog";
-import { BaseProvider } from "./base";
+import { BaseProvider, isJsonObjectResponseFormat } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 
 type DaemonOpResult = { ok: boolean; data?: unknown; error?: string };
@@ -127,8 +127,27 @@ type LocalGemmaStructuredOutput =
   | { type: "final"; content: string }
   | { type: "tool_calls"; toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] };
 
+function androidLocalGemmaEnv(name: string): string | undefined {
+  switch (name) {
+    case "ANDROID_LOCAL_GEMMA_ALLOW_CPU_FALLBACK":
+      return process.env.ANDROID_LOCAL_GEMMA_ALLOW_CPU_FALLBACK;
+    case "ANDROID_LOCAL_GEMMA_CONTEXT_TOKENS":
+      return process.env.ANDROID_LOCAL_GEMMA_CONTEXT_TOKENS;
+    case "ANDROID_LOCAL_GEMMA_MAX_COMPLETION_TOKENS":
+      return process.env.ANDROID_LOCAL_GEMMA_MAX_COMPLETION_TOKENS;
+    case "ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET":
+      return process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
+    case "ANDROID_LOCAL_GEMMA_TIMEOUT_MS":
+      return process.env.ANDROID_LOCAL_GEMMA_TIMEOUT_MS;
+    case "ANDROID_LOCAL_GEMMA_TOOL_LIST_CHAR_BUDGET":
+      return process.env.ANDROID_LOCAL_GEMMA_TOOL_LIST_CHAR_BUDGET;
+    default:
+      return undefined;
+  }
+}
+
 function intEnv(name: string, fallback: number, min: number, max: number): number {
-  const raw = process.env[name];
+  const raw = androidLocalGemmaEnv(name);
   if (!raw) return fallback;
   const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed)) return fallback;
@@ -136,7 +155,7 @@ function intEnv(name: string, fallback: number, min: number, max: number): numbe
 }
 
 function boolEnv(name: string, fallback: boolean): boolean {
-  const raw = process.env[name];
+  const raw = androidLocalGemmaEnv(name);
   if (!raw) return fallback;
   return /^(?:1|true|yes|on)$/i.test(raw.trim());
 }
@@ -410,6 +429,24 @@ function extractJsonObject(raw: string): unknown | null {
   }
 }
 
+function parseWholeJsonObject(raw: string): Record<string, unknown> | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const candidate = fenced?.[1]?.trim() || trimmed;
+  if (!candidate.startsWith("{") || !candidate.endsWith("}")) return null;
+
+  try {
+    const parsed = JSON.parse(candidate);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeToolArguments(value: unknown): string {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -473,16 +510,66 @@ function inferPackageNameForAction(actionToken: string, args: Record<string, unk
   return packageNameFromAlias(appFromAction);
 }
 
-function inferPackageNameFromText(text: string): string | null {
+function inferPackageNamesFromText(text: string): string[] {
   const requestToken = aliasToken(text);
-  if (!requestToken) return null;
+  if (!requestToken) return [];
+  const packages = new Set<string>();
   for (const [alias, packageName] of Object.entries(ANDROID_APP_PACKAGE_ALIASES)) {
     const escapedAlias = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (new RegExp(`(?:^|_)${escapedAlias}(?:_|$)`).test(requestToken)) {
-      return packageName;
+      packages.add(packageName);
     }
   }
-  return null;
+  return [...packages];
+}
+
+function inferPackageNameFromText(text: string): string | null {
+  const packageNames = inferPackageNamesFromText(text);
+  return packageNames.length === 1 ? packageNames[0] : null;
+}
+
+function inferAllowedPackageNameFromText(text: string): string | null {
+  const packageNames = inferPackageNamesFromText(text)
+    .filter((packageName) => !packageTargetNegatedInText(text, packageName));
+  return packageNames.length === 1 ? packageNames[0] : null;
+}
+
+function packageAliases(packageName: string): string[] {
+  return Object.entries(ANDROID_APP_PACKAGE_ALIASES)
+    .filter(([, value]) => value === packageName)
+    .map(([alias]) => alias);
+}
+
+function aliasPattern(alias: string): RegExp {
+  const pattern = alias
+    .split("_")
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[\\s_-]+");
+  return new RegExp(`\\b${pattern}\\b`, "gi");
+}
+
+function requestSegmentForIndex(text: string, index: number): string {
+  const before = text.slice(0, index);
+  const boundaryPattern = /[,.;!?]|\b(?:but|instead|however)\b|\b(?:and|then|also)\s+(?:please\s+)?(?:open|launch|start|browse)\b/gi;
+  let start = 0;
+  let match: RegExpExecArray | null;
+  while ((match = boundaryPattern.exec(before))) {
+    start = match.index + match[0].length;
+  }
+  return text.slice(start, index);
+}
+
+function packageTargetNegatedInText(text: string, packageName: string): boolean {
+  const aliases = packageAliases(packageName);
+  const negationPattern = /\b(?:do not|don['’]?t|never|please don['’]?t|avoid|without|except|not)\b/i;
+  for (const alias of aliases) {
+    const pattern = aliasPattern(alias);
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text))) {
+      if (negationPattern.test(requestSegmentForIndex(text, match.index))) return true;
+    }
+  }
+  return false;
 }
 
 function urlFromText(text: string): string | null {
@@ -508,6 +595,15 @@ function hasProhibitedDeviceActionRequest(text: string): boolean {
     deviceActionPattern.test(normalized) &&
     /\b(?:not|never)\b/.test(normalized)
   );
+}
+
+function requestsJsonResponse(text: string): boolean {
+  return /\b(?:return|respond|reply|output|provide|produce|format|write|give|create|make|generate)\b[\s\S]{0,80}\bjson\b/i.test(text) ||
+    /\b(?:need|want|require|would\s+like)\s+(?:a\s+|an\s+|the\s+)?(?:valid\s+|raw\s+)?json\b/i.test(text) ||
+    /\b(?:need|want|require|would\s+like)\b[\s\S]{0,80}\bjson\b[\s\S]{0,80}\b(?:object|format|response|reply|output|with|containing|including|include|field|key|property)\b/i.test(text) ||
+    /\b(?:show|display|print)\s+(?:me\s+)?(?:the\s+)?json\b/i.test(text) ||
+    /\bjson\b[\s\S]{0,48}\b(?:object|format|response|reply|output|with|containing|including|include|field|key|property)\b/i.test(text) ||
+    /\b(?:as|valid)\s+json\b/i.test(text);
 }
 
 function toolMessageTextContent(content: unknown): string {
@@ -641,6 +737,37 @@ function normalizeToolCallFunction(
   };
 }
 
+function enrichDaemonToolCallsFromRequest(
+  toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[],
+  requestText: string,
+): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] {
+  const safeToolCalls = toolCalls.filter((toolCall) => {
+    if (toolCall.function.name !== "daemon_action") return true;
+    const args = toolArgumentsObject(toolCall.function.arguments);
+    if (!args || args.action !== "android_open_app") return true;
+    const packageName = typeof args.packageName === "string"
+      ? packageNameFromAlias(args.packageName)
+      : inferAllowedPackageNameFromText(requestText);
+    return !!packageName && !packageTargetNegatedInText(requestText, packageName);
+  });
+  const packageName = inferAllowedPackageNameFromText(requestText);
+  if (!packageName) return safeToolCalls;
+
+  return safeToolCalls.map((toolCall) => {
+    if (toolCall.function.name !== "daemon_action") return toolCall;
+    const args = toolArgumentsObject(toolCall.function.arguments);
+    if (!args || args.action !== "android_open_app" || args.packageName) return toolCall;
+
+    return {
+      ...toolCall,
+      function: {
+        ...toolCall.function,
+        arguments: JSON.stringify(normalizeDaemonActionArguments({ ...args, packageName })),
+      },
+    };
+  });
+}
+
 function generatedToolCallId(index: number): string {
   return `phone_gemma_call_${Date.now().toString(36)}_${index}`;
 }
@@ -720,7 +847,10 @@ function recoverRequiredDaemonActionFromRequest(
   };
 }
 
-function parseLocalGemmaStructuredOutput(raw: string): LocalGemmaStructuredOutput {
+function parseLocalGemmaStructuredOutput(
+  raw: string,
+  options: { preserveWholeJson?: boolean } = {},
+): LocalGemmaStructuredOutput {
   const parsed = extractJsonObject(raw);
   if (!parsed || typeof parsed !== "object") {
     return { type: "final", content: raw.trim() };
@@ -729,7 +859,7 @@ function parseLocalGemmaStructuredOutput(raw: string): LocalGemmaStructuredOutpu
   const data = parsed as Record<string, unknown>;
   const type = typeof data.type === "string" ? data.type : "";
   if (type === "final") {
-    return { type: "final", content: String(data.content ?? data.text ?? "").trim() };
+    return { type: "final", content: jsonEnvelopeText(data) ?? raw.trim() };
   }
 
   const rawToolCalls = Array.isArray(data.tool_calls)
@@ -759,7 +889,35 @@ function parseLocalGemmaStructuredOutput(raw: string): LocalGemmaStructuredOutpu
     return { type: "tool_calls", toolCalls };
   }
 
-  return { type: "final", content: raw.trim() };
+  return { type: "final", content: localGemmaFinalText(raw, options) };
+}
+
+function localGemmaFinalText(raw: string, options: { preserveWholeJson?: boolean } = {}): string {
+  const data = parseWholeJsonObject(raw);
+  if (!data) {
+    return raw.trim();
+  }
+
+  if (data.type === "tool_calls" || Array.isArray(data.tool_calls) || Array.isArray(data.toolCalls)) {
+    return raw.trim();
+  }
+
+  if (options.preserveWholeJson) {
+    return raw.trim();
+  }
+
+  return jsonEnvelopeText(data) ?? raw.trim();
+}
+
+function jsonEnvelopeText(data: Record<string, unknown>): string | null {
+  for (const key of ["content", "response", "reply", "text", "message", "error"]) {
+    const value = data[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return null;
 }
 
 function parameterNames(
@@ -1045,13 +1203,26 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       throw new Error("Phone Gemma finished without response text. The phone-local model may have been interrupted or run out of memory; retry after closing other apps.");
     }
 
+    const requestText = latestUserText(params.messages);
+    const preserveRequestedJson = requestsJsonResponse(requestText) || isJsonObjectResponseFormat(params.responseFormat);
     if (useToolProtocol) {
-      const parsed = parseLocalGemmaStructuredOutput(text);
+      const parsed = parseLocalGemmaStructuredOutput(text, { preserveWholeJson: preserveRequestedJson });
       if (parsed.type === "tool_calls") {
-        if (parsed.toolCalls.length === 0) {
+        const toolCalls = enrichDaemonToolCallsFromRequest(parsed.toolCalls, requestText);
+        if (toolCalls.length === 0) {
+          if (hasProhibitedDeviceActionRequest(requestText)) {
+            yield { type: "text", delta: "No device action was run." };
+            yield { type: "finish", reason: "stop" };
+            return;
+          }
+          if (/\b(?:open|launch|start)\b/i.test(requestText) && inferPackageNamesFromText(requestText).length > 1) {
+            yield { type: "text", delta: "I need one app target at a time for local app opening." };
+            yield { type: "finish", reason: "stop" };
+            return;
+          }
           throw new Error("Phone Gemma returned a tool-call response without a valid local tool call.");
         }
-        for (const [index, toolCall] of parsed.toolCalls.entries()) {
+        for (const [index, toolCall] of toolCalls.entries()) {
           yield {
             type: "tool_call_start",
             index,
@@ -1095,7 +1266,10 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       }
     }
 
-    yield { type: "text", delta: text };
+    yield {
+      type: "text",
+      delta: localGemmaFinalText(text, { preserveWholeJson: preserveRequestedJson }),
+    };
     yield { type: "finish", reason: finishReasonFromDaemonData(result.data) };
   }
 }
