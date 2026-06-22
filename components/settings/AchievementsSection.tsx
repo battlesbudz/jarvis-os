@@ -3,17 +3,12 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 import {
-  ALL_BADGES,
-  getAvailableRewards,
-  getLevel,
-  getLevelName,
-  getLifetimeXp,
-  getXpForNextLevel,
   TIER_COLORS,
   type Reward,
   type UserStats,
 } from '@/lib/storage';
 import { SectionHeader } from './SettingsSectionChrome';
+import { buildAchievementsSectionModel } from './achievementsModel';
 
 type AchievementsSectionProps = {
   stats: UserStats;
@@ -21,13 +16,15 @@ type AchievementsSectionProps = {
 };
 
 export function AchievementsSection({ stats, onRewardPress }: AchievementsSectionProps) {
-  const lifetimeXp = getLifetimeXp(stats);
-  const level = getLevel(lifetimeXp);
-  const levelName = getLevelName(lifetimeXp);
-  const xpInfo = getXpForNextLevel(lifetimeXp);
-  const xpProgress = xpInfo.progress;
-  const availableRewards = getAvailableRewards(lifetimeXp);
-  const earnedBadges = (stats.badges ?? []).map(id => ALL_BADGES.find(b => b.id === id)).filter(Boolean);
+  const {
+    lifetimeXp,
+    level,
+    levelName,
+    xpInfo,
+    xpProgress,
+    availableRewards,
+    earnedBadges,
+  } = buildAchievementsSectionModel(stats);
 
   return (
     <>

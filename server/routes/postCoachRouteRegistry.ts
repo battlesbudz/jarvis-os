@@ -48,33 +48,57 @@ interface PostCoachRouteRegistryDeps { openai: OpenAI; authMiddleware: RequestHa
 
 export async function registerPostCoachRoutes(app: Express, { openai, authMiddleware }: PostCoachRouteRegistryDeps): Promise<void> {
   registerCommitmentRoutes(app, openai);
-  for (const register of [
-    registerCoachMorningBriefRoute, registerAuthenticatedCoachRuntimeRoutes, registerRuntimeDiagnosticsRoutes,
-    registerInboxRoutes, registerProfileMemoryRoutes, registerPredictionRoutes, registerPreferenceRoutes,
-    registerMorningVoiceNoteRoutes, registerScheduledTaskBasicRoutes, registerJarvisObservabilityRoutes,
-    registerScheduledTaskAttentionRoutes, registerScheduledTaskRunRoutes, registerJarvisSystemStateRoutes,
-    registerGoalTreeCoreRoutes, registerGoalPacingRoutes, registerGoalTaskHandoffRoutes, registerAgentJobMutationRoutes,
-    registerAgentJobQueryRoutes, registerDeliverableRoutes,
-  ]) register(app);
+
+  registerCoachMorningBriefRoute(app);
+  registerAuthenticatedCoachRuntimeRoutes(app);
+  registerRuntimeDiagnosticsRoutes(app);
+  registerInboxRoutes(app);
+
   registerCoachWeeklyReviewRoute(app, openai);
+
+  registerProfileMemoryRoutes(app);
+  registerPredictionRoutes(app);
+  registerPreferenceRoutes(app);
+  registerMorningVoiceNoteRoutes(app);
+  registerScheduledTaskBasicRoutes(app);
+  registerJarvisObservabilityRoutes(app);
+  registerScheduledTaskAttentionRoutes(app);
+  registerScheduledTaskRunRoutes(app);
+  registerJarvisSystemStateRoutes(app);
+  registerGoalTreeCoreRoutes(app);
+  registerGoalPacingRoutes(app);
+  registerGoalTaskHandoffRoutes(app);
+  registerAgentJobMutationRoutes(app);
+  registerAgentJobQueryRoutes(app);
+  registerDeliverableRoutes(app);
 
   const { registerDeliverableReviewRoutes } = await import("../agent/deliverableReviewHttpRoutes");
   registerDeliverableReviewRoutes(app, { db });
 
+  registerDocumentRoutes(app);
+  registerWebsiteCrawlRoutes(app);
   registerChatGptImportRoutes(app, openai);
-  for (const register of [
-    registerDocumentRoutes, registerWebsiteCrawlRoutes, registerNervousSystemWatchRoutes, registerGutRoutes,
-    registerSettingsRoutes, registerSkillStoreRoutes, registerUserSkillLibraryRoutes, registerUserSkillMutationRoutes,
-    registerSkillCandidateRoutes, registerIntegrationsStatusRoutes, registerDiagnosticsRoutes, registerLocalWorkerRoutes,
-  ]) register(app);
+  registerNervousSystemWatchRoutes(app);
+  registerGutRoutes(app);
+  registerSettingsRoutes(app);
+
   registerOpenAIProviderAuthRoutes(app, {
     includeCallbackRoutes: false,
     resolveUserId: getUserIdFromRequest,
   });
+
+  registerSkillStoreRoutes(app);
+  registerUserSkillLibraryRoutes(app);
+  registerUserSkillMutationRoutes(app);
+  registerSkillCandidateRoutes(app);
+  registerIntegrationsStatusRoutes(app);
+  registerDiagnosticsRoutes(app);
+  registerLocalWorkerRoutes(app);
   registerMcpRoutes(app, authMiddleware);
   registerVoiceRoutes(app, authMiddleware);
-  for (const register of [
-    registerWriteSafetyRoutes, registerButtonLocationRoutes, registerGitHubSettingsRoutes, registerGitHubDeviceRoutes,
-  ]) register(app);
+  registerWriteSafetyRoutes(app);
+  registerButtonLocationRoutes(app);
+  registerGitHubSettingsRoutes(app);
+  registerGitHubDeviceRoutes(app);
   registerCapabilityGapRoutes(app, authMiddleware);
 }
