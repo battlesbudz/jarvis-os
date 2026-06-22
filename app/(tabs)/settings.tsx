@@ -60,6 +60,13 @@ import { SubsystemErrorSheet } from '@/components/settings/SubsystemErrorSheet';
 import { BuildHistorySection } from '@/components/settings/BuildHistorySection';
 import { WakeWordSection } from '@/components/settings/WakeWordSection';
 import { drStyles } from '@/components/settings/diagnosticsRunStyles';
+import type {
+  BuildLogEntry,
+  CatalogProvider,
+  McpServerInfo,
+  OpenAIProviderAuthStatus,
+  TelegramStatus,
+} from '@/components/settings/settingsTypes';
 import {
   CONNECTION_APPS,
   getConnectionStatusLabel,
@@ -88,84 +95,6 @@ import {
   type LocalGemmaModelStatus,
   type PhoneGemmaValidationProfile,
 } from '@/lib/phone-gemma-runtime';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
-
-interface OAuthProviderStatus {
-  connected: boolean;
-  email?: string;
-  accounts?: { email: string; scopes?: string }[];
-}
-
-interface BuildLogEntry {
-  id: string;
-  featureName: string;
-  description: string;
-  outputCode: string;
-  success: boolean;
-  smokeTestPassed: boolean | null;
-  smokeTestArgs: Record<string, unknown> | null;
-  createdAt: string;
-}
-
-interface TelegramStatus {
-  connected: boolean;
-  username: string | null;
-  configured: boolean;
-  botUsername?: string | null;
-}
-
-interface McpServerInfo {
-  id: string;
-  name: string;
-  transport: 'stdio' | 'http';
-  command: string | null;
-  url: string | null;
-  enabled: boolean;
-  isBuiltIn: boolean;
-  connected: boolean;
-  toolCount: number;
-  error?: string;
-  isSystem: boolean;
-  credentialMode?: 'direct' | 'env-ref';
-  envKey?: string | null;
-}
-
-type OpenAIProviderAuthType = 'api_key' | 'oauth' | 'local';
-interface OpenAIProviderAuthTypeStatus {
-  connected: boolean;
-  isDefault: boolean;
-  email?: string;
-  accountId?: string;
-  expiresAt?: string;
-}
-interface OpenAIProviderAuthStatus {
-  providerCatalog?: CatalogProvider[];
-  providers?: Record<string, ProviderAuthProviderStatus>;
-  openai: {
-    connected: boolean;
-    defaultAuthType: OpenAIProviderAuthType | null;
-    fallbackEnabled: boolean;
-    authTypes: Partial<Record<OpenAIProviderAuthType, OpenAIProviderAuthTypeStatus>>;
-  };
-}
-interface ProviderAuthProviderStatus {
-  connected: boolean;
-  defaultAuthType: OpenAIProviderAuthType | null;
-  fallbackEnabled?: boolean;
-  authTypes: Partial<Record<OpenAIProviderAuthType, OpenAIProviderAuthTypeStatus>>;
-}
-interface CatalogProvider {
-  id: string;
-  label: string;
-  shortLabel: string;
-  description: string;
-  credentialKinds: Array<'api_key' | 'oauth' | 'local'>;
-  apiKeyPlaceholder?: string;
-  setupHint: string;
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Section header component
