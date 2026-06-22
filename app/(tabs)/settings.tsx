@@ -1453,7 +1453,7 @@ export default function SettingsScreen() {
   const refreshAndroidAssistantStatus = useCallback(async () => {
     const next = await getAndroidDaemonStatus();
     setAndroidAssistantStatus(next);
-    setAndroidDaemonConnected(next.connected);
+    setAndroidDaemonConnected(prev => prev || next.connected);
     return next;
   }, []);
 

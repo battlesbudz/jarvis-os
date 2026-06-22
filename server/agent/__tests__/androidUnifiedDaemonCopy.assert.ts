@@ -154,6 +154,12 @@ assert.match(
 
 assert.match(
   settingsSource,
+  /setAndroidDaemonConnected\(prev => prev \|\| next\.connected\)/,
+  "Settings native status refresh should not clear a server-connected Android daemon.",
+);
+
+assert.match(
+  settingsSource,
   /androidDaemonNeedsAccessibility/,
   "Settings should not treat a connected phone as ready when Accessibility is still off.",
 );
