@@ -103,6 +103,7 @@ import { executeCoachYoutubeSearch } from "./services/coachYoutubeSearch";
 import { openCoachSse, writeCoachStreamError } from "./services/coachSse";
 import { buildCoachPostTranscriptTools, coachFunctionTool } from "./services/coachToolDefinitions";
 import { buildCoreCoachTools } from "./services/coreCoachTools";
+import { buildConnectedServiceCoachTools } from "./services/connectedServiceCoachTools";
 import {
   buildCoachSystemPrompt,
   getMorningNoteSummary,
@@ -166,76 +167,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   const coachTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     ...buildCoreCoachTools(),
-    coachFunctionTool({
-        name: "check_connections",
-        description: "Check which external accounts and channels the user has connected (Google/Gmail/Calendar, Microsoft/Outlook, Telegram, WhatsApp, Discord, Desktop Daemon). Always call this before claiming a service is or isn't available.",
-        parameters: { type: "object", properties: {} },
-    }),
-    coachFunctionTool({
-        name: "generate_reconnect_link",
-        description: "Generate a fresh OAuth authorization URL so the user can reconnect a disconnected Google or Microsoft account. Returns a tappable link button. Use after check_connections confirms the service is not connected.",
-        parameters: {
-          type: "object",
-          properties: {
-            provider: { type: "string", enum: ["google", "microsoft"], description: "Which provider to reconnect" },
-          },
-          required: ["provider"],
-        },
-    }),
-    coachFunctionTool({
-        name: "create_calendar_event",
-        description: "Create a calendar event on the user's Google or Outlook calendar. Use when the user asks to schedule or block time. start and end must be ISO 8601 datetime strings.",
-        parameters: {
-          type: "object",
-          properties: {
-            title: { type: "string", description: "Event title" },
-            start: { type: "string", description: "Start datetime ISO 8601 (e.g. '2025-04-22T14:00:00Z')" },
-            end: { type: "string", description: "End datetime ISO 8601 (e.g. '2025-04-22T15:00:00Z')" },
-            description: { type: "string", description: "Optional event notes" },
-            location: { type: "string", description: "Optional location or video link" },
-            provider: { type: "string", enum: ["google", "microsoft"], description: "Calendar provider, default 'google'" },
-          },
-          required: ["title", "start", "end"],
-        },
-    }),
-    coachFunctionTool({
-        name: "fetch_calendar",
-        description: "Fetch the user's Google Calendar events for a given day or date range. Use whenever the user asks about their schedule, meetings, availability, or what's coming up. Returns events with title, time, and location.",
-        parameters: {
-          type: "object",
-          properties: {
-            date: { type: "string", description: "ISO date YYYY-MM-DD. Defaults to today if omitted." },
-            days: { type: "number", description: "Number of consecutive days to fetch starting from date. Default 1, max 14." },
-          },
-        },
-    }),
-    coachFunctionTool({
-        name: "fetch_emails",
-        description: "Fetch recent emails on demand. Use when the user asks about their inbox beyond what's already in the system context. provider: 'google' (Gmail) or 'microsoft' (Outlook). count: number of emails to fetch (default 10, max 25).",
-        parameters: {
-          type: "object",
-          properties: {
-            provider: { type: "string", enum: ["google", "microsoft"], description: "Email provider" },
-            count: { type: "number", description: "Number of emails to fetch (max 25)" },
-          },
-          required: ["provider"],
-        },
-    }),
-    coachFunctionTool({
-        name: "send_email",
-        description: "Send an email immediately via Gmail or Outlook. Only use after the user explicitly confirms they want to send. Requires Google or Microsoft to be connected. If the user has multiple Google accounts, pass accountHint with the sender email address to select the correct account.",
-        parameters: {
-          type: "object",
-          properties: {
-            to: { type: "string", description: "Recipient email address" },
-            subject: { type: "string", description: "Email subject" },
-            body: { type: "string", description: "Email body (plain text)" },
-            provider: { type: "string", enum: ["google", "microsoft"], description: "Which provider to use, default 'google'" },
-            accountHint: { type: "string", description: "Optional sender account email to disambiguate when multiple accounts are connected (e.g. 'alice@gmail.com')" },
-          },
-          required: ["to", "subject", "body"],
-        },
-    }),
+    ...buildConnectedServiceCoachTools(),
     coachFunctionTool({
         name: "daemon_action",
         description: "Execute a sandboxed action on the user's paired daemon — either a desktop daemon or an Android device daemon. DESKTOP actions (when desktop daemon paired): shell, notify, file_read, file_write, file_list. ANDROID actions (when Android daemon paired): android_open_app (launch app by package name e.g. 'com.google.android.youtube'), android_browse (open URL in browser or app via deep link — for YouTube search use url='vnd.youtube://results?search_query=QUERY', for Google Maps use 'geo:0,0?q=QUERY', for Spotify use 'spotify:search:QUERY'), android_screenshot (capture screen), android_read_screen (read visible UI text), android_tap (tap at x/y), android_type (type text into focused field — set submit:true to also press Search/Go/Enter after typing), android_swipe (swipe gesture), android_press_key (back/home/recents/enter), android_file_list, android_file_read, android_notifications_list (read current phone notifications — checks server cache first; if cache is empty, AUTOMATICALLY swipes open the notification shade, reads the screen, then closes the shade; always returns real live data, never makes up notifications). CRITICAL RULES: (1) If this tool returns result:'error', STOP IMMEDIATELY and tell the user exactly what went wrong — do NOT proceed or pretend the action succeeded. (2) After android_open_app or android_browse succeeds, ALWAYS call android_read_screen next to confirm the screen state — NEVER describe app content or search results without first reading the screen. (3) For in-app searches (YouTube, Reddit, Maps, etc.) prefer android_browse with a deep link URL over open_app + navigate UI. Do NOT narrate what you plan to do before calling this tool — only confirm what actually happened after a successful result. Always call check_connections first to know which daemon type is paired.",
