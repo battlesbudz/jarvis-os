@@ -636,6 +636,88 @@ async function testAndroidLocalGemmaNormalizesDirectDaemonActionToolNames() {
   }
 }
 
+async function testAndroidLocalGemmaNormalizesViewScreenshotToolAlias() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "android_view_screenshot", arguments: {} }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Take a screenshot." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_screenshot"}');
+    console.log("OK: Android Local Gemma normalizes android_view_screenshot to daemon screenshot");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaRecoversScreenshotFromUnavailableToolName() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "google_search", arguments: { query: "screenshot" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Take a screenshot" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "daemon_action");
+    assert.equal(result.toolCallList[0].function.arguments, '{"action":"android_screenshot"}');
+    console.log("OK: Android Local Gemma recovers screenshot requests from unavailable tool names");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaNormalizesDirectAppAliasToolNames() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -2850,6 +2932,93 @@ async function testAndroidLocalGemmaDoesNotThrowInvalidLocalToolForPlainIdentity
   }
 }
 
+async function testAndroidLocalGemmaRecoversMemorySearchFromIdentityToolHallucination() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "identify_user", arguments: {} }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "What's my name?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "memory_search",
+          description: "Search user memory.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" }, limit: { type: "number" } },
+            required: ["query"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "memory_search");
+    assert.equal(result.toolCallList[0].function.arguments, '{"query":"user name identity nickname profile who am i"}');
+    console.log("OK: Android Local Gemma recovers identity hallucinations to memory_search");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaRecoversMemorySearchFromRequiredIdentityFinalAnswer() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I do not know who you are." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Who am I?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "memory_search",
+          description: "Search user memory.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" }, limit: { type: "number" } },
+            required: ["query"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "memory_search");
+    assert.equal(result.toolCallList[0].function.arguments, '{"query":"user name identity nickname profile who am i"}');
+    console.log("OK: Android Local Gemma forces memory_search before identity final answers");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaPreservesToolFinalLengthFinishReason() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -3128,6 +3297,8 @@ async function main() {
   await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
   await testAndroidLocalGemmaNormalizesDaemonAppAliases();
   await testAndroidLocalGemmaNormalizesDirectDaemonActionToolNames();
+  await testAndroidLocalGemmaNormalizesViewScreenshotToolAlias();
+  await testAndroidLocalGemmaRecoversScreenshotFromUnavailableToolName();
   await testAndroidLocalGemmaNormalizesDirectAppAliasToolNames();
   await testAndroidLocalGemmaNormalizesDirectNotificationToolNames();
   await testAndroidLocalGemmaNormalizesEveryDirectDaemonActionName();
@@ -3177,6 +3348,8 @@ async function main() {
   await testAndroidLocalGemmaExtractsEmbeddedProtocolFinalReplies();
   await testAndroidLocalGemmaRejectsFinalAnswerWhenLocalToolRequired();
   await testAndroidLocalGemmaDoesNotThrowInvalidLocalToolForPlainIdentityQuestion();
+  await testAndroidLocalGemmaRecoversMemorySearchFromIdentityToolHallucination();
+  await testAndroidLocalGemmaRecoversMemorySearchFromRequiredIdentityFinalAnswer();
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
   await testAndroidLocalGemmaExplainsUnbundledEngine();

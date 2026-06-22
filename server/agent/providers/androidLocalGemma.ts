@@ -50,6 +50,8 @@ const ANDROID_DAEMON_ACTION_ALIASES: Record<string, string> = {
   screen_shot: "android_screenshot",
   take_screenshot: "android_screenshot",
   capture_screen: "android_screenshot",
+  view_screenshot: "android_screenshot",
+  android_view_screenshot: "android_screenshot",
   read_screen: "android_read_screen",
   screen_reader: "android_read_screen",
   inspect_screen: "android_read_screen",
@@ -257,15 +259,24 @@ function truncateText(value: string | undefined, maxChars: number): string {
   return `${text.slice(0, Math.max(0, maxChars - 1)).trimEnd()}...`;
 }
 
-function truncateTextMiddle(value: string, maxChars: number): string {
+function truncateTextMiddle(value: string, maxChars: number, headRatio = 0.55): string {
   const text = value.replace(/\s+/g, " ").trim();
   if (text.length <= maxChars) return text;
   if (maxChars <= 12) return truncateText(text, maxChars);
   const marker = " ... ";
   const available = maxChars - marker.length;
-  const headChars = Math.ceil(available * 0.55);
+  const headChars = Math.ceil(available * headRatio);
   const tailChars = Math.max(0, available - headChars);
   return `${text.slice(0, headChars).trimEnd()}${marker}${text.slice(text.length - tailChars).trimStart()}`;
+}
+
+function truncatePromptSection(
+  section: { role: string; text: string },
+  maxChars: number,
+): string {
+  if (section.role === "user") return truncateTextMiddle(section.text, maxChars, 0.78);
+  if (section.role === "tool") return truncateTextMiddle(section.text, maxChars, 0.35);
+  return truncateTextMiddle(section.text, maxChars);
 }
 
 function latestUserText(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): string {
@@ -341,6 +352,7 @@ function shouldUseLocalToolProtocol(params: ProviderQueryParams): boolean {
   return hasActiveToolContinuation(params.messages) ||
     looksLikeLocalToolRequest(latest) ||
     looksLikeUrlToolRequest(latest) ||
+    (hasFunctionTool(params.tools, "memory_search") && looksLikeMemoryLookupRequest(latest)) ||
     isToolConfirmationTurn(params.messages);
 }
 
@@ -393,7 +405,7 @@ function formatPromptSections(
   if (tailSections.length > 0) {
     const separatorChars = Math.max(0, tailSections.length - 1) * 10;
     const perSectionBudget = Math.max(MIN_TAIL_PROMPT_SECTION_CHARS, Math.floor((remainingBudget - separatorChars) / tailSections.length));
-    const renderedTail = tailSections.map((section) => truncateTextMiddle(section.text, perSectionBudget));
+    const renderedTail = tailSections.map((section) => truncatePromptSection(section, perSectionBudget));
     kept.push(...renderedTail);
     used = renderedTail.join("\n\n---\n\n").length;
   }
@@ -833,6 +845,69 @@ function hasDaemonActionTool(tools: ProviderQueryParams["tools"]): boolean {
   return hasFunctionTool(tools, "daemon_action");
 }
 
+function availableFunctionToolNames(tools: ProviderQueryParams["tools"]): Set<string> {
+  return new Set((tools || [])
+    .filter(isFunctionTool)
+    .map((tool) => tool.function.name));
+}
+
+function filterToolCallsToAvailableTools(
+  params: ProviderQueryParams,
+  toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[],
+): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] {
+  if (!params.tools?.length) return toolCalls;
+  const available = availableFunctionToolNames(params.tools);
+  if (available.size === 0) return [];
+  return toolCalls.filter((toolCall) => available.has(toolCall.function.name));
+}
+
+function looksLikeMemoryLookupRequest(text: string): boolean {
+  return /\b(?:memory|memories|remember|recall|what do you know about me|what have i told you|about me|living context)\b/i.test(text) ||
+    /\bwhat(?:'s| is)\s+my\s+(?:name|nickname)\b/i.test(text) ||
+    /\bwhat\s+(?:name|nickname)\s+should\s+you\s+call\s+me\b/i.test(text) ||
+    /\bwhat\s+should\s+you\s+call\s+me\b/i.test(text) ||
+    /\bdo\s+you\s+know\s+my\s+(?:name|nickname)\b/i.test(text) ||
+    /\bwho\s+am\s+i\b/i.test(text);
+}
+
+function memorySearchQueryFromRequest(text: string): string {
+  if (
+    /\bwho\s+am\s+i\b/i.test(text) ||
+    /\bwhat(?:'s| is)\s+my\s+(?:name|nickname)\b/i.test(text) ||
+    /\bwhat\s+(?:name|nickname)\s+should\s+you\s+call\s+me\b/i.test(text) ||
+    /\bwhat\s+should\s+you\s+call\s+me\b/i.test(text) ||
+    /\bdo\s+you\s+know\s+my\s+(?:name|nickname)\b/i.test(text)
+  ) {
+    return "user name identity nickname profile who am i";
+  }
+  return truncateText(text.trim(), 500);
+}
+
+function recoverRequiredMemorySearchFromRequest(
+  params: ProviderQueryParams,
+): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
+  if (params.toolChoice !== "required" || !hasFunctionTool(params.tools, "memory_search")) return null;
+  const requestText = latestUserText(params.messages).trim();
+  if (!requestText || !looksLikeMemoryLookupRequest(requestText)) return null;
+
+  return {
+    id: generatedToolCallId(0),
+    type: "function",
+    function: {
+      name: "memory_search",
+      arguments: JSON.stringify({ query: memorySearchQueryFromRequest(requestText) }),
+    },
+  };
+}
+
+function recoverRequiredToolCallFromRequest(
+  params: ProviderQueryParams,
+  finalContent = "",
+): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
+  return recoverRequiredDaemonActionFromRequest(params, finalContent) ||
+    recoverRequiredMemorySearchFromRequest(params);
+}
+
 function recoverRequiredDaemonActionFromRequest(
   params: ProviderQueryParams,
   finalContent = "",
@@ -1092,18 +1167,16 @@ function toolPromptFromParams(params: ProviderQueryParams): string {
   const requestText = latestUserText(params.messages);
   const promptBudget = phoneGemmaPromptCharBudget();
   const baseIntro = [
-    "You are Jarvis running entirely through Android Local Gemma on the user's phone.",
-    "Return ONLY one JSON object, with no markdown or extra text.",
-    "Jarvis executes requested local tools and sends tool results back; tool results are authoritative.",
-    "Tool use shape:",
-    `{"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
-    "Final answer shape:",
-    `{"type":"final","content":"your reply to the user"}`,
+    "You are Jarvis running entirely through Android Local Gemma on the user's phone; Gemma is the engine, not your name.",
+    "Return ONLY one JSON object. Tool results are authoritative.",
+    "Call only Available tools; never invent names like identify_user, google_search, or android_view_screenshot.",
+    `Tool call: {"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
+    `Final: {"type":"final","content":"your reply to the user"}`,
     params.toolChoice === "required"
       ? "A tool call is required for this turn. Do not return a final answer."
       : "Use tools only when they are necessary to satisfy the user's request.",
   ].join("\n");
-  const toolListBudget = promptBudget - baseIntro.length - MIN_REQUIRED_PROMPT_SECTION_CHARS - 48;
+  const toolListBudget = promptBudget - baseIntro.length - MIN_REQUIRED_PROMPT_SECTION_CHARS - 96;
   const toolSpecs = toolSpecsForPrompt(params.tools, requestText, toolListBudget);
   const intro = [
     baseIntro,
@@ -1123,7 +1196,8 @@ function toolPromptFromParams(params: ProviderQueryParams): string {
 
 function chatPromptFromParams(params: ProviderQueryParams): string {
   const intro = [
-    "You are Jarvis running entirely through Android Local Gemma on the user's phone.",
+    "You are Jarvis running entirely through Android Local Gemma on the user's phone; Gemma is the engine, not your name.",
+    "You are the user's Jarvis assistant.",
     "Answer directly and keep the response useful. Do not claim that a cloud model handled this turn.",
     params.tools?.length && params.toolChoice !== "none"
       ? "Local Jarvis tools are available for explicit device-control requests, but this turn should be answered normally unless a tool is actually needed."
@@ -1262,9 +1336,12 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
     if (useToolProtocol) {
       const parsed = parseLocalGemmaStructuredOutput(text, { preserveWholeJson: preserveRequestedJson });
       if (parsed.type === "tool_calls") {
-        const toolCalls = enrichDaemonToolCallsFromRequest(parsed.toolCalls, requestText);
+        const toolCalls = filterToolCallsToAvailableTools(
+          params,
+          enrichDaemonToolCallsFromRequest(parsed.toolCalls, requestText),
+        );
         if (toolCalls.length === 0) {
-          const recoveredToolCall = recoverRequiredDaemonActionFromRequest(params);
+          const recoveredToolCall = recoverRequiredToolCallFromRequest(params);
           if (recoveredToolCall) {
             yield {
               type: "tool_call_start",
@@ -1315,7 +1392,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       }
 
       if (params.toolChoice === "required") {
-        const recoveredToolCall = recoverRequiredDaemonActionFromRequest(params, parsed.content);
+        const recoveredToolCall = recoverRequiredToolCallFromRequest(params, parsed.content);
         if (recoveredToolCall) {
           yield {
             type: "tool_call_start",
