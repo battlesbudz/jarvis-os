@@ -202,6 +202,10 @@ function extractApiError(error: any, fallback: string): string {
   return raw || fallback;
 }
 
+function androidDaemonServerConnectedFromChannels(channelsRes: any): boolean {
+  return channelsRes?.meta?.android_daemon?.connected ?? channelsRes?.android_daemon_connected ?? false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Screen
 // ─────────────────────────────────────────────────────────────────────────────
@@ -229,6 +233,7 @@ export default function SettingsScreen() {
   const [integrationErrors, setIntegrationErrors] = useState<Record<string, string | null>>({});
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [androidDaemonConnected, setAndroidDaemonConnected] = useState(false);
+  const [androidDaemonServerConnected, setAndroidDaemonServerConnected] = useState(false);
   const [androidDaemonBusy, setAndroidDaemonBusy] = useState(false);
   const [androidDaemonError, setAndroidDaemonError] = useState<string | null>(null);
   const [androidAssistantStatus, setAndroidAssistantStatus] = useState<AndroidDaemonStatus | null>(null);
@@ -1071,10 +1076,10 @@ export default function SettingsScreen() {
       configured: telegramRes.configured ?? false,
       botUsername: telegramRes.botUsername ?? null,
     });
-    const serverAndroidDaemonConnected =
-      channelsRes?.meta?.android_daemon?.connected ?? channelsRes?.android_daemon_connected ?? false;
+    const serverAndroidDaemonConnected = androidDaemonServerConnectedFromChannels(channelsRes);
     const nativeAndroidDaemonStatus = await getAndroidDaemonStatus().catch(() => null);
     setAndroidAssistantStatus(nativeAndroidDaemonStatus);
+    setAndroidDaemonServerConnected(serverAndroidDaemonConnected);
     setAndroidDaemonConnected(serverAndroidDaemonConnected || nativeAndroidDaemonStatus?.connected === true);
     if (connectionsRes) setConnectionsStatus(normalizeConnectionsStatus(connectionsRes));
     if (integrationRes && typeof integrationRes === 'object') {
@@ -1451,11 +1456,24 @@ export default function SettingsScreen() {
 
   // ── Android Daemon ──
   const refreshAndroidAssistantStatus = useCallback(async () => {
-    const next = await getAndroidDaemonStatus();
-    setAndroidAssistantStatus(next);
-    setAndroidDaemonConnected(prev => prev || next.connected);
-    return next;
-  }, []);
+    const [nativeResult, channelsResult] = await Promise.allSettled([
+      getAndroidDaemonStatus(),
+      apiRequest('GET', '/api/channels').then(r => r.ok ? r.json() : Promise.reject(r.status)),
+    ]);
+    const serverConnected = channelsResult.status === 'fulfilled'
+      ? androidDaemonServerConnectedFromChannels(channelsResult.value)
+      : androidDaemonServerConnected;
+    if (channelsResult.status === 'fulfilled') {
+      setAndroidDaemonServerConnected(serverConnected);
+    }
+    if (nativeResult.status === 'fulfilled') {
+      setAndroidAssistantStatus(nativeResult.value);
+      setAndroidDaemonConnected(serverConnected || nativeResult.value.connected);
+      return nativeResult.value;
+    }
+    setAndroidDaemonConnected(serverConnected);
+    throw nativeResult.reason;
+  }, [androidDaemonServerConnected]);
 
   useEffect(() => {
     if (Platform.OS !== 'android' || !AndroidDaemonNative) return;

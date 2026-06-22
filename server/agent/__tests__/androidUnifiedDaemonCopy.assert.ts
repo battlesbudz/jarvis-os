@@ -154,8 +154,14 @@ assert.match(
 
 assert.match(
   settingsSource,
-  /setAndroidDaemonConnected\(prev => prev \|\| next\.connected\)/,
-  "Settings native status refresh should not clear a server-connected Android daemon.",
+  /apiRequest\('GET', '\/api\/channels'\)/,
+  "Settings native status refresh should also refresh the server Android daemon channel state.",
+);
+
+assert.match(
+  settingsSource,
+  /setAndroidDaemonConnected\(serverConnected \|\| nativeResult\.value\.connected\)/,
+  "Settings native status refresh should merge server and native Android daemon state.",
 );
 
 assert.match(
