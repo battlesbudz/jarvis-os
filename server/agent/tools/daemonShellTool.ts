@@ -438,26 +438,11 @@ Results are cached for 500 ms, so two rapid calls will not double-count API usag
       };
     }
 
-    // Require both screenshot AND read_screen permissions since this tool
-    // internally calls android_screenshot and android_view_hierarchy.
-    const [screenshotAllowed, readAllowed] = await Promise.all([
-      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
+    const permissionDenied = await requireAndroidPermissions(ctx.userId, "android_screen_understand", [
+      { action: "android_screenshot", deniedLabel: "screenshot" },
+      { action: "android_read_screen", deniedLabel: "read_screen" },
     ]);
-    if (!screenshotAllowed) {
-      return {
-        ok: false,
-        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile     Connected Channels     Android Device     Permissions.",
-        label: "android_screen_understand: screenshot permission denied",
-      };
-    }
-    if (!readAllowed) {
-      return {
-        ok: false,
-        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile     Connected Channels     Android Device     Permissions.",
-        label: "android_screen_understand: read_screen permission denied",
-      };
-    }
+    if (permissionDenied) return permissionDenied;
 
     //        500ms cache check                                                                                                                                                             
     const cached = screenMapCache.get(ctx.userId);
@@ -6026,32 +6011,12 @@ Requires: android_screenshot, android_read_screen, and android_tap_type permissi
       };
     }
 
-    const [screenshotAllowed, readAllowed, tapAllowed] = await Promise.all([
-      isAndroidDaemonActionAllowed(ctx.userId, "android_screenshot"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen"),
-      isAndroidDaemonActionAllowed(ctx.userId, "android_tap_type"),
+    const permissionDenied = await requireAndroidPermissions(ctx.userId, "android_fill_form", [
+      { action: "android_screenshot", deniedLabel: "screenshot" },
+      { action: "android_read_screen", deniedLabel: "read_screen" },
+      { action: "android_tap_type", deniedLabel: "tap" },
     ]);
-    if (!screenshotAllowed) {
-      return {
-        ok: false,
-        content: "android_screenshot permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_fill_form: screenshot permission denied",
-      };
-    }
-    if (!readAllowed) {
-      return {
-        ok: false,
-        content: "android_read_screen permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_fill_form: read_screen permission denied",
-      };
-    }
-    if (!tapAllowed) {
-      return {
-        ok: false,
-        content: "android_tap_type permission is not enabled. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.",
-        label: "android_fill_form: tap permission denied",
-      };
-    }
+    if (permissionDenied) return permissionDenied;
 
     // ── Step 1: Capture a fresh ScreenMap at the start ─────────────────────────
     let screenElements: ScreenElement[] = [];
