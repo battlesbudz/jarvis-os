@@ -148,6 +148,12 @@ assert.match(
 
 assert.match(
   settingsSource,
+  /AppState\.addEventListener\('change'/,
+  "Settings should refresh Android Accessibility status when returning from system Settings.",
+);
+
+assert.match(
+  settingsSource,
   /androidDaemonNeedsAccessibility/,
   "Settings should not treat a connected phone as ready when Accessibility is still off.",
 );

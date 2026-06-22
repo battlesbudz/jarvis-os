@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   Switch,
   Alert,
+  AppState,
   TextInput,
   Linking,
 } from 'react-native';
@@ -212,7 +213,9 @@ export default function SettingsScreen() {
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const { scrollTo } = useLocalSearchParams<{ scrollTo?: string }>();
   const scrollViewRef = useRef<ScrollView>(null);
+  const appStateRef = useRef(AppState.currentState);
   const diagnosticsYRef = useRef(0);
+  const androidAccessibilityRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [highlightedIntegration, setHighlightedIntegration] = useState<string | null>(null);
 
   // ── Auth state ──
@@ -1447,6 +1450,34 @@ export default function SettingsScreen() {
   }, [refreshIntegrationHealth]);
 
   // ── Android Daemon ──
+  const refreshAndroidAssistantStatus = useCallback(async () => {
+    const next = await getAndroidDaemonStatus();
+    setAndroidAssistantStatus(next);
+    setAndroidDaemonConnected(next.connected);
+    return next;
+  }, []);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android' || !AndroidDaemonNative) return;
+
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      const previousState = appStateRef.current;
+      appStateRef.current = nextState;
+      if ((previousState === 'background' || previousState === 'inactive') && nextState === 'active') {
+        refreshAndroidAssistantStatus().catch(() => {});
+      }
+    });
+
+    return () => subscription.remove();
+  }, [refreshAndroidAssistantStatus]);
+
+  useEffect(() => () => {
+    if (androidAccessibilityRefreshTimerRef.current) {
+      clearTimeout(androidAccessibilityRefreshTimerRef.current);
+      androidAccessibilityRefreshTimerRef.current = null;
+    }
+  }, []);
+
   const handleAndroidDaemon = useCallback(async () => {
     if (androidDaemonConnected || androidDaemonBusy) return;
     setAndroidDaemonBusy(true);
@@ -1481,13 +1512,10 @@ export default function SettingsScreen() {
     setAndroidDaemonError(null);
     try {
       await AndroidDaemonNative.openAccessibilitySettings();
-      setTimeout(() => {
-        getAndroidDaemonStatus()
-          .then((next) => {
-            setAndroidAssistantStatus(next);
-            setAndroidDaemonConnected(next.connected);
-          })
-          .catch(() => {});
+      if (androidAccessibilityRefreshTimerRef.current) clearTimeout(androidAccessibilityRefreshTimerRef.current);
+      androidAccessibilityRefreshTimerRef.current = setTimeout(() => {
+        androidAccessibilityRefreshTimerRef.current = null;
+        refreshAndroidAssistantStatus().catch(() => {});
       }, 1000);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Open Android Accessibility settings and enable Jarvis Device Control.';
@@ -1496,7 +1524,7 @@ export default function SettingsScreen() {
     } finally {
       setAndroidDaemonBusy(false);
     }
-  }, []);
+  }, [refreshAndroidAssistantStatus]);
 
   const saveWakeSettings = useCallback(async (
     updates: { wakeWordEnabled?: boolean; talkModeEnabled?: boolean; wakeWords?: string[] }
@@ -1517,12 +1545,6 @@ export default function SettingsScreen() {
     setTalkModeEnabled(val);
     await saveWakeSettings({ talkModeEnabled: val });
   }, [saveWakeSettings]);
-
-  const refreshAndroidAssistantStatus = useCallback(async () => {
-    const next = await getAndroidDaemonStatus();
-    setAndroidAssistantStatus(next);
-    return next;
-  }, []);
 
   const openAndroidAssistantSettings = useCallback(async () => {
     if (Platform.OS !== 'android' || !AndroidDaemonNative?.openAssistantSettings) return;
