@@ -106,6 +106,7 @@ const tests = [
   { file: "server/agent/__tests__/memorySearchIdentityFallback.assert.ts" },
   { file: "server/agent/__tests__/memorySaveTool.assert.ts" },
   { file: "server/agent/__tests__/mindTraceContextPacks.test.ts" },
+  { file: "server/state/__tests__/stateCard.assert.ts" },
   { file: "server/core/protocol/__tests__/runtimeProtocol.test.ts" },
   { file: "server/core/protocol/__tests__/runtimeRedaction.test.ts" },
   { file: "server/core/runtime/__tests__/executeRuntimeEvent.test.ts" },

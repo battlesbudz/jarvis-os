@@ -32,6 +32,7 @@ This folder contains the public architecture, setup, operations, deployment, and
 
 - [`gbrain-implementation-plan.md`](gbrain-implementation-plan.md) - active implementation plan for the derived G-Brain second-brain layer.
 - [`gbrain-spec-sheet.md`](gbrain-spec-sheet.md) - implementation spec and contract sheet for G-Brain tables, adapter behavior, projection, retrieval, and maintenance.
+- [`memoryos-state-management-architecture.md`](memoryos-state-management-architecture.md) - model-agnostic state, profile, task, MemoryOS, state-card, and telemetry architecture.
 - [`memory-os-temporal-graph-plan.md`](memory-os-temporal-graph-plan.md) - broader Memory OS and temporal graph plan that G-Brain feeds into.
 - [`jarvis-wearable-os-master-roadmap.md`](jarvis-wearable-os-master-roadmap.md) - wearable/spatial/ambient OS roadmap.
 

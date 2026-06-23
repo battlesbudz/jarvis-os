@@ -484,6 +484,10 @@ async function testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp() {
     assert.equal(requests[0].op.type, "android_local_model_generate");
     assert.match(requests[0].op.requestId, /^phone-gemma-/);
     assert.equal(requests[0].op.model, "gemma-4-e4b-it");
+    assert.match(requests[0].op.prompt, /Jarvis Runtime State Card/);
+    assert.match(requests[0].op.prompt, /Assistant: Jarvis/);
+    assert.match(requests[0].op.prompt, /User id: user-phone/);
+    assert.match(requests[0].op.prompt, /Active model: gemma-4-e4b-it/);
     assert.match(requests[0].op.prompt, /system: Be concise\./);
     assert.match(requests[0].op.prompt, /user: Hello/);
     assert.equal(requests[0].op.contextTokens, 2048);
@@ -491,6 +495,44 @@ async function testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp() {
     assert.equal(requests[0].op.allowCpuFallback, false);
     assert.ok(requests[0].timeoutMs >= 60000);
     console.log("OK: Android Local Gemma provider sends generation to the Jarvis Android app daemon runtime");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaStateCardOmitsDisabledTools() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: "plain local answer", finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Hello" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "plain local answer");
+    assert.match(requests[0].op.prompt, /Jarvis Runtime State Card/);
+    assert.match(requests[0].op.prompt, /No tools supplied by this route/);
+    assert.doesNotMatch(requests[0].op.prompt, /daemon_action/);
+    console.log("OK: Android Local Gemma state card omits tools when tool choice is none");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -4453,6 +4495,7 @@ async function main() {
   await testGoogleToolResponseMapsOpenAIToolCallIdsToFunctionNames();
   await testOpenAICompatibleUsesLocalUserCredential();
   await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
+  await testAndroidLocalGemmaStateCardOmitsDisabledTools();
   await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
   await testAndroidLocalGemmaNormalizesDaemonAppAliases();
   await testAndroidLocalGemmaNormalizesDirectDaemonActionToolNames();
