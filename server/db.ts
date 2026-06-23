@@ -272,7 +272,6 @@ export async function ensureTablesExist() {
     await db.execute(sql`CREATE INDEX IF NOT EXISTS people_user_idx ON people(user_id)`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE people ADD COLUMN IF NOT EXISTS next_interaction_at TIMESTAMP`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE people ADD COLUMN IF NOT EXISTS upcoming_count INTEGER NOT NULL DEFAULT 0`).catch(handleSchemaStepError);
-    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS weekly_insights_user_week_idx ON weekly_insights(user_id, week_of)`).catch(handleSchemaStepError);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS jarvis_souls (
         user_id VARCHAR PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -314,7 +313,21 @@ export async function ensureTablesExist() {
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
-    await db.execute(sql`CREATE INDEX IF NOT EXISTS weekly_insights_user_week_idx ON weekly_insights(user_id, week_of)`).catch(handleSchemaStepError);
+    await db.execute(sql`
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1
+          FROM pg_class index_info
+          JOIN pg_index index_metadata ON index_metadata.indexrelid = index_info.oid
+          WHERE index_info.relname = 'weekly_insights_user_week_idx'
+            AND index_metadata.indisunique = FALSE
+        ) THEN
+          DROP INDEX weekly_insights_user_week_idx;
+        END IF;
+      END $$;
+    `).catch(handleSchemaStepError);
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS weekly_insights_user_week_idx ON weekly_insights(user_id, week_of)`).catch(handleSchemaStepError);
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS integration_owner (
@@ -1864,6 +1877,23 @@ export async function ensureTablesExist() {
     // ── LLM Wiki — Karpathy-style compounding knowledge base (Task #1126) ────
     // Add new columns to knowledge_vault_pages for wiki page types, cross-refs,
     // tags, and archiving. Remove 5-slug hard-coded constraint (schema-side only).
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS knowledge_vault_pages (
+        id           SERIAL    PRIMARY KEY,
+        user_id      VARCHAR   NOT NULL REFERENCES users(id),
+        slug         TEXT      NOT NULL,
+        title        TEXT      NOT NULL,
+        content      TEXT      NOT NULL,
+        page_type    VARCHAR   NOT NULL DEFAULT 'core',
+        tags         JSONB     NOT NULL DEFAULT '[]'::jsonb,
+        cross_refs   JSONB     NOT NULL DEFAULT '[]'::jsonb,
+        archived_at      TIMESTAMP,
+        last_accessed_at TIMESTAMP,
+        generated_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (user_id, slug)
+      )
+    `).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE knowledge_vault_pages ADD COLUMN IF NOT EXISTS page_type VARCHAR NOT NULL DEFAULT 'core'`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE knowledge_vault_pages ADD COLUMN IF NOT EXISTS tags JSONB NOT NULL DEFAULT '[]'::jsonb`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE knowledge_vault_pages ADD COLUMN IF NOT EXISTS cross_refs JSONB NOT NULL DEFAULT '[]'::jsonb`).catch(handleSchemaStepError);
@@ -1890,25 +1920,6 @@ export async function ensureTablesExist() {
     await db.execute(sql`
       CREATE INDEX IF NOT EXISTS wiki_lint_log_user_ran_idx
         ON wiki_lint_log (user_id, ran_at DESC)
-    `).catch(handleSchemaStepError);
-
-    // Ensure knowledge_vault_pages table exists (it may have been created via push earlier)
-    await db.execute(sql`
-      CREATE TABLE IF NOT EXISTS knowledge_vault_pages (
-        id           SERIAL    PRIMARY KEY,
-        user_id      VARCHAR   NOT NULL REFERENCES users(id),
-        slug         TEXT      NOT NULL,
-        title        TEXT      NOT NULL,
-        content      TEXT      NOT NULL,
-        page_type    VARCHAR   NOT NULL DEFAULT 'core',
-        tags         JSONB     NOT NULL DEFAULT '[]'::jsonb,
-        cross_refs   JSONB     NOT NULL DEFAULT '[]'::jsonb,
-        archived_at      TIMESTAMP,
-        last_accessed_at TIMESTAMP,
-        generated_at     TIMESTAMP NOT NULL DEFAULT NOW(),
-        updated_at       TIMESTAMP NOT NULL DEFAULT NOW(),
-        UNIQUE (user_id, slug)
-      )
     `).catch(handleSchemaStepError);
 
     await db.execute(sql`
