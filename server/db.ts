@@ -1429,6 +1429,18 @@ export async function ensureTablesExist() {
     `).catch(handleSchemaStepError);
 
     await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS agent_chat_sessions (
+        sdk_session_id VARCHAR PRIMARY KEY,
+        agent_id VARCHAR NOT NULL REFERENCES discord_agents(id) ON DELETE CASCADE,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        messages JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMP NOT NULL
+      )
+    `).catch(handleSchemaStepError);
+
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS agent_chat_session_summaries (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         sdk_session_id VARCHAR NOT NULL REFERENCES agent_chat_sessions(sdk_session_id) ON DELETE CASCADE,

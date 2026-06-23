@@ -24,6 +24,10 @@ assertOrdered(
   "CREATE TABLE IF NOT EXISTS knowledge_vault_pages",
   "ALTER TABLE knowledge_vault_pages ADD COLUMN IF NOT EXISTS page_type",
 );
+assertOrdered(
+  "CREATE TABLE IF NOT EXISTS agent_chat_sessions",
+  "CREATE TABLE IF NOT EXISTS agent_chat_session_summaries",
+);
 assert(
   source.includes('code === "42703"') &&
     source.includes('message.includes("column \\"embedding_vector\\"")'),
