@@ -8,6 +8,7 @@ async function main() {
   const runtimeSource = fs.readFileSync(path.resolve("server/agent/tools/androidAppRuntime.ts"), "utf8");
   assert.match(runtimeSource, /checkAndIncrementScreenshotBudget/);
   assert.match(runtimeSource, /runAndroidCaptureScreen\(args,\s*ctx\.userId,\s*ctx\)/);
+  assert.match(runtimeSource, /normalizedQuery\.length > 2 && normalizedCandidate\.includes\(normalizedQuery\)/);
 
   const {
     ANDROID_PHONE_RUNTIME_TOOL_NAMES,

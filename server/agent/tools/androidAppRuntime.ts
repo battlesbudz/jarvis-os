@@ -119,7 +119,7 @@ function scoreAppMatch(query: string, app: AndroidAppCatalogEntry): { score: num
     else if (normalizedCandidate.startsWith(normalizedQuery)) score = 80;
     else if (normalizedQuery.startsWith(`${normalizedCandidate} `)) score = isGenericContextWord || normalizedCandidate.length <= 3 ? 55 : 75;
     else if (containsNormalizedPhrase(normalizedQuery, normalizedCandidate)) score = isGenericContextWord ? 55 : 70;
-    else if (normalizedCandidate.includes(normalizedQuery)) score = 60;
+    else if (normalizedQuery.length > 2 && normalizedCandidate.includes(normalizedQuery)) score = 60;
     else if (normalizedQuery.includes(normalizedCandidate)) score = normalizedCandidate.length <= 2 ? 0 : (isGenericContextWord ? 45 : 50);
     if (score > best.score) best = { score, alias: candidate };
   }

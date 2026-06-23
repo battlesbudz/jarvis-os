@@ -171,7 +171,8 @@ function isYoutubePhoneActionRequest(text: string): boolean {
     /\b(?:search|find|look\s+up|look\s+for)\s+(?:on\s+)?(?:you\s*tube|youtube|yt)\b/i.test(text) ||
     /\b(?:you\s*tube|youtube|yt)\s+(?:search|find|look\s+up|look\s+for)\b/i.test(text) ||
     /\b(?:search|find|look\s+up|look\s+for)\s+(?:for\s+)?[\s\S]{1,120}?\s+(?:on|in)\s+(?:you\s*tube|youtube|yt)\b/i.test(text) ||
-    /\b(?:find|show|get)\s+(?:me\s+)?(?:a\s+few\s+|some\s+)?(?:you\s*tube|youtube|yt)?\s*videos?\s+(?:about|on|for)\b/i.test(text) ||
+    /\b(?:find|show|get)\s+(?:me\s+)?(?:a\s+few\s+|some\s+)?(?:you\s*tube|youtube|yt)\s*videos?\s+(?:about|on|for)\b/i.test(text) ||
+    /\b(?:show|get)\s+(?:me\s+)?(?:a\s+few\s+|some\s+)?videos?\s+(?:about|on|for)\s+[\s\S]{1,120}?\s+(?:on|in)\s+(?:you\s*tube|youtube|yt)\b/i.test(text) ||
     /\b(?:watch|play)\b[\s\S]{0,120}\b(?:on\s+)?(?:you\s*tube|youtube|yt)\b/i.test(text);
 }
 
@@ -212,7 +213,7 @@ function buildPhoneRuntimeRequiredToolNames(
   isDeviceControlRequest: boolean,
   phoneRuntimeCoveredRequest: boolean,
 ): string[] {
-  const youtubePhoneActionRequest = isYoutubePhoneActionRequest(lastUserContent);
+  const youtubePhoneActionRequest = isYoutubePhoneRequest(lastUserContent) && isYoutubePhoneActionRequest(lastUserContent);
   const youtubeResearchRequest = isYoutubeServerResearchRequest(lastUserContent);
   if (!isDeviceControlRequest && !phoneRuntimeCoveredRequest && !youtubePhoneActionRequest && !youtubeResearchRequest) return [];
   const requiredToolNames = new Set<string>();

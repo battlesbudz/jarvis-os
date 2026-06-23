@@ -37,6 +37,9 @@ assert.match(routesSource, /function isPhoneOpenActionRequest[\s\S]*project\|bui
 assert.match(routesSource, /function hasPhoneRuntimeContext/);
 assert.match(routesSource, /function isPhoneRuntimeCoveredRequest/);
 assert.match(routesSource, /isYoutubePhoneActionRequest\(text\) && !isYoutubeServerResearchRequest\(text\)/);
+assert.match(routesSource, /const youtubePhoneActionRequest = isYoutubePhoneRequest\(lastUserContent\) && isYoutubePhoneActionRequest\(lastUserContent\)/);
+assert.doesNotMatch(routesSource, /\(\?:you\\s\*tube\|youtube\|yt\)\?\\s\*videos/);
+assert.match(routesSource, /\(\?:you\\s\*tube\|youtube\|yt\)\\s\*videos/);
 assert.match(routesSource, /return isPhoneOpenActionRequest\(text\) \|\|/);
 assert.match(
   routesSource,
