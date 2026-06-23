@@ -12,9 +12,12 @@ function getJwtSecret(): string {
   if (process.env.JWT_SECRET) {
     return process.env.JWT_SECRET;
   }
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("JWT_SECRET is required in production");
+  }
   const generated = crypto.randomBytes(32).toString("hex");
   process.env.JWT_SECRET = generated;
-  console.log("Generated JWT_SECRET (set JWT_SECRET env var for persistent tokens across restarts)");
+  console.warn("Generated ephemeral JWT_SECRET for local/test use; set JWT_SECRET for persistent tokens");
   return generated;
 }
 

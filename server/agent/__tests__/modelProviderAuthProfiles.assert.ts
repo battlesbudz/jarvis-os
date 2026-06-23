@@ -13,14 +13,29 @@ import {
 
 async function main() {
   const previousSecret = process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY;
+  const previousLegacySecret = process.env.MODEL_PROVIDER_AUTH_ENCRYPTION_KEY;
+  const previousJwtSecret = process.env.JWT_SECRET;
   const previousClientId = process.env.JARVIS_OPENAI_OAUTH_CLIENT_ID;
   const previousTokenUrl = process.env.JARVIS_OPENAI_OAUTH_TOKEN_URL;
   const previousOpenAIClientId = process.env.OPENAI_OAUTH_CLIENT_ID;
   const previousOpenAITokenUrl = process.env.OPENAI_OAUTH_TOKEN_URL;
   const originalFetch = globalThis.fetch;
-  process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY = "test-secret-for-provider-auth-profiles";
 
   try {
+    delete process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY;
+    delete process.env.MODEL_PROVIDER_AUTH_ENCRYPTION_KEY;
+    process.env.JWT_SECRET = "jwt-secret-must-not-encrypt-provider-credentials";
+    await assert.rejects(
+      () =>
+        saveOpenAIApiKeyProfile({
+          repo: new InMemoryModelProviderAuthProfileRepository(),
+          userId: "user-missing-encryption-key",
+          apiKey: "sk-test-api-key",
+        }),
+      /JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY is required/,
+    );
+
+    process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY = "test-secret-for-provider-auth-profiles";
     const repo = new InMemoryModelProviderAuthProfileRepository();
 
     const apiProfile = await saveOpenAIApiKeyProfile({
@@ -196,10 +211,15 @@ async function main() {
     console.log("OK: model provider auth profiles store encrypted OpenAI API-key and OAuth credentials");
     console.log("OK: built-in ChatGPT/Codex OAuth profiles refresh without env config");
     console.log("OK: provider status is redacted and auth-type fallback is explicit only");
+    console.log("OK: provider credentials require a dedicated encryption key");
   } finally {
     globalThis.fetch = originalFetch;
     if (previousSecret == null) delete process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY;
     else process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY = previousSecret;
+    if (previousLegacySecret == null) delete process.env.MODEL_PROVIDER_AUTH_ENCRYPTION_KEY;
+    else process.env.MODEL_PROVIDER_AUTH_ENCRYPTION_KEY = previousLegacySecret;
+    if (previousJwtSecret == null) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previousJwtSecret;
     if (previousClientId == null) delete process.env.JARVIS_OPENAI_OAUTH_CLIENT_ID;
     else process.env.JARVIS_OPENAI_OAUTH_CLIENT_ID = previousClientId;
     if (previousTokenUrl == null) delete process.env.JARVIS_OPENAI_OAUTH_TOKEN_URL;

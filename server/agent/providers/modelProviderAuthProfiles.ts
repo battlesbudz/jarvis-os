@@ -276,8 +276,7 @@ const databaseRepo = new DatabaseModelProviderAuthProfileRepository();
 function encryptionSecret(): string {
   const value =
     process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY ||
-    process.env.MODEL_PROVIDER_AUTH_ENCRYPTION_KEY ||
-    process.env.JWT_SECRET;
+    process.env.MODEL_PROVIDER_AUTH_ENCRYPTION_KEY;
   if (!value || value.trim().length < 12) {
     throw new Error("JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY is required to store provider credentials");
   }
