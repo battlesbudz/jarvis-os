@@ -516,7 +516,10 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
               <View key={`screenshot-${idx}`} style={styles.screenshotContainer}>
                 <View style={styles.screenshotBadgeRow}>
                   <Ionicons name="phone-portrait-outline" size={12} color={Colors.success} />
-                  <Text style={styles.screenshotLabel}>{ea.label}</Text>
+                  <View style={styles.screenshotLabelBlock}>
+                    <Text style={styles.screenshotLabel}>{ea.label && ea.label !== 'Screenshot captured' ? ea.label : 'Temporary screen capture'}</Text>
+                    <Text style={styles.screenshotHint}>Temporary chat preview</Text>
+                  </View>
                 </View>
                 <Image
                   source={{ uri: `${getApiUrl().replace(/\/$/, '')}${ea.screenshotUrl}` }}
@@ -3744,10 +3747,19 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
+  screenshotLabelBlock: {
+    flex: 1,
+  },
   screenshotLabel: {
     fontSize: 11,
     fontFamily: 'Inter_500Medium',
     color: Colors.success,
+  },
+  screenshotHint: {
+    marginTop: 2,
+    fontSize: 10,
+    fontFamily: 'Inter_400Regular',
+    color: Colors.textSecondary,
   },
   screenshotImage: {
     width: 280,

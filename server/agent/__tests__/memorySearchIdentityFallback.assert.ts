@@ -77,7 +77,7 @@ async function main() {
 
 {
   const { result } = await runSearch({
-    query: "user name identity what is my name",
+    query: "user name identity nickname profile what is my name who am i",
     memories: [memory()],
     profileIdentity: "Battles Budz",
   });
@@ -86,6 +86,29 @@ async function main() {
   assert.match(result.content, /^Profile identity fallback: Battles Budz/);
   assert.match(result.content, /answer with this fallback identity/i);
   console.log("OK: model-expanded identity query puts profile fallback first");
+}
+
+{
+  const { result } = await runSearch({
+    query: "who am i",
+    profileIdentity: "Justin",
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(result.content, /Profile identity fallback: Justin/);
+  console.log("OK: who-am-I query returns profile identity fallback");
+}
+
+{
+  const { result } = await runSearch({
+    query: "Who am I meeting tomorrow?",
+    profileIdentity: "Justin",
+  });
+
+  assert.equal(result.ok, true);
+  assert.match(result.content, /No memories found/);
+  assert.doesNotMatch(result.content, /Profile identity fallback/);
+  console.log("OK: who-am-I continuations do not trigger profile identity fallback");
 }
 
 {

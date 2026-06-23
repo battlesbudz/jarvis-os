@@ -8,9 +8,12 @@
  *   SB-2: Each ctx object gets its own independent budget
  *   SB-3: Calling without ctx (undefined) is always allowed (internal utility callers)
  *   SB-4: daemon_action tool rejects android_screenshot after budget is exhausted
+ *   SB-5: Chat screenshot attachments are transparent and include local screen context
  */
 
 import assert from "node:assert/strict";
+
+process.env.DATABASE_URL ||= "postgres://test:test@localhost:5432/test";
 
 let passed = 0;
 let failed = 0;
@@ -110,6 +113,46 @@ async function run() {
     ok("SB-4: daemon_action wires checkAndIncrementScreenshotBudget with correct error message and label");
   } catch (err) {
     fail("SB-4", err);
+  }
+
+  // SB-5: app-chat screenshot attachments remain transparent and model-usable.
+  try {
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const routesSrc = fs.readFileSync(path.resolve(__dirname, "../../routes.ts"), "utf8");
+    const insightsSrc = fs.readFileSync(path.resolve(__dirname, "../../../app/(tabs)/insights.tsx"), "utf8");
+
+    assert.ok(
+      routesSrc.includes("temporary_chat_screen_capture"),
+      "SB-5a: screenshot detail marks the attachment as a temporary chat capture",
+    );
+    assert.ok(
+      !routesSrc.includes("savedToGallery: false"),
+      "SB-5b: screenshot detail does not unconditionally promise Gallery absence",
+    );
+    assert.ok(
+      routesSrc.includes("galleryPersistence"),
+      "SB-5c: screenshot detail carries neutral Gallery persistence metadata",
+    );
+    assert.ok(
+      routesSrc.includes("{ type: 'android_read_screen' }"),
+      "SB-5d: screenshot handling fetches local accessibility context for the model",
+    );
+    assert.ok(
+      routesSrc.includes("screenContext"),
+      "SB-5e: screenshot detail includes screenContext fields",
+    );
+    assert.ok(
+      insightsSrc.includes("Temporary chat preview"),
+      "SB-5f: chat UI explains screenshot previews without promising Gallery behavior",
+    );
+    assert.ok(
+      !insightsSrc.includes("not saved to Gallery"),
+      "SB-5g: chat UI does not promise Gallery absence",
+    );
+    ok("SB-5: screenshot attachments are transparent and include local screen context");
+  } catch (err) {
+    fail("SB-5", err);
   }
 
   console.log(`\nResults: ${passed} passed, ${failed} failed`);

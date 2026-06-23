@@ -844,7 +844,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const daemonResult = await sendDaemonOp(userId, op, timeoutMs);
           if (!daemonResult.ok) return { result: 'error', label: 'Daemon action failed', detail: daemonResult.error || 'Unknown error' };
 
-          // Handle screenshot specially: store the image and return a URL instead of raw base64
+          // Handle screenshot specially: store a temporary chat preview and give
+          // the model a small accessibility snapshot it can reason over locally.
           if (action === 'android_screenshot' && daemonResult.data) {
             const data = daemonResult.data as Record<string, unknown>;
             const b64 = data.screenshot as string | undefined;
@@ -852,7 +853,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
               const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
               const buf = Buffer.from(b64, 'base64');
               storeDaemonScreenshot(id, buf);
-              return { result: 'success', label: 'Screenshot captured', detail: JSON.stringify({ screenshotUrl: `/api/daemon/screenshot/${id}` }) };
+              const detail: Record<string, unknown> = {
+                screenshotUrl: `/api/daemon/screenshot/${id}`,
+                attachmentKind: 'temporary_chat_screen_capture',
+                galleryPersistence: 'not_intended_but_android_fallback_may_use_gallery_before_cleanup',
+                expiresMinutes: 30,
+                modelCanSeeImagePixels: false,
+                screenContextAvailable: false,
+                screenContextSource: 'android_read_screen_accessibility_tree',
+                modelUseNote: 'The user sees the image preview inline in chat. Use screenContext to understand the current screen; the local model cannot inspect screenshot pixels from the URL directly. Android fallback capture paths may briefly use Gallery/MediaStore before cleanup, so do not promise Gallery persistence behavior unless the daemon reports it.',
+              };
+
+              try {
+                if (await isAndroidDaemonActionAllowed(userId, 'android_read_screen')) {
+                  const screenContextResult = await sendDaemonOp(userId, { type: 'android_read_screen' }, 8000);
+                  if (screenContextResult.ok) {
+                    const rawScreenContext = screenContextResult.data;
+                    const serializedScreenContext = typeof rawScreenContext === 'string'
+                      ? rawScreenContext
+                      : JSON.stringify(rawScreenContext ?? {});
+                    detail.screenContextAvailable = true;
+                    detail.screenContext = serializedScreenContext.slice(0, 2500);
+                  } else {
+                    detail.screenContextError = screenContextResult.error || 'android_read_screen failed';
+                  }
+                } else {
+                  detail.screenContextError = 'android_read_screen permission is not enabled.';
+                }
+              } catch (screenContextError) {
+                detail.screenContextError = screenContextError instanceof Error
+                  ? screenContextError.message
+                  : String(screenContextError);
+              }
+
+              return { result: 'success', label: 'Temporary screen capture', detail: JSON.stringify(detail) };
             }
           }
 

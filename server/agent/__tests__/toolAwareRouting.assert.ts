@@ -100,6 +100,17 @@ assertRoute(
   ["memory_search", "memory_get"],
 );
 assertRoute(
+  "Who am I?",
+  "memory",
+  ["memory"],
+  ["memory_search", "memory_get"],
+);
+{
+  const plan = classifyToolAwareRoute("Who am I meeting tomorrow?");
+  assert(plan.intents.includes("calendar"), "calendar: who-am-I continuation stays calendar");
+  assert(!plan.intents.includes("memory"), "memory: who-am-I continuation does not route as identity memory");
+}
+assertRoute(
   "Remember that Justin Battles is my personal name.",
   "memory",
   ["memory"],

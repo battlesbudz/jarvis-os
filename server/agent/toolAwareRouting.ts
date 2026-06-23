@@ -98,6 +98,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\bremember\s+(that|this)\b/i,
       /\b(my work hours|my goals|my routines|my projects|about me)\b/i,
       /\bwhat('?s|\s+is)\s+my\s+(name|nickname)\b/i,
+      /\bwho\s+am\s+i\s*\??\s*$/i,
       /\bwhat\s+(name|nickname)\s+should\s+you\s+call\s+me\b/i,
       /\bwhat\s+should\s+you\s+call\s+me\b/i,
       /\bdo\s+you\s+know\s+my\s+(name|nickname)\b/i,
