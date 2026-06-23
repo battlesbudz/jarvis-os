@@ -24,5 +24,10 @@ assertOrdered(
   "CREATE TABLE IF NOT EXISTS knowledge_vault_pages",
   "ALTER TABLE knowledge_vault_pages ADD COLUMN IF NOT EXISTS page_type",
 );
+assert(
+  source.includes('code === "42703"') &&
+    source.includes('message.includes("column \\"embedding_vector\\"")'),
+  "Optional pgvector fallback must tolerate missing embedding_vector after vector column creation is skipped",
+);
 
 console.log("OK: schema boot creates tables before dependent repairs");

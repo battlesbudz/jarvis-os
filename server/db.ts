@@ -38,8 +38,10 @@ function isOptionalVectorSchemaError(error: unknown): boolean {
   const message = pgErrorMessage(error).toLowerCase();
   return (
     code === "0A000" ||
+    code === "42703" ||
     code === "42704" ||
     message.includes("extension \"vector\"") ||
+    message.includes("column \"embedding_vector\"") ||
     message.includes("type \"vector\"") ||
     message.includes("operator class \"vector_cosine_ops\"")
   );
