@@ -101,6 +101,8 @@ function containsNormalizedPhrase(value: string, phrase: string): boolean {
     value.includes(` ${phrase} `);
 }
 
+const GENERIC_APP_CONTEXT_WORDS = new Set(["android", "app", "application", "device", "phone"]);
+
 function scoreAppMatch(query: string, app: AndroidAppCatalogEntry): { score: number; alias?: string } {
   const normalizedQuery = normalizeAppLookup(query);
   if (!normalizedQuery) return { score: 0 };
@@ -110,14 +112,15 @@ function scoreAppMatch(query: string, app: AndroidAppCatalogEntry): { score: num
   for (const candidate of candidates) {
     const normalizedCandidate = normalizeAppLookup(candidate);
     if (!normalizedCandidate) continue;
+    const isGenericContextWord = GENERIC_APP_CONTEXT_WORDS.has(normalizedCandidate);
     let score = 0;
     if (normalizedCandidate === normalizedQuery) score = 100;
-    else if (normalizedQuery.endsWith(` ${normalizedCandidate}`)) score = 90;
+    else if (normalizedQuery.endsWith(` ${normalizedCandidate}`)) score = isGenericContextWord ? 55 : 90;
     else if (normalizedCandidate.startsWith(normalizedQuery)) score = 80;
-    else if (normalizedQuery.startsWith(`${normalizedCandidate} `)) score = normalizedCandidate.length <= 3 ? 55 : 75;
-    else if (containsNormalizedPhrase(normalizedQuery, normalizedCandidate)) score = 70;
+    else if (normalizedQuery.startsWith(`${normalizedCandidate} `)) score = isGenericContextWord || normalizedCandidate.length <= 3 ? 55 : 75;
+    else if (containsNormalizedPhrase(normalizedQuery, normalizedCandidate)) score = isGenericContextWord ? 55 : 70;
     else if (normalizedCandidate.includes(normalizedQuery)) score = 60;
-    else if (normalizedQuery.includes(normalizedCandidate)) score = 50;
+    else if (normalizedQuery.includes(normalizedCandidate)) score = isGenericContextWord ? 45 : 50;
     if (score > best.score) best = { score, alias: candidate };
   }
 
