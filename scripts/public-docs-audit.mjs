@@ -55,6 +55,8 @@ const allowedCompatibilityReferences = [
 
 const requiredReadmeAssets = [
   "docs/assets/screenshots/mobile-mission-control.png",
+  "docs/assets/screenshots/mobile-app-workspace.png",
+  "docs/assets/screenshots/mobile-provider-usage.png",
   "docs/assets/screenshots/mobile-connections.png",
   "docs/assets/screenshots/mobile-knowledge-vault.png",
 ];
