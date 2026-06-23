@@ -1788,6 +1788,47 @@ async function testAndroidLocalGemmaRedirectsServerYoutubeSearchToPhoneRuntime()
   }
 }
 
+async function testAndroidLocalGemmaRecoversSearchForQueryOnYoutube() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "Searching YouTube." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Search for cats on YouTube." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_youtube_search",
+          description: "Search the native YouTube app on the phone.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_youtube_search");
+    assert.equal(result.toolCallList[0].function.arguments, '{"query":"cats"}');
+    console.log("OK: Android Local Gemma recovers search-for-query-on-YouTube phrasing");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaPreservesYoutubeResearchWorkflow() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -3643,6 +3684,94 @@ async function testAndroidLocalGemmaRecoversMemorySaveFromRequiredSaveFinalAnswe
   }
 }
 
+async function testAndroidLocalGemmaPrioritizesMemorySaveOverPhoneYoutubeRecovery() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I will remember that." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Remember that I search YouTube for jazz." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "memory_save",
+          description: "Save a memory.",
+          parameters: { type: "object", properties: { content: { type: "string" } }, required: ["content"] },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "android_youtube_search",
+          description: "Search the native YouTube app on the phone.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "memory_save");
+    assert.match(result.toolCallList[0].function.arguments, /search YouTube for jazz/);
+    console.log("OK: Android Local Gemma prioritizes memory save over phone YouTube recovery");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaPrioritizesMemorySearchOverOpenYoutubeRecovery() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I can check memory." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Do you remember how to open YouTube?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "memory_search",
+          description: "Search memory.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "android_open_app_by_name",
+          description: "Open a phone app by name.",
+          parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "memory_search");
+    assert.equal(result.toolCallList[0].function.arguments, '{"query":"Do you remember how to open YouTube?"}');
+    console.log("OK: Android Local Gemma prioritizes memory search over open-YouTube recovery");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaRecoversRememberMyMemorySaveWithoutCopula() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -4291,6 +4420,7 @@ async function main() {
   await testAndroidLocalGemmaRecoversCatalogSystemAppToPhoneRuntime();
   await testAndroidLocalGemmaRecoversYoutubeSearchToPhoneRuntime();
   await testAndroidLocalGemmaRedirectsServerYoutubeSearchToPhoneRuntime();
+  await testAndroidLocalGemmaRecoversSearchForQueryOnYoutube();
   await testAndroidLocalGemmaPreservesYoutubeResearchWorkflow();
   await testAndroidLocalGemmaDoesNotRecoverYoutubeResearchFinalToPhoneSearch();
   await testAndroidLocalGemmaRecoversRequiredOpenAppRefusalFinalAnswer();
@@ -4334,6 +4464,8 @@ async function main() {
   await testAndroidLocalGemmaRecoversMemorySearchFromRequiredIdentityFinalAnswer();
   await testAndroidLocalGemmaDoesNotRewriteWhoAmIContinuationsAsIdentitySearch();
   await testAndroidLocalGemmaRecoversMemorySaveFromRequiredSaveFinalAnswer();
+  await testAndroidLocalGemmaPrioritizesMemorySaveOverPhoneYoutubeRecovery();
+  await testAndroidLocalGemmaPrioritizesMemorySearchOverOpenYoutubeRecovery();
   await testAndroidLocalGemmaRecoversRememberMyMemorySaveWithoutCopula();
   await testAndroidLocalGemmaRecoversPoliteRememberMyMemorySave();
   await testAndroidLocalGemmaDoesNotSaveRememberMyQuestions();

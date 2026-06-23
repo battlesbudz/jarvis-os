@@ -1007,6 +1007,7 @@ function looksLikeMemoryLookupRequest(text: string): boolean {
   if (looksLikeMemorySaveRequest(text)) return false;
   return /\b(?:memory|memories|recall|what do you know about me|what have i told you|about me|living context)\b/i.test(text) ||
     /\b(?:do\s+you\s+)?remember\s+my\b/i.test(text) ||
+    /\b(?:do|did)\s+you\s+remember\s+(?:how|what|when|where|why|whether|if)\b/i.test(text) ||
     /\b(?:do|did)\s+you\s+remember\s+(?:that|this)\b/i.test(text) ||
     /\bwhat\s+do\s+you\s+remember\b/i.test(text) ||
     /\bwhat(?:'s| is)\s+my\s+(?:name|nickname)\b/i.test(text) ||
@@ -1085,6 +1086,7 @@ function recoverRequiredMemoryToolFromRequest(
 function youtubeSearchQueryFromRequest(text: string): string | null {
   if (shouldUseServerYoutubeResearchWorkflow(text)) return null;
   const patterns = [
+    /\b(?:search|find|look\s+up|look\s+for)\s+(?:for\s+)?(.+?)\s+(?:on|in)\s+(?:you\s*tube|youtube|yt)\b/i,
     /\b(?:search|find|look\s+up|look\s+for)\s+(?:on\s+)?youtube\s+(?:for\s+)?(.+)$/i,
     /\byoutube\s+(?:search|find|look\s+up|look\s+for)\s+(?:for\s+)?(.+)$/i,
     /\b(?:find|show|get)\s+(?:me\s+)?(?:a\s+few\s+|some\s+)?(?:youtube\s+)?videos?\s+(?:about|on|for)\s+(.+)$/i,
@@ -1110,6 +1112,7 @@ function recoverRequiredAndroidRuntimeToolFromRequest(
   const requestText = latestUserText(params.messages).trim();
   if (!requestText) return null;
   if (hasProhibitedDeviceActionRequest(requestText)) return null;
+  if (looksLikeMemorySaveRequest(requestText) || looksLikeMemoryLookupRequest(requestText)) return null;
 
   if (hasFunctionTool(params.tools, "android_youtube_search") && !shouldUseServerYoutubeResearchWorkflow(requestText)) {
     const query = youtubeSearchQueryFromRequest(requestText);
@@ -1216,9 +1219,9 @@ function recoverRequiredToolCallFromRequest(
   params: ProviderQueryParams,
   finalContent = "",
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
-  return recoverRequiredAndroidRuntimeToolFromRequest(params) ||
-    recoverRequiredDaemonActionFromRequest(params, finalContent) ||
-    recoverRequiredMemoryToolFromRequest(params);
+  return recoverRequiredMemoryToolFromRequest(params) ||
+    recoverRequiredAndroidRuntimeToolFromRequest(params) ||
+    recoverRequiredDaemonActionFromRequest(params, finalContent);
 }
 
 function recoverRequiredDaemonActionFromRequest(

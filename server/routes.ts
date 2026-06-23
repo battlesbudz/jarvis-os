@@ -166,13 +166,26 @@ function isYoutubePhoneRequest(text: string): boolean {
   return /\b(you\s*tube|youtube|yt)\b/i.test(text);
 }
 
+function isYoutubePhoneActionRequest(text: string): boolean {
+  return /\b(?:open|launch|start)\s+(?:the\s+)?(?:you\s*tube|youtube|yt)\b/i.test(text) ||
+    /\b(?:search|find|look\s+up|look\s+for)\s+(?:on\s+)?(?:you\s*tube|youtube|yt)\b/i.test(text) ||
+    /\b(?:you\s*tube|youtube|yt)\s+(?:search|find|look\s+up|look\s+for)\b/i.test(text) ||
+    /\b(?:search|find|look\s+up|look\s+for)\s+(?:for\s+)?[\s\S]{1,120}?\s+(?:on|in)\s+(?:you\s*tube|youtube|yt)\b/i.test(text) ||
+    /\b(?:find|show|get)\s+(?:me\s+)?(?:a\s+few\s+|some\s+)?(?:you\s*tube|youtube|yt)?\s*videos?\s+(?:about|on|for)\b/i.test(text) ||
+    /\b(?:watch|play)\b[\s\S]{0,120}\b(?:on\s+)?(?:you\s*tube|youtube|yt)\b/i.test(text);
+}
+
 function isYoutubeServerResearchRequest(text: string): boolean {
   return isYoutubePhoneRequest(text) &&
     /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|compare|rank|recommend|recommendation|best videos?|top videos?|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
 }
 
+function isMemoryPhoneBypassRequest(text: string): boolean {
+  return /\b(?:memory|memories|remember|recall|what do you know about me|what have i told you|about me|living context)\b/i.test(text);
+}
+
 function isPhoneRuntimeCoveredRequest(text: string): boolean {
-  if (isYoutubePhoneRequest(text)) return !isYoutubeServerResearchRequest(text);
+  if (isYoutubePhoneRequest(text)) return isYoutubePhoneActionRequest(text) && !isYoutubeServerResearchRequest(text);
   return /\b(?:open|launch|start)\b/i.test(text) ||
     /\b(?:browse to|navigate to|open (?:a )?(?:url|link|website|site))\b/i.test(text) ||
     /\b(?:screenshot|screen shot|screen capture)\b/i.test(text) ||
@@ -186,15 +199,16 @@ function buildPhoneRuntimeRequiredToolNames(
   isDeviceControlRequest: boolean,
   phoneRuntimeCoveredRequest: boolean,
 ): string[] {
-  if (!isDeviceControlRequest && !phoneRuntimeCoveredRequest && !isYoutubePhoneRequest(lastUserContent)) return [];
+  const youtubePhoneActionRequest = isYoutubePhoneActionRequest(lastUserContent);
+  const youtubeResearchRequest = isYoutubeServerResearchRequest(lastUserContent);
+  if (!isDeviceControlRequest && !phoneRuntimeCoveredRequest && !youtubePhoneActionRequest && !youtubeResearchRequest) return [];
   const requiredToolNames = new Set<string>();
 
   if (phoneRuntimeCoveredRequest) {
     ANDROID_PHONE_RUNTIME_TOOL_NAMES.forEach((name) => requiredToolNames.add(name));
   }
 
-  if (isYoutubePhoneRequest(lastUserContent)) {
-    const youtubeResearchRequest = isYoutubeServerResearchRequest(lastUserContent);
+  if (youtubePhoneActionRequest || youtubeResearchRequest) {
     if (!youtubeResearchRequest) {
       requiredToolNames.add("android_youtube_search");
       requiredToolNames.add("android_open_phone_url");
@@ -1740,8 +1754,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         'search youtube', 'find a youtube', 'look up on youtube', 'research on youtube',
         'look something up', 'look it up', 'find a video', 'find me a video',
       ];
-      const isDeviceControlRequest = androidActive && deviceControlKeywords.some(k => lastUserContent.includes(k));
-      const phoneRuntimeCoveredRequest = androidActive && isPhoneRuntimeCoveredRequest(lastUserContent);
+      const memoryPhoneBypassRequest = isMemoryPhoneBypassRequest(lastUserContent);
+      const isDeviceControlRequest = androidActive && !memoryPhoneBypassRequest && deviceControlKeywords.some(k => lastUserContent.includes(k));
+      const phoneRuntimeCoveredRequest = androidActive && !memoryPhoneBypassRequest && isPhoneRuntimeCoveredRequest(lastUserContent);
       const youtubeServerResearchRequest = androidActive && isYoutubeServerResearchRequest(lastUserContent);
       const keepDaemonActionFallback = androidActive && isDeviceControlRequest && !phoneRuntimeCoveredRequest && !youtubeServerResearchRequest;
 
