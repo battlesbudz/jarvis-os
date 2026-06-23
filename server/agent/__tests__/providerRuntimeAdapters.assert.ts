@@ -1844,6 +1844,56 @@ async function testAndroidLocalGemmaPreservesYoutubeResearchWorkflow() {
   }
 }
 
+async function testAndroidLocalGemmaDoesNotRecoverYoutubeResearchFinalToPhoneSearch() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I can search YouTube and summarize a good video." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Search YouTube for local Gemma on Android videos and summarize the best video." }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "android_youtube_search",
+            description: "Search the native YouTube app on the phone.",
+            parameters: {
+              type: "object",
+              properties: { query: { type: "string" } },
+              required: ["query"],
+            },
+          },
+        }, {
+          type: "function",
+          function: {
+            name: "search_youtube",
+            description: "Search YouTube server-side.",
+            parameters: {
+              type: "object",
+              properties: { query: { type: "string" } },
+              required: ["query"],
+            },
+          },
+        }],
+        toolChoice: "required",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      /local harness required a tool call[\s\S]*No cloud model was used/,
+    );
+    console.log("OK: Android Local Gemma does not recover YouTube research final answers to phone search");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaRecoversRequiredOpenAppRefusalFinalAnswer() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -4242,6 +4292,7 @@ async function main() {
   await testAndroidLocalGemmaRecoversYoutubeSearchToPhoneRuntime();
   await testAndroidLocalGemmaRedirectsServerYoutubeSearchToPhoneRuntime();
   await testAndroidLocalGemmaPreservesYoutubeResearchWorkflow();
+  await testAndroidLocalGemmaDoesNotRecoverYoutubeResearchFinalToPhoneSearch();
   await testAndroidLocalGemmaRecoversRequiredOpenAppRefusalFinalAnswer();
   await testAndroidLocalGemmaRecoversRequiredScreenshotRefusalFinalAnswer();
   await testAndroidLocalGemmaInfersPackageForDirectOpenAppToolCalls();

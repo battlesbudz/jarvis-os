@@ -150,11 +150,11 @@ function filterPhoneRuntimeModelTools(
 ): OpenAI.Chat.Completions.ChatCompletionTool[] {
   return tools.filter((tool) => {
     const name = phoneRuntimeChatToolName(tool);
-    if (!name) return true;
+    if (!name) return false;
+    if (isAndroidPhoneRuntimeToolName(name)) return true;
     if (name === "daemon_action") return options.allowDaemonActionFallback === true;
-    if (!options.allowServerYoutubeTools && SERVER_YOUTUBE_TOOL_NAMES.has(name)) return false;
-    if (name.startsWith("android_") && !isAndroidPhoneRuntimeToolName(name)) return false;
-    return true;
+    if (SERVER_YOUTUBE_TOOL_NAMES.has(name)) return options.allowServerYoutubeTools === true;
+    return false;
   });
 }
 
@@ -168,7 +168,7 @@ function isYoutubePhoneRequest(text: string): boolean {
 
 function isYoutubeServerResearchRequest(text: string): boolean {
   return isYoutubePhoneRequest(text) &&
-    /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|best video|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
+    /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|compare|rank|recommend|recommendation|best videos?|top videos?|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
 }
 
 function isPhoneRuntimeCoveredRequest(text: string): boolean {
@@ -1699,7 +1699,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const daemonSection = daemonPaired
         ? androidActive
-        ? `Android Device Control is ACTIVE and connected.\n${deviceHints}\nUse the deterministic Phone Runtime tools for phone work: ${ANDROID_PHONE_RUNTIME_TOOL_NAMES.join(", ")}. Low-level daemon actions are internal implementation details and should not be used as the normal phone-control interface. DO NOT use desktop shell/file actions for phone work.\n\nPHONE RUNTIME WORKFLOW:\n  1. Use android_read_screen_context when you need to know what is visible before acting.\n  2. Use android_open_app_by_name for natural app names like YouTube, Facebook, LinkedIn, Maps, Camera, or Settings.\n  3. Use android_youtube_search for \"Search YouTube for X\" so the native app opens deterministically.\n  4. Use android_capture_screen when the user asks for a screenshot or screen capture. The screenshot appears as a temporary inline chat preview; direct capture is not intended as a Gallery photo, but Android fallback capture cleanup is best-effort.\n  5. Use android_tap_screen, android_type_text, android_swipe_screen, android_press_phone_key, and android_wait_for_ui for controlled UI navigation when a higher-level app runtime tool does not exist yet.\n  6. Use android_notify_user, then android_return_to_jarvis_chat at the end of multi-step phone tasks.\n\nYOUTUBE PHONE SEARCH WORKFLOW — when the user asks to search YouTube on the phone, call android_youtube_search. It opens native YouTube search results and reads visible screen context.\n\nYOUTUBE RESEARCH WORKFLOW — when the user asks to research something on YouTube and summarize a video:\n  1. Call search_youtube (server-side) with the query to pick a reputable/high-signal video without touching the phone.\n  2. Call fetch_youtube_transcript with the chosen video ID.\n  3. Call android_open_phone_url with url='vnd.youtube://watch?v=VIDEO_ID' only after the content choice is made.\n  4. Summarize the transcript content for the user.\n  5. Call android_notify_user and android_return_to_jarvis_chat as final phone steps when this was a phone task.\n\nFLAG_SECURE APPS — android_capture_screen may fail for Facebook, Instagram, WhatsApp, Snapchat, streaming, banking, and camera apps. Use android_read_screen_context instead; it reads visible text, labels, and UI element context from accessibility.\n\nACTION FLOW for multi-step tasks: Use as many Phone Runtime tool-call turns as needed. After acting, read the screen to confirm the result before describing it. If a tool returns result:error, tell the user what failed and what you tried.\n\nSCREENSHOT DISPLAY — screenshots ARE shown inline in the Jarvis chat as temporary images:\nWhen android_capture_screen succeeds, the screenshot is stored as a temporary chat preview. Use the returned screenContext for reasoning unless a vision/OCR path has explicitly provided visual details.`
+        ? `Android Device Control is ACTIVE and connected.\n${deviceHints}\nUse the deterministic Phone Runtime tools for supported phone work: ${ANDROID_PHONE_RUNTIME_TOOL_NAMES.join(", ")}. Low-level daemon actions are internal implementation details and should not be used as the normal phone-control interface unless daemon_action is the only exposed fallback for an unsupported phone action. When that fallback is exposed and succeeds, treat it as a valid phone action. DO NOT use desktop shell/file actions for phone work.\n\nPHONE RUNTIME WORKFLOW:\n  1. Use android_read_screen_context when you need to know what is visible before acting.\n  2. Use android_open_app_by_name for natural app names like YouTube, Facebook, LinkedIn, Maps, Camera, or Settings.\n  3. Use android_youtube_search for \"Search YouTube for X\" so the native app opens deterministically.\n  4. Use android_capture_screen when the user asks for a screenshot or screen capture. The screenshot appears as a temporary inline chat preview; direct capture is not intended as a Gallery photo, but Android fallback capture cleanup is best-effort.\n  5. Use android_tap_screen, android_type_text, android_swipe_screen, android_press_phone_key, and android_wait_for_ui for controlled UI navigation when a higher-level app runtime tool does not exist yet.\n  6. Use android_notify_user, then android_return_to_jarvis_chat at the end of multi-step phone tasks.\n\nYOUTUBE PHONE SEARCH WORKFLOW — when the user asks to search YouTube on the phone, call android_youtube_search. It opens native YouTube search results and reads visible screen context.\n\nYOUTUBE RESEARCH WORKFLOW — when the user asks to research something on YouTube and summarize a video:\n  1. Call search_youtube (server-side) with the query to pick a reputable/high-signal video without touching the phone.\n  2. Call fetch_youtube_transcript with the chosen video ID.\n  3. Call android_open_phone_url with url='vnd.youtube://watch?v=VIDEO_ID' only after the content choice is made.\n  4. Summarize the transcript content for the user.\n  5. Call android_notify_user and android_return_to_jarvis_chat as final phone steps when this was a phone task.\n\nFLAG_SECURE APPS — android_capture_screen may fail for Facebook, Instagram, WhatsApp, Snapchat, streaming, banking, and camera apps. Use android_read_screen_context instead; it reads visible text, labels, and UI element context from accessibility.\n\nACTION FLOW for multi-step tasks: Use as many Phone Runtime tool-call turns as needed. After acting, read the screen to confirm the result before describing it. If a tool returns result:error, tell the user what failed and what you tried.\n\nSCREENSHOT DISPLAY — screenshots ARE shown inline in the Jarvis chat as temporary images:\nWhen android_capture_screen succeeds, the screenshot is stored as a temporary chat preview. Use the returned screenContext for reasoning unless a vision/OCR path has explicitly provided visual details.`
           : 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing.'
         : '⚠️ NO DAEMON CONNECTED. Do NOT call daemon_action — it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone device control isn\'t connected. To fix it: (1) Install/open the main Jarvis Android app, (2) Go to Profile and scroll to Android Device, (3) Tap Enable Device Control. The app uses the configured server URL automatically. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it\'s connected.';
       const selfImprovementSection = `## Self-Improvement: Building New Jarvis Tools
@@ -1742,7 +1742,8 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       ];
       const isDeviceControlRequest = androidActive && deviceControlKeywords.some(k => lastUserContent.includes(k));
       const phoneRuntimeCoveredRequest = androidActive && isPhoneRuntimeCoveredRequest(lastUserContent);
-      const keepDaemonActionFallback = androidActive && isDeviceControlRequest && !phoneRuntimeCoveredRequest;
+      const youtubeServerResearchRequest = androidActive && isYoutubeServerResearchRequest(lastUserContent);
+      const keepDaemonActionFallback = androidActive && isDeviceControlRequest && !phoneRuntimeCoveredRequest && !youtubeServerResearchRequest;
 
       // Absolute prohibition injected at the TOP of the system message so the model
       // reads it before any other context. Without this, the model pattern-matches
@@ -1979,8 +1980,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           focusedToolNames.add("jarvis_self_diagnose");
         }
         toolAwareRoute.blockedToolNames.forEach((name) => focusedToolNames.delete(name));
+        const useFocusedRequestTools = toolAwareRoute.shouldPreferTool || routeRequiredToolNames.length > 0;
         const focusedRequestTools =
-          toolAwareRoute.shouldPreferTool
+          useFocusedRequestTools
             ? requestTools.filter((tool) => {
                 const name = chatToolName(tool);
                 return name ? focusedToolNames.has(name) : false;
@@ -2000,7 +2002,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         const modelRequestTools = usePhoneRuntimeToolSurfaceOnly
           ? filterPhoneRuntimeModelTools(firstTurnToolPolicy.tools, {
               allowDaemonActionFallback: keepDaemonActionFallback,
-              allowServerYoutubeTools: isYoutubeServerResearchRequest(lastUserContent),
+              allowServerYoutubeTools: youtubeServerResearchRequest,
             })
           : firstTurnToolPolicy.tools;
 

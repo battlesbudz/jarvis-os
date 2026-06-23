@@ -1100,7 +1100,7 @@ function youtubeSearchQueryFromRequest(text: string): string | null {
 }
 
 function shouldUseServerYoutubeResearchWorkflow(text: string): boolean {
-  return /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|best video|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
+  return /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|compare|rank|recommend|recommendation|best videos?|top videos?|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
 }
 
 function recoverRequiredAndroidRuntimeToolFromRequest(
