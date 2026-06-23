@@ -26,8 +26,12 @@ const app = express();
 const log = console.log;
 
 function startRuntimeBootAfterListen(): void {
-  startWorkerBoot();
-  startPostListenBoot();
+  try {
+    startWorkerBoot();
+    startPostListenBoot();
+  } catch (err) {
+    console.error("[Startup] post-listen boot tasks crashed unexpectedly:", err);
+  }
 }
 
 (async () => {
