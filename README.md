@@ -36,7 +36,7 @@ These public screenshots are cropped from the current mobile/web app surface. Th
 
 | Wiki Index | Universal Conversation Search |
 |---|---|
-| <img src="docs/assets/screenshots/mobile-wiki-index-detail.png" alt="Jarvis wiki index page with top pages and entity pages" width="220"> | <img src="docs/assets/screenshots/mobile-universal-conversation-search.png" alt="Jarvis universal conversation search requirements page" width="220"> |
+| <img src="docs/assets/screenshots/mobile-wiki-index-detail.png" alt="Jarvis wiki index page with redacted entity pages" width="220"> | <img src="docs/assets/screenshots/mobile-universal-conversation-search.png" alt="Jarvis universal conversation search requirements page" width="220"> |
 
 ## What Jarvis Can Do
 
