@@ -36,7 +36,6 @@ const DEFAULT_PHONE_GEMMA_MAX_COMPLETION_TOKENS = 128;
 const DEFAULT_PHONE_GEMMA_ALLOW_CPU_FALLBACK = false;
 const DEFAULT_PHONE_GEMMA_PROMPT_CHAR_BUDGET = 3_600;
 const DEFAULT_PHONE_GEMMA_TOOL_LIST_CHAR_BUDGET = 1_600;
-const DEFAULT_PHONE_GEMMA_BUSY_RETRY_DELAY_MS = 250;
 const MAX_TOOL_DESCRIPTION_CHARS = 180;
 const MAX_TOOL_ARGUMENT_NAMES = 12;
 const MIN_REQUIRED_PROMPT_SECTION_CHARS = 80;
@@ -181,8 +180,6 @@ function androidLocalGemmaEnv(name: string): string | undefined {
       return process.env.ANDROID_LOCAL_GEMMA_TIMEOUT_MS;
     case "ANDROID_LOCAL_GEMMA_TOOL_LIST_CHAR_BUDGET":
       return process.env.ANDROID_LOCAL_GEMMA_TOOL_LIST_CHAR_BUDGET;
-    case "ANDROID_LOCAL_GEMMA_BUSY_RETRY_DELAY_MS":
-      return process.env.ANDROID_LOCAL_GEMMA_BUSY_RETRY_DELAY_MS;
     default:
       return undefined;
   }
@@ -228,27 +225,14 @@ function phoneGemmaToolListCharBudget(): number {
   return intEnv("ANDROID_LOCAL_GEMMA_TOOL_LIST_CHAR_BUDGET", DEFAULT_PHONE_GEMMA_TOOL_LIST_CHAR_BUDGET, 500, 6_000);
 }
 
-function phoneGemmaBusyRetryDelayMs(): number {
-  return intEnv("ANDROID_LOCAL_GEMMA_BUSY_RETRY_DELAY_MS", DEFAULT_PHONE_GEMMA_BUSY_RETRY_DELAY_MS, 0, 2_000);
-}
-
 function shouldCancelTimedOutGeneration(result: DaemonOpResult): boolean {
   return !result.ok && /timeout/i.test(result.error || "");
-}
-
-function shouldCancelBusyGeneration(result: DaemonOpResult): boolean {
-  return !result.ok && /LOCAL_MODEL_BUSY/i.test(result.error || "");
 }
 
 function createAbortError(message: string): Error {
   const error = new Error(message);
   error.name = "AbortError";
   return error;
-}
-
-function delay(ms: number): Promise<void> {
-  if (ms <= 0) return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export function _setAndroidLocalGemmaDaemonOpForTesting(fn: AndroidLocalGemmaDaemonOp | null): void {
@@ -1664,26 +1648,6 @@ async function sendAbortableAndroidLocalGemmaGenerateOp(
   }
 }
 
-async function generateAndroidLocalGemmaWithStaleBusyRecovery(
-  params: ProviderQueryParams,
-  op: Extract<Parameters<AndroidLocalGemmaDaemonOp>[1], { type: "android_local_model_generate" }>,
-  timeoutMs: number,
-): Promise<DaemonOpResult> {
-  const userId = params.userId;
-  if (!userId) {
-    return { ok: false, error: "Android Local Gemma requires an authenticated user." };
-  }
-
-  const first = await sendAbortableAndroidLocalGemmaGenerateOp(userId, op, timeoutMs, params.signal);
-  if (!shouldCancelBusyGeneration(first)) {
-    return first;
-  }
-
-  await cancelAndroidLocalGemmaGeneration(userId);
-  await delay(phoneGemmaBusyRetryDelayMs());
-  return sendAbortableAndroidLocalGemmaGenerateOp(userId, op, timeoutMs, params.signal);
-}
-
 export class AndroidLocalGemmaProvider extends BaseProvider {
   async initialize(): Promise<void> {}
   async cleanup(): Promise<void> {}
@@ -1700,8 +1664,8 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
     }
 
     const requestId = `phone-gemma-${randomUUID()}`;
-    const result = await generateAndroidLocalGemmaWithStaleBusyRecovery(
-      params,
+    const result = await sendAbortableAndroidLocalGemmaGenerateOp(
+      params.userId,
       {
         type: "android_local_model_generate",
         requestId,
@@ -1712,6 +1676,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
         allowCpuFallback: phoneGemmaAllowCpuFallback(),
       },
       phoneGemmaTimeoutMs(),
+      params.signal,
     );
 
     if (shouldCancelTimedOutGeneration(result)) {

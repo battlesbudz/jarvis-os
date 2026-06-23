@@ -4312,34 +4312,25 @@ async function testAndroidLocalGemmaExplainsPhoneResourceFailures() {
   }
 
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
-  let generateAttempts = 0;
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
     requests.push({ userId, op, timeoutMs });
-    if (op.type === "android_local_model_cancel") return { ok: true, data: { cancelled: true } };
-    generateAttempts += 1;
-    if (generateAttempts === 1) {
-      return { ok: false, error: "LOCAL_MODEL_BUSY: Phone Gemma is already generating." };
-    }
-    return { ok: true, data: { text: "Recovered after cancelling stale Phone Gemma work.", finishReason: "stop" } };
+    return { ok: false, error: "LOCAL_MODEL_BUSY: Phone Gemma is already generating." };
   });
 
   try {
-    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
-      model: "android-local-gemma/gemma-4-e4b-it",
-      messages: [{ role: "user", content: "Hello again" }],
-      toolChoice: "none",
-      maxCompletionTokens: 128,
-      stream: false,
-      userId: "user-phone",
-    }));
-    assert.equal(result.textContent, "Recovered after cancelling stale Phone Gemma work.");
-    assert.deepEqual(requests.map((request) => request.op.type), [
-      "android_local_model_generate",
-      "android_local_model_cancel",
-      "android_local_model_generate",
-    ]);
-    assert.equal(requests[1].op.requestId, undefined);
-    console.log("OK: Android Local Gemma explains memory failures and recovers from stale busy generations");
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Hello again" }],
+        toolChoice: "none",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      /still working on the previous message/,
+    );
+    assert.deepEqual(requests.map((request) => request.op.type), ["android_local_model_generate"]);
+    console.log("OK: Android Local Gemma explains memory failures and does not cancel live busy generations");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
