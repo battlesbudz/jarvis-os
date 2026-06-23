@@ -25,6 +25,7 @@ assert.match(routesSource, /const useFocusedRequestTools = toolAwareRoute\.shoul
 assert.match(routesSource, /usePhoneRuntimeToolSurfaceOnly[\s\S]*filterPhoneRuntimeModelTools\(firstTurnToolPolicy\.tools,\s*\{/);
 assert.match(routesSource, /allowServerYoutubeTools:\s*youtubeServerResearchRequest/);
 assert.match(routesSource, /usePhoneRuntimeToolSurfaceOnly\s*=\s*androidActive[\s\S]*phoneRuntimeCoveredRequest[\s\S]*keepDaemonActionFallback/);
+assert.match(routesSource, /keepDaemonActionFallback && !isResearchRequest/);
 assert.doesNotMatch(routesSource, /isAndroidLocalGemmaModelName/);
 assert.match(routesSource, /\.\.\.ANDROID_PHONE_RUNTIME_TOOL_NAMES/);
 assert.match(routesSource, /function buildPhoneRuntimeRequiredToolNames/);

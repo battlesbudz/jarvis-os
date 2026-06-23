@@ -2025,7 +2025,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         });
         const usePhoneRuntimeToolSurfaceOnly = androidActive && (
           phoneRuntimeCoveredRequest ||
-          keepDaemonActionFallback
+          (keepDaemonActionFallback && !isResearchRequest)
         );
         const modelRequestTools = usePhoneRuntimeToolSurfaceOnly
           ? filterPhoneRuntimeModelTools(firstTurnToolPolicy.tools, {
