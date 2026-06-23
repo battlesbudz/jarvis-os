@@ -54,9 +54,9 @@ const allowedCompatibilityReferences = [
 ];
 
 const requiredReadmeAssets = [
-  "docs/assets/screenshots/dashboard-projects.png",
-  "docs/assets/screenshots/dashboard-memory.png",
-  "docs/assets/screenshots/dashboard-visual.png",
+  "docs/assets/screenshots/mobile-mission-control.png",
+  "docs/assets/screenshots/mobile-connections.png",
+  "docs/assets/screenshots/mobile-knowledge-vault.png",
 ];
 
 function toFsPath(relativePath) {
