@@ -16,15 +16,15 @@ The goal is useful autonomy that stays reviewable. Jarvis can work in the backgr
 
 ## Screenshots
 
-These public screenshots are cropped from the current mobile/web app surface. They focus on the user-facing operating loop: review queued work, package generated app workspaces, monitor provider health, connect accounts, and inspect the knowledge system that Jarvis builds over time.
+These public screenshots are cropped from the current mobile/web app surface. They focus on the user-facing operating loop: review queued work, approve real long-term memories, package generated app workspaces, monitor provider health, connect accounts, and inspect the knowledge system that Jarvis builds over time.
 
-| Mission Control | App workspace | Provider usage |
+| Mission Control | Memory Review | App Workspace |
 |---|---|---|
-| <img src="docs/assets/screenshots/mobile-mission-control.png" alt="Jarvis Mission Control review queue" width="240"> | <img src="docs/assets/screenshots/mobile-app-workspace.png" alt="Jarvis generated app workspace" width="220"> | <img src="docs/assets/screenshots/mobile-provider-usage.png" alt="Jarvis provider usage and health dashboard" width="240"> |
+| <img src="docs/assets/screenshots/mobile-mission-control.png" alt="Jarvis Mission Control review queue" width="240"> | <img src="docs/assets/screenshots/mobile-memory-review.png" alt="Jarvis memory review queue with real stored memories" width="240"> | <img src="docs/assets/screenshots/mobile-app-workspace.png" alt="Jarvis generated app workspace" width="220"> |
 
-| Connected accounts | Knowledge Vault |
-|---|---|
-| <img src="docs/assets/screenshots/mobile-connections.png" alt="Jarvis connected accounts settings" width="220"> | <img src="docs/assets/screenshots/mobile-knowledge-vault.png" alt="Jarvis Knowledge Vault index" width="240"> |
+| Provider Usage | Connected Accounts | Knowledge Vault |
+|---|---|---|
+| <img src="docs/assets/screenshots/mobile-provider-usage.png" alt="Jarvis provider usage and health dashboard" width="240"> | <img src="docs/assets/screenshots/mobile-connections.png" alt="Jarvis connected accounts settings" width="220"> | <img src="docs/assets/screenshots/mobile-knowledge-vault.png" alt="Jarvis Knowledge Vault index" width="240"> |
 
 ## What Jarvis Can Do
 
