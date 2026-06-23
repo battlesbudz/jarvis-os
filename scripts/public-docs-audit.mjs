@@ -54,9 +54,16 @@ const allowedCompatibilityReferences = [
 ];
 
 const requiredReadmeAssets = [
-  "docs/assets/screenshots/dashboard-projects.png",
-  "docs/assets/screenshots/dashboard-memory.png",
-  "docs/assets/screenshots/dashboard-visual.png",
+  "docs/assets/screenshots/mobile-mission-control.png",
+  "docs/assets/screenshots/mobile-memory-review.png",
+  "docs/assets/screenshots/mobile-stored-memories.png",
+  "docs/assets/screenshots/mobile-app-workspace.png",
+  "docs/assets/screenshots/mobile-app-static-workspace.png",
+  "docs/assets/screenshots/mobile-provider-usage.png",
+  "docs/assets/screenshots/mobile-connections.png",
+  "docs/assets/screenshots/mobile-knowledge-vault.png",
+  "docs/assets/screenshots/mobile-wiki-index-detail.png",
+  "docs/assets/screenshots/mobile-universal-conversation-search.png",
 ];
 
 function toFsPath(relativePath) {
