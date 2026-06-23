@@ -82,7 +82,7 @@ export class OpenAIProvider extends BaseProvider {
     if (!params.userId) return this.getEnvClient();
 
     const resolver = openAIProviderCredentialResolverForTesting ?? getProviderCredential;
-    const preferredAuthType = getPreferredOpenAIAuthType();
+    const preferredAuthType = params.preferredAuthType ?? getPreferredOpenAIAuthType();
     const allowAuthTypeFallback = isOpenAIAuthTypeFallbackEnabled();
     const credential = await resolver({
       userId: params.userId,

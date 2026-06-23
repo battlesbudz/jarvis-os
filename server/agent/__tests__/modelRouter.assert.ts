@@ -746,6 +746,7 @@ async function runExplicitCodexSelectionOverridesDefaultProviderProfileAssertion
     assert.equal(result.model, "gpt-4.1-mini");
     assert.equal(result.textContent, "chatgpt subscription route");
     assert.equal(capturedRequest?.model, "gpt-4.1-mini");
+    assert.equal(capturedRequest?.preferredAuthType, "oauth");
     assert.equal(capturedRequest?.userId, "user-explicit-codex");
     console.log("OK: a connected ChatGPT subscription selection uses the OpenAI OAuth chat route");
   } finally {
@@ -855,6 +856,7 @@ async function runLegacyCodexSelectionWithOAuthOverridesDefaultProviderProfileAs
     assert.equal(result.model, "gpt-4.1-mini");
     assert.equal(result.textContent, "legacy subscription route");
     assert.equal(capturedRequest?.model, "gpt-4.1-mini");
+    assert.equal(capturedRequest?.preferredAuthType, "oauth");
     assert.equal(capturedRequest?.userId, "user-legacy-codex-oauth");
     console.log("OK: a legacy ChatGPT/Codex selection with OAuth uses the OpenAI OAuth chat route");
   } finally {
@@ -917,10 +919,10 @@ async function runRequestedChatGPTSubscriptionUsesOAuthRouteAssertion(): Promise
       assert.equal(userId, "user-requested-chatgpt-subscription");
       const openai = {
         connected: true,
-        defaultAuthType: "oauth" as const,
+        defaultAuthType: "api_key" as const,
         authTypes: {
-          api_key: { connected: false, isDefault: false },
-          oauth: { connected: true, isDefault: true },
+          api_key: { connected: true, isDefault: true },
+          oauth: { connected: true, isDefault: false },
         },
       };
       return {
@@ -948,6 +950,7 @@ async function runRequestedChatGPTSubscriptionUsesOAuthRouteAssertion(): Promise
     assert.equal(result.model, "gpt-4.1-mini");
     assert.equal(result.textContent, "requested subscription route");
     assert.equal(capturedRequest?.model, "gpt-4.1-mini");
+    assert.equal(capturedRequest?.preferredAuthType, "oauth");
     assert.equal(capturedRequest?.userId, "user-requested-chatgpt-subscription");
     console.log("OK: app-selected ChatGPT subscription requests use the OpenAI OAuth chat route");
   } finally {

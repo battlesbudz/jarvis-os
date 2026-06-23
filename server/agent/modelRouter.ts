@@ -667,7 +667,7 @@ function isCodexOnlyRouteChain(chain: FallbackChainEntry[] | null | undefined): 
 }
 
 function openAIOAuthChatSubscriptionChain(tier: ModelExecutionTier): FallbackChainEntry[] {
-  return [{ providerName: "openai", model: openAIModelForExecutionTier(tier) }];
+  return [{ providerName: "openai", model: openAIModelForExecutionTier(tier), preferredAuthType: "oauth" }];
 }
 
 function resolveCodexSubscriptionChain(
