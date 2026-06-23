@@ -47,6 +47,12 @@ async function main() {
   const settingsOnPhone = await resolveAndroidAppName("user-phone", "settings on phone", { includeLiveInventory: false });
   assert.equal(settingsOnPhone.app?.packageName, "com.android.settings");
 
+  const xApp = await resolveAndroidAppName("user-phone", "X", { includeLiveInventory: false });
+  assert.equal(xApp.app?.packageName, "com.twitter.android");
+
+  const excel = await resolveAndroidAppName("user-phone", "Excel", { includeLiveInventory: false });
+  assert.equal(excel.app, null);
+
   assert.equal(
     buildAndroidYoutubeSearchUrl("local Gemma on Android videos"),
     "vnd.youtube://results?search_query=local%20Gemma%20on%20Android%20videos",

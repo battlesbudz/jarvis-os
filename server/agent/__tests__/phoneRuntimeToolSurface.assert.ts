@@ -32,12 +32,19 @@ assert.match(routesSource, /function isYoutubeServerResearchRequest/);
 assert.match(routesSource, /function isYoutubePhoneActionRequest/);
 assert.match(routesSource, /function isMemoryPhoneBypassRequest/);
 assert.match(routesSource, /function isPhoneOpenActionRequest/);
+assert.match(routesSource, /function hasPhoneRuntimeContext/);
 assert.match(routesSource, /function isPhoneRuntimeCoveredRequest/);
 assert.match(routesSource, /isYoutubePhoneActionRequest\(text\) && !isYoutubeServerResearchRequest\(text\)/);
 assert.match(routesSource, /return isPhoneOpenActionRequest\(text\) \|\|/);
+assert.match(
+  routesSource,
+  new RegExp("hasPhoneRuntimeContext\\(text\\) && /\\\\b\\(\\?:tap\\|swipe\\|scroll\\|type\\|press\\|back\\|home\\|recents\\|enter\\)"),
+);
 assert.match(routesSource, /memoryPhoneBypassRequest[\s\S]*isPhoneRuntimeCoveredRequest\(lastUserContent\)/);
 assert.match(routesSource, /phoneRuntimeCoveredRequest \|\|[\s\S]*deviceControlKeywords\.some/);
 assert.doesNotMatch(routesSource, /'launch',/);
+assert.doesNotMatch(routesSource, /'look it up'/);
+assert.doesNotMatch(routesSource, /'find me a video'/);
 assert.match(routesSource, /const youtubeResearchRequest = isYoutubeServerResearchRequest\(lastUserContent\)/);
 assert.match(routesSource, /if \(!youtubeResearchRequest\)[\s\S]*requiredToolNames\.add\(["']android_youtube_search["']\)[\s\S]*\} else \{[\s\S]*requiredToolNames\.add\(["']search_youtube["']\)/);
 assert.match(routesSource, /requiredToolNames\.add\(["']search_youtube["']\)/);

@@ -189,6 +189,12 @@ function isPhoneOpenActionRequest(text: string): boolean {
   return /\b(?:app|application|phone|device|youtube|you\s*tube|yt|facebook|fb|linkedin|linked\s+in|instagram|ig|insta|spotify|chrome|browser|camera|settings|messages|texts|gmail|google\s+mail|maps|messenger|whatsapp|snapchat|tiktok|tik\s+tok|x|twitter|reddit|discord|telegram|slack|zoom|teams|calculator|calendar|clock|contacts|notes)\b/i.test(text);
 }
 
+function hasPhoneRuntimeContext(text: string): boolean {
+  return /\b(?:android|phone|screen|display|device|app|application|button|keyboard|field|input|notification|notifications)\b/i.test(text) ||
+    isYoutubePhoneRequest(text) ||
+    isPhoneOpenActionRequest(text);
+}
+
 function isPhoneRuntimeCoveredRequest(text: string): boolean {
   if (isYoutubePhoneRequest(text)) return isYoutubePhoneActionRequest(text) && !isYoutubeServerResearchRequest(text);
   return isPhoneOpenActionRequest(text) ||
@@ -196,7 +202,7 @@ function isPhoneRuntimeCoveredRequest(text: string): boolean {
     /\b(?:screenshot|screen shot|screen capture)\b/i.test(text) ||
     /\b(?:read|inspect|look at|what(?:'s| is))\b.{0,48}\b(?:screen|display|phone)\b/i.test(text) ||
     /\bnotifications?\b/i.test(text) ||
-    /\b(?:tap|swipe|scroll|type|press|back|home|recents|enter)\b/i.test(text);
+    (hasPhoneRuntimeContext(text) && /\b(?:tap|swipe|scroll|type|press|back|home|recents|enter)\b/i.test(text));
 }
 
 function buildPhoneRuntimeRequiredToolNames(
@@ -1756,8 +1762,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         // youtube / video intelligence
         'transcript', 'summarize the video', 'summarize that video', 'what is the video about',
         "what's the video about", 'give me a summary', 'summarize what', 'tell me what the video',
-        'search youtube', 'find a youtube', 'look up on youtube', 'research on youtube',
-        'look something up', 'look it up', 'find a video', 'find me a video',
+        'search youtube', 'find a youtube', 'look up on youtube',
       ];
       const memoryPhoneBypassRequest = isMemoryPhoneBypassRequest(lastUserContent);
       const phoneRuntimeCoveredRequest = androidActive && !memoryPhoneBypassRequest && isPhoneRuntimeCoveredRequest(lastUserContent);
