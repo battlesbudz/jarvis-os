@@ -1,6 +1,8 @@
 # Jarvis OS
 
-Jarvis OS is a self-hostable personal AI operating system. It combines a mobile app, dashboard, Express runtime, tool-calling agent harness, long-term memory, background jobs, approval gates, provider routing, and optional desktop/Android connectors into one system for running a private assistant that can plan, research, communicate, remember, and act.
+Jarvis OS is a self-hostable personal AI operating system for running a private assistant that can remember, plan, route work across tools and models, and act through connected accounts and devices.
+
+It combines a mobile command center, dashboard surfaces, Express runtime, tool-calling agent harness, long-term memory, background jobs, approval gates, provider routing, and optional desktop/Android connectors into one system.
 
 Jarvis is not a single chatbot wrapper. It is built around an observable operating loop:
 
@@ -14,23 +16,22 @@ The goal is useful autonomy that stays reviewable. Jarvis can work in the backgr
 
 ## Screenshots
 
-These screenshots are generated from the current local dashboard build.
-They show the first public dashboard surfaces; mobile, approval, connector, and channel screenshots are tracked in the public roadmap so future readers can verify more of the system visually.
+These public screenshots are cropped from the current mobile/web app surface. They focus on the user-facing operating loop: review queued work, connect accounts, and inspect the knowledge system that Jarvis builds over time.
 
-| Mission objectives | Knowledge base | Visual office |
+| Mission Control | Connected accounts | Knowledge Vault |
 |---|---|---|
-| ![Jarvis dashboard project objectives](docs/assets/screenshots/dashboard-projects.png) | ![Jarvis dashboard memory surface](docs/assets/screenshots/dashboard-memory.png) | ![Jarvis dashboard visual office](docs/assets/screenshots/dashboard-visual.png) |
+| <img src="docs/assets/screenshots/mobile-mission-control.png" alt="Jarvis Mission Control review queue" width="260"> | <img src="docs/assets/screenshots/mobile-connections.png" alt="Jarvis connected accounts settings" width="220"> | <img src="docs/assets/screenshots/mobile-knowledge-vault.png" alt="Jarvis Knowledge Vault index" width="260"> |
 
 ## What Jarvis Can Do
 
-- **Personal command center:** Expo mobile/web app plus dashboard surfaces for chat, profile, settings, goals, inbox, memory review, job status, deliverables, and connector setup.
+- **Personal command center:** Expo mobile/web app plus dashboard surfaces for chat, Mission Control, settings, goals, inbox, memory review, job status, deliverables, and connector setup.
 - **Agent runtime:** Tool-calling harness with model routing, provider fallback, task-specific agents, quality checks, controlled background jobs, and visible deliverables.
 - **Long-term memory:** Structured memories, people records, SOUL/context files, G-Brain derived notes, memory review, retrieval paths, and provenance-aware personalization.
 - **Autonomous work queue:** Persistent jobs for research, deep research, writing, planning, email drafting, goal decomposition, named-agent work, and build-feature workflows.
 - **Reviewable outputs:** Approval gates, draft/revise/approve flows, revision lineage, Drive export, channel notifications, and audit-friendly records.
 - **Multi-channel presence:** Telegram, Discord, Slack, WhatsApp, in-app chat, web chat, email/calendar integrations, and external notification routing.
-- **Provider routing:** OpenAI-compatible providers, Gemini, OpenRouter-style routing, stored provider profiles, and ChatGPT subscription use through the desktop connector/Codex OAuth path.
-- **Desktop and Android control:** Optional Windows desktop connector plus Android daemon for local shell/file operations, screenshots, screen understanding, app navigation, notifications, and wake/talk mode.
+- **Provider routing:** OpenAI-compatible providers, Gemini, OpenRouter-style routing, stored provider profiles, and ChatGPT subscription/OAuth routes.
+- **Desktop and Android control:** Optional Windows desktop connector plus Android device control for local shell/file operations, screenshots, screen understanding, app navigation, notifications, wake/talk mode, and phone-local model experiments.
 - **Safety boundaries:** Approval receipts, tool policies, daemon permissions, forbidden action checks, audit logs, and fail-closed behavior for high-risk actions.
 - **Deployment support:** Railway-oriented server deployment, Expo/Android builds, dashboard build, database migrations, doctor checks, and QA scripts.
 
