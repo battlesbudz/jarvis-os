@@ -32,6 +32,7 @@ assert.match(routesSource, /function isYoutubeServerResearchRequest/);
 assert.match(routesSource, /function isYoutubePhoneActionRequest/);
 assert.match(routesSource, /function isMemoryPhoneBypassRequest/);
 assert.match(routesSource, /function isPhoneOpenActionRequest/);
+assert.match(routesSource, /project\|build\|create\|make\|generate\|scaffold\|code\|website\|web\\s\+app/);
 assert.match(routesSource, /function hasPhoneRuntimeContext/);
 assert.match(routesSource, /function isPhoneRuntimeCoveredRequest/);
 assert.match(routesSource, /isYoutubePhoneActionRequest\(text\) && !isYoutubeServerResearchRequest\(text\)/);

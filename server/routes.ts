@@ -186,7 +186,9 @@ function isMemoryPhoneBypassRequest(text: string): boolean {
 
 function isPhoneOpenActionRequest(text: string): boolean {
   if (!/\b(?:open|launch|start)\b/i.test(text)) return false;
-  return /\b(?:app|application|phone|device|youtube|you\s*tube|yt|facebook|fb|linkedin|linked\s+in|instagram|ig|insta|spotify|chrome|browser|camera|settings|messages|texts|gmail|google\s+mail|maps|messenger|whatsapp|snapchat|tiktok|tik\s+tok|x|twitter|reddit|discord|telegram|slack|zoom|teams|calculator|calendar|clock|contacts|notes)\b/i.test(text);
+  if (/\b(?:youtube|you\s*tube|yt|facebook|fb|linkedin|linked\s+in|instagram|ig|insta|spotify|chrome|browser|camera|settings|messages|texts|gmail|google\s+mail|maps|messenger|whatsapp|snapchat|tiktok|tik\s+tok|x|twitter|reddit|discord|telegram|slack|zoom|teams|calculator|calendar|clock|contacts|notes)\b/i.test(text)) return true;
+  if (/\b(?:project|build|create|make|generate|scaffold|code|website|web\s+app)\b/i.test(text)) return false;
+  return /\b(?:app|application|phone|device)\b/i.test(text);
 }
 
 function hasPhoneRuntimeContext(text: string): boolean {
