@@ -1,0 +1,84 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+
+const routesSource = fs.readFileSync(path.resolve("server/routes.ts"), "utf8");
+const runtimeSource = fs.readFileSync(path.resolve("server/agent/tools/androidAppRuntime.ts"), "utf8");
+const bridgeSource = fs.readFileSync(path.resolve("server/daemon/bridge.ts"), "utf8");
+const androidOpHandlerSource = fs.readFileSync(path.resolve("android-daemon/app/src/main/java/com/jarvis/daemon/OpHandler.kt"), "utf8");
+
+assert.match(routesSource, /ANDROID_PHONE_RUNTIME_TOOL_NAMES/);
+assert.match(routesSource, /function filterPhoneRuntimeModelTools/);
+assert.match(routesSource, /allowDaemonActionFallback/);
+assert.match(routesSource, /SERVER_YOUTUBE_TOOL_NAMES/);
+assert.match(routesSource, /allowServerYoutubeTools/);
+assert.match(routesSource, /if \(!name\) return false/);
+assert.match(routesSource, /isAndroidPhoneRuntimeToolName\(name\)\) return true/);
+assert.match(routesSource, /name === ["']daemon_action["']\)\s+return options\.allowDaemonActionFallback === true/);
+assert.match(routesSource, /SERVER_YOUTUBE_TOOL_NAMES\.has\(name\)\) return options\.allowServerYoutubeTools === true/);
+assert.match(routesSource, /return false;\s*\}\);/);
+assert.match(routesSource, /keepDaemonActionFallback[\s\S]*focusedToolNames\.add\(["']daemon_action["']\)/);
+assert.match(routesSource, /routeRequiredToolNames[\s\S]*keepDaemonActionFallback[\s\S]*\["daemon_action"\]/);
+assert.match(routesSource, /const youtubeServerResearchRequest = androidActive && isYoutubeServerResearchRequest\(lastUserContent\)/);
+assert.match(routesSource, /keepDaemonActionFallback[\s\S]*!youtubeServerResearchRequest/);
+assert.match(routesSource, /const useFocusedRequestTools = toolAwareRoute\.shouldPreferTool \|\| routeRequiredToolNames\.length > 0/);
+assert.match(routesSource, /usePhoneRuntimeToolSurfaceOnly[\s\S]*filterPhoneRuntimeModelTools\(firstTurnToolPolicy\.tools,\s*\{/);
+assert.match(routesSource, /allowServerYoutubeTools:\s*youtubeServerResearchRequest/);
+assert.match(routesSource, /usePhoneRuntimeToolSurfaceOnly\s*=\s*androidActive && phoneRuntimeCoveredRequest/);
+assert.doesNotMatch(routesSource, /isAndroidLocalGemmaModelName/);
+assert.match(routesSource, /\.\.\.ANDROID_PHONE_RUNTIME_TOOL_NAMES/);
+assert.match(routesSource, /function buildPhoneRuntimeRequiredToolNames/);
+assert.match(routesSource, /function isYoutubeServerResearchRequest/);
+assert.match(routesSource, /function isYoutubePhoneActionRequest/);
+assert.match(routesSource, /function isMemoryPhoneBypassRequest/);
+assert.match(routesSource, /function isPhoneOpenActionRequest/);
+assert.match(routesSource, /project\|build\|create\|make\|generate\|scaffold\|code\|website\|web\\s\+app/);
+assert.match(routesSource, /function isPhoneOpenActionRequest[\s\S]*project\|build\|create[\s\S]*youtube\|you\\s\*tube/);
+assert.match(routesSource, /function hasPhoneRuntimeContext/);
+assert.match(routesSource, /function isPhoneRuntimeCoveredRequest/);
+assert.match(routesSource, /isYoutubePhoneActionRequest\(text\) && !isYoutubeServerResearchRequest\(text\)/);
+assert.match(routesSource, /const youtubePhoneActionRequest = isYoutubePhoneRequest\(lastUserContent\) && isYoutubePhoneActionRequest\(lastUserContent\)/);
+assert.doesNotMatch(routesSource, /\(\?:you\\s\*tube\|youtube\|yt\)\?\\s\*videos/);
+assert.match(routesSource, /\(\?:you\\s\*tube\|youtube\|yt\)\\s\*videos/);
+assert.match(routesSource, /return isPhoneOpenActionRequest\(text\) \|\|/);
+assert.match(
+  routesSource,
+  new RegExp("hasPhoneRuntimeContext\\(text\\) && /\\\\b\\(\\?:tap\\|swipe\\|scroll\\|type\\|press\\|back\\|home\\|recents\\|enter\\)"),
+);
+assert.match(routesSource, /memoryPhoneBypassRequest[\s\S]*isPhoneRuntimeCoveredRequest\(lastUserContent\)/);
+assert.match(routesSource, /phoneRuntimeCoveredRequest \|\|[\s\S]*deviceControlKeywords\.some/);
+assert.doesNotMatch(routesSource, /'launch',/);
+assert.doesNotMatch(routesSource, /'look it up'/);
+assert.doesNotMatch(routesSource, /'find me a video'/);
+assert.match(routesSource, /const youtubeResearchRequest = isYoutubeServerResearchRequest\(lastUserContent\)/);
+assert.match(routesSource, /if \(!youtubeResearchRequest\)[\s\S]*requiredToolNames\.add\(["']android_youtube_search["']\)[\s\S]*\} else \{[\s\S]*requiredToolNames\.add\(["']search_youtube["']\)/);
+assert.match(routesSource, /requiredToolNames\.add\(["']search_youtube["']\)/);
+assert.match(routesSource, /requiredToolNames\.add\(["']fetch_youtube_transcript["']\)/);
+assert.match(routesSource, /effectiveToolAwareRoute[\s\S]*priorityToolNames:\s*uniqueToolNames/);
+assert.match(routesSource, /buildToolExecutionPolicy\(\{[\s\S]*route:\s*effectiveToolAwareRoute/);
+assert.match(routesSource, /forceRequired:\s*isDeviceControlRequest \|\| isDiagnosticsRequest \|\| isResearchRequest \|\| routeRequiredToolNames\.length > 0/);
+assert.match(routesSource, /tc\.function\.name === 'android_return_to_jarvis_chat'[\s\S]*savePendingCoachResponse/);
+assert.match(routesSource, /daemonAbsoluteRuleBase/);
+assert.match(routesSource, /daemon_action fallback exposed for this unsupported phone action/);
+assert.match(routesSource, /treat it as a valid phone action/);
+
+assert.match(runtimeSource, /export const ANDROID_PHONE_RUNTIME_TOOL_NAMES/);
+assert.match(runtimeSource, /export const androidPhoneRuntimeTools/);
+assert.match(runtimeSource, /androidOpenAppByNameTool/);
+assert.match(runtimeSource, /androidCaptureScreenTool/);
+assert.match(runtimeSource, /androidReadNotificationsTool/);
+assert.match(runtimeSource, /\{ type: ["']android_notify["'], title, body \}/);
+assert.match(runtimeSource, /galleryPersistence:\s*["']temporary_chat_preview/);
+assert.match(runtimeSource, /fallback capture cleanup is best-effort/);
+assert.doesNotMatch(runtimeSource, /savedToGallery:\s*false/);
+assert.doesNotMatch(runtimeSource, /not saved to the user's gallery/i);
+assert.doesNotMatch(runtimeSource, /Missing Android permissions: \$\{missing\.join/);
+assert.match(runtimeSource, /Missing Android permission: android_browse/);
+
+assert.match(bridgeSource, /\| \{ type: ["']android_notify["']; title: string; body: string \}/);
+assert.match(androidOpHandlerSource, /"notify", "android_notify" -> handleNotify/);
+assert.match(runtimeSource, /\{ label: ["']Camera["'], packageName: ["']com\.android\.camera2["'], aliases: \["camera"/);
+assert.match(androidOpHandlerSource, /"com\.android\.camera2"\s+to listOf\("com\.sec\.android\.app\.camera", "com\.google\.android\.GoogleCamera"/);
+assert.match(androidOpHandlerSource, /"com\.sec\.android\.app\.camera"\s+to listOf\("com\.android\.camera2", "com\.google\.android\.GoogleCamera"/);
+
+console.log("All Phone Runtime tool surface assertions passed.");

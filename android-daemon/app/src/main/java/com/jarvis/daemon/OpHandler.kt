@@ -44,6 +44,7 @@ object OpHandler {
         return try {
             val result = when (type) {
                 "ping" -> handlePing()
+                "android_list_apps" -> handleListApps(context)
                 "android_open_app" -> handleOpenApp(context, op)
                 "android_browse" -> handleBrowse(context, op)
                 "android_return_to_jarvis" -> handleReturnToJarvis(context)
@@ -63,7 +64,7 @@ object OpHandler {
                 "android_file_search" -> handleFileSearch(op)
                 "android_open_file" -> handleOpenFile(context, op)
                 "android_copy_to_clipboard" -> handleCopyToClipboard(context, op)
-                "notify" -> handleNotify(context, op)
+                "notify", "android_notify" -> handleNotify(context, op)
                 "voice_set_wake_words" -> handleSetWakeWords(context, op)
                 "voice_set_talk_mode" -> handleSetTalkMode(context, op)
                 "voice_tts_finished" -> handleTtsFinished()
@@ -118,6 +119,34 @@ object OpHandler {
         )
     }
 
+    private fun handleListApps(context: Context): OpResult {
+        val pm = context.packageManager
+        val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        val apps = JSONArray()
+        val activities = pm.queryIntentActivities(launcherIntent, 0)
+            .sortedWith(compareBy({ it.loadLabel(pm).toString().lowercase() }, { it.activityInfo.packageName }))
+
+        for (info in activities) {
+            val label = info.loadLabel(pm).toString()
+            val packageName = info.activityInfo.packageName
+            apps.put(
+                JSONObject()
+                    .put("label", label)
+                    .put("packageName", packageName)
+                    .put("activityName", info.activityInfo.name)
+            )
+        }
+
+        return OpResult(
+            true,
+            data = JSONObject()
+                .put("apps", apps)
+                .put("count", apps.length())
+        )
+    }
+
     // Many apps ship under multiple package names (lite vs full, different stores, beta).
     // When the requested package has no launch intent, try these alternatives before
     // declaring the app not installed.
@@ -135,6 +164,11 @@ object OpHandler {
         "com.snapchat.android"        to listOf("com.snapchat.android.debug"),
         "com.discord"                 to listOf("com.discord.development"),
         "com.linkedin.android"        to listOf("com.linkedin.android.lite"),
+        "com.android.camera2"         to listOf("com.sec.android.app.camera", "com.google.android.GoogleCamera", "com.oneplus.camera", "com.motorola.camera3"),
+        "com.sec.android.app.camera"  to listOf("com.android.camera2", "com.google.android.GoogleCamera", "com.oneplus.camera", "com.motorola.camera3"),
+        "com.google.android.GoogleCamera" to listOf("com.android.camera2", "com.sec.android.app.camera", "com.oneplus.camera", "com.motorola.camera3"),
+        "com.oneplus.camera"          to listOf("com.android.camera2", "com.sec.android.app.camera", "com.google.android.GoogleCamera", "com.motorola.camera3"),
+        "com.motorola.camera3"        to listOf("com.android.camera2", "com.sec.android.app.camera", "com.google.android.GoogleCamera", "com.oneplus.camera"),
         "com.amazon.mShop.android.shopping" to listOf("com.amazon.windowshop"),
         "com.ubercab"                 to listOf("com.ubercab.driver"),
         "com.pinterest"               to listOf("com.pinterest.twa"),

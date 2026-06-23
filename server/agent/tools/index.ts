@@ -37,6 +37,23 @@ import { driveCreateFileTool, driveListFilesTool, driveReadFileTool } from "./go
 import { fetchCalendarTool } from "./calendar";
 import { spawnSubagentTool } from "./spawnSubagent";
 import { daemonActionTool } from "./daemon";
+import {
+  ANDROID_PHONE_RUNTIME_TOOL_NAMES,
+  androidCaptureScreenTool,
+  androidNotifyUserTool,
+  androidOpenAppByNameTool,
+  androidOpenPhoneUrlTool,
+  androidPhoneRuntimeTools,
+  androidPressPhoneKeyTool,
+  androidReadNotificationsTool,
+  androidReadScreenContextTool,
+  androidReturnToJarvisChatTool,
+  androidSwipeScreenTool,
+  androidTapScreenTool,
+  androidTypeTextTool,
+  androidWaitForUiTool,
+  androidYoutubeSearchTool,
+} from "./androidAppRuntime";
 import { daemonShellTool, daemonStatusTool, androidScreenUnderstandTool, androidSearchInAppTool, androidTypeInFieldTool, androidTapElementTool, androidSwipeElementTool, androidPinchElementTool, androidPinchCoordinatesTool, androidTrainButtonTool, androidFindTrainedButtonTool, androidTypeIntoElementTool, androidLongPressElementTool, androidDragElementTool, androidDragCoordinatesTool, androidFillFormTool, androidScrollToTopTool, androidSelectOptionTool } from "./daemonShellTool";
 import { checkConnectionsTool, generateReconnectLinkTool } from "./connections";
 import {
@@ -272,6 +289,21 @@ export {
   driveReadFileTool,
   spawnSubagentTool,
   daemonActionTool,
+  ANDROID_PHONE_RUNTIME_TOOL_NAMES,
+  androidOpenAppByNameTool,
+  androidYoutubeSearchTool,
+  androidOpenPhoneUrlTool,
+  androidCaptureScreenTool,
+  androidReadScreenContextTool,
+  androidTapScreenTool,
+  androidTypeTextTool,
+  androidSwipeScreenTool,
+  androidPressPhoneKeyTool,
+  androidWaitForUiTool,
+  androidReadNotificationsTool,
+  androidNotifyUserTool,
+  androidReturnToJarvisChatTool,
+  androidPhoneRuntimeTools,
   daemonShellTool,
   daemonStatusTool,
   androidScreenUnderstandTool,
