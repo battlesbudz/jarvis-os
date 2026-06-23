@@ -186,8 +186,8 @@ function isMemoryPhoneBypassRequest(text: string): boolean {
 
 function isPhoneOpenActionRequest(text: string): boolean {
   if (!/\b(?:open|launch|start)\b/i.test(text)) return false;
-  if (/\b(?:youtube|you\s*tube|yt|facebook|fb|linkedin|linked\s+in|instagram|ig|insta|spotify|chrome|browser|camera|settings|messages|texts|gmail|google\s+mail|maps|messenger|whatsapp|snapchat|tiktok|tik\s+tok|x|twitter|reddit|discord|telegram|slack|zoom|teams|calculator|calendar|clock|contacts|notes)\b/i.test(text)) return true;
   if (/\b(?:project|build|create|make|generate|scaffold|code|website|web\s+app)\b/i.test(text)) return false;
+  if (/\b(?:youtube|you\s*tube|yt|facebook|fb|linkedin|linked\s+in|instagram|ig|insta|spotify|chrome|browser|camera|settings|messages|texts|gmail|google\s+mail|maps|messenger|whatsapp|snapchat|tiktok|tik\s+tok|x|twitter|reddit|discord|telegram|slack|zoom|teams|calculator|calendar|clock|contacts|notes)\b/i.test(text)) return true;
   return /\b(?:app|application|phone|device)\b/i.test(text);
 }
 
@@ -2023,7 +2023,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           tools: focusedRequestTools,
           maxTurns: MAX_TOOL_TURNS,
           getToolName: (tool) => chatToolName(tool) ?? "",
-          forceRequired: isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest,
+          forceRequired: isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest || routeRequiredToolNames.length > 0,
         });
         const usePhoneRuntimeToolSurfaceOnly = androidActive && phoneRuntimeCoveredRequest;
         const modelRequestTools = usePhoneRuntimeToolSurfaceOnly
