@@ -184,9 +184,14 @@ function isMemoryPhoneBypassRequest(text: string): boolean {
   return /\b(?:memory|memories|remember|recall|what do you know about me|what have i told you|about me|living context)\b/i.test(text);
 }
 
+function isPhoneOpenActionRequest(text: string): boolean {
+  if (!/\b(?:open|launch|start)\b/i.test(text)) return false;
+  return /\b(?:app|application|phone|device|youtube|you\s*tube|yt|facebook|fb|linkedin|linked\s+in|instagram|ig|insta|spotify|chrome|browser|camera|settings|messages|texts|gmail|google\s+mail|maps|messenger|whatsapp|snapchat|tiktok|tik\s+tok|x|twitter|reddit|discord|telegram|slack|zoom|teams|calculator|calendar|clock|contacts|notes)\b/i.test(text);
+}
+
 function isPhoneRuntimeCoveredRequest(text: string): boolean {
   if (isYoutubePhoneRequest(text)) return isYoutubePhoneActionRequest(text) && !isYoutubeServerResearchRequest(text);
-  return /\b(?:open|launch|start)\b/i.test(text) ||
+  return isPhoneOpenActionRequest(text) ||
     /\b(?:browse to|navigate to|open (?:a )?(?:url|link|website|site))\b/i.test(text) ||
     /\b(?:screenshot|screen shot|screen capture)\b/i.test(text) ||
     /\b(?:read|inspect|look at|what(?:'s| is))\b.{0,48}\b(?:screen|display|phone)\b/i.test(text) ||
@@ -1735,7 +1740,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         'screenshot', 'screen shot', 'screen capture',
         'open youtube', 'open instagram', 'open spotify', 'open chrome', 'open camera',
         'open settings', 'open messages', 'open gmail', 'open maps', 'open the app',
-        'launch', 'take a photo', 'tap on', 'tap the', 'swipe', 'read the screen',
+        'take a photo', 'tap on', 'tap the', 'swipe', 'read the screen',
         "what's on the screen", 'what is on the screen', 'what does the screen', 'browse to',
         'android_', 'navigate to', 'type into', 'open app',
         // notification keywords
@@ -1755,8 +1760,11 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         'look something up', 'look it up', 'find a video', 'find me a video',
       ];
       const memoryPhoneBypassRequest = isMemoryPhoneBypassRequest(lastUserContent);
-      const isDeviceControlRequest = androidActive && !memoryPhoneBypassRequest && deviceControlKeywords.some(k => lastUserContent.includes(k));
       const phoneRuntimeCoveredRequest = androidActive && !memoryPhoneBypassRequest && isPhoneRuntimeCoveredRequest(lastUserContent);
+      const isDeviceControlRequest = androidActive && !memoryPhoneBypassRequest && (
+        phoneRuntimeCoveredRequest ||
+        deviceControlKeywords.some(k => lastUserContent.includes(k))
+      );
       const youtubeServerResearchRequest = androidActive && isYoutubeServerResearchRequest(lastUserContent);
       const keepDaemonActionFallback = androidActive && isDeviceControlRequest && !phoneRuntimeCoveredRequest && !youtubeServerResearchRequest;
 
