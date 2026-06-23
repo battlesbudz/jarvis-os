@@ -4184,6 +4184,63 @@ async function testAndroidLocalGemmaCancelsTimedOutGeneration() {
   }
 }
 
+async function testAndroidLocalGemmaCancelsGenerationWhenRunAborts() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  let generationStarted: () => void = () => {};
+  let finishGeneration: (result: any) => void = () => {};
+  const generationStartedPromise = new Promise<void>((resolve) => {
+    generationStarted = resolve;
+  });
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    if (op.type === "android_local_model_cancel") return { ok: true, data: { cancelled: true } };
+    generationStarted();
+    return new Promise((resolve) => {
+      finishGeneration = resolve;
+    });
+  });
+
+  const controller = new AbortController();
+
+  try {
+    const turn = accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open YouTube" }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+      signal: controller.signal,
+    }));
+
+    await generationStartedPromise;
+    controller.abort();
+    await assert.rejects(
+      () => Promise.race([
+        turn,
+        new Promise((_resolve, reject) => {
+          setTimeout(() => reject(new Error("abort did not settle")), 100);
+        }),
+      ]),
+      (error: unknown) => {
+        assert(error instanceof Error);
+        assert.equal(error.name, "AbortError");
+        return true;
+      },
+    );
+
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0].op.type, "android_local_model_generate");
+    assert.equal(requests[1].op.type, "android_local_model_cancel");
+    assert.equal(requests[1].op.requestId, requests[0].op.requestId);
+    finishGeneration({ ok: true, data: { text: "late answer", finishReason: "stop" } });
+    console.log("OK: Android Local Gemma provider cancels phone generation when the chat run aborts");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaExplainsUnbundledEngine() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: false,
@@ -4254,24 +4311,35 @@ async function testAndroidLocalGemmaExplainsPhoneResourceFailures() {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
 
-  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
-    ok: false,
-    error: "LOCAL_MODEL_BUSY: Phone Gemma is already generating.",
-  }));
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  let generateAttempts = 0;
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    if (op.type === "android_local_model_cancel") return { ok: true, data: { cancelled: true } };
+    generateAttempts += 1;
+    if (generateAttempts === 1) {
+      return { ok: false, error: "LOCAL_MODEL_BUSY: Phone Gemma is already generating." };
+    }
+    return { ok: true, data: { text: "Recovered after cancelling stale Phone Gemma work.", finishReason: "stop" } };
+  });
 
   try {
-    await assert.rejects(
-      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
-        model: "android-local-gemma/gemma-4-e4b-it",
-        messages: [{ role: "user", content: "Hello again" }],
-        toolChoice: "none",
-        maxCompletionTokens: 128,
-        stream: false,
-        userId: "user-phone",
-      })),
-      /still working on the previous message/,
-    );
-    console.log("OK: Android Local Gemma explains phone memory and busy failures");
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Hello again" }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+    assert.equal(result.textContent, "Recovered after cancelling stale Phone Gemma work.");
+    assert.deepEqual(requests.map((request) => request.op.type), [
+      "android_local_model_generate",
+      "android_local_model_cancel",
+      "android_local_model_generate",
+    ]);
+    assert.equal(requests[1].op.requestId, undefined);
+    console.log("OK: Android Local Gemma explains memory failures and recovers from stale busy generations");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -4474,6 +4542,7 @@ async function main() {
   await testAndroidLocalGemmaDoesNotSaveEmptyRememberCommands();
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
+  await testAndroidLocalGemmaCancelsGenerationWhenRunAborts();
   await testAndroidLocalGemmaExplainsUnbundledEngine();
   await testAndroidLocalGemmaExplainsValidationRequired();
   await testAndroidLocalGemmaExplainsPhoneResourceFailures();
