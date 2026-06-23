@@ -20,30 +20,12 @@ import { runPreListenBoot } from "./boot/preListen";
 import { registerRealtimeBoot } from "./boot/realtime";
 import { startWorkerBoot } from "./boot/workers";
 import { startPostListenBoot } from "./boot/postListen";
+import { verifyDatabaseTablesBeforeListen } from "./boot/databaseBoot";
 
 const app = express();
 const log = console.log;
 
-async function verifyDatabaseTablesInBackground(): Promise<void> {
-  let lastErr: unknown;
-  for (let attempt = 1; attempt <= 5; attempt++) {
-    try {
-      await ensureTablesExist();
-      return;
-    } catch (err) {
-      lastErr = err;
-      const delayMs = attempt * 2000;
-      console.warn(`[Startup] database table verification failed (attempt ${attempt}/5); retrying in ${delayMs}ms`);
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-  }
-
-  console.error("[Startup] database table verification failed after retries; continuing with existing schema", lastErr);
-}
-
-async function startRuntimeBootAfterListen(): Promise<void> {
-  await verifyDatabaseTablesInBackground();
-  await runPreListenBoot();
+function startRuntimeBootAfterListen(): void {
   startWorkerBoot();
   startPostListenBoot();
 }
@@ -62,6 +44,9 @@ async function startRuntimeBootAfterListen(): Promise<void> {
   registerWhatsAppWebhook(app);
   registerSlackWebhook(app);
 
+  await verifyDatabaseTablesBeforeListen({ ensureTablesExist });
+  await runPreListenBoot();
+
   const server = await registerRoutes(app);
 
   registerRealtimeBoot(app, server);
@@ -77,9 +62,10 @@ async function startRuntimeBootAfterListen(): Promise<void> {
     },
     () => {
       log(`express server serving on ${host}:${port}`);
-      startRuntimeBootAfterListen().catch((err) => {
-        console.error("[Startup] runtime boot tasks crashed unexpectedly:", err);
-      });
+      startRuntimeBootAfterListen();
     },
   );
-})();
+})().catch((err) => {
+  console.error("[Startup] fatal boot failure:", err);
+  process.exit(1);
+});

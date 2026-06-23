@@ -19,6 +19,8 @@ const tests = [
   { file: "server/auth/__tests__/mobileAuthFlow.test.ts" },
   { file: "server/auth/__tests__/mobileAuthRedirectHtml.test.ts" },
   { file: "server/auth/__tests__/telegramWebAppAuth.test.ts", requiresDatabase: true },
+  { file: "server/boot/__tests__/databaseBoot.assert.ts" },
+  { file: "server/boot/__tests__/requestLogging.assert.ts" },
   { file: "server/diagnostics/__tests__/osReadiness.test.ts" },
   { file: "server/diagnostics/__tests__/memoryEmbeddingHealthRouting.assert.ts" },
   { file: "server/agent/__tests__/autonomyPolicy.test.ts" },
