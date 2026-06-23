@@ -229,6 +229,12 @@ function shouldCancelTimedOutGeneration(result: DaemonOpResult): boolean {
   return !result.ok && /timeout/i.test(result.error || "");
 }
 
+function createAbortError(message: string): Error {
+  const error = new Error(message);
+  error.name = "AbortError";
+  return error;
+}
+
 export function _setAndroidLocalGemmaDaemonOpForTesting(fn: AndroidLocalGemmaDaemonOp | null): void {
   daemonOpForTesting = fn;
 }
@@ -1600,6 +1606,48 @@ async function sendAndroidLocalGemmaOp(
   return sendDaemonOp(userId, op, timeoutMs);
 }
 
+async function cancelAndroidLocalGemmaGeneration(userId: string, requestId?: string): Promise<void> {
+  await sendAndroidLocalGemmaOp(
+    userId,
+    requestId
+      ? { type: "android_local_model_cancel", requestId }
+      : { type: "android_local_model_cancel" },
+    5_000,
+  );
+}
+
+async function sendAbortableAndroidLocalGemmaGenerateOp(
+  userId: string,
+  op: Extract<Parameters<AndroidLocalGemmaDaemonOp>[1], { type: "android_local_model_generate" }>,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<DaemonOpResult> {
+  if (!signal) {
+    return sendAndroidLocalGemmaOp(userId, op, timeoutMs);
+  }
+
+  if (signal.aborted) {
+    throw createAbortError("Phone Gemma generation was stopped before it started.");
+  }
+
+  const requestId = op.requestId;
+  let onAbort: (() => void) | null = null;
+  const generatePromise = sendAndroidLocalGemmaOp(userId, op, timeoutMs);
+  const abortPromise = new Promise<never>((_resolve, reject) => {
+    onAbort = () => {
+      cancelAndroidLocalGemmaGeneration(userId, requestId).catch(() => {});
+      reject(createAbortError("Phone Gemma generation was stopped."));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+
+  try {
+    return await Promise.race([generatePromise, abortPromise]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
 export class AndroidLocalGemmaProvider extends BaseProvider {
   async initialize(): Promise<void> {}
   async cleanup(): Promise<void> {}
@@ -1616,7 +1664,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
     }
 
     const requestId = `phone-gemma-${randomUUID()}`;
-    const result = await sendAndroidLocalGemmaOp(
+    const result = await sendAbortableAndroidLocalGemmaGenerateOp(
       params.userId,
       {
         type: "android_local_model_generate",
@@ -1628,6 +1676,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
         allowCpuFallback: phoneGemmaAllowCpuFallback(),
       },
       phoneGemmaTimeoutMs(),
+      params.signal,
     );
 
     if (shouldCancelTimedOutGeneration(result)) {

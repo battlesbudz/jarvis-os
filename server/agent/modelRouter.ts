@@ -666,6 +666,19 @@ function isCodexOnlyRouteChain(chain: FallbackChainEntry[] | null | undefined): 
   return !!chain && chain.length === 1 && isCodexOAuthRouteEntry(chain[0]);
 }
 
+function openAIOAuthChatSubscriptionChain(tier: ModelExecutionTier): FallbackChainEntry[] {
+  return [{ providerName: "openai", model: openAIModelForExecutionTier(tier), preferredAuthType: "oauth" }];
+}
+
+function resolveCodexSubscriptionChain(
+  chain: FallbackChainEntry[] | null,
+  providerProfileState: UserProviderProfileRouteState,
+  tier: ModelExecutionTier,
+): FallbackChainEntry[] | null {
+  if (!isCodexOnlyRouteChain(chain) || !providerProfileState.hasOpenAIOAuthProfile) return chain;
+  return openAIOAuthChatSubscriptionChain(tier);
+}
+
 function describeRouteChain(chain: FallbackChainEntry[] | null | undefined): string {
   if (!chain?.length) return "none";
   return chain.map((entry) => `${entry.providerName}(${entry.model})`).join(" -> ");
@@ -810,14 +823,18 @@ async function prepareModelTurn(
   const requestedChain = requestedEntry ? [requestedEntry] : null;
   const selectedCodexMayBeStale = isCodexOnlyRouteChain(selectedChain) && !selectedRoute?.isExplicit;
   const requestedCodexOnly = isCodexOnlyRouteChain(requestedChain);
+  const selectedOrRequestedCodexOnly = isCodexOnlyRouteChain(selectedChain) || requestedCodexOnly;
   const requestedNonCodexChain = !requestedCodexOnly ? requestedChain : null;
-  const preferredRequestedChain = params.preferRequestedModel ? requestedChain : requestedNonCodexChain;
   const needsProviderProfileState =
     selectedCodexMayBeStale ||
+    selectedOrRequestedCodexOnly ||
     (!selectedChain && (!requestedChain || requestedCodexOnly));
   const providerProfileState = needsProviderProfileState
     ? await getUserProviderProfileRouteState(params.userId, params.tier, logPrefix)
     : { defaultChain: null, hasOpenAIOAuthProfile: false };
+  const selectedRuntimeChain = resolveCodexSubscriptionChain(selectedChain, providerProfileState, params.tier);
+  const requestedRuntimeChain = resolveCodexSubscriptionChain(requestedChain, providerProfileState, params.tier);
+  const preferredRequestedChain = params.preferRequestedModel ? requestedRuntimeChain : requestedNonCodexChain;
   const selectedCodexIsStaleDefault =
     selectedCodexMayBeStale &&
     !providerProfileState.hasOpenAIOAuthProfile;
@@ -825,10 +842,10 @@ async function prepareModelTurn(
     `${logPrefix} route_input requested=${params.requestedModel ?? "none"} requestedEntry=${describeRouteChain(requestedChain)} selected=${describeRouteChain(selectedChain)} selectedExplicit=${selectedRoute?.isExplicit ? "true" : "false"} preferRequested=${params.preferRequestedModel ? "true" : "false"}`,
   );
   const chain = preferredRequestedChain
-    ?? (!selectedCodexIsStaleDefault ? selectedChain : null)
+    ?? (!selectedCodexIsStaleDefault ? selectedRuntimeChain : null)
     ?? providerProfileState.defaultChain
-    ?? selectedChain
-    ?? requestedChain
+    ?? selectedRuntimeChain
+    ?? requestedRuntimeChain
     ?? (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix))
     ?? getModelRouteChain(params.tier);
   if (chain.length === 0) {

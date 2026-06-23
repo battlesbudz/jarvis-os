@@ -54,6 +54,8 @@ export interface FallbackChainEntry {
   providerName: ProviderName;
   /** Model string forwarded to this provider's query() call. */
   model: string;
+  /** Optional per-route credential preference, e.g. ChatGPT subscription -> OpenAI OAuth. */
+  preferredAuthType?: ProviderQueryParams["preferredAuthType"];
 }
 
 function collectErrorSignals(err: unknown): string {
@@ -240,7 +242,11 @@ export async function queryWithFallback(
       const provider = getProvider(entry.providerName);
       // Override `params.model` with the model string for this specific provider.
       // Model namespaces are provider-specific, so fallback must remap the model.
-      const result = await accumulateTurn(provider.query({ ...params, model: entry.model }));
+      const result = await accumulateTurn(provider.query({
+        ...params,
+        model: entry.model,
+        preferredAuthType: entry.preferredAuthType ?? params.preferredAuthType,
+      }));
       result.providerName = entry.providerName;
       result.model = entry.model;
       result.fallbackUsed = isFallback;
@@ -307,7 +313,12 @@ export async function queryWithFallbackStreaming(
     try {
       const provider = getProvider(entry.providerName);
       const result = await accumulateTurn(
-        provider.query({ ...params, model: entry.model, stream: true }),
+        provider.query({
+          ...params,
+          model: entry.model,
+          preferredAuthType: entry.preferredAuthType ?? params.preferredAuthType,
+          stream: true,
+        }),
         async (chunk) => {
           emittedChunk = true;
           await onChunk(chunk);
