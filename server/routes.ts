@@ -2023,10 +2023,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           getToolName: (tool) => chatToolName(tool) ?? "",
           forceRequired: isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest,
         });
-        const usePhoneRuntimeToolSurfaceOnly = androidActive && (
-          phoneRuntimeCoveredRequest ||
-          (keepDaemonActionFallback && !isResearchRequest)
-        );
+        const usePhoneRuntimeToolSurfaceOnly = androidActive && phoneRuntimeCoveredRequest;
         const modelRequestTools = usePhoneRuntimeToolSurfaceOnly
           ? filterPhoneRuntimeModelTools(firstTurnToolPolicy.tools, {
               allowDaemonActionFallback: keepDaemonActionFallback,
