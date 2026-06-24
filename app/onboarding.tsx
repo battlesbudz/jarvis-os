@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState } from 'react';
 import {
   StyleSheet,
   View,
@@ -8,11 +8,10 @@ import {
   Platform,
   KeyboardAvoidingView,
   ScrollView,
-  Dimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, { FadeInRight, FadeOutLeft, FadeIn } from 'react-native-reanimated';
+import Animated, { FadeInRight } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import Colors from '@/constants/colors';
 import {
@@ -24,7 +23,6 @@ import {
   type Goal,
 } from '@/lib/storage';
 
-const { width } = Dimensions.get('window');
 
 const LIFE_QUESTIONS = [
   {

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated } from 'react-native';
-import Svg, { Rect, Polygon, Circle } from 'react-native-svg';
+import Svg, { Rect, Polygon } from 'react-native-svg';
 
 interface Props {
   size?: number;

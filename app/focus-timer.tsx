@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { StyleSheet, View, Text, Pressable, Platform } from 'react-native';
-import { Ionicons, Feather } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import ProgressRing from '@/components/ProgressRing';
-import { getTimerSettings, saveTimerSettings } from '@/lib/storage';
+import { getTimerSettings } from '@/lib/storage';
 import { scheduleNudge, scheduleTimerNotification, requestNotificationPermissions } from '@/lib/notifications';
 
 type TimerMode = 'work' | 'break';

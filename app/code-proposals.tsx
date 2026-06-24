@@ -15,7 +15,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiRequest, getApiUrl } from '@/lib/query-client';
+import { apiRequest } from '@/lib/query-client';
 import Colors from '@/constants/colors';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -558,7 +558,7 @@ export default function CodeProposalsScreen() {
   const [restartState, setRestartState] = useState<RestartState>('idle');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const { data: proposals = [], isLoading, refetch } = useQuery<ProposalSummary[]>({
+  const { data: proposals = [], isLoading } = useQuery<ProposalSummary[]>({
     queryKey: ['/api/code-proposals'],
   });
 
