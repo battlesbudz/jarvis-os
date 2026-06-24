@@ -53,7 +53,7 @@ const LIFE_QUESTIONS = [
   },
 ];
 
-const GOAL_CATEGORIES: Array<{ id: Goal['category']; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
+const GOAL_CATEGORIES: { id: Goal['category']; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { id: 'fitness', label: 'Fitness', icon: 'barbell-outline' },
   { id: 'career', label: 'Career', icon: 'briefcase-outline' },
   { id: 'finance', label: 'Finance', icon: 'trending-up-outline' },

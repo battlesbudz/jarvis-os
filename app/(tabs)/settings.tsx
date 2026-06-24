@@ -614,7 +614,7 @@ export default function SettingsScreen() {
   const [workspaceLoading, setWorkspaceLoading] = useState(false);
   const [workspaceIsOwner, setWorkspaceIsOwner] = useState(false);
   const [synthesising, setSynthesising] = useState(false);
-  const [synthesisHistory, setSynthesisHistory] = useState<Array<{
+  const [synthesisHistory, setSynthesisHistory] = useState<{
     id: number;
     createdAt: string;
     bulletCount: number;
@@ -622,7 +622,7 @@ export default function SettingsScreen() {
     triggeredBy: string;
     skipped: boolean;
     skipReason?: string | null;
-  }>>([]);
+  }[]>([]);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [archiveAfterSynth, setArchiveAfterSynth] = useState(false);
 

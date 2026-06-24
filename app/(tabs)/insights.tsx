@@ -11,6 +11,8 @@ import {
   Platform,
   Alert,
   Modal,
+  Linking,
+  Image,
 } from 'react-native';
 import { fetch as expoFetch } from 'expo/fetch';
 import { Ionicons } from '@expo/vector-icons';
@@ -67,7 +69,7 @@ import {
 import { getApiUrl, queryClient, apiRequest } from '@/lib/query-client';
 import { authFetch, getAuthToken } from '@/lib/auth-context';
 import { useWakeWord } from '@/lib/wake-word-context';
-import { Linking, Image } from 'react-native';
+
 
 interface EmailSuggestion {
   title: string;
@@ -1284,9 +1286,9 @@ export default function InsightsScreen() {
       const decoder = new TextDecoder();
       let lineBuffer = '';
 
-      const parseLines = (rawText: string): Array<{ type: string; data?: string; sampleRate?: number; message?: string }> => {
+      const parseLines = (rawText: string): { type: string; data?: string; sampleRate?: number; message?: string }[] => {
         lineBuffer += rawText;
-        const parsed: Array<{ type: string; data?: string; sampleRate?: number; message?: string }> = [];
+        const parsed: { type: string; data?: string; sampleRate?: number; message?: string }[] = [];
         const lines = lineBuffer.split('\n');
         lineBuffer = lines.pop() ?? '';
         for (const line of lines) {

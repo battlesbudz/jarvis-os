@@ -369,7 +369,7 @@ export default function SkillsScreen() {
     { type: 'section', label: `MY SKILLS (${customSkills.length})`, key: 'header-custom', isCustom: true },
     ...customSkills.map((s) => ({ type: 'skill', skill: s, key: s.id })),
     { type: 'footer', key: 'footer' },
-  ] as Array<{ type: string; key: string; label?: string; skill?: UserSkill; isCustom?: boolean }>;
+  ] as { type: string; key: string; label?: string; skill?: UserSkill; isCustom?: boolean }[];
 
   return (
     <View style={[styles.container, { paddingTop }]}>
