@@ -320,7 +320,7 @@ export default function ProfileScreen() {
   const [daemonPermsBusy, setDaemonPermsBusy] = useState<string | null>(null);
   const [androidDaemonPerms, setAndroidDaemonPerms] = useState<Record<string, boolean> | null>(null);
   const [androidDaemonPermsBusy, setAndroidDaemonPermsBusy] = useState<string | null>(null);
-  const [trainedButtons, setTrainedButtons] = useState<Array<{ id: number; appPackage: string; elementLabel: string; confidence: number; stale: boolean; updatedAt: string }> | null>(null);
+  const [trainedButtons, setTrainedButtons] = useState<{ id: number; appPackage: string; elementLabel: string; confidence: number; stale: boolean; updatedAt: string }[] | null>(null);
   const [trainedButtonsBusy, setTrainedButtonsBusy] = useState<number | null>(null);
   const [pendingMemories, setPendingMemories] = useState<PendingMemory[]>([]);
   const [pendingMemoriesLoading, setPendingMemoriesLoading] = useState(false);

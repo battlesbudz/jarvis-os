@@ -53,14 +53,14 @@ interface UsageResponse {
 interface ProviderHealthResponse {
   checkedAt: string;
   allOk: boolean;
-  results: Array<{
+  results: {
     provider: string;
     ok: boolean;
     durationMs: number;
     error?: string;
     result?: { textContent?: string; finishReason?: string | null };
-  }>;
-  routeChains?: Record<string, Array<{ provider: string; model: string }>>;
+  }[];
+  routeChains?: Record<string, { provider: string; model: string }[]>;
   codexGateway?: {
     enabled: boolean;
     gatewayUrlConfigured: boolean;

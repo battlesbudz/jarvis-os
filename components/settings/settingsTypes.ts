@@ -71,7 +71,7 @@ export interface CatalogProvider {
   label: string;
   shortLabel: string;
   description: string;
-  credentialKinds: Array<'api_key' | 'oauth' | 'local'>;
+  credentialKinds: ('api_key' | 'oauth' | 'local')[];
   apiKeyPlaceholder?: string;
   setupHint: string;
 }
