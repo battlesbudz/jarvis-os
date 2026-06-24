@@ -152,7 +152,7 @@ export function WindowsConnectorSetupWizard({ onSkip, onConnected }: Props) {
         setInstallerNotice("If Windows asks, allow Jarvis Desktop Connector to open. After installation finishes, choose Finish pairing.");
       }
       return true;
-    } catch (err) {
+    } catch {
       if (canContinue()) {
         setInstallerNotice("Install the connector, then choose Finish pairing to complete setup.");
       }

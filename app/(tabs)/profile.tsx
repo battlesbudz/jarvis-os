@@ -27,7 +27,6 @@ import {
   getLevel,
   getLevelName,
   getXpForNextLevel,
-  getAvailableRewards,
   getDailyXpEarned,
   getDailyBudgetRemaining,
   getLifetimeXp,
@@ -332,7 +331,7 @@ export default function ProfileScreen() {
   const [editingLivingUpdateText, setEditingLivingUpdateText] = useState('');
   const [channelBusy, setChannelBusy] = useState<string | null>(null);
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [loadingStatus, setLoadingStatus] = useState(true);
+  const [loadingStatus] = useState(true);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [selectedReward, setSelectedReward] = useState<Reward | null>(null);
   const [rewardModalVisible, setRewardModalVisible] = useState(false);
@@ -854,7 +853,7 @@ export default function ProfileScreen() {
       setSkillCandidatesList(prev => prev.filter(c => c.id !== id));
       setEditingCandidateId(null);
       if (action === 'accept' || action === 'edit') await loadSkills();
-    } catch (err) {
+    } catch {
       Alert.alert('Error', 'Could not update skill candidate');
     } finally {
       setSkillBusy(null);
@@ -1115,7 +1114,7 @@ export default function ProfileScreen() {
       await loadDocuments();
       startDocumentPoll();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } catch (e: any) {
+    } catch {
       Alert.alert('Upload failed', 'Could not read or upload the file. Please try again.');
     } finally {
       setDocumentUploading(false);
@@ -1835,15 +1834,6 @@ export default function ProfileScreen() {
       lastClaimedAt[entry.id] = entry.claimedAt;
     }
   }
-  const availableRewards = getAvailableRewards(lifetimeXp);
-  const unclaimedAvailable = availableRewards.filter(r => {
-    const canAfford = budgetRemaining >= DAILY_XP_REQUIRED[r.tier];
-    const claimedToday = (stats.claimedRewards || []).some(
-      e => e.id === r.id && e.claimedAt.startsWith(todayStr)
-    );
-    return canAfford && !claimedToday;
-  });
-
   const handleOpenReward = (reward: Reward) => {
     setSelectedReward(reward);
     setRewardModalVisible(true);
@@ -2078,7 +2068,6 @@ export default function ProfileScreen() {
               const claimedToday = (stats.claimedRewards || []).some(
                 e => e.id === reward.id && e.claimedAt.startsWith(todayStr)
               );
-              const count = claimCounts[reward.id] || 0;
               const tierColor = TIER_COLORS[reward.tier];
               const canTap = permanentlyUnlocked && canAfford && !claimedToday;
 
