@@ -2726,7 +2726,7 @@ export default function InsightsScreen() {
           </View>
         ) : emailSuggestions.length === 0 ? (
           <View style={styles.scanLoadingWrap}>
-            <Text style={styles.scanLoadingText}>No task suggestions found. Tap "Scan again" to retry.</Text>
+            <Text style={styles.scanLoadingText}>No task suggestions found. Tap &quot;Scan again&quot; to retry.</Text>
           </View>
         ) : (
           emailSuggestions.map((suggestion, idx) => (
@@ -3350,7 +3350,7 @@ export default function InsightsScreen() {
                 </View>
                 <Text style={styles.discordInstructTitle}>Set up your Jarvis bot</Text>
                 <Text style={styles.discordInstructSub}>
-                  Jarvis runs as your own private Discord bot. You'll create it once in about 2 minutes — no coding needed.
+                  Jarvis runs as your own private Discord bot. You&apos;ll create it once in about 2 minutes — no coding needed.
                 </Text>
 
                 <View style={styles.discordStep}>
@@ -3360,7 +3360,7 @@ export default function InsightsScreen() {
                     <Text style={styles.discordLink} onPress={() => Linking.openURL('https://discord.com/developers/applications')}>
                       discord.com/developers/applications
                     </Text>
-                    {' '}and tap <Text style={styles.discordBold}>New Application</Text>. Name it "Jarvis" (or whatever you like).
+                    {' '}and tap <Text style={styles.discordBold}>New Application</Text>. Name it &quot;Jarvis&quot; (or whatever you like).
                   </Text>
                 </View>
                 <View style={styles.discordStep}>
@@ -3443,7 +3443,7 @@ export default function InsightsScreen() {
                   <Text style={styles.discordPhasePillText}>Step 2 of 2 — Link Your Account</Text>
                 </View>
                 <Text style={styles.discordInstructTitle}>Pair your Discord account</Text>
-                <Text style={styles.discordInstructSub}>Your bot is running. Now link your personal Discord account so Jarvis knows it's you.</Text>
+                <Text style={styles.discordInstructSub}>Your bot is running. Now link your personal Discord account so Jarvis knows it&apos;s you.</Text>
 
                 <View style={styles.discordStep}>
                   <Text style={styles.discordStepNum}>1</Text>

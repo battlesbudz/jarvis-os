@@ -127,7 +127,7 @@ export default function MorningBriefCard({
 
       {needsEnergy ? (
         <View style={styles.energySection}>
-          <Text style={styles.energyPrompt}>How's your energy?</Text>
+          <Text style={styles.energyPrompt}>How&apos;s your energy?</Text>
           <View style={styles.energyRow}>
             {ENERGY_OPTIONS.map((opt) => (
               <Pressable
@@ -158,7 +158,7 @@ export default function MorningBriefCard({
           )}
 
           {reasoning && (
-            <Text style={styles.reasoning}>"{reasoning}"</Text>
+            <Text style={styles.reasoning}>&quot;{reasoning}&quot;</Text>
           )}
 
           {topTaskName && (

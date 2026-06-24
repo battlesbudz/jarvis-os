@@ -103,7 +103,7 @@ export default function BlockerModal({ visible, task, onClose, onSolved }: Block
             <View style={styles.headerText}>
               <Text style={styles.taskTitle} numberOfLines={2}>{task.title}</Text>
               <Text style={styles.subtitle}>
-                Carried over {task.skipDays ?? 1} day{(task.skipDays ?? 1) > 1 ? 's' : ''} — what's getting in the way?
+                Carried over {task.skipDays ?? 1} day{(task.skipDays ?? 1) > 1 ? 's' : ''} — what&apos;s getting in the way?
               </Text>
             </View>
             <Pressable onPress={handleClose} style={styles.closeBtn} hitSlop={8}>
@@ -147,7 +147,7 @@ export default function BlockerModal({ visible, task, onClose, onSolved }: Block
                 style={({ pressed }) => [styles.gotItBtn, pressed && { opacity: 0.8 }]}
                 onPress={handleGotIt}
               >
-                <Text style={styles.gotItText}>Got it, let's do this</Text>
+                <Text style={styles.gotItText}>Got it, let&apos;s do this</Text>
                 <Ionicons name="arrow-forward" size={16} color="#fff" />
               </Pressable>
             </View>
