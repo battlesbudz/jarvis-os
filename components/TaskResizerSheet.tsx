@@ -6,7 +6,6 @@ import {
   Pressable,
   Modal,
   ActivityIndicator,
-  Platform,
   ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
@@ -15,7 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import Colors from '@/constants/colors';
 import { apiRequest } from '@/lib/query-client';
-import { type Task, type CompletionHistoryItem, getCompletionHistory } from '@/lib/storage';
+import { type Task, getCompletionHistory } from '@/lib/storage';
 
 interface TaskResizerSheetProps {
   visible: boolean;
