@@ -155,7 +155,7 @@ export default function SettingsScreen() {
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [integrationHealth, setIntegrationHealth] = useState<Record<string, string>>({});
   const [integrationErrors, setIntegrationErrors] = useState<Record<string, string | null>>({});
-  const [loadingStatus, setLoadingStatus] = useState(true);
+  const [, setLoadingStatus] = useState(true);
   const [androidDaemonConnected, setAndroidDaemonConnected] = useState(false);
   const [androidDaemonServerConnected, setAndroidDaemonServerConnected] = useState(false);
   const [androidDaemonBusy, setAndroidDaemonBusy] = useState(false);
@@ -783,7 +783,7 @@ export default function SettingsScreen() {
         const data = await res.json();
         setDiagnosisText(data.diagnosis ?? null);
       }
-    } catch (e) {
+    } catch {
       setDiagnosisText('Failed to run diagnosis. Please try again.');
     }
     setDiagnosisLoading(false);
@@ -1090,7 +1090,7 @@ export default function SettingsScreen() {
       await apiRequest('DELETE', `/api/mcp-servers/${id}`);
       setMcpServers(prev => prev.filter(s => s.id !== id));
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    } catch (err) {
+    } catch {
       Alert.alert('Error', 'Could not delete server');
     }
   }, []);
@@ -1124,7 +1124,7 @@ export default function SettingsScreen() {
         await loadMcpServers();
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       }
-    } catch (err) {
+    } catch {
       setMcpAddError('Network error');
     } finally {
       setMcpAddSaving(false);

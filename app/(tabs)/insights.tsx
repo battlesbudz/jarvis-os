@@ -813,7 +813,6 @@ export default function InsightsScreen() {
   const [discordPairInput, setDiscordPairInput] = useState('');
   const [discordConnecting, setDiscordConnecting] = useState(false);
   const [discordConnectError, setDiscordConnectError] = useState('');
-  const [discordConnectDone, setDiscordConnectDone] = useState(false);
   const [discordBotTokenInput, setDiscordBotTokenInput] = useState('');
   const [discordTokenSaving, setDiscordTokenSaving] = useState(false);
   const [discordTokenError, setDiscordTokenError] = useState('');
@@ -2080,7 +2079,6 @@ export default function InsightsScreen() {
       let buffer = '';
       let executedActions: ExecutedAction[] = [];
       let gotConfirmRequired = false;
-      let gotPhoneWorking = false;
       let streamAborted = false;
       let streamErrorMessage = '';
 
@@ -2175,7 +2173,6 @@ export default function InsightsScreen() {
                   return updated;
                 });
               } else if (parsed.type === 'working') {
-                gotPhoneWorking = true;
                 setIsWorkingOnPhone(true);
                 setPhoneWorkingMessage(parsed.message || 'Working on your phone...');
               } else if (parsed.type === 'integration_error' && parsed.integration) {
@@ -2596,7 +2593,6 @@ export default function InsightsScreen() {
   const handleDiscordConnect = useCallback(async () => {
     setDiscordPairInput('');
     setDiscordConnectError('');
-    setDiscordConnectDone(false);
     setDiscordBotTokenInput('');
     setDiscordTokenError('');
     setDiscordPhase('loading');
@@ -2608,7 +2604,6 @@ export default function InsightsScreen() {
       const discordMeta = data.meta?.discord as { hasBotToken?: boolean; isPaired?: boolean } | undefined;
       if (data.connected?.discord) {
         setDiscordPhase('done');
-        setDiscordConnectDone(true);
       } else if (discordMeta?.hasBotToken) {
         setDiscordPhase('pair');
       } else {
@@ -3488,7 +3483,6 @@ export default function InsightsScreen() {
                       });
                       const data = await res.json();
                       if (data.ok) {
-                        setDiscordConnectDone(true);
                         setDiscordPhase('done');
                       } else {
                         setDiscordConnectError(data.error || 'Invalid code — make sure you copied it exactly from the bot.');

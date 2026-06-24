@@ -17,7 +17,6 @@ import Animated, {
   withRepeat,
 } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Colors from '@/constants/colors';
 import { TIER_COLORS, type Reward } from '@/lib/storage';
 
@@ -86,7 +85,6 @@ export default function RewardClaimModal({
   dailyXpRequired,
   claimedToday,
 }: RewardClaimModalProps) {
-  const insets = useSafeAreaInsets();
   const iconScale = useSharedValue(0.5);
   const cardY = useSharedValue(60);
   const cardOpacity = useSharedValue(0);
