@@ -147,7 +147,7 @@ function GapCard({
 
       {gap.agentReplySnippet ? (
         <Text style={[card.reply, dimmed && card.messageDimmed]} numberOfLines={2}>
-          Jarvis: "{gap.agentReplySnippet}"
+          Jarvis: &quot;{gap.agentReplySnippet}&quot;
         </Text>
       ) : null}
 
@@ -267,7 +267,7 @@ export default function CapabilityGapsScreen() {
         </Pressable>
         <View style={styles.headerText}>
           <Text style={styles.title}>Capability Gaps</Text>
-          <Text style={styles.subtitle}>What Jarvis couldn't do this week</Text>
+          <Text style={styles.subtitle}>What Jarvis couldn&apos;t do this week</Text>
         </View>
         <Pressable onPress={() => refetch()} style={styles.refreshBtn}>
           <Ionicons name="refresh-outline" size={20} color={Colors.textSecondary} />
@@ -292,7 +292,7 @@ export default function CapabilityGapsScreen() {
           <Ionicons name="checkmark-circle-outline" size={48} color={Colors.success} />
           <Text style={styles.emptyTitle}>No gaps this week</Text>
           <Text style={styles.emptySubtitle}>
-            Jarvis handled everything it was asked. Gaps are analysed on Sunday's self-improvement cycle.
+            Jarvis handled everything it was asked. Gaps are analysed on Sunday&apos;s self-improvement cycle.
           </Text>
         </View>
       ) : (
@@ -300,7 +300,7 @@ export default function CapabilityGapsScreen() {
           <View style={styles.infoBar}>
             <Ionicons name="information-circle-outline" size={14} color={Colors.textTertiary} />
             <Text style={styles.infoText}>
-              {unaddressedCount} open · {addressedCount} dismissed · Sunday's cycle will analyse unaddressed gaps
+              {unaddressedCount} open · {addressedCount} dismissed · Sunday&apos;s cycle will analyse unaddressed gaps
             </Text>
           </View>
           <FlatList

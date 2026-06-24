@@ -78,7 +78,7 @@ export default function JarvisPlanModal({
               <View style={styles.header}>
                 <View style={styles.headerLeft}>
                   <Ionicons name="sparkles" size={20} color={Colors.primary} />
-                  <Text style={styles.headerTitle}>Jarvis's Plan for Today</Text>
+                  <Text style={styles.headerTitle}>Jarvis&apos;s Plan for Today</Text>
                 </View>
                 <Pressable onPress={onDismiss} style={styles.closeBtn} hitSlop={8}>
                   <Ionicons name="close" size={22} color={Colors.textTertiary} />

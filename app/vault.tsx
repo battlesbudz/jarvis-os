@@ -329,7 +329,7 @@ function DetailView({
         ) : (
           <View style={styles.emptyBox}>
             <Text style={styles.emptyText}>
-              Jarvis hasn't written this page yet. Tap the refresh button to generate it now.
+              Jarvis hasn&apos;t written this page yet. Tap the refresh button to generate it now.
             </Text>
           </View>
         )}
@@ -446,7 +446,7 @@ export default function VaultScreen() {
         </Pressable>
         <View style={styles.headerText}>
           <Text style={styles.headerTitle}>Knowledge Vault</Text>
-          <Text style={styles.headerSub}>Jarvis's compounding wiki about you</Text>
+          <Text style={styles.headerSub}>Jarvis&apos;s compounding wiki about you</Text>
         </View>
         <Pressable
           style={[styles.refreshIconBtn, regenerating && { opacity: 0.5 }]}

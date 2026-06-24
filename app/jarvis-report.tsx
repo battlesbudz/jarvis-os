@@ -115,7 +115,7 @@ export default function JarvisReportScreen() {
         {isLoading && !analysis ? (
           <View style={styles.loading}>
             <ActivityIndicator size="large" color={Colors.cyan} />
-            <Text style={styles.loadingText}>Analysing Jarvis's performance…</Text>
+            <Text style={styles.loadingText}>Analysing Jarvis&apos;s performance…</Text>
           </View>
         ) : !analysis ? (
           <View style={styles.empty}>

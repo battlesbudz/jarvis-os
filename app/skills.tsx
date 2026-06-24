@@ -439,7 +439,7 @@ export default function SkillsScreen() {
                     </Pressable>
                   )}
                   <Text style={styles.footerNote}>
-                    Active skills are injected into Jarvis's context at the start of every conversation.
+                    Active skills are injected into Jarvis&apos;s context at the start of every conversation.
                     Toggle any time — changes take effect on the next conversation.
                   </Text>
                 </View>

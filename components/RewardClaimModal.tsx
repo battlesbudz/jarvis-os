@@ -154,7 +154,7 @@ export default function RewardClaimModal({
               </Animated.View>
               <Text style={styles.successTitle}>Reward Claimed!</Text>
               <Text style={[styles.successRewardName, { color: tierColor }]}>{reward.title}</Text>
-              <Text style={styles.successMessage}>You've earned it — go enjoy it!</Text>
+              <Text style={styles.successMessage}>You&apos;ve earned it — go enjoy it!</Text>
               <View style={styles.successXpRow}>
                 <Ionicons name="flash" size={14} color="#DC2626" />
                 <Text style={styles.successXpText}>−{dailyXpRequired} XP spent</Text>
@@ -188,7 +188,7 @@ export default function RewardClaimModal({
               {/* Content */}
               <Text style={styles.title}>{reward.title}</Text>
               <Text style={styles.description}>{reward.description}</Text>
-              <Text style={[styles.tip, { color: tierColor }]}>"{reward.tip}"</Text>
+              <Text style={[styles.tip, { color: tierColor }]}>&quot;{reward.tip}&quot;</Text>
 
               {/* XP cost badge */}
               <View style={[styles.xpCostBadge, { backgroundColor: tierColor + '15', borderColor: tierColor + '30' }]}>
@@ -211,7 +211,7 @@ export default function RewardClaimModal({
                 <View style={styles.actionBlock}>
                   <View style={styles.todayRow}>
                     <Ionicons name="moon-outline" size={16} color="#D97706" />
-                    <Text style={styles.todayText}>You've claimed this today — come back tomorrow!</Text>
+                    <Text style={styles.todayText}>You&apos;ve claimed this today — come back tomorrow!</Text>
                   </View>
                   <Pressable style={[styles.claimBtn, styles.claimBtnDisabled]} disabled>
                     <Ionicons name="checkmark-outline" size={18} color="#fff" />

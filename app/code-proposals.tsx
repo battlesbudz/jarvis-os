@@ -610,7 +610,7 @@ export default function CodeProposalsScreen() {
         </Pressable>
         <View style={styles.headerText}>
           <Text style={styles.title}>Code Proposals</Text>
-          <Text style={styles.subtitle}>Review Jarvis's suggested improvements</Text>
+          <Text style={styles.subtitle}>Review Jarvis&apos;s suggested improvements</Text>
         </View>
       </View>
 
@@ -643,7 +643,7 @@ export default function CodeProposalsScreen() {
           <Ionicons name="code-slash-outline" size={48} color={Colors.textTertiary} />
           <Text style={styles.emptyTitle}>No proposals yet</Text>
           <Text style={styles.emptySubtitle}>
-            Ask Jarvis to inspect its own code and suggest improvements — they'll appear here for your review.
+            Ask Jarvis to inspect its own code and suggest improvements — they&apos;ll appear here for your review.
           </Text>
         </View>
       ) : (

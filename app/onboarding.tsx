@@ -179,7 +179,7 @@ export default function OnboardingScreen() {
       return (
         <Animated.View key={animKey} entering={FadeInRight.duration(300)} style={styles.stepContent}>
           <Text style={styles.question}>Set your first goal</Text>
-          <Text style={styles.subLabel}>What's one thing you want to make meaningful progress on?</Text>
+          <Text style={styles.subLabel}>What&apos;s one thing you want to make meaningful progress on?</Text>
           <TextInput
             style={styles.input}
             value={goalTitle}
@@ -226,7 +226,7 @@ export default function OnboardingScreen() {
               You can connect Google Calendar, Outlook, and Gmail from your Profile tab after setup.
             </Text>
           </View>
-          <Text style={styles.readyText}>You're all set to start your GamePlan.</Text>
+          <Text style={styles.readyText}>You&apos;re all set to start your GamePlan.</Text>
         </Animated.View>
       );
     }

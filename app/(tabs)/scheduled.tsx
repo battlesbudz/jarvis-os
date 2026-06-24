@@ -421,7 +421,7 @@ export default function ScheduledScreen() {
           <Ionicons name="calendar-outline" size={48} color={Colors.textTertiary} style={{ marginBottom: 12 }} />
           <Text style={styles.emptyTitle}>No scheduled tasks</Text>
           <Text style={styles.emptyBody}>
-            Tap + to create one, or ask Jarvis to{"\n"}"remind me every morning at 9am to..."
+            Tap + to create one, or ask Jarvis to{"\n"}&quot;remind me every morning at 9am to...&quot;
           </Text>
         </View>
       ) : (
