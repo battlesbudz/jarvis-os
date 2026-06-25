@@ -98,13 +98,13 @@ export function registerWhatsAppWebhook(app: Express): void {
       if (codeMatch) {
         const linked = await tryConsumeLinkCode(text.toUpperCase(), from);
         if (linked) {
-          await sendWhatsAppMessage(from, "✅ You're connected to GamePlan! Jarvis can now reach you here. Send a message any time.");
+          await sendWhatsAppMessage(from, "✅ You're connected to JARVIS! Jarvis can now reach you here. Send a message any time.");
           return;
         }
-        await sendWhatsAppMessage(from, "That code didn't work or has expired. Open the GamePlan app → Profile → Connected Channels → WhatsApp to generate a fresh one.");
+        await sendWhatsAppMessage(from, "That code didn't work or has expired. Open the JARVIS app → Profile → Connected Channels → WhatsApp to generate a fresh one.");
         return;
       }
-      await sendWhatsAppMessage(from, "Welcome to GamePlan Coach! To connect, open the app → Profile → Connected Channels → WhatsApp, generate a link code, and send it here.");
+      await sendWhatsAppMessage(from, "Welcome to JARVIS. To connect, open the app → Profile → Connected Channels → WhatsApp, generate a link code, and send it here.");
       return;
     }
 

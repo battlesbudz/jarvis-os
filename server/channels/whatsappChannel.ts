@@ -61,8 +61,8 @@ export const whatsappChannel: Channel = {
     let body = text || "";
     if (opts.attachments && opts.attachments.length > 0) {
       body = body
-        ? `${body}\n\n(${opts.attachments.length} attachment(s) generated — open the GamePlan app to download.)`
-        : `(${opts.attachments.length} attachment(s) generated — open the GamePlan app to download.)`;
+        ? `${body}\n\n(${opts.attachments.length} attachment(s) generated — open the JARVIS app to download.)`
+        : `(${opts.attachments.length} attachment(s) generated — open the JARVIS app to download.)`;
     }
     const result = await sendWhatsAppMessage(address, body);
     return { ok: result.ok, messageId: result.sid, error: result.error };

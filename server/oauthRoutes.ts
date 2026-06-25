@@ -19,7 +19,7 @@ function successHtml(provider: string, email?: string): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Connected — GamePlan</title>
+  <title>Connected — JARVIS</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -44,7 +44,7 @@ function successHtml(provider: string, email?: string): string {
     <div class="check">✅</div>
     <h2>${displayName} Connected</h2>
     ${email ? `<p class="email">${email}</p>` : ''}
-    <p class="close-note">You can close this tab and return to GamePlan.</p>
+    <p class="close-note">You can close this tab and return to JARVIS.</p>
   </div>
   <script>
     setTimeout(function() { window.close(); }, 2000);
@@ -58,7 +58,7 @@ function errorHtml(message: string): string {
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Error — GamePlan</title>
+  <title>Error — JARVIS</title>
   <style>
     body { font-family: sans-serif; background: #0f0f0f; color: #fff;
            display: flex; align-items: center; justify-content: center; min-height: 100vh; }
@@ -372,7 +372,7 @@ oauthCallbackRouter.get('/slack/callback', async (req: Request, res: Response) =
     });
 
     // Wire the Slack identity into channel_links so inbound DMs and /jarvis
-    // slash commands can resolve the GamePlan user.
+    // slash commands can resolve the JARVIS user.
     try {
       const teamId = tokenData.team?.id || '';
       if (teamId && authedUserId) {

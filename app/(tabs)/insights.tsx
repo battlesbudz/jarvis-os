@@ -47,8 +47,6 @@ import {
   getCoachSessionId,
   saveCoachSessionId,
   getLifeContext,
-  getCoachingMode,
-  saveCoachingMode,
   type Goal,
   type UserStats,
   type ChatMessage,
@@ -79,13 +77,7 @@ interface EmailSuggestion {
   reason: string;
 }
 
-const COACHING_MODES: { key: CoachingMode; label: string; icon: string }[] = [
-  { key: 'sharp', label: 'Sharp', icon: '\u26A1' },
-  { key: 'drill', label: 'Drill', icon: '\uD83C\uDF96\uFE0F' },
-  { key: 'mentor', label: 'Mentor', icon: '\uD83C\uDF31' },
-  { key: 'strategist', label: 'Strategist', icon: '\uD83D\uDCC8' },
-  { key: 'flow', label: 'Flow', icon: '\uD83C\uDF0A' },
-];
+const DEFAULT_RUNTIME_MODE: CoachingMode = 'sharp';
 
 const SUGGESTED_PROMPTS = [
   "How am I doing overall?",
@@ -419,7 +411,7 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
       {!isUser && isFirst && (
         <View style={styles.coachLabel}>
           <Ionicons name="sparkles-outline" size={12} color={Colors.secondary} />
-          <Text style={styles.coachLabelText}>GamePlan Coach</Text>
+          <Text style={styles.coachLabelText}>JARVIS</Text>
         </View>
       )}
       {!isUser && message.pendingConfirm ? (
@@ -831,8 +823,7 @@ export default function InsightsScreen() {
   const [scanLoading, setScanLoading] = useState(false);
   const [addedSuggestions, setAddedSuggestions] = useState<Record<number, boolean>>({});
   const [inboxCollapsed, setInboxCollapsed] = useState(false);
-  const [coachingMode, setCoachingMode] = useState<CoachingMode>('sharp');
-  const coachingModeRef = useRef<CoachingMode>('sharp');
+  const coachingModeRef = useRef<CoachingMode>(DEFAULT_RUNTIME_MODE);
   const [isRecording, setIsRecording] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [talkModeEnabled, setTalkModeEnabled] = useState(false);
@@ -946,7 +937,6 @@ export default function InsightsScreen() {
   }));
 
   useEffect(() => { commitmentsRef.current = commitments; }, [commitments]);
-  useEffect(() => { coachingModeRef.current = coachingMode; }, [coachingMode]);
   useEffect(() => { gmailItemsRef.current = gmailItems; }, [gmailItems]);
   useEffect(() => { gmailConnectedRef.current = gmailConnected; }, [gmailConnected]);
   useEffect(() => { slackMessagesRef.current = slackMessages; }, [slackMessages]);
@@ -1751,13 +1741,12 @@ export default function InsightsScreen() {
     let loadedLifeContext: LifeContext | null = null;
     let loadedCommitments: Commitment[] = [];
     try {
-      const [lg, ls, lh, savedMessages, lc, savedMode, savedSessionId] = await Promise.all([
+      const [lg, ls, lh, savedMessages, lc, savedSessionId] = await Promise.all([
         getGoals(),
         getStats(),
         getCompletionHistory(),
         getChatHistory(),
         getLifeContext(),
-        getCoachingMode(),
         getCoachSessionId(),
       ]);
       loadedGoals = lg;
@@ -1769,8 +1758,7 @@ export default function InsightsScreen() {
       setHistory(lh);
       setMessages(savedMessages);
       setLifeContext(lc);
-      setCoachingMode(savedMode);
-      coachingModeRef.current = savedMode;
+      coachingModeRef.current = DEFAULT_RUNTIME_MODE;
       sdkSessionIdRef.current = savedSessionId;
 
       // Fetch commitments
@@ -2493,12 +2481,6 @@ export default function InsightsScreen() {
     }
   }, []);
 
-  const handleModeChange = useCallback((mode: CoachingMode) => {
-    setCoachingMode(mode);
-    coachingModeRef.current = mode;
-    saveCoachingMode(mode);
-  }, []);
-
   // After Jarvis sends a connect_channel link, poll /api/channels until the
   // channel flips to connected, then inject a confirmation message in the chat.
   const startChannelConnectPoll = useCallback((channelName: string, assistantMsgId: string) => {
@@ -2761,7 +2743,7 @@ export default function InsightsScreen() {
       <View style={[styles.header, { paddingTop: topPad + 16 }]}>
         <View style={styles.headerLeft}>
           <Ionicons name="sparkles-outline" size={20} color={Colors.primary} />
-          <Text style={styles.headerTitle}>Coach</Text>
+          <Text style={styles.headerTitle}>JARVIS</Text>
         </View>
         <Pressable
           style={styles.clearBtn}
@@ -2773,23 +2755,6 @@ export default function InsightsScreen() {
             <Ionicons name="create-outline" size={20} color={Colors.textSecondary} />
           )}
         </Pressable>
-      </View>
-
-      <View style={styles.modeRow}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.modeScrollContent}>
-          {COACHING_MODES.map((mode) => (
-            <Pressable
-              key={mode.key}
-              style={[styles.modePill, coachingMode === mode.key && styles.modePillActive]}
-              onPress={() => handleModeChange(mode.key)}
-            >
-              <Text style={styles.modePillIcon}>{mode.icon}</Text>
-              <Text style={[styles.modePillText, coachingMode === mode.key && styles.modePillTextActive]}>
-                {mode.label}
-              </Text>
-            </Pressable>
-          ))}
-        </ScrollView>
       </View>
 
       {isEmailLoading && (
@@ -2806,8 +2771,8 @@ export default function InsightsScreen() {
             <View style={styles.emptyIconWrap}>
               <Ionicons name="sparkles-outline" size={32} color={Colors.primary} />
             </View>
-            <Text style={styles.emptyTitle}>Your AI Coach</Text>
-            <Text style={styles.emptySubtitle}>Ask anything about your goals, habits, and progress.</Text>
+            <Text style={styles.emptyTitle}>JARVIS is ready</Text>
+            <Text style={styles.emptySubtitle}>Ask anything about your tasks, devices, memory, and plans.</Text>
             <View style={styles.suggestedGrid}>
               {SUGGESTED_PROMPTS.map((prompt, i) => (
                 <Pressable
@@ -2934,7 +2899,7 @@ export default function InsightsScreen() {
           style={[styles.input, isBaseLoading && { opacity: 0.5 }]}
           value={input}
           onChangeText={setInput}
-          placeholder={isBaseLoading ? "Loading your context\u2026" : isRecording ? "Listening..." : isTranscribing ? "Transcribing..." : "Message your coach..."}
+          placeholder={isBaseLoading ? "Loading your context\u2026" : isRecording ? "Listening..." : isTranscribing ? "Transcribing..." : "Message JARVIS..."}
           placeholderTextColor={isRecording ? '#EF4444' : Colors.textSecondary}
           multiline
           maxLength={1000}
@@ -3542,42 +3507,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontFamily: 'Inter_600SemiBold',
     color: '#EF4444',
-  },
-  modeRow: {
-    paddingVertical: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    backgroundColor: Colors.background,
-  },
-  modeScrollContent: {
-    paddingHorizontal: 16,
-    gap: 8,
-  },
-  modePill: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: 4,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.background,
-  },
-  modePillActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  modePillIcon: {
-    fontSize: 12,
-  },
-  modePillText: {
-    fontSize: 13,
-    fontFamily: 'Inter_500Medium',
-    color: Colors.textSecondary,
-  },
-  modePillTextActive: {
-    color: '#fff',
   },
   emailLoadingBanner: {
     flexDirection: 'row' as const,

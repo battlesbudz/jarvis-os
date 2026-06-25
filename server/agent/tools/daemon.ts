@@ -564,7 +564,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
       if (!args.cmd) return { ok: false, content: jsonErrorContent("cmd required") };
       op = { type: "shell", cmd: String(args.cmd), cwd: args.cwd ? String(args.cwd) : undefined, timeoutMs: typeof args.timeoutMs === "number" ? args.timeoutMs : undefined };
     } else if (action === "notify") {
-      op = { type: "notify", title: String(args.title || "GamePlan"), body: String(args.body || "") };
+      op = { type: "notify", title: String(args.title || "JARVIS"), body: String(args.body || "") };
     } else if (action === "file_read") {
       if (!args.path) return { ok: false, content: jsonErrorContent("path required") };
       op = { type: "file_read", path: String(args.path) };

@@ -244,7 +244,7 @@ const PROFILE_PANELS: {
   {
     key: 'memories',
     title: 'Memories',
-    subtitle: 'Stored coach memory',
+    subtitle: 'Stored MemoryOS context',
     icon: 'bulb-outline',
     accent: Colors.success,
   },
@@ -2158,7 +2158,7 @@ export default function ProfileScreen() {
             )}
           </View>
           <Text style={styles.sectionSubtitle}>
-            Help your coach understand your life and goals
+            Help JARVIS understand your life and goals
           </Text>
 
           {!lifeContext ? (
@@ -2167,7 +2167,7 @@ export default function ProfileScreen() {
                 <Ionicons name="sparkles-outline" size={22} color={Colors.primary} />
               </View>
               <View style={styles.aboutEmptyText}>
-                <Text style={styles.aboutEmptyTitle}>Tell your coach about you</Text>
+                <Text style={styles.aboutEmptyTitle}>Tell JARVIS about you</Text>
                 <Text style={styles.aboutEmptySub}>Personalize your plan with 5 quick questions</Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={Colors.textTertiary} />
@@ -2237,7 +2237,7 @@ export default function ProfileScreen() {
             </Pressable>
           </View>
           <Text style={styles.sectionSubtitle}>
-            How your coach sees you — distilled from memories, patterns, and people
+            How JARVIS sees you — distilled from memories, patterns, and people
           </Text>
           {soulLoading ? (
             <View style={styles.memoryEmptyCard}>
@@ -2249,7 +2249,7 @@ export default function ProfileScreen() {
                 <Ionicons name="sparkles-outline" size={22} color={Colors.textTertiary} />
               </View>
               <Text style={styles.memoryEmptyText}>
-                No soul yet — chat with the coach to start building one
+                No soul yet — chat with JARVIS to start building one
               </Text>
             </View>
           ) : (
@@ -2732,11 +2732,11 @@ export default function ProfileScreen() {
         )}
         {activeProfilePanel === 'memories' && (
           <>
-        {/* Coach Memory */}
+        {/* MemoryOS */}
         <Animated.View entering={FadeInDown.duration(400).delay(420)}>
-          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Coach Memory</Text>
+          <Text style={[styles.sectionTitle, { marginTop: 28 }]}>MemoryOS</Text>
           <Text style={styles.sectionSubtitle}>
-            Facts your coach has learned from conversations
+            Facts JARVIS has learned from conversations
           </Text>
           {memoriesLoading ? (
             <View style={styles.memoryEmptyCard}>
@@ -2748,7 +2748,7 @@ export default function ProfileScreen() {
                 <Ionicons name="bulb-outline" size={22} color={Colors.textTertiary} />
               </View>
               <Text style={styles.memoryEmptyText}>
-                No memories yet — the coach learns from your conversations
+                No memories yet — JARVIS learns from your conversations
               </Text>
             </View>
           ) : (
@@ -4239,7 +4239,7 @@ export default function ProfileScreen() {
         </Animated.View>
 
         <Animated.View entering={FadeInDown.duration(400).delay(500)} style={styles.versionRow}>
-          <Text style={styles.versionText}>GamePlan v1.0.0</Text>
+          <Text style={styles.versionText}>JARVIS v1.0.0</Text>
           {Platform.OS === 'android' && (
             <Pressable
               onPress={handleCheckAppUpdate}

@@ -93,7 +93,7 @@ export function registerCoachActionConfirmationRoutes(
         : tool === "connected_accounts_execute"
           ? `running the Composio ${preview.platform || "connected account"} action ${preview.action || ""}`.trim()
           : `running a terminal command (${preview.cmd || preview.action || "shell"})`;
-      const prompt = `The user has just declined an action you proposed. You were about to ${toolLabel} but they cancelled. Acknowledge briefly and naturally in one sentence — do not re-propose the action. Stay in your coaching persona.`;
+      const prompt = `The user has just declined an action you proposed. You were about to ${toolLabel} but they cancelled. Acknowledge briefly and naturally in one sentence — do not re-propose the action. Stay in Jarvis's normal voice.`;
       const resp = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [{ role: "user", content: prompt }],

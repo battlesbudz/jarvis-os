@@ -38,12 +38,12 @@ const QUESTIONS = [
   },
   {
     question: "What's been getting in your way lately?",
-    subLabel: "Be honest — this helps your coach give realistic, grounded advice",
+    subLabel: "Be honest — this helps JARVIS give realistic, grounded advice",
     field: 'currentBlocker' as keyof LifeContext,
     placeholder: "e.g. Always running out of time, procrastinating on hard tasks, low motivation...",
   },
   {
-    question: "Anything else you want your coach to know?",
+    question: "Anything else you want JARVIS to know?",
     subLabel: "Context, backstory, current life situation — anything goes",
     field: 'freeText' as keyof LifeContext,
     placeholder: "e.g. I work full-time and have two kids, I'm going through a career change, I travel often...",

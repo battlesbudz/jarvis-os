@@ -79,6 +79,8 @@ const tests = [
   { file: "server/agent/__tests__/codexGatewayRecovery.assert.ts" },
   { file: "server/agent/__tests__/coachPromptClutter.assert.ts" },
   { file: "server/agent/__tests__/codexDelegation.assert.ts" },
+  { file: "server/agent/__tests__/jarvisBrandingCopy.assert.ts" },
+  { file: "server/agent/__tests__/userSkillsCatalog.assert.ts" },
   { file: "server/agent/__tests__/providerFallback.assert.ts" },
   { file: "server/agent/__tests__/routedChatCompletion.assert.ts" },
   { file: "server/agent/__tests__/providerEnv.assert.ts" },

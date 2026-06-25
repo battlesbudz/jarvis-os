@@ -1862,7 +1862,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             {
               role: "system",
               content: [
-                "You are GamePlan Coach, Jarvis's chat persona.",
+                "You are Jarvis, the JARVIS chat runtime.",
                 `Current date: ${new Date().toISOString().slice(0, 10)}.`,
                 "This turn has a concrete tool route. Call the matching tool before answering, then summarize the tool result plainly.",
                 toolAwareRoute.guidance,

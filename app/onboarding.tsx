@@ -46,7 +46,7 @@ const LIFE_QUESTIONS = [
   {
     field: 'currentBlocker' as keyof LifeContext,
     question: "What's been getting in your way lately?",
-    subLabel: "Be honest — this helps your coach give realistic advice",
+    subLabel: "Be honest — this helps JARVIS give realistic advice",
     placeholder: "e.g. Always running out of time, procrastinating on hard tasks...",
   },
 ];
@@ -134,7 +134,7 @@ export default function OnboardingScreen() {
         <Animated.View key={animKey} entering={FadeInRight.duration(300)} style={styles.stepContent}>
           <Text style={styles.stepEmoji}>👋</Text>
           <Text style={styles.question}>What should we call you?</Text>
-          <Text style={styles.subLabel}>Your coach will use this to personalize your experience</Text>
+          <Text style={styles.subLabel}>JARVIS will use this to personalize your experience</Text>
           <TextInput
             style={styles.input}
             value={name}
@@ -216,7 +216,7 @@ export default function OnboardingScreen() {
           <Text style={styles.stepEmoji}>🔗</Text>
           <Text style={styles.question}>Connect your calendar</Text>
           <Text style={styles.subLabel}>
-            Your coach can see your schedule and help you plan around it. Connect your apps from the Profile tab anytime.
+            JARVIS can see your schedule and help you plan around it. Connect your apps from the Profile tab anytime.
           </Text>
           <View style={styles.connectNote}>
             <Ionicons name="information-circle-outline" size={18} color={Colors.primary} />
@@ -224,7 +224,7 @@ export default function OnboardingScreen() {
               You can connect Google Calendar, Outlook, and Gmail from your Profile tab after setup.
             </Text>
           </View>
-          <Text style={styles.readyText}>You&apos;re all set to start your GamePlan.</Text>
+          <Text style={styles.readyText}>You&apos;re all set to start with JARVIS.</Text>
         </Animated.View>
       );
     }

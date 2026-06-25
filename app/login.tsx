@@ -566,8 +566,8 @@ export default function LoginScreen() {
           <View style={styles.iconCircle}>
             <Ionicons name="game-controller" size={48} color="#6366F1" />
           </View>
-          <Text style={styles.appName}>GamePlan</Text>
-          <Text style={styles.tagline}>Your personal productivity coach</Text>
+          <Text style={styles.appName}>JARVIS</Text>
+          <Text style={styles.tagline}>Your personal AI operating layer</Text>
         </View>
 
         <View style={styles.card}>
@@ -700,7 +700,7 @@ export default function LoginScreen() {
         </View>
 
         <Text style={styles.footer}>
-          By signing in, you agree to let GamePlan store your productivity data.
+          By signing in, you agree to let JARVIS store your productivity data.
         </Text>
       </View>
     </View>

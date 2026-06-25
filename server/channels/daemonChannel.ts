@@ -34,7 +34,7 @@ export const daemonChannel: Channel = {
       return { ok: false, error: "daemon notify permission disabled by user" };
     }
     try {
-      const title = "GamePlan Coach";
+      const title = "JARVIS";
       const result = await sendDaemonOp(userId, { type: "notify", title, body: text }, 5000);
       if (!result.ok) return { ok: false, error: result.error || "daemon notify failed" };
       return { ok: true };

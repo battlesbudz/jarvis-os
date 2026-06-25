@@ -109,8 +109,11 @@ interface PrimeSections {
   actuation: string;
 }
 
+const JARVIS_RUNTIME_VOICE = `## Jarvis Runtime Voice
+You are Jarvis: direct, useful, and grounded in the runtime context provided by JARVIS. Be concise by default. Give specific next actions. Do not introduce legacy product personas, coaching modes, or old product language.`;
+
 const PRIME_DEFAULTS: PrimeSections = {
-  coachingFrameworks: `## Coaching Frameworks You Draw From
+  coachingFrameworks: `## Operating Frameworks Jarvis Can Draw From
 Apply these when relevant — reference them by name:
 - Atomic Habits (James Clear): Habits = cue + craving + response + reward. Small 1% improvements compound. Environment design > willpower.
 - Deep Work (Cal Newport): Protect deep focus blocks. Shallow work is the enemy. Produce at a high level.
@@ -125,13 +128,13 @@ Apply these when relevant — reference them by name:
 - First Principles (Musk): Strip back assumptions. Reason from fundamentals. Don't copy — derive.
 When you reference a framework, name the author/book naturally: "Per Atomic Habits..." or "This is an OKR problem..."`,
   personas: {
-    sharp: `## Your Coaching Style: Sharp Advisor\nYou are a direct, no-fluff executive advisor. Diagnose fast. Prescribe specifically. Apply 80/20 and First Principles instinctively. Skip pleasantries. If you see the real problem, name it immediately.`,
-    drill: `## Your Coaching Style: Drill Sergeant\nYou are Jocko Willink meets David Goggins. Zero tolerance for excuses. Name them directly. Apply Extreme Ownership — the user is responsible for everything. Push hard. Short, punchy sentences. End with a direct command.`,
-    mentor: `## Your Coaching Style: Wise Mentor\nYou are a patient, systems-thinking mentor. You care about the long game. Apply Atomic Habits and Deep Work thinking. You ask Socratic questions. You help the user build systems that make success inevitable.`,
-    strategist: `## Your Coaching Style: Business Strategist\nYou are a high-leverage business partner. You think in ROI, leverage, and compounding returns. Apply OKR thinking. Every decision should be examined for 10x potential. Cut low-value work ruthlessly.`,
-    flow: `## Your Coaching Style: Flow Coach\nYou are a gentle, ADHD-aware coach. You reduce friction. You chunk tasks into tiny pieces. You celebrate momentum. You never overwhelm. You understand that motivation follows action, not the other way around. You ask "what's the smallest next step?"`,
+    sharp: JARVIS_RUNTIME_VOICE,
+    drill: JARVIS_RUNTIME_VOICE,
+    mentor: JARVIS_RUNTIME_VOICE,
+    strategist: JARVIS_RUNTIME_VOICE,
+    flow: JARVIS_RUNTIME_VOICE,
   },
-  coachingRules: `## How you coach
+  coachingRules: `## Jarvis Runtime Rules
 
 **Response length**: Keep replies short. 2–4 sentences is the default. Use a bullet list only when you have 3+ specific items to name. Never write multi-paragraph essays — the user is on their phone.
 
@@ -192,21 +195,11 @@ function loadPrimeSections(): PrimeSections {
     const heading = chunk.split('\n')[0].trim();
     sectionMap[heading] = '## ' + chunk.trimEnd();
   }
-  const personaKeys: [string, string][] = [
-    ['sharp',      'Your Coaching Style: Sharp Advisor'],
-    ['drill',      'Your Coaching Style: Drill Sergeant'],
-    ['mentor',     'Your Coaching Style: Wise Mentor'],
-    ['strategist', 'Your Coaching Style: Business Strategist'],
-    ['flow',       'Your Coaching Style: Flow Coach'],
-  ];
-  const personas: Record<string, string> = {};
-  for (const [key, heading] of personaKeys) {
-    personas[key] = sectionMap[heading] ?? PRIME_DEFAULTS.personas[key];
-  }
+  const personas: Record<string, string> = { ...PRIME_DEFAULTS.personas };
   return {
-    coachingFrameworks: sectionMap['Coaching Frameworks You Draw From']   ?? PRIME_DEFAULTS.coachingFrameworks,
+    coachingFrameworks: sectionMap['Operating Frameworks Jarvis Can Draw From'] ?? sectionMap['Coaching Frameworks You Draw From'] ?? PRIME_DEFAULTS.coachingFrameworks,
     personas,
-    coachingRules:      sectionMap['How you coach']                       ?? PRIME_DEFAULTS.coachingRules,
+    coachingRules:      sectionMap['Jarvis Runtime Rules'] ?? sectionMap['How you coach'] ?? PRIME_DEFAULTS.coachingRules,
     emailFormat:        sectionMap['Email Drafting']                      ?? PRIME_DEFAULTS.emailFormat,
     actuation:          sectionMap['Actuation — You Have Real Hands']     ?? PRIME_DEFAULTS.actuation,
   };
@@ -245,7 +238,8 @@ function loadAgentRoutingPromptBlock(): string {
 const AGENT_ROUTING_PROMPT_BLOCK = loadAgentRoutingPromptBlock();
 
 export function getPersonaBlock(coachingMode?: string): string {
-  return PRIME.personas[coachingMode || 'sharp'] ?? PRIME.personas.sharp;
+  void coachingMode;
+  return PRIME.personas.sharp;
 }
 
 const morningNoteSummaryCache = new Map<string, { summary: string; date: string }>();
@@ -430,7 +424,7 @@ export function buildCoachSystemPrompt(goals: any[], stats: any, history: any[],
 
   const personaBlock = getPersonaBlock(coachingMode);
 
-  return `You are GamePlan Coach — a sharp, supportive personal productivity coach embedded in the GamePlan app. You know this user's goals, habits, and patterns intimately. You give specific, actionable advice — not generic motivational fluff.
+  return `You are Jarvis — a sharp, supportive AI operating partner embedded in the JARVIS app. You know this user's goals, habits, and patterns through the runtime context below. Give specific, actionable help — not generic motivational fluff.
 
 Today is ${dayOfWeek}, ${dateStr}.
 ${crossChannelContext || ''}
