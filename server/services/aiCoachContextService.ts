@@ -68,6 +68,7 @@ export async function runCoachModelTurn(
     userId: params.userId,
     signal: params.signal,
     logPrefix: params.logPrefix,
+    allowRuntimeIdentityShortcut: true,
   });
 }
 
@@ -96,6 +97,7 @@ export async function streamCoachModelTurn(
     userId: params.userId,
     signal: params.signal,
     logPrefix: params.logPrefix,
+    allowRuntimeIdentityShortcut: true,
   }, onChunk);
 }
 

@@ -6,10 +6,12 @@ import {
   classifyTaskPrivacy,
   routeModelForTask,
   _setOpenAIProviderStatusResolverForTesting,
+  _setRuntimeIdentityProfileResolverForTesting,
   _setUserSelectedModelResolverForTesting,
 } from "../modelRouter";
 import { BaseProvider, _clearProviderCacheForTesting, _overrideProviderForTesting } from "../providers";
 import type { ProviderChunk, ProviderQueryParams } from "../providers/base";
+import { classifyRuntimeIdentityIntent, runtimeModelLabelForRoute } from "../../state/runtimeIdentity";
 
 function userMessage(content: string) {
   return [{ role: "user" as const, content }];
@@ -1398,6 +1400,654 @@ async function runRequestedProviderModelOverridesAmbientCodexRouteAssertion(): P
   }
 }
 
+async function runRuntimeIdentityAnswersBypassSelectedPhoneGemmaAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  class UnexpectedAndroidLocalGemmaProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("runtime identity questions should not be delegated to Phone Gemma");
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("android-local-gemma", new UnexpectedAndroidLocalGemmaProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-runtime-identity-phone");
+      return "android-local-gemma/gemma-4-e4b-it";
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Who are you?" }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-runtime-identity-phone",
+      logPrefix: "[ModelRouterRuntimeIdentityPhoneTest]",
+      allowRuntimeIdentityShortcut: true,
+    });
+
+    assert.equal(result.providerName, "jarvis-runtime");
+    assert.equal(result.model, "gemma-4-e4b-it");
+    assert.match(result.textContent, /I'm Jarvis\./);
+    assert.match(result.textContent, /Local/);
+    console.log("OK: runtime identity answers bypass selected Phone Gemma");
+  } finally {
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runRuntimeUserIdentityUsesProfileAuthorityAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  class UnexpectedGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("runtime user identity should come from profile state, not Gemini");
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new UnexpectedGoogleProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-runtime-profile");
+      return "google/gemini-2.5-pro";
+    });
+    _setRuntimeIdentityProfileResolverForTesting(async (userId) => {
+      assert.equal(userId, "user-runtime-profile");
+      return {
+        userId,
+        preferredName: "Justin",
+        source: "profile_store",
+      };
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Who am I?" }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-runtime-profile",
+      logPrefix: "[ModelRouterRuntimeUserIdentityTest]",
+      allowRuntimeIdentityShortcut: true,
+    });
+
+    assert.equal(result.providerName, "jarvis-runtime");
+    assert.equal(result.model, "gemini-2.5-pro");
+    assert.match(result.textContent, /Justin/);
+    assert.match(result.textContent, /profile/i);
+    assert.doesNotMatch(result.textContent, /memory/i);
+    console.log("OK: runtime user identity answers use profile authority instead of model memory");
+  } finally {
+    _setRuntimeIdentityProfileResolverForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runRuntimeActiveModelUsesCompactLabelAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  class UnexpectedGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("active-model questions should be answered by runtime state");
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new UnexpectedGoogleProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-runtime-model-label");
+      return "google/gemini-2.5-flash";
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "What model are you using?" }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-runtime-model-label",
+      logPrefix: "[ModelRouterRuntimeModelLabelTest]",
+      allowRuntimeIdentityShortcut: true,
+    });
+
+    assert.equal(result.providerName, "jarvis-runtime");
+    assert.equal(result.model, "gemini-2.5-flash");
+    assert.match(result.textContent, /Gemini/);
+    assert.match(result.textContent, /Jarvis/);
+    console.log("OK: runtime active-model answers use compact provider labels");
+  } finally {
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runRuntimeIdentityStreamsDeterministicAnswerAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  class UnexpectedGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("streaming identity questions should be answered by runtime state");
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new UnexpectedGoogleProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-runtime-stream-identity");
+      return "google/gemini-2.5-flash";
+    });
+
+    const chunks: ProviderChunk[] = [];
+    const result = await streamModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Who are you?" }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-runtime-stream-identity",
+      logPrefix: "[ModelRouterRuntimeIdentityStreamTest]",
+      allowRuntimeIdentityShortcut: true,
+    }, (chunk) => {
+      chunks.push(chunk);
+    });
+
+    assert.equal(result.providerName, "jarvis-runtime");
+    assert.equal(result.model, "gemini-2.5-flash");
+    assert.match(result.textContent, /I'm Jarvis\./);
+    assert.deepEqual(chunks, [
+      { type: "text", delta: result.textContent },
+      { type: "finish", reason: "stop" },
+    ]);
+    console.log("OK: runtime identity answers stream through the normal model-turn interface");
+  } finally {
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runRuntimeIdentityPreservesStructuredResponseFormatAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let providerCalled = false;
+  class StructuredGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      providerCalled = true;
+      assert.deepEqual(params.responseFormat, { type: "json_object" });
+      yield { type: "text", delta: '{"answer":"provider-json"}' };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new StructuredGoogleProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-runtime-structured-identity");
+      return "google/gemini-2.5-flash";
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Who are you?" }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      responseFormat: { type: "json_object" },
+      userId: "user-runtime-structured-identity",
+      logPrefix: "[ModelRouterRuntimeIdentityStructuredTest]",
+      allowRuntimeIdentityShortcut: true,
+    });
+
+    assert.equal(providerCalled, true);
+    assert.equal(result.providerName, "google");
+    assert.equal(result.textContent, '{"answer":"provider-json"}');
+    console.log("OK: runtime identity shortcut preserves structured response format contracts");
+  } finally {
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runRuntimeIdentityPreservesRequiredToolChoiceAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let providerCalled = false;
+  class RequiredToolGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      providerCalled = true;
+      assert.equal(params.toolChoice, "required");
+      yield { type: "text", delta: "provider-required-tool-contract" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new RequiredToolGoogleProvider());
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      requestedModel: "google/gemini-2.5-flash",
+      preferRequestedModel: true,
+      messages: [{ role: "user", content: "Who am I?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "identity_contract_tool",
+          description: "Test tool for required tool contract preservation.",
+          parameters: { type: "object", properties: {} },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 64,
+      logPrefix: "[ModelRouterRuntimeIdentityRequiredToolTest]",
+      allowRuntimeIdentityShortcut: true,
+    });
+
+    assert.equal(providerCalled, true);
+    assert.equal(result.providerName, "google");
+    assert.equal(result.textContent, "provider-required-tool-contract");
+    console.log("OK: runtime identity shortcut preserves required tool-choice contracts");
+  } finally {
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runRuntimeIdentityBypassesRequiredMemoryToolRouteAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  class UnexpectedGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("required memory identity turns should be answered by runtime state");
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new UnexpectedGoogleProvider());
+    _setRuntimeIdentityProfileResolverForTesting(async (userId) => ({
+      userId,
+      preferredName: "Justin",
+      source: "profile_store",
+    }));
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      requestedModel: "google/gemini-2.5-flash",
+      preferRequestedModel: true,
+      messages: [{ role: "user", content: "What's my name?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "memory_search",
+          description: "Search Jarvis memory.",
+          parameters: { type: "object", properties: { query: { type: "string" } } },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 64,
+      userId: "user-runtime-required-memory",
+      logPrefix: "[ModelRouterRuntimeIdentityRequiredMemoryTest]",
+      allowRuntimeIdentityShortcut: true,
+    });
+
+    assert.equal(result.providerName, "jarvis-runtime");
+    assert.match(result.textContent, /Justin/);
+    console.log("OK: runtime identity shortcut bypasses required memory tool routes");
+  } finally {
+    _setRuntimeIdentityProfileResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runRuntimeIdentityDoesNotHijackGeneralRouterJobsAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let providerCalled = false;
+  class TranslationGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      providerCalled = true;
+      assert.equal(params.messages[0]?.role, "system");
+      assert.equal(params.messages[1]?.role, "user");
+      yield { type: "text", delta: "provider-translation-output" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new TranslationGoogleProvider());
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      requestedModel: "google/gemini-2.5-flash",
+      preferRequestedModel: true,
+      messages: [
+        { role: "system", content: "Translate the user's text into French." },
+        { role: "user", content: "Who are you?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      logPrefix: "[ModelRouterRuntimeIdentityGeneralJobTest]",
+    });
+
+    assert.equal(providerCalled, true);
+    assert.equal(result.providerName, "google");
+    assert.equal(result.textContent, "provider-translation-output");
+    console.log("OK: runtime identity shortcut does not hijack general router jobs");
+  } finally {
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runRuntimeUserIdentityRequiresAuthenticatedUserAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  class UnexpectedGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("missing-auth identity questions should be answered by runtime state");
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("google", new UnexpectedGoogleProvider());
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      requestedModel: "google/gemini-2.5-flash",
+      preferRequestedModel: true,
+      messages: [{ role: "user", content: "Who am I?" }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      logPrefix: "[ModelRouterRuntimeIdentityAuthTest]",
+      allowRuntimeIdentityShortcut: true,
+    });
+
+    assert.equal(result.providerName, "jarvis-runtime");
+    assert.match(result.textContent, /Authentication\/runtime error/);
+    assert.match(result.textContent, /signed-in user/);
+    console.log("OK: runtime user identity questions report missing authenticated user as an auth/runtime response");
+  } finally {
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runRuntimeUserIdentityHidesProfileStoreExceptionDetailsAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+  const previousWarn = console.warn;
+  const warnings: unknown[][] = [];
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args);
+    };
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-runtime-profile-error");
+      return "google/gemini-2.5-flash";
+    });
+    _setRuntimeIdentityProfileResolverForTesting(async () => {
+      throw new Error("postgres://internal-host/account_name sql select * from profiles");
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Who am I?" }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-runtime-profile-error",
+      logPrefix: "[ModelRouterRuntimeIdentityProfileErrorTest]",
+      allowRuntimeIdentityShortcut: true,
+    });
+
+    assert.equal(result.providerName, "jarvis-runtime");
+    assert.match(result.textContent, /profile state is unavailable/i);
+    assert.doesNotMatch(result.textContent, /postgres/i);
+    assert.doesNotMatch(result.textContent, /internal-host/i);
+    assert.equal(warnings.length, 1);
+    assert.match(String(warnings[0]?.[0] ?? ""), /\[RuntimeIdentity\]/);
+    assert.match(String((warnings[0]?.[1] as Error | undefined)?.message ?? ""), /internal-host/);
+    console.log("OK: runtime user identity hides profile-store exception details from chat responses");
+  } finally {
+    console.warn = previousWarn;
+    _setRuntimeIdentityProfileResolverForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runRuntimeModelLabelDoesNotTreatUnknownProviderAsLocalAssertion(): Promise<void> {
+  assert.equal(
+    classifyRuntimeIdentityIntent([{ role: "user", content: "What’s my name?" }]),
+    "user_identity",
+  );
+  assert.equal(
+    classifyRuntimeIdentityIntent([{ role: "user", content: "What’s your name?" }]),
+    "assistant_identity",
+  );
+  assert.equal(
+    runtimeModelLabelForRoute({ providerName: "experimental-provider" as never, model: "vendor/alpha-model" }),
+    "Unknown",
+  );
+  assert.equal(
+    runtimeModelLabelForRoute({ providerName: "local-llama" as never, model: "openai-compatible/llama-local" }),
+    "Local",
+  );
+  assert.equal(
+    runtimeModelLabelForRoute({ providerName: "openai-compatible" as never, model: "openai-compatible/auto-fastest" }),
+    "OpenAI-compatible",
+  );
+  assert.equal(
+    runtimeModelLabelForRoute({ providerName: "openai-compatible" as never, model: "openai-compatible/llama-local" }),
+    "Local",
+  );
+  assert.equal(
+    runtimeModelLabelForRoute({ providerName: "openai-compatible" as never, model: "modelrelay/auto-fastest" }),
+    "ModelRelay",
+  );
+  console.log("OK: runtime model labels do not treat unknown providers as local");
+}
+
 runUserOpenAIProfileRouteAssertion()
   .then(runUserSelectedProviderOverridesRuntimeDefaultsAssertion)
   .then(runUserSelectedAndroidLocalGemmaOverridesCodexRuntimeAssertion)
@@ -1413,6 +2063,17 @@ runUserOpenAIProfileRouteAssertion()
   .then(runPlainGptRequestUsesConfiguredChainAssertion)
   .then(runCoachChatSelectedProviderModelAssertion)
   .then(runRequestedProviderModelOverridesAmbientCodexRouteAssertion)
+  .then(runRuntimeIdentityAnswersBypassSelectedPhoneGemmaAssertion)
+  .then(runRuntimeUserIdentityUsesProfileAuthorityAssertion)
+  .then(runRuntimeActiveModelUsesCompactLabelAssertion)
+  .then(runRuntimeIdentityStreamsDeterministicAnswerAssertion)
+  .then(runRuntimeIdentityPreservesStructuredResponseFormatAssertion)
+  .then(runRuntimeIdentityPreservesRequiredToolChoiceAssertion)
+  .then(runRuntimeIdentityBypassesRequiredMemoryToolRouteAssertion)
+  .then(runRuntimeIdentityDoesNotHijackGeneralRouterJobsAssertion)
+  .then(runRuntimeUserIdentityRequiresAuthenticatedUserAssertion)
+  .then(runRuntimeUserIdentityHidesProfileStoreExceptionDetailsAssertion)
+  .then(runRuntimeModelLabelDoesNotTreatUnknownProviderAsLocalAssertion)
   .then(runLeanContextToolBudgetAssertion)
   .then(() => {
     console.log("\nAll model router assertions passed.");
