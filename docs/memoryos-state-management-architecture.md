@@ -234,6 +234,16 @@ Next providers to wire:
 - Google Gemini
 - OpenAI-compatible local runtimes
 
+## Runtime Identity Answers
+
+Exact identity questions should be answered by Jarvis before a provider turn runs. This covers:
+
+- "Who are you?"
+- "Who am I?"
+- "What model are you using?"
+
+These answers are runtime state, not model reasoning. Jarvis should answer from the selected route, active model label, and Profile Store. Phone Gemma and cloud models should not be asked to guess Jarvis's identity, the user's preferred name, or the active model label for these exact identity questions.
+
 ## Design Constraints
 
 - State must be available even if MemoryOS is down.

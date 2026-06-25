@@ -201,7 +201,7 @@ function fallbackProfile(userId: string): RuntimeProfileState {
   };
 }
 
-async function loadProfileStateFromDb(userId: string): Promise<RuntimeProfileState | null> {
+export async function loadRuntimeProfileStateFromDb(userId: string): Promise<RuntimeProfileState | null> {
   if (typeof process !== "undefined" && !process.env.DATABASE_URL) return null;
 
   const [{ db }, schema] = await Promise.all([
@@ -381,7 +381,7 @@ export async function buildRuntimeStateCard(
   const uncertainty: string[] = [];
   const provenance = new Set<RuntimeStateSource>(["state_kernel", "provider_runtime"]);
 
-  const loadProfileState = deps.loadProfileState ?? loadProfileStateFromDb;
+  const loadProfileState = deps.loadProfileState ?? loadRuntimeProfileStateFromDb;
   const loadTaskState = deps.loadTaskState ?? loadTaskStateFromDb;
   const retrieveMemoryContext = deps.retrieveMemoryContext ?? retrieveMemoryContextFromMemoryOs;
 

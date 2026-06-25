@@ -15,6 +15,13 @@ import {
 } from "./providers/modelProviderAuthProfiles";
 import { DEFAULT_CODEX_OAUTH_MODEL, getCodexOAuthModel } from "./runtimeModel";
 import { ANDROID_LOCAL_GEMMA_MODEL } from "@shared/modelProviderCatalog";
+import {
+  answerRuntimeIdentityQuestion,
+  classifyRuntimeIdentityIntent,
+  _setRuntimeIdentityProfileResolverForTesting,
+} from "../state/runtimeIdentity";
+
+export { _setRuntimeIdentityProfileResolverForTesting };
 
 export type ModelTier = "prime" | "smart" | "cheap" | "free";
 export type TaskComplexity = "trivial" | "easy" | "medium" | "hard";
@@ -77,6 +84,7 @@ export interface RoutedModelTurnParams {
   userId?: string;
   signal?: AbortSignal;
   logPrefix?: string;
+  allowRuntimeIdentityShortcut?: boolean;
 }
 
 interface PreparedModelTurn {
@@ -765,9 +773,30 @@ export async function getUserSelectedModelRouteChain(
   return null;
 }
 
+function canUseRuntimeIdentityShortcut(params: RoutedModelTurnParams): boolean {
+  if (!params.allowRuntimeIdentityShortcut) return false;
+  if (params.responseFormat) return false;
+  if ((params.toolChoice ?? "none") !== "required") return true;
+  if (!classifyRuntimeIdentityIntent(params.messages)) return false;
+  return (params.tools ?? []).some((tool) => {
+    const name = tool.function?.name;
+    return name === "memory_search" || name === "memory_get";
+  });
+}
+
 export async function routeModelTurn(params: RoutedModelTurnParams): Promise<ProviderTurnResult> {
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
+  const allowRuntimeIdentityShortcut = canUseRuntimeIdentityShortcut(params);
   const prepared = await prepareModelTurn(params, logPrefix);
+  if (allowRuntimeIdentityShortcut) {
+    const runtimeIdentityAnswer = await answerRuntimeIdentityQuestion({
+      messages: params.messages,
+      userId: params.userId,
+      route: prepared.chain[0],
+      assistantName: "Jarvis",
+    });
+    if (runtimeIdentityAnswer) return runtimeIdentityAnswer;
+  }
 
   return queryWithFallback(
     prepared.chain,
@@ -791,7 +820,21 @@ export async function streamModelTurn(
   onChunk: (chunk: ProviderChunk) => void | Promise<void>,
 ): Promise<ProviderTurnResult> {
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
+  const allowRuntimeIdentityShortcut = canUseRuntimeIdentityShortcut(params);
   const prepared = await prepareModelTurn(params, logPrefix);
+  if (allowRuntimeIdentityShortcut) {
+    const runtimeIdentityAnswer = await answerRuntimeIdentityQuestion({
+      messages: params.messages,
+      userId: params.userId,
+      route: prepared.chain[0],
+      assistantName: "Jarvis",
+    });
+    if (runtimeIdentityAnswer) {
+      await onChunk({ type: "text", delta: runtimeIdentityAnswer.textContent });
+      await onChunk({ type: "finish", reason: runtimeIdentityAnswer.finishReason });
+      return runtimeIdentityAnswer;
+    }
+  }
 
   return queryWithFallbackStreaming(
     prepared.chain,
