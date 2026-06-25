@@ -25,8 +25,17 @@ import {
   classifyRuntimeCapabilityIntent,
   _setRuntimeCapabilityDepsForTesting,
 } from "../state/runtimeCapability";
+import {
+  answerRuntimeMemoryInspectionQuestion,
+  classifyRuntimeMemoryInspectionIntent,
+  _setRuntimeMemoryInspectionDepsForTesting,
+} from "../state/runtimeMemoryInspection";
 
-export { _setRuntimeIdentityProfileResolverForTesting, _setRuntimeCapabilityDepsForTesting };
+export {
+  _setRuntimeIdentityProfileResolverForTesting,
+  _setRuntimeCapabilityDepsForTesting,
+  _setRuntimeMemoryInspectionDepsForTesting,
+};
 
 export type ModelTier = "prime" | "smart" | "cheap" | "free";
 export type TaskComplexity = "trivial" | "easy" | "medium" | "hard";
@@ -91,6 +100,7 @@ export interface RoutedModelTurnParams {
   logPrefix?: string;
   allowRuntimeIdentityShortcut?: boolean;
   allowRuntimeCapabilityShortcut?: boolean;
+  allowRuntimeMemoryInspectionShortcut?: boolean;
 }
 
 interface PreparedModelTurn {
@@ -802,10 +812,22 @@ function routeToolNames(params: RoutedModelTurnParams): string[] {
     .filter((name): name is string => Boolean(name));
 }
 
+function canUseRuntimeMemoryInspectionShortcut(params: RoutedModelTurnParams): boolean {
+  if (!params.allowRuntimeMemoryInspectionShortcut) return false;
+  if (params.responseFormat) return false;
+  if ((params.toolChoice ?? "none") !== "required") return true;
+  if (!classifyRuntimeMemoryInspectionIntent(params.messages)) return false;
+  return (params.tools ?? []).some((tool) => {
+    const name = tool.function?.name;
+    return name === "memory_search" || name === "memory_get";
+  });
+}
+
 export async function routeModelTurn(params: RoutedModelTurnParams): Promise<ProviderTurnResult> {
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
   const allowRuntimeIdentityShortcut = canUseRuntimeIdentityShortcut(params);
   const allowRuntimeCapabilityShortcut = canUseRuntimeCapabilityShortcut(params);
+  const allowRuntimeMemoryInspectionShortcut = canUseRuntimeMemoryInspectionShortcut(params);
   const prepared = await prepareModelTurn(params, logPrefix);
   if (allowRuntimeIdentityShortcut) {
     const runtimeIdentityAnswer = await answerRuntimeIdentityQuestion({
@@ -824,6 +846,14 @@ export async function routeModelTurn(params: RoutedModelTurnParams): Promise<Pro
       routeToolNames: routeToolNames(params),
     });
     if (runtimeCapabilityAnswer) return runtimeCapabilityAnswer;
+  }
+  if (allowRuntimeMemoryInspectionShortcut) {
+    const runtimeMemoryInspectionAnswer = await answerRuntimeMemoryInspectionQuestion({
+      messages: params.messages,
+      userId: params.userId,
+      route: prepared.chain[0],
+    });
+    if (runtimeMemoryInspectionAnswer) return runtimeMemoryInspectionAnswer;
   }
 
   return queryWithFallback(
@@ -850,6 +880,7 @@ export async function streamModelTurn(
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
   const allowRuntimeIdentityShortcut = canUseRuntimeIdentityShortcut(params);
   const allowRuntimeCapabilityShortcut = canUseRuntimeCapabilityShortcut(params);
+  const allowRuntimeMemoryInspectionShortcut = canUseRuntimeMemoryInspectionShortcut(params);
   const prepared = await prepareModelTurn(params, logPrefix);
   if (allowRuntimeIdentityShortcut) {
     const runtimeIdentityAnswer = await answerRuntimeIdentityQuestion({
@@ -875,6 +906,18 @@ export async function streamModelTurn(
       await onChunk({ type: "text", delta: runtimeCapabilityAnswer.textContent });
       await onChunk({ type: "finish", reason: runtimeCapabilityAnswer.finishReason });
       return runtimeCapabilityAnswer;
+    }
+  }
+  if (allowRuntimeMemoryInspectionShortcut) {
+    const runtimeMemoryInspectionAnswer = await answerRuntimeMemoryInspectionQuestion({
+      messages: params.messages,
+      userId: params.userId,
+      route: prepared.chain[0],
+    });
+    if (runtimeMemoryInspectionAnswer) {
+      await onChunk({ type: "text", delta: runtimeMemoryInspectionAnswer.textContent });
+      await onChunk({ type: "finish", reason: runtimeMemoryInspectionAnswer.finishReason });
+      return runtimeMemoryInspectionAnswer;
     }
   }
 

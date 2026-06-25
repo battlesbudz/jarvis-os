@@ -7,6 +7,7 @@ export type MemoryOsCaller =
   | "daily_command"
   | "agent_sdk_context"
   | "gbrain_retrieval"
+  | "runtime_memory_inspection"
   | "other";
 
 export type MemoryProvenanceRef = {
