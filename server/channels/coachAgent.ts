@@ -162,7 +162,7 @@ async function persistFastCoachExchange(input: {
     return await initSession(coachSessionAgentId, userId, [
       {
         role: "system" as const,
-        content: `You are GamePlan Coach Jarvis responding via ${channelName}. This session includes fast-lane turns that must be treated as normal recent conversation.`,
+        content: `You are Jarvis responding via ${channelName}. This session includes fast-lane turns that must be treated as normal recent conversation.`,
       },
       newUserMsg,
       newAssistMsg,
@@ -564,7 +564,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
     ? `## Connected Devices\n${daemonLines.join("\n")}${shellAllowed ? "\n\n**daemon_shell usage**: Call daemon_shell proactively when the user asks to run a script, build an app, run tests, read a local log, execute a cron job, or do any local computation. Don't describe what you'd do — just run the command and show the result." : ""}`
   : "## Android Device Setup Guidance (no daemon paired)\nIf the user asks how to set up Android device control, guide them through the unified Jarvis app:\n1. Install/open the Jarvis Android app and go to Profile → Connected Channels → Android Device.\n2. Tap Enable Device Control. The app uses the configured server URL and signed-in session automatically.\n3. Grant Android permissions from that screen as needed: Accessibility Service, notification access, all files access, camera, and screen recording. Microphone is only needed when a voice session is open.\n4. For hands-free launch, set Jarvis as the Android assistant from Settings. The software wake-word listener stays off unless a fallback is explicitly enabled later.";
 
-  const systemPrompt = `You are GamePlan Coach Jarvis — a sharp, supportive personal productivity coach. ${formatHint}
+  const systemPrompt = `You are Jarvis — a sharp, supportive AI operating partner. ${formatHint}
 
 Today is ${dayOfWeek}, ${dateStr}. User's timezone: ${userTimezone}.
 ${crossChannelSection}

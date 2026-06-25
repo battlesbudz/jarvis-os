@@ -21,6 +21,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
 import { apiRequest } from '@/lib/query-client';
 
+const LEGACY_STOIC_SKILL_NAME = ['Stoic', 'Coach'].join(' ');
+
 interface UserSkill {
   id: string;
   name: string;
@@ -35,7 +37,8 @@ interface UserSkill {
 const SKILL_ACCENTS: Record<string, string> = {
   'Morning Ritual': Colors.warning,
   'Finance Awareness': Colors.success,
-  'Stoic Coach': '#8B7CF6',
+  [LEGACY_STOIC_SKILL_NAME]: '#8B7CF6',
+  'Stoic Guide': '#8B7CF6',
   'Deadline Hawk': Colors.error,
   'Deep Work Mode': Colors.violet,
   'Weekly Review': Colors.cyan,
@@ -46,7 +49,12 @@ const SKILL_ACCENTS: Record<string, string> = {
 };
 
 function getAccent(skill: UserSkill): string {
-  return SKILL_ACCENTS[skill.name] ?? Colors.violet;
+  return SKILL_ACCENTS[getSkillDisplayName(skill)] ?? SKILL_ACCENTS[skill.name] ?? Colors.violet;
+}
+
+function getSkillDisplayName(skill: UserSkill): string {
+  if (skill.isBuiltIn && skill.name === LEGACY_STOIC_SKILL_NAME) return 'Stoic Guide';
+  return skill.name;
 }
 
 function SkillCard({
@@ -69,7 +77,7 @@ function SkillCard({
           <Text style={styles.emoji}>{skill.emoji}</Text>
         </View>
         <View style={styles.cardBody}>
-          <Text style={styles.skillName}>{skill.name}</Text>
+          <Text style={styles.skillName}>{getSkillDisplayName(skill)}</Text>
           <Text style={styles.skillDesc} numberOfLines={2}>{skill.description}</Text>
         </View>
         <View style={styles.rightControls}>

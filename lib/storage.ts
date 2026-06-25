@@ -180,7 +180,7 @@ export const ALL_BADGES: BadgeDefinition[] = [
 const LEVEL_THRESHOLDS = [0, 100, 250, 500, 1000, 2000, 3500, 5000, 7500, 10000];
 const LEVEL_NAMES = [
   'Beginner', 'Planner', 'Achiever', 'Momentum',
-  'Focused', 'Dedicated', 'Elite', 'Master', 'Legend', 'GamePlan Pro',
+  'Focused', 'Dedicated', 'Elite', 'Master', 'Legend', 'JARVIS Prime',
 ];
 
 export function getLevel(xp: number): number {

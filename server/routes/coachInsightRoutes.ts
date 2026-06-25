@@ -80,7 +80,7 @@ Return ONLY the JSON object.`;
           (lifeContext.improvementArea ? `\n- Wants to improve: ${lifeContext.improvementArea}` : '')
         : '';
 
-      const prompt = `You are a personal productivity coach. Write a 1-2 sentence daily coaching note for this person.
+      const prompt = `You are Jarvis. Write a 1-2 sentence daily note for this person.
 
 ${getPersonaBlock(coachingMode)}
 

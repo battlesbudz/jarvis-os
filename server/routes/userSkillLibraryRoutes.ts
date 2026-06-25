@@ -2,7 +2,11 @@ import { and, eq } from "drizzle-orm";
 import type { Express, Request, Response } from "express";
 import { userSkills } from "@shared/schema";
 import { db } from "../db";
-import { BUILT_IN_SKILLS } from "./userSkillsCatalog";
+import {
+  BUILT_IN_SKILLS,
+  canonicalBuiltInSkillName,
+  canonicalizeBuiltInSkillRecord,
+} from "./userSkillsCatalog";
 
 const paramValue = (value: string | string[]): string => Array.isArray(value) ? (value[0] ?? "") : value;
 
@@ -13,7 +17,9 @@ export function registerUserSkillLibraryRoutes(app: Express): void {
     try {
       const existing = await db.select().from(userSkills).where(eq(userSkills.userId, userId));
       const existingBuiltInNames = new Set(
-        existing.filter((skill) => skill.isBuiltIn).map((skill) => skill.name),
+        existing
+          .filter((skill) => skill.isBuiltIn)
+          .map((skill) => canonicalBuiltInSkillName(skill.name)),
       );
       const toSeed = BUILT_IN_SKILLS.filter((skill) => !existingBuiltInNames.has(skill.name));
 
@@ -33,10 +39,10 @@ export function registerUserSkillLibraryRoutes(app: Express): void {
           )
           .onConflictDoNothing();
         const fresh = await db.select().from(userSkills).where(eq(userSkills.userId, userId));
-        return res.json({ skills: fresh });
+        return res.json({ skills: fresh.map(canonicalizeBuiltInSkillRecord) });
       }
 
-      res.json({ skills: existing });
+      res.json({ skills: existing.map(canonicalizeBuiltInSkillRecord) });
     } catch (err) {
       console.error("[UserSkills] GET failed:", err);
       res.status(500).json({ error: "Failed to list skills" });
@@ -91,7 +97,7 @@ export function registerUserSkillLibraryRoutes(app: Express): void {
         .set({ isActive: !existing.isActive, updatedAt: new Date() })
         .where(and(eq(userSkills.id, id), eq(userSkills.userId, userId)))
         .returning();
-      res.json({ skill: updated });
+      res.json({ skill: canonicalizeBuiltInSkillRecord(updated) });
     } catch (err) {
       console.error("[UserSkills] PATCH toggle failed:", err);
       res.status(500).json({ error: "Failed to toggle skill" });

@@ -106,8 +106,8 @@ export const slackChannel: Channel = {
     let body = text || "";
     if (opts.attachments && opts.attachments.length > 0) {
       body = body
-        ? `${body}\n\n_(${opts.attachments.length} attachment(s) generated — open the GamePlan app to download.)_`
-        : `_(${opts.attachments.length} attachment(s) generated — open the GamePlan app to download.)_`;
+        ? `${body}\n\n_(${opts.attachments.length} attachment(s) generated — open the JARVIS app to download.)_`
+        : `_(${opts.attachments.length} attachment(s) generated — open the JARVIS app to download.)_`;
     }
     const result = await postSlackMessage(botToken, target, body);
     return { ok: result.ok, messageId: result.ts, error: result.error };

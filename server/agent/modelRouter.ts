@@ -368,7 +368,7 @@ function likelyNeedsToolAccess(text: string): boolean {
 
 function buildLeanSystemPrompt(): string {
   return [
-    "You are GamePlan Coach, Jarvis's chat persona.",
+    "You are Jarvis, the JARVIS chat runtime.",
     "Answer the user's latest message directly and keep it concise.",
     "Use only the context included in this request. Do not invent memories, files, user data, live research, or tool results.",
     "If the user asks for current information or an action and a relevant tool is available, use it. If the needed tool or API is unavailable, say that plainly.",

@@ -6,7 +6,7 @@ import { eq, and, desc, sql } from "drizzle-orm";
 export const createDocumentTool: AgentTool = {
   name: "create_document",
   description:
-    "Create a new text/markdown document in the user's GamePlan document library. Use this to draft notes, briefs, summaries, plans, or any longer-form content the user asks for. The user can review, edit, and reference these later. Returns the new document id.",
+    "Create a new text/markdown document in the user's JARVIS document library. Use this to draft notes, briefs, summaries, plans, or any longer-form content the user asks for. The user can review, edit, and reference these later. Returns the new document id.",
   parameters: {
     type: "object",
     properties: {

@@ -66,14 +66,8 @@ export async function buildPlanFromInputs(body: any): Promise<{
 
   const predictionContext = typeof body.predictionContext === 'string' ? body.predictionContext : null;
 
-  const modeInstructions: Record<string, string> = {
-    mentor: 'Coaching style: Mentor mode — include Deep Work blocks, be supportive, suggest learning and growth tasks.',
-    drill: 'Coaching style: Drill Sergeant mode — aggressive prioritization, no fluff, only the tasks that move the needle.',
-    friend: 'Coaching style: Friend mode — balanced and encouraging, mix of productive and enjoyable tasks.',
-  };
-  const modeText = coachingMode && modeInstructions[coachingMode]
-    ? modeInstructions[coachingMode]
-    : '';
+  void coachingMode;
+  const modeText = '';
 
   const timezone = typeof body.timezone === "string" ? body.timezone : "America/New_York";
   const dateKey = typeof body.dateKey === "string" ? body.dateKey : undefined;

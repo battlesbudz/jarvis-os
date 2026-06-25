@@ -353,12 +353,14 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       const { eq, and } = await import("drizzle-orm");
       const { db: dbImport } = await import("../db");
       const { truncateToBudget, BUDGET_PRESETS } = await import("../memory/contextBuilder");
+      const { canonicalizeBuiltInSkillRecord } = await import("../routes/userSkillsCatalog");
       const activeSkills = await dbImport
         .select()
         .from(userSkillsTable)
         .where(and(eq(userSkillsTable.userId, context.userId), eq(userSkillsTable.isActive, true)));
       if (activeSkills.length > 0) {
-        const skillBlockRaw = activeSkills
+        const runtimeSkills = activeSkills.map(canonicalizeBuiltInSkillRecord);
+        const skillBlockRaw = runtimeSkills
           .map((s) => `### ${s.emoji} ${s.name}\n${s.instructions}`)
           .join("\n\n");
         const skillBlock = truncateToBudget(skillBlockRaw, BUDGET_PRESETS.agentTurn.skills);

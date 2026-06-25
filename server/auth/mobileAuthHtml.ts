@@ -36,7 +36,7 @@ export function createMobileAuthSuccessHtml(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Signed In - GamePlan</title>
+  <title>Signed In - JARVIS</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -61,7 +61,7 @@ export function createMobileAuthSuccessHtml(
   <div class="card">
     <div class="icon">OK</div>
     <h2>Signed in successfully</h2>
-    <p>Taking you back to GamePlan...</p>
+    <p>Taking you back to JARVIS...</p>
     <div class="dots">
       <div class="dot"></div>
       <div class="dot"></div>
@@ -80,7 +80,7 @@ export function createMobileAuthImplicitCallbackHtml(): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Finishing Sign In - GamePlan</title>
+  <title>Finishing Sign In - JARVIS</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {

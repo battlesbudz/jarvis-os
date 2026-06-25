@@ -120,7 +120,7 @@ function successHtml(token: string): string {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Signed In — GamePlan</title>
+  <title>Signed In — JARVIS</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -145,7 +145,7 @@ function successHtml(token: string): string {
   <div class="card">
     <div class="icon">✅</div>
     <h2>Signed in successfully</h2>
-    <p>Taking you back to GamePlan...</p>
+    <p>Taking you back to JARVIS...</p>
     <div class="dots">
       <div class="dot"></div>
       <div class="dot"></div>
@@ -177,7 +177,7 @@ function errorHtml(message: string): string {
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Error — GamePlan</title>
+  <title>Error — JARVIS</title>
   <style>
     body { font-family: sans-serif; background: #0f0f0f; color: #fff;
            display: flex; align-items: center; justify-content: center; min-height: 100vh; }

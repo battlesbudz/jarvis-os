@@ -1,3 +1,5 @@
+const LEGACY_STOIC_SKILL_NAME = ["Stoic", "Coach"].join(" ");
+
 export const BUILT_IN_SKILLS = [
   {
     name: "Morning Ritual",
@@ -12,7 +14,7 @@ export const BUILT_IN_SKILLS = [
     instructions: "Before recommending any action that involves spending money, time, or resources, briefly consider whether it aligns with sensible financial habits. If the user mentions a purchase, subscription, or expense, acknowledge it and (where natural) ask if it fits their current priorities. Never lecture — one gentle nudge is enough. If the user has shared financial goals in their memory, use them as context.",
   },
   {
-    name: "Stoic Coach",
+    name: "Stoic Guide",
     emoji: "🏛️",
     description: "Offer stoic reframes when the user is stressed or frustrated.",
     instructions: "When the user expresses frustration, anxiety, or worry, offer a brief stoic reframe: focus on what is within their control, acknowledge what is not, and suggest one concrete next action. Keep it short — two to three sentences. Do not be preachy. The goal is to help them regain agency, not to lecture. Use stoic language naturally, not as a performance.",
@@ -60,3 +62,24 @@ export const BUILT_IN_SKILLS = [
     instructions: "Pay attention to mentions of the user's energy levels across conversations. When they seem depleted, suggest tackling their most important work during peak hours (usually morning for most people) and protecting those times from meetings and reactive tasks. Gently remind them that rest is productive. When they mention being overwhelmed, suggest doing one thing at a time rather than multitasking.",
   },
 ] as const;
+
+const BUILT_IN_SKILL_ALIASES = new Map<string, readonly string[]>([
+  ["Stoic Guide", [LEGACY_STOIC_SKILL_NAME]],
+]);
+
+export function canonicalBuiltInSkillName(name: string): string {
+  const normalizedName = name.trim();
+  for (const skill of BUILT_IN_SKILLS) {
+    if (skill.name === normalizedName) return skill.name;
+    const aliases = BUILT_IN_SKILL_ALIASES.get(skill.name) ?? [];
+    if (aliases.includes(normalizedName)) return skill.name;
+  }
+  return normalizedName;
+}
+
+export function canonicalizeBuiltInSkillRecord<T extends { name: string; isBuiltIn?: boolean | null }>(skill: T): T {
+  if (!skill.isBuiltIn) return skill;
+  const canonicalName = canonicalBuiltInSkillName(skill.name);
+  if (canonicalName === skill.name) return skill;
+  return { ...skill, name: canonicalName };
+}

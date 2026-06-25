@@ -872,7 +872,7 @@ async function processUpdate(update: any): Promise<void> {
             .limit(1);
 
           if (!link?.userId) {
-            await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
+            await sendMessage(chatId, "Your Telegram isn't linked to a JARVIS account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
             return;
           }
           linkedUserId = link.userId;
@@ -1015,7 +1015,7 @@ async function processUpdate(update: any): Promise<void> {
             set: { chatId, username: message.from?.username || message.from?.first_name || null, linkedAt: new Date() },
           });
         await db.delete(schema.telegramLinkCodes).where(eq(schema.telegramLinkCodes.code, code));
-        await sendMessage(chatId, "✅ You're connected to GamePlan! Jarvis will send you morning check-ins and you can chat anytime right here.");
+        await sendMessage(chatId, "✅ You're connected to JARVIS! Jarvis will send you morning check-ins and you can chat anytime right here.");
         console.log(`[Telegram] Linked user ${userId} to chat ${chatId}`);
       } catch (err) {
         console.error("Error linking Telegram:", err);
@@ -1025,14 +1025,14 @@ async function processUpdate(update: any): Promise<void> {
     }
 
     if (text === '/start') {
-      await sendMessage(chatId, "Welcome to GamePlan Coach! To connect your account, generate a link code from the GamePlan app (Profile → Connected Apps → Telegram), then send it here.");
+      await sendMessage(chatId, "Welcome to JARVIS. To connect your account, generate a link code from the JARVIS app (Profile → Connected Apps → Telegram), then send it here.");
       return;
     }
 
     try {
       const link = await db.select().from(schema.telegramLinks).where(eq(schema.telegramLinks.chatId, chatId)).limit(1);
       if (link.length === 0) {
-        await sendMessage(chatId, "Your Telegram isn't linked to a GamePlan account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
+        await sendMessage(chatId, "Your Telegram isn't linked to a JARVIS account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
         return;
       }
 
@@ -2388,8 +2388,8 @@ Write a sharp weekly summary (3-4 sentences). What's the trend? What needs focus
         {
           role: 'system',
           content: isWeeklyPlanning
-            ? 'You are GamePlan Coach Jarvis — a direct, sharp, ADHD-friendly productivity coach. Messages go via Telegram. This is the weekly planning session — you are allowed to be comprehensive (8-15 sentences). Use line breaks between sections for readability. Plain text only, no markdown, no bullet points, no asterisks.'
-            : 'You are GamePlan Coach Jarvis — a direct, sharp, ADHD-friendly productivity coach. Messages go via Telegram. Keep it SHORT (3-4 sentences max). Plain text only, no markdown, no bullet points.',
+            ? 'You are Jarvis — a direct, sharp, ADHD-friendly AI operating partner. Messages go via Telegram. This is the weekly planning session — you are allowed to be comprehensive (8-15 sentences). Use line breaks between sections for readability. Plain text only, no markdown, no bullet points, no asterisks.'
+            : 'You are Jarvis — a direct, sharp, ADHD-friendly AI operating partner. Messages go via Telegram. Keep it SHORT (3-4 sentences max). Plain text only, no markdown, no bullet points.',
         },
         { role: 'user', content: prompt },
       ],
@@ -2726,7 +2726,7 @@ Write a sharp 2-3 sentence meeting prep brief. Include what the meeting is about
                 messages: [
                   {
                     role: 'system',
-                    content: 'You are GamePlan Coach Jarvis — a direct, sharp productivity coach. You send pre-meeting prep briefs via Telegram. Keep it SHORT (2-3 sentences). Plain text only, no markdown, no bullet points.',
+                    content: 'You are Jarvis — a direct, sharp AI operating partner. You send pre-meeting prep briefs via Telegram. Keep it SHORT (2-3 sentences). Plain text only, no markdown, no bullet points.',
                   },
                   { role: 'user', content: briefPrompt },
                 ],

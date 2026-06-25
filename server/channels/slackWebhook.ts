@@ -97,7 +97,7 @@ export function registerSlackWebhook(app: Express): void {
           .limit(1);
         const replyToken = tok[0] ? await getSlackBotToken(tok[0].userId) : null;
         if (replyToken) {
-          await postSlackMessage(replyToken, ev.channel, "I don't recognize this Slack account. Open the GamePlan app and reconnect Slack from Profile → Connected Apps.");
+          await postSlackMessage(replyToken, ev.channel, "I don't recognize this Slack account. Open the JARVIS app and reconnect Slack from Profile → Connected Apps.");
         }
         return;
       }
@@ -138,7 +138,7 @@ export function registerSlackWebhook(app: Express): void {
 
       const userId = await findUserBySlackId(teamId, slackUserId);
       if (!userId) {
-        return res.json({ response_type: "ephemeral", text: "Your Slack isn't linked to a GamePlan account. Open the app → Profile → Connected Apps and reconnect." });
+        return res.json({ response_type: "ephemeral", text: "Your Slack isn't linked to a JARVIS account. Open the app → Profile → Connected Apps and reconnect." });
       }
 
       const [sub, ...rest] = text.split(/\s+/);
