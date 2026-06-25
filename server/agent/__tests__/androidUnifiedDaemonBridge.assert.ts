@@ -28,6 +28,12 @@ assert.match(
 
 assert.match(
   bridgeSource,
+  /export async function pingAndroidDaemon[\s\S]*sendDaemonOp\(userId, \{ type: "ping" \}, timeoutMs, "android"\)/,
+  "Android live capability checks should target the Android socket instead of the desktop-first neutral ping path.",
+);
+
+assert.match(
+  bridgeSource,
   /android_screen_context:\s*"android_read_screen"/,
   "Android permissions should map android_screen_context to android_read_screen.",
 );

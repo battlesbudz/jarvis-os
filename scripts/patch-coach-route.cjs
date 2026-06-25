@@ -78,11 +78,6 @@ function maybeUseLeanContext(
   );
 }
 
-modelRouterSource = modelRouterSource.replace(
-  `messages: params.messages,`,
-  `messages: maybeUseLeanContext(params.messages, logPrefix),`,
-);
-
 if (!modelRouterSource.includes("const leanContextApplied = routedMessages !== params.messages;")) {
   modelRouterSource = modelRouterSource.replace(
     /const routedMessages = maybeUseLeanContext\(params\.messages, logPrefix\);\s*/,
