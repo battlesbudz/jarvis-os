@@ -331,7 +331,7 @@ export default function ProfileScreen() {
   const [editingLivingUpdateText, setEditingLivingUpdateText] = useState('');
   const [channelBusy, setChannelBusy] = useState<string | null>(null);
   const telegramPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [loadingStatus] = useState(true);
+  const [telegramStatusLoading, setTelegramStatusLoading] = useState(true);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [selectedReward, setSelectedReward] = useState<Reward | null>(null);
   const [rewardModalVisible, setRewardModalVisible] = useState(false);
@@ -583,6 +583,7 @@ export default function ProfileScreen() {
   }, []);
 
   const loadTelegramStatus = useCallback(async () => {
+    setTelegramStatusLoading(true);
     try {
       const res = await apiRequest('GET', '/api/telegram/status');
       const data = await res.json();
@@ -596,6 +597,8 @@ export default function ProfileScreen() {
       });
     } catch {
       setTelegramStatus({ connected: false, username: null, configured: false, botUsername: null, webhookHealthy: null, webhookLastChecked: null });
+    } finally {
+      setTelegramStatusLoading(false);
     }
   }, []);
 
@@ -3198,7 +3201,7 @@ export default function ProfileScreen() {
                   <Text style={styles.platformEmail}>@{telegramStatus.username}</Text>
                 )}
               </View>
-              {loadingStatus ? (
+              {telegramStatusLoading ? (
                 <ActivityIndicator size="small" color={Colors.textTertiary} />
               ) : connectingId === 'telegram' ? (
                 <ActivityIndicator size="small" color="#229ED9" />
