@@ -2143,11 +2143,9 @@ export default function InsightsScreen() {
                   setPhoneWorkingMessage(progressMsg);
                 }
               } else if (parsed.type === 'working') {
-                const progressMsg = String(parsed.message || '');
-                if (progressMsg) {
-                  setIsWorkingOnPhone(true);
-                  setPhoneWorkingMessage(progressMsg);
-                }
+                const progressMsg = String(parsed.message || 'Working on your phone...');
+                setIsWorkingOnPhone(true);
+                setPhoneWorkingMessage(progressMsg);
               } else if (parsed.type === 'background_job' && parsed.jobId) {
                 const jobId = String(parsed.jobId);
                 const agentType = String(parsed.agentType || 'background');
@@ -2172,9 +2170,6 @@ export default function InsightsScreen() {
                   }
                   return updated;
                 });
-              } else if (parsed.type === 'working') {
-                setIsWorkingOnPhone(true);
-                setPhoneWorkingMessage(parsed.message || 'Working on your phone...');
               } else if (parsed.type === 'integration_error' && parsed.integration) {
                 setIntegrationError({ integration: parsed.integration });
               } else if (parsed.type === 'actions' && (Array.isArray(parsed.actions) || Array.isArray(parsed.attachments))) {
