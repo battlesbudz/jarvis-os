@@ -135,10 +135,41 @@ function shouldSkipLowSignalExtraction(source: string): boolean {
   return false;
 }
 
+function isRestrictedExtractionSource(value: unknown): boolean {
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) return false;
+  return [
+    "account_balance",
+    "bank",
+    "banking",
+    "card",
+    "credit",
+    "debit",
+    "financial",
+    "plaid",
+    "routing",
+    "transaction",
+    "transactions",
+  ].some((token) =>
+    normalized === token ||
+    normalized.startsWith(`${token}_`) ||
+    normalized.endsWith(`_${token}`) ||
+    normalized.includes(`_${token}_`)
+  );
+}
+
 export async function extractAndStore(input: ExtractInput): Promise<ExtractedMemory[]> {
   const { userId, source, sourceType, sourceRef, contextHint, maxNew = 3 } = input;
   if (!source.trim()) return [];
   if (shouldSkipLowSignalExtraction(source)) return [];
+  if (
+    containsRawRestrictedContent(source) ||
+    isRestrictedExtractionSource(sourceType) ||
+    isRestrictedExtractionSource(sourceRef)
+  ) {
+    console.warn(`[Memory] extraction skipped for restricted ${sourceType} source`);
+    return [];
+  }
   if (Date.now() < memoryExtractionCooldownUntil) {
     console.warn("[Memory] extraction skipped: provider backpressure cooldown active");
     return [];

@@ -106,6 +106,12 @@ assert.match(
 );
 
 assert.match(
+  extractorSource,
+  /containsRawRestrictedContent\(source\)[\s\S]*isRestrictedExtractionSource\(sourceType\)[\s\S]*isRestrictedExtractionSource\(sourceRef\)[\s\S]*return \[\][\s\S]*source\.slice\(0, 1800\)/,
+  "Conversation extraction should reject restricted source text before building model extraction prompts",
+);
+
+assert.match(
   brainAdapterSource,
   /APPROVED_USER_MEMORY_REVIEW_STATUSES[\s\S]*active[\s\S]*kept[\s\S]*edited[\s\S]*!APPROVED_USER_MEMORY_REVIEW_STATUSES\.has\(memory\.reviewStatus\)/,
   "Brain projection should retire derived pages for non-approved memory lifecycle states instead of projecting them",
