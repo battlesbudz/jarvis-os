@@ -31,6 +31,7 @@ const openai = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 const HEARTBEAT_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 const CHECKLIST_PATH = path.resolve(process.cwd(), "JARVIS_HEARTBEAT.md");
 const VALIDATION_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+const RESTRICTED_MEMORY_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
 
 /**
  * Maximum number of pending crew tasks to batch into a single PRIME routing
@@ -925,6 +926,9 @@ export async function runHeartbeatTick(): Promise<void> {
           eq(schema.userMemories.userId, link.userId),
           eq(schema.userMemories.pendingReview, false),
           sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+          sql`COALESCE(${schema.userMemories.sensitivity}, 'normal') = 'normal'`,
+          sql`LOWER(COALESCE(${schema.userMemories.sourceType}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
+          sql`LOWER(COALESCE(${schema.userMemories.sourceRef}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
         ))
         .orderBy(desc(schema.userMemories.extractedAt))
         .limit(30);

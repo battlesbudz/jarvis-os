@@ -113,6 +113,8 @@ import {
   streamCoachModelTurn,
 } from "./services/aiCoachContextService";
 
+const RESTRICTED_MEMORY_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
+
 function operatorActionPermKey(operatorAction: Record<string, unknown>): AndroidDaemonAction | null {
   switch (operatorAction.type) {
     case 'open_app': return 'android_open_app';
@@ -1635,6 +1637,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   eq(userMemories.userId, userId),
                   eq(userMemories.pendingReview, false),
                   sql`${userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+                  sql`COALESCE(${userMemories.sensitivity}, 'normal') = 'normal'`,
+                  sql`LOWER(COALESCE(${userMemories.sourceType}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
+                  sql`LOWER(COALESCE(${userMemories.sourceRef}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
                 ))
                 .orderBy(desc(userMemories.extractedAt))
                 .limit(50),

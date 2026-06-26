@@ -20,6 +20,7 @@ async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
 
 import { normalizeCategory, MEMORY_CATEGORIES } from "./categories";
 import { markSoulStale } from "./soul";
+import { planMemoryWrite } from "./writePipeline";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
 export interface ExtractInput {
@@ -239,22 +240,32 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
       const tier = normalizeTier(typeof r.tier === "string" ? r.tier : null);
       const memoryType = normalizeMemoryType(typeof r.memory_type === "string" ? r.memory_type : null);
       const expiresAt = expiresAtForTier(tier);
-
-      // Determine if this memory needs human review before becoming active.
-      let pendingReview = false;
-      let reviewStatus = "active";
-      if (tier === "long_term" && (memoryType === "semantic" || memoryType === "procedural")) {
-        const reviewEnabled = await isMemoryReviewEnabledForUser(userId);
-        if (reviewEnabled) {
-          pendingReview = true;
-          reviewStatus = "pending";
-        }
+      const reviewEnabled = tier === "long_term" && (memoryType === "semantic" || memoryType === "procedural")
+        ? await isMemoryReviewEnabledForUser(userId)
+        : false;
+      const plan = planMemoryWrite({
+        userId,
+        content: text,
+        trigger: "inferred",
+        category,
+        confidence,
+        tier,
+        memoryType,
+        sourceType,
+        sourceRef,
+        expiresAt,
+        reviewEnabled,
+      });
+      if (!plan.record) {
+        console.log(`[Memory] skipped extracted memory (${plan.status}): ${plan.reason}`);
+        continue;
       }
+      const record = plan.record;
 
       let embedding: number[] | null = null;
       try {
         const { embedText } = await import("./retrieve");
-        embedding = await embedText(text);
+        embedding = await embedText(record.content);
       } catch (embedErr) {
         console.error("[Memory] embed on insert failed:", embedErr);
         diagEmit({
@@ -267,19 +278,21 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
       }
       try {
         const [inserted] = await db.insert(schema.userMemories).values({
-          userId,
-          content: text,
-          category,
-          confidence,
+          userId: record.userId,
+          content: record.content,
+          category: record.category,
+          confidence: record.confidence,
           relevanceScore: 50,
-          sourceType,
-          sourceRef: sourceRef || null,
+          sourceType: record.sourceType,
+          sourceRef: record.sourceRef,
           embedding: embedding ?? undefined,
-          tier,
-          memoryType,
-          expiresAt: expiresAt ?? undefined,
-          pendingReview,
-          reviewStatus,
+          tier: record.tier,
+          memoryType: record.memoryType,
+          expiresAt: record.expiresAt ?? undefined,
+          pendingReview: record.pendingReview,
+          reviewStatus: record.reviewStatus,
+          sensitivity: record.sensitivity,
+          provenance: record.provenance,
         }).returning({ id: schema.userMemories.id });
         if (embedding && inserted?.id) {
           try {
@@ -290,8 +303,14 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
           }
         }
         seen.add(norm);
-        stored.push({ content: text, category, confidence, tier, memoryType });
-        console.log(`[Memory] +${sourceType} [${category} ${tier}/${memoryType} c=${confidence}${embedding ? " e" : ""}${expiresAt ? " ttl" : ""}] ${text.slice(0, 70)}`);
+        stored.push({
+          content: record.content,
+          category: record.category,
+          confidence: record.confidence,
+          tier: record.tier,
+          memoryType: record.memoryType,
+        });
+        console.log(`[Memory] +${record.sourceType} [${record.category} ${record.tier}/${record.memoryType} c=${record.confidence}${embedding ? " e" : ""}${record.expiresAt ? " ttl" : ""}] ${record.content.slice(0, 70)}`);
       } catch (insertErr) {
         hadAnyError = true;
         console.error("[Memory] DB insert failed:", insertErr);
@@ -300,7 +319,7 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
           subsystem: "memory",
           severity: "error",
           message: `Memory DB insert failed: ${insertErr instanceof Error ? insertErr.message : String(insertErr)}`.slice(0, 300),
-          metadata: { operation: "extractAndStore_insert", sourceType, category, tier },
+          metadata: { operation: "extractAndStore_insert", sourceType: record.sourceType, category: record.category, tier: record.tier },
         }).catch(() => {});
       }
     }

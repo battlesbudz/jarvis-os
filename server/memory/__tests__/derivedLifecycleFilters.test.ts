@@ -6,6 +6,7 @@ const repoRoot = process.cwd();
 const soulSource = fs.readFileSync(path.resolve(repoRoot, "server/memory/soul.ts"), "utf8");
 const brainAdapterSource = fs.readFileSync(path.resolve(repoRoot, "server/brain/adapter.ts"), "utf8");
 const vaultWriterSource = fs.readFileSync(path.resolve(repoRoot, "server/memory/vaultWriter.ts"), "utf8");
+const extractorSource = fs.readFileSync(path.resolve(repoRoot, "server/memory/extractor.ts"), "utf8");
 const runtimeContextSources = [
   "server/routes.ts",
   "server/curiosityScanner.ts",
@@ -20,6 +21,15 @@ const runtimeContextSources = [
 const dedupeSources = [
   "server/memory/extractor.ts",
   "server/routes/chatgptImportRoutes.ts",
+].map((file) => ({
+  file,
+  source: fs.readFileSync(path.resolve(repoRoot, file), "utf8"),
+}));
+const restrictedPromptReaderSources = [
+  "server/routes.ts",
+  "server/curiosityScanner.ts",
+  "server/heartbeat.ts",
+  "server/voiceRelayRoutes.ts",
 ].map((file) => ({
   file,
   source: fs.readFileSync(path.resolve(repoRoot, file), "utf8"),
@@ -54,6 +64,20 @@ assert.match(
   vaultWriterSource,
   /approvedNonRestrictedMemoryClauses[\s\S]*COALESCE\(\$\{schema\.userMemories\.sensitivity\}, 'normal'\) = 'normal'[\s\S]*schema\.userMemories\.sourceType[\s\S]*NOT SIMILAR TO[\s\S]*schema\.userMemories\.sourceRef[\s\S]*NOT SIMILAR TO/,
   "Knowledge vault source builders should exclude restricted user memories",
+);
+
+for (const { file, source } of restrictedPromptReaderSources) {
+  assert.match(
+    source,
+    /COALESCE\(\$\{(?:schema\.)?userMemories\.sensitivity\}, 'normal'\) = 'normal'[\s\S]*(?:schema\.)?userMemories\.sourceType[\s\S]*NOT SIMILAR TO[\s\S]*(?:schema\.)?userMemories\.sourceRef[\s\S]*NOT SIMILAR TO/,
+    `${file} should exclude restricted user memories from prompt-facing direct reads`,
+  );
+}
+
+assert.match(
+  extractorSource,
+  /planMemoryWrite\([\s\S]*sensitivity: record\.sensitivity[\s\S]*provenance: record\.provenance/,
+  "Conversation extraction should route writes through the restricted memory write planner",
 );
 
 assert.match(

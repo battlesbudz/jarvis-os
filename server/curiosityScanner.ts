@@ -42,6 +42,7 @@ function extractSenderKey(sender: string | null | undefined): string | null {
 }
 
 const EMAIL_SOURCE_TYPES = ["email", "gmail", "outlook_email"] as const;
+const RESTRICTED_MEMORY_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
 
 async function getRecentlySurfacedSenders(userId: string, since: Date): Promise<Set<string>> {
   const sentRows = await db
@@ -90,6 +91,9 @@ async function getUserMemories(
       eq(schema.userMemories.userId, userId),
       eq(schema.userMemories.pendingReview, false),
       sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+      sql`COALESCE(${schema.userMemories.sensitivity}, 'normal') = 'normal'`,
+      sql`LOWER(COALESCE(${schema.userMemories.sourceType}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
+      sql`LOWER(COALESCE(${schema.userMemories.sourceRef}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
     ));
 }
 
