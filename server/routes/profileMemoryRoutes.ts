@@ -9,7 +9,16 @@ import { morningVoiceNotes, userMemories, userPreferences } from "@shared/schema
 import { db } from "../db";
 import { getOpenAIClientConfig } from "../agent/providers/env";
 import { extractAndStore } from "../memory/extractor";
-import { getSoul, regenerateSoul, setManualOverride, setSoulContent } from "../memory/soul";
+import {
+  approveSoulEdit,
+  getSoul,
+  listSoulEditHistory,
+  proposeSoulEdit,
+  regenerateSoul,
+  rejectSoulEdit,
+  setManualOverride,
+  setSoulContent,
+} from "../memory/soul";
 import { markSoulStale } from "../memory/soul";
 import { deletePerson, listPeople } from "../memory/people";
 import { processLivingContextUpdate } from "../workspace/livingContextRouter";
@@ -440,7 +449,11 @@ export function registerProfileMemoryRoutes(app: Express): void {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const soul = await getSoul(userId);
-      res.json(soul);
+      const [auditHistory, pendingSoulEdits] = await Promise.all([
+        listSoulEditHistory(userId, { limit: 20 }),
+        listSoulEditHistory(userId, { limit: 20, status: "pending" }),
+      ]);
+      res.json({ ...soul, auditHistory, pendingSoulEdits });
     } catch (error) {
       console.error("Error fetching SOUL:", error);
       res.status(500).json({ error: "Failed to fetch SOUL" });
@@ -451,8 +464,18 @@ export function registerProfileMemoryRoutes(app: Express): void {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const soul = await regenerateSoul(userId);
-      res.json(soul);
+      await regenerateSoul(userId, {
+        source: "soul_editor",
+        requestedBy: userId,
+        approvedBy: userId,
+        reason: "Manual Soul regeneration",
+      });
+      const [soul, auditHistory, pendingSoulEdits] = await Promise.all([
+        getSoul(userId),
+        listSoulEditHistory(userId, { limit: 20 }),
+        listSoulEditHistory(userId, { limit: 20, status: "pending" }),
+      ]);
+      res.json({ ...soul, auditHistory, pendingSoulEdits });
     } catch (error) {
       console.error("Error regenerating SOUL:", error);
       res.status(500).json({ error: "Failed to regenerate SOUL" });
@@ -465,9 +488,17 @@ export function registerProfileMemoryRoutes(app: Express): void {
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const body = req.body as { override?: unknown };
       const override = typeof body.override === "string" ? body.override : null;
-      await setManualOverride(userId, override);
-      const soul = await getSoul(userId);
-      res.json(soul);
+      await setManualOverride(userId, override, {
+        source: "soul_editor",
+        requestedBy: userId,
+        approvedBy: userId,
+      });
+      const [soul, auditHistory, pendingSoulEdits] = await Promise.all([
+        getSoul(userId),
+        listSoulEditHistory(userId, { limit: 20 }),
+        listSoulEditHistory(userId, { limit: 20, status: "pending" }),
+      ]);
+      res.json({ ...soul, auditHistory, pendingSoulEdits });
     } catch (error) {
       console.error("Error setting SOUL override:", error);
       res.status(500).json({ error: "Failed to set override" });
@@ -482,12 +513,79 @@ export function registerProfileMemoryRoutes(app: Express): void {
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const body = req.body as { content?: unknown };
       const content = typeof body.content === "string" ? body.content : "";
-      await setSoulContent(userId, content);
-      const soul = await getSoul(userId);
-      res.json(soul);
+      await setSoulContent(userId, content, {
+        source: "soul_editor",
+        requestedBy: userId,
+        approvedBy: userId,
+      });
+      const [soul, auditHistory, pendingSoulEdits] = await Promise.all([
+        getSoul(userId),
+        listSoulEditHistory(userId, { limit: 20 }),
+        listSoulEditHistory(userId, { limit: 20, status: "pending" }),
+      ]);
+      res.json({ ...soul, auditHistory, pendingSoulEdits });
     } catch (error) {
       console.error("Error saving SOUL content:", error);
       res.status(500).json({ error: "Failed to save SOUL content" });
+    }
+  });
+
+  app.post("/api/soul/proposals", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const body = req.body as {
+        target?: unknown;
+        newValue?: unknown;
+        source?: unknown;
+        sourceRef?: unknown;
+        reason?: unknown;
+      };
+      const target = typeof body.target === "string" ? body.target : "";
+      const newValue = typeof body.newValue === "string" ? body.newValue : "";
+      const proposed = await proposeSoulEdit({
+        userId,
+        target,
+        newValue,
+        source: typeof body.source === "string" ? body.source : "chat",
+        sourceRef: typeof body.sourceRef === "string" ? body.sourceRef : null,
+        requestedBy: userId,
+        reason: typeof body.reason === "string" ? body.reason : null,
+      });
+      res.json({ ok: true, proposal: proposed });
+    } catch (error) {
+      console.error("Error proposing SOUL edit:", error);
+      res.status(400).json({ error: error instanceof Error ? error.message : "Failed to propose SOUL edit" });
+    }
+  });
+
+  app.patch("/api/soul/proposals/:id/review", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = paramValue(req.params.id);
+      const body = req.body as { action?: unknown; reason?: unknown };
+      const action = typeof body.action === "string" ? body.action : "";
+      const reason = typeof body.reason === "string" ? body.reason : null;
+      const reviewed = action === "approve"
+        ? await approveSoulEdit({ userId, editId: id, approvedBy: userId, reason })
+        : action === "reject"
+          ? await rejectSoulEdit({ userId, editId: id, approvedBy: userId, reason })
+          : null;
+      if (!reviewed) {
+        return res.status(action === "approve" || action === "reject" ? 404 : 400).json({
+          error: action === "approve" || action === "reject" ? "Soul edit proposal not found" : "action must be approve or reject",
+        });
+      }
+      const [soul, auditHistory, pendingSoulEdits] = await Promise.all([
+        getSoul(userId),
+        listSoulEditHistory(userId, { limit: 20 }),
+        listSoulEditHistory(userId, { limit: 20, status: "pending" }),
+      ]);
+      res.json({ ok: true, proposal: reviewed, soul: { ...soul, auditHistory, pendingSoulEdits } });
+    } catch (error) {
+      console.error("Error reviewing SOUL proposal:", error);
+      res.status(500).json({ error: "Failed to review SOUL proposal" });
     }
   });
 

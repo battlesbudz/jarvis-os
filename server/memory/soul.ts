@@ -31,6 +31,272 @@ interface SoulRecord {
   updatedAt: Date;
 }
 
+export type SoulEditTarget = "content" | "manual_override";
+export type SoulEditStatus = "pending" | "approved" | "rejected";
+
+export interface SoulEditHistoryRecord {
+  id: string;
+  userId: string;
+  target: SoulEditTarget;
+  status: SoulEditStatus;
+  oldValue: string | null;
+  newValue: string;
+  source: string;
+  sourceRef: string | null;
+  requestedBy: string | null;
+  approvedBy: string | null;
+  reason: string | null;
+  createdAt: Date | string;
+  resolvedAt: Date | string | null;
+}
+
+interface SoulEditAuditOptions {
+  source?: string;
+  sourceRef?: string | null;
+  requestedBy?: string | null;
+  approvedBy?: string | null;
+  reason?: string | null;
+}
+
+interface SoulEditProposalInput extends SoulEditAuditOptions {
+  userId: string;
+  target: SoulEditTarget | string;
+  newValue: string;
+}
+
+function normalizeSoulEditTarget(value: unknown): SoulEditTarget | null {
+  if (value === "content" || value === "manual_override") return value;
+  return null;
+}
+
+function normalizeSoulEditValue(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
+
+function editValuesMatch(oldValue: string | null, newValue: string | null): boolean {
+  return (oldValue ?? "") === (newValue ?? "");
+}
+
+function mapSoulEditRow(row: Record<string, unknown>): SoulEditHistoryRecord {
+  const createdAt = row.created_at instanceof Date || typeof row.created_at === "string"
+    ? row.created_at
+    : row.createdAt instanceof Date || typeof row.createdAt === "string"
+      ? row.createdAt
+      : new Date(0);
+  const resolvedAt = row.resolved_at instanceof Date || typeof row.resolved_at === "string"
+    ? row.resolved_at
+    : row.resolvedAt instanceof Date || typeof row.resolvedAt === "string"
+      ? row.resolvedAt
+      : null;
+
+  return {
+    id: String(row.id ?? ""),
+    userId: String(row.user_id ?? row.userId ?? ""),
+    target: normalizeSoulEditTarget(row.target) ?? "content",
+    status: row.status === "approved" || row.status === "rejected" ? row.status : "pending",
+    oldValue: typeof row.old_value === "string" ? row.old_value : typeof row.oldValue === "string" ? row.oldValue : null,
+    newValue: String(row.new_value ?? row.newValue ?? ""),
+    source: String(row.source ?? "chat"),
+    sourceRef: typeof row.source_ref === "string" ? row.source_ref : typeof row.sourceRef === "string" ? row.sourceRef : null,
+    requestedBy: typeof row.requested_by === "string" ? row.requested_by : typeof row.requestedBy === "string" ? row.requestedBy : null,
+    approvedBy: typeof row.approved_by === "string" ? row.approved_by : typeof row.approvedBy === "string" ? row.approvedBy : null,
+    reason: typeof row.reason === "string" ? row.reason : null,
+    createdAt,
+    resolvedAt,
+  };
+}
+
+async function readSoulEditValue(userId: string, target: SoulEditTarget): Promise<string | null> {
+  const [existing] = await db
+    .select({
+      content: schema.jarvisSouls.content,
+      manualOverride: schema.jarvisSouls.manualOverride,
+    })
+    .from(schema.jarvisSouls)
+    .where(eq(schema.jarvisSouls.userId, userId))
+    .limit(1);
+  if (target === "content") return existing?.content ?? "";
+  return existing?.manualOverride ?? null;
+}
+
+async function writeSoulEditValue(userId: string, target: SoulEditTarget, newValue: string | null, now: Date): Promise<void> {
+  if (target === "content") {
+    await db
+      .insert(schema.jarvisSouls)
+      .values({ userId, content: newValue ?? "", manualOverride: null, generatedAt: now, updatedAt: now })
+      .onConflictDoUpdate({
+        target: schema.jarvisSouls.userId,
+        set: { content: newValue ?? "", manualOverride: null, generatedAt: now, updatedAt: now },
+      });
+    return;
+  }
+
+  await db
+    .insert(schema.jarvisSouls)
+    .values({ userId, content: "", manualOverride: newValue, updatedAt: now })
+    .onConflictDoUpdate({
+      target: schema.jarvisSouls.userId,
+      set: { manualOverride: newValue, updatedAt: now },
+    });
+}
+
+async function insertSoulEditEvent(input: {
+  userId: string;
+  target: SoulEditTarget;
+  status: SoulEditStatus;
+  oldValue: string | null;
+  newValue: string;
+  source: string;
+  sourceRef?: string | null;
+  requestedBy?: string | null;
+  approvedBy?: string | null;
+  reason?: string | null;
+  resolvedAt?: Date | null;
+}): Promise<SoulEditHistoryRecord> {
+  const result = await db.execute(sql`
+    INSERT INTO soul_edit_events (
+      user_id, target, status, old_value, new_value, source, source_ref,
+      requested_by, approved_by, reason, resolved_at
+    )
+    VALUES (
+      ${input.userId}, ${input.target}, ${input.status}, ${input.oldValue}, ${input.newValue}, ${input.source},
+      ${input.sourceRef ?? null}, ${input.requestedBy ?? null}, ${input.approvedBy ?? null},
+      ${input.reason ?? null}, ${input.resolvedAt ?? null}
+    )
+    RETURNING id, user_id, target, status, old_value, new_value, source, source_ref,
+      requested_by, approved_by, reason, created_at, resolved_at
+  `);
+  return mapSoulEditRow((result.rows ?? [])[0] as Record<string, unknown>);
+}
+
+export async function recordSoulEditAudit(input: {
+  userId: string;
+  target: SoulEditTarget;
+  oldValue: string | null;
+  newValue: string | null;
+  options?: SoulEditAuditOptions;
+}): Promise<SoulEditHistoryRecord | null> {
+  const oldValue = normalizeSoulEditValue(input.oldValue);
+  const newValue = normalizeSoulEditValue(input.newValue);
+  if (editValuesMatch(oldValue, newValue)) return null;
+  return insertSoulEditEvent({
+    userId: input.userId,
+    target: input.target,
+    status: "approved",
+    oldValue,
+    newValue: newValue ?? "",
+    source: input.options?.source ?? "soul_editor",
+    sourceRef: input.options?.sourceRef ?? null,
+    requestedBy: input.options?.requestedBy ?? input.userId,
+    approvedBy: input.options?.approvedBy ?? input.userId,
+    reason: input.options?.reason ?? null,
+    resolvedAt: new Date(),
+  });
+}
+
+export async function proposeSoulEdit(input: SoulEditProposalInput): Promise<SoulEditHistoryRecord> {
+  const target = normalizeSoulEditTarget(input.target);
+  if (!target) throw new Error("Invalid Soul edit target");
+  const newValue = normalizeSoulEditValue(input.newValue);
+  if (!newValue) throw new Error("Soul edit proposal requires newValue");
+  const oldValue = await readSoulEditValue(input.userId, target);
+  return insertSoulEditEvent({
+    userId: input.userId,
+    target,
+    status: "pending",
+    oldValue: normalizeSoulEditValue(oldValue),
+    newValue,
+    source: input.source ?? "chat",
+    sourceRef: input.sourceRef ?? null,
+    requestedBy: input.requestedBy ?? input.userId,
+    reason: input.reason ?? null,
+  });
+}
+
+export async function approveSoulEdit(input: {
+  userId: string;
+  editId: string;
+  approvedBy?: string | null;
+  reason?: string | null;
+}): Promise<SoulEditHistoryRecord | null> {
+  const existing = await db.execute(sql`
+    SELECT id, user_id, target, status, old_value, new_value, source, source_ref,
+      requested_by, approved_by, reason, created_at, resolved_at
+    FROM soul_edit_events
+    WHERE id = ${input.editId} AND user_id = ${input.userId} AND status = 'pending'
+    LIMIT 1
+  `);
+  const row = (existing.rows ?? [])[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  const target = normalizeSoulEditTarget(row.target);
+  if (!target) return null;
+
+  const now = new Date();
+  const oldValue = normalizeSoulEditValue(await readSoulEditValue(input.userId, target));
+  const newValue = normalizeSoulEditValue(String(row.new_value ?? "")) ?? "";
+  await writeSoulEditValue(input.userId, target, newValue, now);
+
+  const approvedBy = input.approvedBy ?? input.userId;
+  const reason = input.reason ?? (typeof row.reason === "string" ? row.reason : null);
+  const updated = await db.execute(sql`
+    UPDATE soul_edit_events
+    SET status = 'approved',
+        old_value = ${oldValue},
+        approved_by = ${approvedBy},
+        reason = ${reason},
+        resolved_at = ${now}
+    WHERE id = ${input.editId} AND user_id = ${input.userId} AND status = 'pending'
+    RETURNING id, user_id, target, status, old_value, new_value, source, source_ref,
+      requested_by, approved_by, reason, created_at, resolved_at
+  `);
+  return mapSoulEditRow((updated.rows ?? [])[0] as Record<string, unknown>);
+}
+
+export async function rejectSoulEdit(input: {
+  userId: string;
+  editId: string;
+  approvedBy?: string | null;
+  reason?: string | null;
+}): Promise<SoulEditHistoryRecord | null> {
+  const reviewer = input.approvedBy ?? input.userId;
+  const now = new Date();
+  const updated = await db.execute(sql`
+    UPDATE soul_edit_events
+    SET status = 'rejected',
+        approved_by = ${reviewer},
+        reason = ${input.reason ?? null},
+        resolved_at = ${now}
+    WHERE id = ${input.editId} AND user_id = ${input.userId} AND status = 'pending'
+    RETURNING id, user_id, target, status, old_value, new_value, source, source_ref,
+      requested_by, approved_by, reason, created_at, resolved_at
+  `);
+  const row = (updated.rows ?? [])[0] as Record<string, unknown> | undefined;
+  return row ? mapSoulEditRow(row) : null;
+}
+
+export async function listSoulEditHistory(userId: string, opts?: { limit?: number; status?: SoulEditStatus }): Promise<SoulEditHistoryRecord[]> {
+  const limit = Math.max(1, Math.min(100, opts?.limit ?? 25));
+  const result = opts?.status
+    ? await db.execute(sql`
+      SELECT id, user_id, target, status, old_value, new_value, source, source_ref,
+        requested_by, approved_by, reason, created_at, resolved_at
+      FROM soul_edit_events
+      WHERE user_id = ${userId} AND status = ${opts.status}
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `)
+    : await db.execute(sql`
+      SELECT id, user_id, target, status, old_value, new_value, source, source_ref,
+        requested_by, approved_by, reason, created_at, resolved_at
+      FROM soul_edit_events
+      WHERE user_id = ${userId}
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `);
+  return (result.rows ?? []).map((row) => mapSoulEditRow(row as Record<string, unknown>));
+}
+
 interface LifeContextData {
   priorityGoal?: string;
   upcomingDeadline?: string;
@@ -413,7 +679,8 @@ function compactSoulMarkdown(md: string): string {
   return output.join("\n");
 }
 
-export async function regenerateSoul(userId: string): Promise<SoulRecord> {
+export async function regenerateSoul(userId: string, auditOptions?: SoulEditAuditOptions): Promise<SoulRecord> {
+  const oldValue = await readSoulEditValue(userId, "content");
   const raw = await buildSoulMarkdown(userId);
   const content = compactSoulMarkdown(raw);
   const now = new Date();
@@ -426,6 +693,13 @@ export async function regenerateSoul(userId: string): Promise<SoulRecord> {
     })
     .returning();
   const row = inserted[0];
+  await recordSoulEditAudit({
+    userId,
+    target: "content",
+    oldValue,
+    newValue: row?.content ?? content,
+    options: auditOptions ?? { source: "soul_regeneration" },
+  });
   console.log(`[Soul] regenerated for user ${userId} (${content.length} chars)`);
   return {
     content: row?.content ?? content,
@@ -469,28 +743,32 @@ export async function getSoul(userId: string, opts?: { forceFresh?: boolean }): 
  * Calling this also resets generatedAt so the document is treated as
  * fresh (won't be auto-regenerated on next read).
  */
-export async function setSoulContent(userId: string, content: string): Promise<void> {
+export async function setSoulContent(userId: string, content: string, auditOptions?: SoulEditAuditOptions): Promise<void> {
   const trimmed = content.trim();
   const now = new Date();
-  await db
-    .insert(schema.jarvisSouls)
-    .values({ userId, content: trimmed, manualOverride: null, generatedAt: now, updatedAt: now })
-    .onConflictDoUpdate({
-      target: schema.jarvisSouls.userId,
-      set: { content: trimmed, manualOverride: null, generatedAt: now, updatedAt: now },
-    });
+  const oldValue = await readSoulEditValue(userId, "content");
+  await writeSoulEditValue(userId, "content", trimmed, now);
+  await recordSoulEditAudit({
+    userId,
+    target: "content",
+    oldValue,
+    newValue: trimmed,
+    options: auditOptions ?? { source: "soul_editor", approvedBy: userId },
+  });
 }
 
-export async function setManualOverride(userId: string, override: string | null): Promise<void> {
+export async function setManualOverride(userId: string, override: string | null, auditOptions?: SoulEditAuditOptions): Promise<void> {
   const trimmed = override?.trim() || null;
   const now = new Date();
-  await db
-    .insert(schema.jarvisSouls)
-    .values({ userId, content: "", manualOverride: trimmed, updatedAt: now })
-    .onConflictDoUpdate({
-      target: schema.jarvisSouls.userId,
-      set: { manualOverride: trimmed, updatedAt: now },
-    });
+  const oldValue = await readSoulEditValue(userId, "manual_override");
+  await writeSoulEditValue(userId, "manual_override", trimmed, now);
+  await recordSoulEditAudit({
+    userId,
+    target: "manual_override",
+    oldValue,
+    newValue: trimmed,
+    options: auditOptions ?? { source: "soul_editor", approvedBy: userId },
+  });
 }
 
 /**

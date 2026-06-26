@@ -91,6 +91,7 @@ import { queueBackgroundJobTool } from "./queueBackgroundJob";
 import { setupContentPipelineTool } from "./setupContentPipeline";
 import { setupDiscordWorkspaceTool } from "./setupDiscordWorkspace";
 import { memorySearchTool, memoryGetTool, memorySaveTool } from "./memorySearch";
+import { soulEditProposeTool } from "./soulEdit";
 import { webFetchTool } from "./webFetch";
 import { weatherLookupTool } from "./weatherLookup";
 import { sessionsListTool, sessionsHistoryTool, sessionsSendTool, sessionsCancelTool } from "./sessionTools";
@@ -356,6 +357,7 @@ export {
   memorySearchTool,
   memoryGetTool,
   memorySaveTool,
+  soulEditProposeTool,
   webFetchTool,
   weatherLookupTool,
   sessionsListTool,
