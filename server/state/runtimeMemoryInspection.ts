@@ -169,7 +169,6 @@ export function classifyRuntimeMemoryInspectionIntent(
 
   const topicPatterns = [
     /^(?:show|list|display|pull up)(?: me)?(?: the)?(?: my)?(?: exact)?(?: stored)? (?:memories|memory) (?:about|for|on|related to|regarding) (.+)$/i,
-    /^(?:show|list|display|pull up)(?: me)? what you know (?:about|on|regarding) (.+)$/i,
     /^(?:what memories do you have|what have i told you|what does memory os know) (?:about|on|regarding) (.+)$/i,
   ];
 

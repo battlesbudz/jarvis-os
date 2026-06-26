@@ -143,6 +143,14 @@ async function main(): Promise<void> {
     null,
   );
   assert.equal(
+    classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Show me what you know about Kubernetes." }]),
+    null,
+  );
+  assert.equal(
+    classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Show me what you know about DoorDash." }]),
+    null,
+  );
+  assert.equal(
     classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Show memories about DoorDash and draft a reply using them." }]),
     null,
   );
