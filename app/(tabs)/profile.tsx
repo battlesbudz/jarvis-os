@@ -131,6 +131,38 @@ interface PendingLivingContextUpdate {
   created_at: string;
 }
 
+interface SoulEditRecord {
+  id: string;
+  target: 'content' | 'manual_override';
+  status: 'pending' | 'approved' | 'rejected';
+  oldValue: string | null;
+  newValue: string;
+  source: string;
+  requestedBy: string | null;
+  approvedBy: string | null;
+  reason: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+interface SoulState {
+  content: string;
+  manualOverride: string | null;
+  generatedAt: string | null;
+  auditHistory: SoulEditRecord[];
+  pendingSoulEdits: SoulEditRecord[];
+}
+
+function normalizeSoulPayload(data: any): SoulState {
+  return {
+    content: typeof data?.content === 'string' ? data.content : '',
+    manualOverride: typeof data?.manualOverride === 'string' ? data.manualOverride : null,
+    generatedAt: typeof data?.generatedAt === 'string' ? data.generatedAt : data?.generatedAt ?? null,
+    auditHistory: Array.isArray(data?.auditHistory) ? data.auditHistory : [],
+    pendingSoulEdits: Array.isArray(data?.pendingSoulEdits) ? data.pendingSoulEdits : [],
+  };
+}
+
 interface MorningVoiceNote {
   id: string;
   recordedAt: string;
@@ -342,10 +374,11 @@ export default function ProfileScreen() {
   const [userName, setUserName] = useState('');
   const [memories, setMemories] = useState<Memory[]>([]);
   const [memoriesLoading, setMemoriesLoading] = useState(true);
-  const [soul, setSoul] = useState<{ content: string; manualOverride: string | null; generatedAt: string | null } | null>(null);
+  const [soul, setSoul] = useState<SoulState | null>(null);
   const [soulLoading, setSoulLoading] = useState(true);
   const [soulExpanded, setSoulExpanded] = useState(false);
   const [soulRegenerating, setSoulRegenerating] = useState(false);
+  const [soulProposalBusy, setSoulProposalBusy] = useState<string | null>(null);
   const [overrideDraft, setOverrideDraft] = useState('');
   const [overrideEditing, setOverrideEditing] = useState(false);
   const [contentEditing, setContentEditing] = useState(false);
@@ -657,7 +690,7 @@ export default function ProfileScreen() {
       const res = await authFetch(url.toString());
       const data = await res.json();
       if (data && typeof data.content === 'string') {
-        setSoul({ content: data.content, manualOverride: data.manualOverride ?? null, generatedAt: data.generatedAt ?? null });
+        setSoul(normalizeSoulPayload(data));
         setOverrideDraft(data.manualOverride ?? '');
       }
     } catch {}
@@ -671,7 +704,7 @@ export default function ProfileScreen() {
       const res = await authFetch(url.toString(), { method: 'POST' });
       const data = await res.json();
       if (data && typeof data.content === 'string') {
-        setSoul({ content: data.content, manualOverride: data.manualOverride ?? null, generatedAt: data.generatedAt ?? null });
+        setSoul(normalizeSoulPayload(data));
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {}
@@ -688,7 +721,7 @@ export default function ProfileScreen() {
       });
       const data = await res.json();
       if (data && typeof data.content === 'string') {
-        setSoul({ content: data.content, manualOverride: data.manualOverride ?? null, generatedAt: data.generatedAt ?? null });
+        setSoul(normalizeSoulPayload(data));
       }
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {}
@@ -705,13 +738,35 @@ export default function ProfileScreen() {
       });
       const data = await res.json();
       if (data && typeof data.content === 'string') {
-        setSoul({ content: data.content, manualOverride: data.manualOverride ?? null, generatedAt: data.generatedAt ?? null });
+        setSoul(normalizeSoulPayload(data));
       }
       setOverrideEditing(false);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch {}
     setSavingOverride(false);
   }, [overrideDraft]);
+
+  const handleReviewSoulProposal = useCallback(async (id: string, action: 'approve' | 'reject') => {
+    setSoulProposalBusy(id);
+    try {
+      const url = new URL(`/api/soul/proposals/${id}/review`, getApiUrl());
+      const res = await authFetch(url.toString(), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json();
+      if (data?.soul && typeof data.soul.content === 'string') {
+        setSoul(normalizeSoulPayload(data.soul));
+        setOverrideDraft(data.soul.manualOverride ?? '');
+      }
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch {
+      Alert.alert('Soul update failed', 'Could not review that Soul change.');
+    } finally {
+      setSoulProposalBusy(null);
+    }
+  }, []);
 
   const loadPeople = useCallback(async () => {
     setPeopleLoading(true);
@@ -2380,6 +2435,96 @@ export default function ProfileScreen() {
               </View>
             )}
           </View>
+
+          {(soul?.pendingSoulEdits?.length ?? 0) > 0 && (
+            <View style={[styles.memoryList, { marginTop: 16 }]}>
+              <View style={{ paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: PROFILE_BORDER }}>
+                <Text style={{ color: Colors.text, fontSize: 14, fontFamily: 'Inter_700Bold' }}>Pending Soul changes</Text>
+                <Text style={{ color: Colors.textSecondary, fontSize: 12, marginTop: 3 }}>
+                  JARVIS can suggest these, but only you can apply them.
+                </Text>
+              </View>
+              {soul?.pendingSoulEdits.map((edit, index, arr) => (
+                <View key={edit.id} style={[styles.memoryRow, index < arr.length - 1 && styles.memoryRowBorder]}>
+                  <View style={styles.memoryContent}>
+                    <View style={styles.memoryCategoryRow}>
+                      <View style={[styles.memoryCategoryPill, { backgroundColor: Colors.violetDim }]}>
+                        <Text style={[styles.memoryCategoryText, { color: Colors.violet }]}>
+                          {edit.target === 'manual_override' ? 'OVERRIDE' : 'SOUL'}
+                        </Text>
+                      </View>
+                    </View>
+                    {edit.oldValue !== null && (
+                      <>
+                        <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 8, marginBottom: 4 }}>
+                          Current value
+                        </Text>
+                        <Text style={styles.memoryText}>
+                          {edit.oldValue}
+                        </Text>
+                      </>
+                    )}
+                    <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 10, marginBottom: 4 }}>
+                      Full proposed replacement
+                    </Text>
+                    <Text style={styles.memoryText}>
+                      {edit.newValue}
+                    </Text>
+                    {!!edit.reason && (
+                      <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 6 }} numberOfLines={2}>
+                        {edit.reason}
+                      </Text>
+                    )}
+                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
+                      <Pressable
+                        onPress={() => handleReviewSoulProposal(edit.id, 'approve')}
+                        disabled={soulProposalBusy === edit.id}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.successDim, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, opacity: soulProposalBusy === edit.id ? 0.55 : 1 }}
+                      >
+                        <Ionicons name="checkmark" size={13} color={Colors.success} />
+                        <Text style={{ color: Colors.success, fontSize: 12, fontFamily: 'Inter_600SemiBold' }}>Approve</Text>
+                      </Pressable>
+                      <Pressable
+                        onPress={() => handleReviewSoulProposal(edit.id, 'reject')}
+                        disabled={soulProposalBusy === edit.id}
+                        style={{ flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: Colors.errorDim, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 8, opacity: soulProposalBusy === edit.id ? 0.55 : 1 }}
+                      >
+                        <Ionicons name="close" size={13} color={Colors.error} />
+                        <Text style={{ color: Colors.error, fontSize: 12, fontFamily: 'Inter_600SemiBold' }}>Reject</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {(soul?.auditHistory?.length ?? 0) > 0 && (
+            <View style={[styles.memoryList, { marginTop: 16 }]}>
+              <View style={{ paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: PROFILE_BORDER }}>
+                <Text style={{ color: Colors.text, fontSize: 14, fontFamily: 'Inter_700Bold' }}>Soul edit history</Text>
+              </View>
+              {soul?.auditHistory.slice(0, 8).map((edit, index, arr) => (
+                <View key={edit.id} style={[styles.memoryRow, index < arr.length - 1 && styles.memoryRowBorder]}>
+                  <View style={styles.memoryContent}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 5 }}>
+                      <View style={[styles.memoryCategoryPill, { backgroundColor: edit.status === 'approved' ? Colors.successDim : edit.status === 'rejected' ? Colors.errorDim : Colors.warningDim }]}>
+                        <Text style={[styles.memoryCategoryText, { color: edit.status === 'approved' ? Colors.success : edit.status === 'rejected' ? Colors.error : Colors.warning }]}>
+                          {edit.status.toUpperCase()}
+                        </Text>
+                      </View>
+                      <Text style={{ color: Colors.textTertiary, fontSize: 11, flex: 1 }} numberOfLines={1}>
+                        {edit.source} · {new Date(edit.resolvedAt ?? edit.createdAt).toLocaleString()}
+                      </Text>
+                    </View>
+                    <Text style={styles.memoryText} numberOfLines={2}>
+                      {edit.newValue}
+                    </Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
         </Animated.View>
 
           </>

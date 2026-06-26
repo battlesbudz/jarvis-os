@@ -427,6 +427,24 @@ export const jarvisSouls = pgTable("jarvis_souls", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+export const soulEditEvents = pgTable("soul_edit_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  target: varchar("target").notNull(),
+  status: varchar("status").notNull().default("pending"),
+  oldValue: text("old_value"),
+  newValue: text("new_value").notNull(),
+  source: varchar("source").notNull().default("chat"),
+  sourceRef: text("source_ref"),
+  requestedBy: varchar("requested_by"),
+  approvedBy: varchar("approved_by"),
+  reason: text("reason"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  resolvedAt: timestamp("resolved_at"),
+}, (table) => [
+  index("soul_edit_events_user_status_created_idx").on(table.userId, table.status, table.createdAt),
+]);
+
 export const livingContextUpdates = pgTable("living_context_updates", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
