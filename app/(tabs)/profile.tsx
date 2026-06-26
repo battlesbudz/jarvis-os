@@ -2454,7 +2454,20 @@ export default function ProfileScreen() {
                         </Text>
                       </View>
                     </View>
-                    <Text style={styles.memoryText} numberOfLines={4}>
+                    {edit.oldValue !== null && (
+                      <>
+                        <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 8, marginBottom: 4 }}>
+                          Current value
+                        </Text>
+                        <Text style={styles.memoryText}>
+                          {edit.oldValue}
+                        </Text>
+                      </>
+                    )}
+                    <Text style={{ color: Colors.textTertiary, fontSize: 11, marginTop: 10, marginBottom: 4 }}>
+                      Full proposed replacement
+                    </Text>
+                    <Text style={styles.memoryText}>
                       {edit.newValue}
                     </Text>
                     {!!edit.reason && (
