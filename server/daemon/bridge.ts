@@ -602,10 +602,18 @@ export async function pingDaemon(
   return sendDaemonOp(userId, { type: "ping" }, timeoutMs);
 }
 
+export async function pingAndroidDaemon(
+  userId: string,
+  timeoutMs = 5000,
+): Promise<{ ok: boolean; data?: unknown; error?: string }> {
+  return sendDaemonOp(userId, { type: "ping" }, timeoutMs, "android");
+}
+
 export async function sendDaemonOp(
   userId: string,
   op: DaemonOp,
   timeoutMs = 15000,
+  platformOverride?: "desktop" | "android",
 ): Promise<{ ok: boolean; data?: unknown; error?: string }> {
   const isAndroidOp = op.type.startsWith("android_") || op.type.startsWith("voice_");
   // "notify" and "ping" are platform-neutral: route to desktop first, android fallback.
@@ -613,7 +621,9 @@ export async function sendDaemonOp(
   const isPlatformNeutral = op.type === "ping" || op.type === "notify";
 
   let sock: WebSocket | undefined;
-  if (isPlatformNeutral) {
+  if (platformOverride) {
+    sock = userSockets.get(socketKey(userId, platformOverride));
+  } else if (isPlatformNeutral) {
     sock = userSockets.get(socketKey(userId, "desktop")) || userSockets.get(socketKey(userId, "android"));
   } else if (isAndroidOp) {
     sock = userSockets.get(socketKey(userId, "android"));
@@ -622,19 +632,23 @@ export async function sendDaemonOp(
   }
 
   if (!sock || sock.readyState !== WebSocket.OPEN) {
-    const missing = isPlatformNeutral ? "daemon" : isAndroidOp ? "android daemon" : "desktop daemon";
+    const missing = platformOverride
+      ? `${platformOverride} daemon`
+      : isPlatformNeutral ? "daemon" : isAndroidOp ? "android daemon" : "desktop daemon";
     console.log(`[daemon] op SKIPPED — ${missing} not connected userId=${userId} op=${op.type}`);
-    if (isAndroidOp) {
+    if (platformOverride === "android" || isAndroidOp) {
       return { ok: false, error: "Jarvis Android app device control is not connected. Open the Jarvis Android app and enable Device Control." };
     }
-    if (!isPlatformNeutral) {
+    if (platformOverride === "desktop" || !isPlatformNeutral) {
       return { ok: false, error: "Desktop daemon not connected. Ask the user to install and pair the desktop daemon." };
     }
     return { ok: false, error: "No daemon connected. Install and pair the desktop daemon or the Android APK from Profile → Connected Channels." };
   }
   // Determine which platform this op is actually going to (for scoped pending tracking)
   let actualPlatform: string;
-  if (isPlatformNeutral) {
+  if (platformOverride) {
+    actualPlatform = platformOverride;
+  } else if (isPlatformNeutral) {
     const deskSock = userSockets.get(socketKey(userId, "desktop"));
     actualPlatform = (sock === deskSock) ? "desktop" : "android";
   } else {

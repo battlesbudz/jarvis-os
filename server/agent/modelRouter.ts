@@ -20,8 +20,13 @@ import {
   classifyRuntimeIdentityIntent,
   _setRuntimeIdentityProfileResolverForTesting,
 } from "../state/runtimeIdentity";
+import {
+  answerRuntimeCapabilityQuestion,
+  classifyRuntimeCapabilityIntent,
+  _setRuntimeCapabilityDepsForTesting,
+} from "../state/runtimeCapability";
 
-export { _setRuntimeIdentityProfileResolverForTesting };
+export { _setRuntimeIdentityProfileResolverForTesting, _setRuntimeCapabilityDepsForTesting };
 
 export type ModelTier = "prime" | "smart" | "cheap" | "free";
 export type TaskComplexity = "trivial" | "easy" | "medium" | "hard";
@@ -85,6 +90,7 @@ export interface RoutedModelTurnParams {
   signal?: AbortSignal;
   logPrefix?: string;
   allowRuntimeIdentityShortcut?: boolean;
+  allowRuntimeCapabilityShortcut?: boolean;
 }
 
 interface PreparedModelTurn {
@@ -784,9 +790,22 @@ function canUseRuntimeIdentityShortcut(params: RoutedModelTurnParams): boolean {
   });
 }
 
+function canUseRuntimeCapabilityShortcut(params: RoutedModelTurnParams): boolean {
+  if (!params.allowRuntimeCapabilityShortcut) return false;
+  if (params.responseFormat) return false;
+  return Boolean(classifyRuntimeCapabilityIntent(params.messages));
+}
+
+function routeToolNames(params: RoutedModelTurnParams): string[] {
+  return (params.tools ?? [])
+    .map((tool) => tool.function?.name)
+    .filter((name): name is string => Boolean(name));
+}
+
 export async function routeModelTurn(params: RoutedModelTurnParams): Promise<ProviderTurnResult> {
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
   const allowRuntimeIdentityShortcut = canUseRuntimeIdentityShortcut(params);
+  const allowRuntimeCapabilityShortcut = canUseRuntimeCapabilityShortcut(params);
   const prepared = await prepareModelTurn(params, logPrefix);
   if (allowRuntimeIdentityShortcut) {
     const runtimeIdentityAnswer = await answerRuntimeIdentityQuestion({
@@ -796,6 +815,15 @@ export async function routeModelTurn(params: RoutedModelTurnParams): Promise<Pro
       assistantName: "Jarvis",
     });
     if (runtimeIdentityAnswer) return runtimeIdentityAnswer;
+  }
+  if (allowRuntimeCapabilityShortcut) {
+    const runtimeCapabilityAnswer = await answerRuntimeCapabilityQuestion({
+      messages: params.messages,
+      userId: params.userId,
+      route: prepared.chain[0],
+      routeToolNames: routeToolNames(params),
+    });
+    if (runtimeCapabilityAnswer) return runtimeCapabilityAnswer;
   }
 
   return queryWithFallback(
@@ -821,6 +849,7 @@ export async function streamModelTurn(
 ): Promise<ProviderTurnResult> {
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
   const allowRuntimeIdentityShortcut = canUseRuntimeIdentityShortcut(params);
+  const allowRuntimeCapabilityShortcut = canUseRuntimeCapabilityShortcut(params);
   const prepared = await prepareModelTurn(params, logPrefix);
   if (allowRuntimeIdentityShortcut) {
     const runtimeIdentityAnswer = await answerRuntimeIdentityQuestion({
@@ -833,6 +862,19 @@ export async function streamModelTurn(
       await onChunk({ type: "text", delta: runtimeIdentityAnswer.textContent });
       await onChunk({ type: "finish", reason: runtimeIdentityAnswer.finishReason });
       return runtimeIdentityAnswer;
+    }
+  }
+  if (allowRuntimeCapabilityShortcut) {
+    const runtimeCapabilityAnswer = await answerRuntimeCapabilityQuestion({
+      messages: params.messages,
+      userId: params.userId,
+      route: prepared.chain[0],
+      routeToolNames: routeToolNames(params),
+    });
+    if (runtimeCapabilityAnswer) {
+      await onChunk({ type: "text", delta: runtimeCapabilityAnswer.textContent });
+      await onChunk({ type: "finish", reason: runtimeCapabilityAnswer.finishReason });
+      return runtimeCapabilityAnswer;
     }
   }
 

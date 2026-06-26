@@ -14,8 +14,10 @@ async function main() {
     ANDROID_PHONE_RUNTIME_TOOL_NAMES,
     androidPhoneRuntimeTools,
     buildAndroidYoutubeSearchUrl,
+    runAndroidOpenAppByName,
     resolveAndroidAppName,
   } = await import("../tools/androidAppRuntime");
+  const { _setRuntimeCapabilityDepsForTesting } = await import("../../state/runtimeCapability");
 
   assert.deepEqual(
     androidPhoneRuntimeTools.map((tool) => tool.name),
@@ -58,6 +60,44 @@ async function main() {
     buildAndroidYoutubeSearchUrl("local Gemma on Android videos"),
     "vnd.youtube://results?search_query=local%20Gemma%20on%20Android%20videos",
   );
+
+  _setRuntimeCapabilityDepsForTesting({
+    now: () => new Date("2026-06-25T12:00:00.000Z"),
+    loadConnectedAccounts: async () => [],
+    loadDeviceControlState: async () => ({
+      desktop: { connected: false, hostname: null, lastSeenAt: null, permissions: [] },
+      android: {
+        connected: false,
+        hostname: "Galaxy Fold6",
+        lastSeenAt: "2026-06-25T11:50:00.000Z",
+        activeDevice: null,
+        permissions: {
+          openApp: {
+            status: "offline",
+            reason: "Android Device Control is not connected.",
+            lastCheckedAt: "2026-06-25T12:00:00.000Z",
+          },
+          browse: { status: "offline", reason: "Android Device Control is not connected.", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          screenCapture: { status: "offline", reason: "Android Device Control is not connected.", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          readScreen: { status: "offline", reason: "Android Device Control is not connected.", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          tapType: { status: "offline", reason: "Android Device Control is not connected.", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          accessibility: { status: "offline", reason: "Android Device Control is not connected.", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          notificationAccess: { status: "offline", reason: "Android Device Control is not connected.", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          microphone: { status: "offline", reason: "Android Device Control is not connected.", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+        },
+      },
+    }),
+  });
+  try {
+    const openWhenDisconnected = await runAndroidOpenAppByName({ appName: "YouTube" }, "user-phone");
+    assert.equal(openWhenDisconnected.ok, false);
+    assert.equal(openWhenDisconnected.detail.source, "runtime_capability_state");
+    assert.equal(openWhenDisconnected.detail.status, "offline");
+    assert.match(String(openWhenDisconnected.detail.error), /Android Device Control is not connected/);
+  } finally {
+    _setRuntimeCapabilityDepsForTesting(null);
+  }
+  console.log("OK: Android app actions use runtime capability preflight before daemon work");
 
   console.log("All Android app runtime assertions passed.");
 }

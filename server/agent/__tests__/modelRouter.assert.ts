@@ -12,6 +12,10 @@ import {
 import { BaseProvider, _clearProviderCacheForTesting, _overrideProviderForTesting } from "../providers";
 import type { ProviderChunk, ProviderQueryParams } from "../providers/base";
 import { classifyRuntimeIdentityIntent, runtimeModelLabelForRoute } from "../../state/runtimeIdentity";
+import {
+  classifyRuntimeCapabilityIntent,
+  _setRuntimeCapabilityDepsForTesting,
+} from "../../state/runtimeCapability";
 
 function userMessage(content: string) {
   return [{ role: "user" as const, content }];
@@ -2048,6 +2052,117 @@ async function runRuntimeModelLabelDoesNotTreatUnknownProviderAsLocalAssertion()
   console.log("OK: runtime model labels do not treat unknown providers as local");
 }
 
+async function runRuntimeCapabilityAnswersBypassSelectedPhoneGemmaAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  class UnexpectedAndroidLocalGemmaProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("runtime capability questions should not be delegated to Phone Gemma");
+    }
+  }
+
+  try {
+    assert.equal(
+      classifyRuntimeCapabilityIntent([{ role: "user", content: "What tools can you use?" }]),
+      "tools",
+    );
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("android-local-gemma", new UnexpectedAndroidLocalGemmaProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-runtime-capability-phone");
+      return "android-local-gemma/gemma-4-e4b-it";
+    });
+    _setRuntimeCapabilityDepsForTesting({
+      now: () => new Date("2026-06-25T12:00:00.000Z"),
+      loadConnectedAccounts: async () => [],
+      loadDeviceControlState: async () => ({
+        desktop: { connected: false, hostname: null, lastSeenAt: null, permissions: [] },
+        android: {
+          connected: true,
+          hostname: "Galaxy Fold6",
+          lastSeenAt: "2026-06-25T11:59:00.000Z",
+          activeDevice: "Galaxy Fold6",
+          permissions: {
+            openApp: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+            browse: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+            screenCapture: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+            readScreen: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+            tapType: { status: "disabled", reason: "android_tap_type permission is disabled.", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+            accessibility: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+            notificationAccess: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+            microphone: { status: "unknown", reason: "Not reported.", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          },
+        },
+      }),
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "What tools can you use?" }],
+      tools: [
+        { type: "function", function: { name: "memory_search", description: "Search memory.", parameters: { type: "object", properties: {} } } },
+        { type: "function", function: { name: "android_open_app_by_name", description: "Open an Android app.", parameters: { type: "object", properties: {} } } },
+        { type: "function", function: { name: "send_email", description: "Send email.", parameters: { type: "object", properties: {} } } },
+      ],
+      toolChoice: "auto",
+      maxCompletionTokens: 64,
+      userId: "user-runtime-capability-phone",
+      logPrefix: "[ModelRouterRuntimeCapabilityPhoneTest]",
+      allowRuntimeCapabilityShortcut: true,
+    });
+
+    assert.equal(result.providerName, "jarvis-runtime");
+    assert.equal(result.model, "gemma-4-e4b-it");
+    assert.match(result.textContent, /Memory: memory_search/);
+    assert.match(result.textContent, /Runtime: android_open_app_by_name/);
+    assert.match(result.textContent, /Email not connected: send_email/);
+    assert.match(result.textContent, /Device Control: Android connected/);
+
+    const requiredStatusResult = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Is screen capture permission enabled on my phone?" }],
+      tools: [
+        { type: "function", function: { name: "android_capture_screen", description: "Capture the Android screen.", parameters: { type: "object", properties: {} } } },
+      ],
+      toolChoice: "required",
+      maxCompletionTokens: 64,
+      userId: "user-runtime-capability-phone",
+      logPrefix: "[ModelRouterRuntimeCapabilityRequiredPhoneStatusTest]",
+      allowRuntimeCapabilityShortcut: true,
+    });
+
+    assert.equal(requiredStatusResult.providerName, "jarvis-runtime");
+    assert.equal(requiredStatusResult.model, "gemma-4-e4b-it");
+    assert.match(requiredStatusResult.textContent, /Android Device Control: connected/);
+    assert.match(requiredStatusResult.textContent, /Screen capture: ready/);
+    console.log("OK: runtime capability answers bypass selected Phone Gemma");
+  } finally {
+    _setRuntimeCapabilityDepsForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 runUserOpenAIProfileRouteAssertion()
   .then(runUserSelectedProviderOverridesRuntimeDefaultsAssertion)
   .then(runUserSelectedAndroidLocalGemmaOverridesCodexRuntimeAssertion)
@@ -2074,6 +2189,7 @@ runUserOpenAIProfileRouteAssertion()
   .then(runRuntimeUserIdentityRequiresAuthenticatedUserAssertion)
   .then(runRuntimeUserIdentityHidesProfileStoreExceptionDetailsAssertion)
   .then(runRuntimeModelLabelDoesNotTreatUnknownProviderAsLocalAssertion)
+  .then(runRuntimeCapabilityAnswersBypassSelectedPhoneGemmaAssertion)
   .then(runLeanContextToolBudgetAssertion)
   .then(() => {
     console.log("\nAll model router assertions passed.");
