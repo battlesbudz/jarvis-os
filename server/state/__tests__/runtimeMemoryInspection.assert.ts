@@ -214,6 +214,14 @@ async function main(): Promise<void> {
     classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Show memories about DoorDash, email them to me." }]),
     null,
   );
+  assert.equal(
+    classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Show memories about DoorDash - draft a reply." }]),
+    null,
+  );
+  assert.equal(
+    classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Show memories about DoorDash \u2014 summarize them." }]),
+    null,
+  );
   assert.deepEqual(
     classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Show memories about how to build apps." }]),
     { kind: "exact_memory_inspection", query: "how to build apps", scopeLabel: "how to build apps" },
@@ -547,6 +555,50 @@ async function main(): Promise<void> {
   assert(rTopicAnswer);
   assert.match(rTopicAnswer.textContent, /R for statistical analysis/);
   assert.doesNotMatch(rTopicAnswer.textContent, /shorter reports/);
+
+  const rAndPythonTopicAnswer = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{ role: "user", content: "Show memories about R and Python." }],
+      userId,
+      route: { providerName: "android-local-gemma", model: "gemma-4-e4b-it" },
+    },
+    {
+      retrieveMemoryContext: async (input) => {
+        assert.equal(input.query, "R and Python");
+        return memoryContextFromContents("R and Python", [
+          { id: "mem-r-only", content: "User uses R for statistical analysis.", category: "technical" },
+          { id: "mem-python-only", content: "User uses Python for automation.", category: "technical" },
+          { id: "mem-r-python", content: "User compares R and Python for analytics workflows.", category: "technical" },
+        ]);
+      },
+    },
+  );
+  assert(rAndPythonTopicAnswer);
+  assert.match(rAndPythonTopicAnswer.textContent, /R and Python for analytics workflows/);
+  assert.doesNotMatch(rAndPythonTopicAnswer.textContent, /R for statistical analysis/);
+  assert.doesNotMatch(rAndPythonTopicAnswer.textContent, /Python for automation/);
+
+  const rOrPythonTopicAnswer = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{ role: "user", content: "Show memories about R or Python." }],
+      userId,
+      route: { providerName: "android-local-gemma", model: "gemma-4-e4b-it" },
+    },
+    {
+      retrieveMemoryContext: async (input) => {
+        assert.equal(input.query, "R or Python");
+        return memoryContextFromContents("R or Python", [
+          { id: "mem-r-only", content: "User uses R for statistical analysis.", category: "technical" },
+          { id: "mem-python-only", content: "User uses Python for automation.", category: "technical" },
+          { id: "mem-stripe", content: "User has Stripe payout notes.", category: "finance" },
+        ]);
+      },
+    },
+  );
+  assert(rOrPythonTopicAnswer);
+  assert.match(rOrPythonTopicAnswer.textContent, /R for statistical analysis/);
+  assert.match(rOrPythonTopicAnswer.textContent, /Python for automation/);
+  assert.doesNotMatch(rOrPythonTopicAnswer.textContent, /Stripe payout notes/);
 
   const multiWordTopicAnswer = await answerRuntimeMemoryInspectionQuestion(
     {

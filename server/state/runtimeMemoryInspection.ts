@@ -120,7 +120,7 @@ function hasCompoundFollowUpWork(text: string): boolean {
   const normalized = normalizeForIntent(text);
   const rawLower = cleanText(text).toLowerCase().replace(/['`]/g, "");
   const followUp = String.raw`\b(?:and(?: then)?|then|after that|afterward|afterwards)\s+(?:please\s+)?`;
-  const punctuatedFollowUp = String.raw`[,.!?;:]\s+(?:please\s+)?`;
+  const punctuatedFollowUp = String.raw`(?:[,.!?;:]|[-\u2013\u2014]{1,2})\s+(?:please\s+)?`;
   const politeActionPrefix = String.raw`(?:(?:can|could|would|will)\s+you\s+|are\s+you\s+able\s+to\s+)?`;
   if (new RegExp(`${followUp}${politeActionPrefix}${COMPOUND_ACTION_VERBS}\\b`).test(normalized)) {
     return true;
@@ -352,18 +352,33 @@ type TopicAlternative = {
   symbolTerms: string[];
 };
 
-function tokenizeTopic(value: string): string[] {
+function isTopicSearchToken(token: string): boolean {
+  if (TOPIC_TOKEN_STOPWORDS.has(token)) return false;
+  if (token.length >= 2) return true;
+  return token.length === 1 && !/^[ai]$/.test(token);
+}
+
+function tokenizeTopic(value: string, symbolTerms: string[] = symbolTopicTerms(value)): string[] {
+  const symbolTokenParts = new Set(symbolTerms.flatMap((term) => term
+    .replace(/[^a-z0-9]+/g, " ")
+    .split(" ")
+    .map((token) => token.trim())
+    .filter(Boolean)));
   return Array.from(new Set(
     normalizeForIntent(value)
       .replace(/[^a-z0-9]+/g, " ")
       .split(" ")
       .map((token) => token.trim())
-      .filter((token) => token.length >= 2 && !TOPIC_TOKEN_STOPWORDS.has(token)),
+      .filter((token) => {
+        if (symbolTokenParts.has(token)) return false;
+        return isTopicSearchToken(token);
+      }),
   ));
 }
 
 function topicTokens(query: string): string[] {
-  return tokenizeTopic(cleanTopic(query));
+  const topic = cleanTopic(query);
+  return tokenizeTopic(topic, symbolTopicTerms(topic));
 }
 
 function allowsUnorderedTopicMatch(query: string): boolean {
@@ -386,10 +401,13 @@ function topicAlternatives(query: string): TopicAlternative[] {
   if (!hasOrTopicConnector(topic)) return [];
   return topic
     .split(/\bor\b/i)
-    .map((part) => ({
-      tokens: tokenizeTopic(part),
-      symbolTerms: symbolTopicTerms(part),
-    }))
+    .map((part) => {
+      const symbolTerms = symbolTopicTerms(part);
+      return {
+        tokens: tokenizeTopic(part, symbolTerms),
+        symbolTerms,
+      };
+    })
     .filter((part) => part.tokens.length > 0 || part.symbolTerms.length > 0);
 }
 
@@ -399,8 +417,7 @@ function searchableTopicText(item: MemoryContext["items"][number]): string {
     item.memory.category,
     item.memory.tier,
     item.memory.memoryType,
-    item.memory.sourceId,
-    ...item.provenance.flatMap((ref) => [ref.id, ref.source, ref.label]),
+    ...item.provenance.map((ref) => ref.label),
   ].filter((value): value is string => Boolean(value)).join(" ");
 }
 
@@ -446,7 +463,7 @@ function itemMatchesTopicTokens(item: MemoryContext["items"][number], tokens: st
     .replace(/[^a-z0-9]+/g, " ")
     .split(" ")
     .map((token) => token.trim())
-    .filter((token) => token.length >= 2 && !TOPIC_TOKEN_STOPWORDS.has(token))
+    .filter(isTopicSearchToken)
     .join(" ")
     .trim()
     .replace(/\s+/g, " ");
@@ -454,7 +471,7 @@ function itemMatchesTopicTokens(item: MemoryContext["items"][number], tokens: st
     .replace(/[^a-z0-9]+/g, " ")
     .split(" ")
     .map((token) => token.trim())
-    .filter((token) => token.length >= 2));
+    .filter(isTopicSearchToken));
   const topicPhrase = tokens.join(" ");
   if (tokens.length > 1) {
     return ` ${searchablePhrase} `.includes(` ${topicPhrase} `) ||
