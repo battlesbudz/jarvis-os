@@ -147,6 +147,14 @@ async function main(): Promise<void> {
     null,
   );
   assert.equal(
+    classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Show memories about DoorDash to draft a reply." }]),
+    null,
+  );
+  assert.equal(
+    classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Show memories about DoorDash so you can draft a reply." }]),
+    null,
+  );
+  assert.equal(
     classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Show memories about DoorDash and can you draft a reply using them?" }]),
     null,
   );
@@ -205,6 +213,10 @@ async function main(): Promise<void> {
   assert.equal(
     classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Show memories about DoorDash, email them to me." }]),
     null,
+  );
+  assert.deepEqual(
+    classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Show memories about how to build apps." }]),
+    { kind: "exact_memory_inspection", query: "how to build apps", scopeLabel: "how to build apps" },
   );
 
   const answer = await answerRuntimeMemoryInspectionQuestion(

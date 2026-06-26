@@ -113,19 +113,29 @@ function wantsInterpretation(text: string): boolean {
   return /\b(interpret|analyze|analyse|advise|recommend|strategy|plan|what should i|how should i|why do i|use my memories to|based on what you know)\b/.test(normalized);
 }
 
+const COMPOUND_ACTION_VERBS = String.raw`(?:draft|write|send|email|message|text|forward|share|create|open|search|use|reply|summarize|summarise|analyze|analyse|explain|describe|interpret|plan|recommend|schedule|remind|book|make|build|turn|save|store|upload|export|copy|move|put|add|attach|post|submit|file|delete|remove|archive|convert|tell|compare|help|give)`;
+
 function hasCompoundFollowUpWork(text: string): boolean {
   const normalized = normalizeForIntent(text);
   const rawLower = cleanText(text).toLowerCase().replace(/['`]/g, "");
   const followUp = String.raw`\b(?:and(?: then)?|then|after that|afterward|afterwards)\s+(?:please\s+)?`;
   const punctuatedFollowUp = String.raw`[,.!?;:]\s+(?:please\s+)?`;
   const politeActionPrefix = String.raw`(?:(?:can|could|would|will)\s+you\s+|are\s+you\s+able\s+to\s+)?`;
-  const actionVerbs = String.raw`(?:draft|write|send|email|message|text|forward|share|create|open|search|use|reply|summarize|summarise|analyze|analyse|explain|describe|interpret|plan|recommend|schedule|remind|book|make|build|turn|save|store|upload|export|copy|move|put|add|attach|post|submit|file|delete|remove|archive|convert|tell|compare|help|give)`;
-  if (new RegExp(`${followUp}${politeActionPrefix}${actionVerbs}\\b`).test(normalized)) {
+  if (new RegExp(`${followUp}${politeActionPrefix}${COMPOUND_ACTION_VERBS}\\b`).test(normalized)) {
     return true;
   }
-  if (new RegExp(`${punctuatedFollowUp}${politeActionPrefix}${actionVerbs}\\b`).test(rawLower)) return true;
+  if (new RegExp(`${punctuatedFollowUp}${politeActionPrefix}${COMPOUND_ACTION_VERBS}\\b`).test(rawLower)) return true;
   if (new RegExp(`${followUp}(?:\\w+\\s+){0,3}(?:it|them|that|this|these|those|the memories|the results)\\b`).test(normalized)) return true;
   return new RegExp(`${punctuatedFollowUp}(?:\\w+\\s+){0,3}(?:it|them|that|this|these|those|the memories|the results)\\b`).test(rawLower);
+}
+
+function hasInfinitiveActionFollowUp(text: string): boolean {
+  const normalized = normalizeForIntent(text);
+  const match = normalized.match(new RegExp(`^(.+?)\\s+(?:to|in order to|so (?:i|we|you) can)\\s+(?:please\\s+)?${COMPOUND_ACTION_VERBS}\\b`));
+  const leadIn = match?.[1]?.trim();
+  if (!leadIn) return false;
+  const lastLeadInWord = leadIn.split(/\s+/).at(-1) ?? "";
+  return !/^(?:how|what|where|when|why|whether|which)$/i.test(lastLeadInWord);
 }
 
 function topicIntent(topic: string): RuntimeMemoryInspectionIntent {
@@ -166,7 +176,7 @@ export function classifyRuntimeMemoryInspectionIntent(
   for (const pattern of topicPatterns) {
     const match = cleaned.match(pattern);
     if (match?.[1]) {
-      if (hasCompoundFollowUpWork(match[1])) return null;
+      if (hasCompoundFollowUpWork(match[1]) || hasInfinitiveActionFollowUp(match[1])) return null;
       return topicIntent(match[1]);
     }
   }
