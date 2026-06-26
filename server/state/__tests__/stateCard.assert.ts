@@ -4,6 +4,7 @@ import {
   buildRuntimeStateCard,
   buildRuntimeStateCardPrompt,
   limitRuntimeTaskStateRows,
+  memoryModelTargetFromActiveModel,
   renderRuntimeStateCard,
   type RuntimeStateCardDeps,
 } from "../stateCard";
@@ -116,6 +117,35 @@ async function testMemoryContextIsOptionalAndClearlyHistorical() {
   console.log("OK: runtime state card keeps retrieved memory separate from authoritative state");
 }
 
+async function testLocalActiveModelRequestsLocalMemoryPacket() {
+  let capturedModelTarget: string | undefined;
+  await buildRuntimeStateCard({
+    userId: "user-123",
+    activeModel: "Phone Gemma E4B",
+    seedQuery: "financial summary",
+    includeMemoryContext: true,
+  }, {
+    ...deps,
+    retrieveMemoryContext: async (input) => {
+      capturedModelTarget = input.modelTarget;
+      return {
+        userId: input.userId,
+        query: input.query,
+        caller: "state_card_test",
+        items: [],
+        sources: { memories: [], brainChunks: [], hotState: [] },
+        provenance: [],
+        uncertainty: [],
+      };
+    },
+  });
+
+  assert.equal(memoryModelTargetFromActiveModel("Phone Gemma E4B"), "local");
+  assert.equal(memoryModelTargetFromActiveModel("Claude Sonnet"), "cloud");
+  assert.equal(capturedModelTarget, "local");
+  console.log("OK: local active models request local-safe MemoryOS packets");
+}
+
 async function testStateCardFallsBackWhenStoresAreUnavailable() {
   const card = await buildRuntimeStateCard({
     userId: "user-fallback",
@@ -225,6 +255,7 @@ async function testPromptHelperRespectsCompactBudget() {
 async function main() {
   await testStateCardAlwaysIncludesAuthoritativeIdentityAndTaskState();
   await testMemoryContextIsOptionalAndClearlyHistorical();
+  await testLocalActiveModelRequestsLocalMemoryPacket();
   await testStateCardFallsBackWhenStoresAreUnavailable();
   testTaskStateLimitPreservesJobsAndWorkflows();
   testTaskStateLimitPrioritizesRunningJobs();

@@ -261,7 +261,10 @@ export async function ensureTablesExist() {
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS review_status VARCHAR NOT NULL DEFAULT 'active'`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS supersedes_memory_id VARCHAR`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS corrected_by_memory_id VARCHAR`).catch(handleSchemaStepError);
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS sensitivity VARCHAR NOT NULL DEFAULT 'normal'`).catch(handleSchemaStepError);
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS provenance JSONB NOT NULL DEFAULT '[]'::jsonb`).catch(handleSchemaStepError);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS user_memories_user_review_idx ON user_memories(user_id, review_status)`).catch(handleSchemaStepError);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS user_memories_user_sensitivity_idx ON user_memories(user_id, sensitivity)`).catch(handleSchemaStepError);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS memory_working_context (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1871,6 +1874,9 @@ export async function ensureTablesExist() {
     // ── Memory Review Gate (Phase 6) ─────────────────────────────────────────
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS pending_review BOOLEAN NOT NULL DEFAULT FALSE`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS review_status VARCHAR NOT NULL DEFAULT 'active'`).catch(handleSchemaStepError);
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS sensitivity VARCHAR NOT NULL DEFAULT 'normal'`).catch(handleSchemaStepError);
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS provenance JSONB NOT NULL DEFAULT '[]'::jsonb`).catch(handleSchemaStepError);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS user_memories_user_sensitivity_idx ON user_memories(user_id, sensitivity)`).catch(handleSchemaStepError);
     // Optional pgvector index for canonical user_memories. If the extension is
     // unavailable, JSONB embeddings and FTS retrieval remain the fallback path.
     await db.execute(sql`CREATE EXTENSION IF NOT EXISTS vector`).catch(handleOptionalVectorSchemaStepError);

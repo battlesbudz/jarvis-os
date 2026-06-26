@@ -187,6 +187,8 @@ async function executeMemorySave(
       pendingReview: plan.record.pendingReview,
       reviewStatus: plan.record.reviewStatus,
       supersedesMemoryId: plan.record.supersedesMemoryId,
+      sensitivity: plan.record.sensitivity,
+      provenance: plan.record.provenance,
     }).returning({ id: userMemories.id });
 
     if (embedding && inserted?.id) {
@@ -531,6 +533,7 @@ export const memoryGetTool: AgentTool = {
           AND (expires_at IS NULL OR expires_at >= NOW())
           AND (pending_review = FALSE OR pending_review IS NULL)
           AND review_status IN ('active', 'kept', 'edited')
+          AND COALESCE(sensitivity, 'normal') = 'normal'
         ORDER BY confidence DESC, relevance_score DESC
         LIMIT ${limit}
       `);

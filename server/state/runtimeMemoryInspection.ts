@@ -39,6 +39,8 @@ type RuntimeMemoryInspectionDeps = {
     caller: "runtime_memory_inspection";
     skipAccessUpdate: boolean;
     canonicalOnly?: boolean;
+    modelTarget?: "runtime" | "local" | "cloud";
+    allowRestrictedMemory?: boolean;
   }) => Promise<MemoryContext>;
 };
 
@@ -240,9 +242,14 @@ async function defaultRetrieveMemoryContext(input: {
   limit: number;
   caller: "runtime_memory_inspection";
   skipAccessUpdate: boolean;
+  canonicalOnly?: boolean;
 }): Promise<MemoryContext> {
   const { retrieveMemoryContext } = await import("../memory/memoryOs");
-  return retrieveMemoryContext(input);
+  return retrieveMemoryContext({
+    ...input,
+    modelTarget: "runtime",
+    allowRestrictedMemory: true,
+  });
 }
 
 function hasRenderedProfile(profile: RuntimeProfileState | null): boolean {

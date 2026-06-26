@@ -237,8 +237,11 @@ export const userMemories = pgTable("user_memories", {
   reviewStatus: varchar("review_status").notNull().default("active"),
   supersedesMemoryId: varchar("supersedes_memory_id"),
   correctedByMemoryId: varchar("corrected_by_memory_id"),
+  sensitivity: varchar("sensitivity").notNull().default("normal"),
+  provenance: jsonb("provenance").$type<Array<{ sourceType: string; sourceRef?: string | null; sensitivity?: string; label?: string; restricted?: boolean }>>().notNull().default(sql`'[]'::jsonb`),
 }, (table) => [
   index("user_memories_user_review_idx").on(table.userId, table.reviewStatus),
+  index("user_memories_user_sensitivity_idx").on(table.userId, table.sensitivity),
 ]);
 
 // Biomimetic memory tiers — mirrors human memory architecture.

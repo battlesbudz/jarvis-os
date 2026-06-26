@@ -30,6 +30,16 @@ export type MemoryWriteDecisionStatus =
   | "excluded"
   | "invalid";
 
+export type MemorySensitivity = "normal" | "restricted_summary";
+
+export interface MemoryProvenanceMetadata {
+  sourceType: string;
+  sourceRef?: string | null;
+  sensitivity?: string;
+  label?: string;
+  restricted?: boolean;
+}
+
 export interface WorkingContextScope {
   scopeType: string;
   scopeId: string;
@@ -70,6 +80,9 @@ export interface MemoryWriteInput {
   expiresAt?: Date | null;
   supersedesMemoryId?: string | null;
   reviewEnabled?: boolean;
+  sensitivity?: unknown;
+  provenance?: unknown;
+  restrictedSummaryApproved?: boolean;
 }
 
 export interface PlannedMemoryRecord {
@@ -85,6 +98,8 @@ export interface PlannedMemoryRecord {
   reviewStatus: MemoryLifecycleState;
   expiresAt: Date | null;
   supersedesMemoryId: string | null;
+  sensitivity: MemorySensitivity;
+  provenance: MemoryProvenanceMetadata[];
 }
 
 export interface MemoryWritePlan {
@@ -152,6 +167,29 @@ export interface WorkingContextDeps {
 }
 
 const DIAGNOSTIC_SOURCE_PATTERN = /\b(diagnostic|diagnostics|self[_ -]?model|phone[_ -]?gemma[_ -]?diagnostic|test[_ -]?run)\b/i;
+const RESTRICTED_SOURCE_TOKENS = [
+  "bank",
+  "banking",
+  "bank_statement",
+  "financial",
+  "financial_record",
+  "financial_transaction",
+  "transaction",
+  "plaid",
+  "credit_card",
+  "debit_card",
+  "tax_document",
+  "payroll",
+  "brokerage",
+  "account_balance",
+  "restricted_source",
+];
+const RAW_RESTRICTED_CONTENT_PATTERNS = [
+  /\b(?:account|routing|card|debit|credit)\s*(?:number|no\.?|#|ending)?\s*[:#-]?\s*(?:\d[\s-]?){4,}\b/i,
+  /\b(?:ssn|social security)\b[\s\S]{0,40}\d{3}[\s-]?\d{2}[\s-]?\d{4}\b/i,
+  /\b(?:available|current|ending)\s+balance\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/i,
+  /^\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+.{2,}\s+[-+]?\$?\d[\d,]*(?:\.\d{2})?\s*$/m,
+];
 
 function cleanSingleLine(value: unknown, fallback = ""): string {
   return String(value ?? fallback).replace(/\s+/g, " ").trim();
@@ -180,6 +218,75 @@ function normalizeTier(value: unknown, fallback: MemoryTier): MemoryTier {
 function normalizeMemoryType(value: unknown, fallback: MemoryType): MemoryType {
   const raw = cleanSingleLine(value).toLowerCase();
   return (MEMORY_TYPES as readonly string[]).includes(raw) ? (raw as MemoryType) : fallback;
+}
+
+function normalizeSensitivity(value: unknown): MemorySensitivity {
+  const raw = cleanSingleLine(value).toLowerCase();
+  return raw === "restricted_summary" ? "restricted_summary" : "normal";
+}
+
+function normalizeProvenance(value: unknown): MemoryProvenanceMetadata[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 12).flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    const sourceType = cleanSingleLine(record.sourceType ?? record.source_type ?? record.kind);
+    if (!sourceType) return [];
+    const sourceRef = cleanSingleLine(record.sourceRef ?? record.source_ref ?? record.id);
+    const sensitivity = cleanSingleLine(record.sensitivity);
+    const label = cleanSingleLine(record.label);
+    return [{
+      sourceType,
+      sourceRef: sourceRef || null,
+      sensitivity: sensitivity || undefined,
+      label: label || undefined,
+      restricted: Boolean(record.restricted),
+    }];
+  });
+}
+
+function isRestrictedSourceType(value: unknown): boolean {
+  const normalized = cleanSingleLine(value).toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) return false;
+  return RESTRICTED_SOURCE_TOKENS.some((token) =>
+    normalized === token ||
+    normalized.startsWith(`${token}_`) ||
+    normalized.endsWith(`_${token}`) ||
+    normalized.includes(`_${token}_`)
+  );
+}
+
+function containsRawRestrictedContent(content: string): boolean {
+  return RAW_RESTRICTED_CONTENT_PATTERNS.some((pattern) => pattern.test(content));
+}
+
+function provenanceHasRestrictedSource(provenance: MemoryProvenanceMetadata[]): boolean {
+  return provenance.some((item) =>
+    item.restricted === true ||
+    normalizeSensitivity(item.sensitivity) === "restricted_summary" ||
+    isRestrictedSourceType(item.sourceType) ||
+    isRestrictedSourceType(item.sourceRef)
+  );
+}
+
+function isApprovedRestrictedSummary(input: MemoryWriteInput, sourceType: string): boolean {
+  return input.restrictedSummaryApproved === true || sourceType === "restricted_summary";
+}
+
+function buildRestrictedProvenance(
+  sourceType: string,
+  sourceRef: string | null,
+  provenance: MemoryProvenanceMetadata[],
+): MemoryProvenanceMetadata[] {
+  const refs = provenance.length > 0 ? provenance : [{
+    sourceType: sourceType || "restricted_source",
+    sourceRef,
+  }];
+  return refs.map((item) => ({
+    ...item,
+    sensitivity: "restricted_summary",
+    restricted: true,
+  }));
 }
 
 function addMs(date: Date, ms: number): Date {
@@ -224,6 +331,16 @@ export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
   const userId = cleanSingleLine(input.userId);
   const content = cleanContent(input.content);
   const now = input.now ?? new Date();
+  const inputSourceType = cleanSingleLine(input.sourceType);
+  const inputSourceRef = cleanSingleLine(input.sourceRef) || null;
+  const provenance = normalizeProvenance(input.provenance);
+  const requestedSensitivity = normalizeSensitivity(input.sensitivity);
+  const restrictedSource = isRestrictedSourceType(inputSourceType) ||
+    isRestrictedSourceType(inputSourceRef) ||
+    provenanceHasRestrictedSource(provenance) ||
+    requestedSensitivity === "restricted_summary";
+  const rawRestrictedContent = containsRawRestrictedContent(content);
+  const approvedRestrictedSummary = isApprovedRestrictedSummary(input, inputSourceType);
 
   if (!userId) {
     return {
@@ -258,7 +375,30 @@ export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
     };
   }
 
+  if ((restrictedSource || rawRestrictedContent) && !approvedRestrictedSummary) {
+    return {
+      status: "excluded",
+      reason: "Raw restricted-source records are excluded from normal MemoryOS. Store an approved high-level restricted summary instead.",
+      userId,
+      record: null,
+      supersedeMemoryIds: [],
+      oneTimeReviewTip: false,
+    };
+  }
+
+  if (approvedRestrictedSummary && rawRestrictedContent) {
+    return {
+      status: "excluded",
+      reason: "Approved restricted summaries must not include raw account, card, routing, balance, or transaction details.",
+      userId,
+      record: null,
+      supersedeMemoryIds: [],
+      oneTimeReviewTip: false,
+    };
+  }
+
   if (input.trigger === "working_context") {
+    const sensitivity: MemorySensitivity = approvedRestrictedSummary ? "restricted_summary" : "normal";
     return {
       status: "auto_write_working_context",
       reason: "Working context is short-lived and can update without manual review.",
@@ -276,6 +416,10 @@ export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
         reviewStatus: "active",
         expiresAt: input.expiresAt === undefined ? addMs(now, WORKING_CONTEXT_TTL_MS) : input.expiresAt,
         supersedesMemoryId: null,
+        sensitivity,
+        provenance: sensitivity === "restricted_summary"
+          ? buildRestrictedProvenance(inputSourceType || "restricted_summary", inputSourceRef, provenance)
+          : provenance,
       },
       supersedeMemoryIds: [],
       oneTimeReviewTip: false,
@@ -287,7 +431,10 @@ export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
   const reviewRequired = reviewEnabled;
   const sourceType = reviewRequired && input.trigger === "explicit_remember"
     ? "explicit_remember"
-    : cleanSingleLine(input.sourceType, input.trigger === "dream" ? "dream_cycle" : "manual");
+    : approvedRestrictedSummary
+      ? "restricted_summary"
+      : cleanSingleLine(input.sourceType, input.trigger === "dream" ? "dream_cycle" : "manual");
+  const sensitivity: MemorySensitivity = approvedRestrictedSummary ? "restricted_summary" : "normal";
   const reason = reviewRequired
     ? input.trigger === "explicit_remember"
       ? "Explicit long-term memories are queued for user review before they become active."
@@ -311,6 +458,10 @@ export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
       reviewStatus: reviewRequired ? "pending" : "active",
       expiresAt: input.expiresAt ?? null,
       supersedesMemoryId,
+      sensitivity,
+      provenance: sensitivity === "restricted_summary"
+        ? buildRestrictedProvenance(inputSourceType || sourceType, inputSourceRef, provenance)
+        : provenance,
     },
     supersedeMemoryIds: supersedesMemoryId ? [supersedesMemoryId] : [],
     oneTimeReviewTip: reviewRequired && input.trigger === "explicit_remember",
@@ -340,6 +491,12 @@ export function buildRecentContextMemory(row: ExpiredWorkingContextRow, now = ne
     reviewStatus: "active",
     expiresAt: addMs(now, RECENT_CONTEXT_TTL_MS),
     supersedesMemoryId: null,
+    sensitivity: "normal",
+    provenance: [{
+      sourceType: "working_context",
+      sourceRef: `${scope}:${row.lastEventId}`,
+      label: row.scopeType,
+    }],
   };
 }
 
@@ -563,6 +720,8 @@ export const defaultMemoryWriteDeps: MemoryWritePipelineDeps = {
       pendingReview: record.pendingReview,
       reviewStatus: record.reviewStatus,
       supersedesMemoryId: record.supersedesMemoryId,
+      sensitivity: record.sensitivity,
+      provenance: record.provenance,
     }).returning({ id: userMemories.id });
     return { id: inserted.id };
   },

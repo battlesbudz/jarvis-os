@@ -16,6 +16,8 @@ export type MemoryVectorRow = {
   confidence: number | string | null;
   access_count: number | string | null;
   embedding: number[] | null;
+  sensitivity: string | null;
+  provenance: unknown;
   fts_rank: number | string | null;
   extracted_at: string | Date | null;
   vector_distance?: number | string | null;
@@ -148,6 +150,8 @@ export async function searchMemoryVectors(input: {
         ${userMemories.confidence} AS confidence,
         ${userMemories.accessCount} AS access_count,
         ${userMemories.embedding} AS embedding,
+        ${userMemories.sensitivity} AS sensitivity,
+        ${userMemories.provenance} AS provenance,
         ${userMemories.extractedAt} AS extracted_at,
         ts_rank(to_tsvector('english', ${userMemories.content}), plainto_tsquery('english', ${input.query})) AS fts_rank,
         ${userMemories.embeddingVector} <=> ${literal}::vector AS vector_distance

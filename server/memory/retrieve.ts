@@ -28,6 +28,8 @@ export interface RetrievedMemory {
   confidence: number;
   accessCount: number;
   score: number;
+  sensitivity?: string;
+  provenance?: unknown[];
   source?: "canonical" | "gbrain";
   sourceId?: string;
   sourceRefs?: QueryBrainResult["chunks"][number]["citations"];
@@ -197,6 +199,8 @@ export function mapBrainChunksToRetrievedMemories(chunks: QueryBrainResult["chun
       confidence: 80,
       accessCount: 0,
       score: chunk.score,
+      sensitivity: "normal",
+      provenance: [],
       source: "gbrain",
       sourceId: brainChunkId,
       sourceRefs: chunk.citations,
@@ -256,6 +260,8 @@ export function rankMemoryRowsForRetrieval(
       confidence: Number(r.confidence) || 0,
       accessCount: Number(r.access_count) || 0,
       score,
+      sensitivity: String(r.sensitivity || "normal"),
+      provenance: Array.isArray(r.provenance) ? r.provenance : [],
     };
   });
 
@@ -293,7 +299,8 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
   let rows: { rows: MemoryRow[] };
   try {
     const rawRows = await db.execute(sql`
-      SELECT id, content, category, tier, memory_type, relevance_score, confidence, access_count, embedding, extracted_at,
+      SELECT id, content, category, tier, memory_type, relevance_score, confidence, access_count, embedding,
+             COALESCE(sensitivity, 'normal') AS sensitivity, COALESCE(provenance, '[]'::jsonb) AS provenance, extracted_at,
              ts_rank(to_tsvector('english', content), plainto_tsquery('english', ${q})) AS fts_rank
       FROM user_memories
       WHERE user_id = ${userId}

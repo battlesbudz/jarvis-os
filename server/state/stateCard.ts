@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
-import type { MemoryContext } from "../memory/memoryOs";
+import type { MemoryContext, MemoryModelTarget } from "../memory/memoryOs";
 
 export type RuntimeStateSource =
   | "state_kernel"
@@ -88,6 +88,8 @@ export interface RuntimeStateCardDeps {
     userId: string;
     query: string;
     limit: number;
+    modelTarget?: MemoryModelTarget;
+    allowRestrictedMemory?: boolean;
   }) => Promise<MemoryContext>;
   now?: () => Date;
 }
@@ -342,6 +344,8 @@ async function retrieveMemoryContextFromMemoryOs(input: {
   userId: string;
   query: string;
   limit: number;
+  modelTarget?: MemoryModelTarget;
+  allowRestrictedMemory?: boolean;
 }): Promise<MemoryContext> {
   const { retrieveMemoryContext } = await import("../memory/memoryOs");
   return retrieveMemoryContext({
@@ -350,7 +354,16 @@ async function retrieveMemoryContextFromMemoryOs(input: {
     limit: input.limit,
     caller: "coach_context",
     skipAccessUpdate: true,
+    modelTarget: input.modelTarget,
+    allowRestrictedMemory: input.allowRestrictedMemory,
   });
+}
+
+export function memoryModelTargetFromActiveModel(activeModel?: string): MemoryModelTarget {
+  const normalized = activeModel?.trim().toLowerCase() ?? "";
+  return /\b(local|phone[_ -]?gemma|android[_ -]?local[_ -]?gemma|gemma)\b/.test(normalized)
+    ? "local"
+    : "cloud";
 }
 
 function memoryItemsFromContext(context: MemoryContext): RuntimeRelevantContext[] {
@@ -418,6 +431,7 @@ export async function buildRuntimeStateCard(
         userId: input.userId,
         query,
         limit: memoryLimit,
+        modelTarget: memoryModelTargetFromActiveModel(input.activeModel),
       });
       relevantContext = memoryItemsFromContext(memoryContext);
       provenance.add("memory_os");

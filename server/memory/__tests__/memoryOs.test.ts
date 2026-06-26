@@ -106,6 +106,53 @@ async function main(): Promise<void> {
   assert.deepEqual(failed.items, []);
   assert.match(failed.uncertainty[0] ?? "", /database unavailable/);
 
+  const restricted = memory({
+    id: "restricted-summary-1",
+    content: "Food delivery spending is trending up. Account number 123456789 and available balance $500 were present in the raw source.",
+    sensitivity: "restricted_summary",
+    provenance: [{
+      sourceType: "plaid_transaction_rollup",
+      sourceRef: "rollup-1",
+      restricted: true,
+      sensitivity: "restricted_summary",
+    }],
+  });
+
+  const cloudRestricted = await retrieveMemoryContext(
+    { userId: "memory-os-user", query: "food delivery spending", caller: "coach_context" },
+    { retrieveMemories: async () => [restricted] },
+  );
+  assert.deepEqual(cloudRestricted.items, []);
+  assert.match(cloudRestricted.uncertainty.join(" "), /withheld from cloud model context/);
+
+  const localRestricted = await retrieveMemoryContext(
+    {
+      userId: "memory-os-user",
+      query: "food delivery spending",
+      caller: "coach_context",
+      modelTarget: "local",
+    },
+    { retrieveMemories: async () => [restricted] },
+  );
+  assert.equal(localRestricted.items.length, 1);
+  assert.match(localRestricted.items[0]?.memory.content ?? "", /^Restricted summary:/);
+  assert.doesNotMatch(localRestricted.items[0]?.memory.content ?? "", /123456789/);
+  assert.doesNotMatch(localRestricted.items[0]?.memory.content ?? "", /\$500/);
+  assert.match(localRestricted.uncertainty.join(" "), /sanitized for local model context/);
+
+  const allowedCloudRestricted = await retrieveMemoryContext(
+    {
+      userId: "memory-os-user",
+      query: "food delivery spending",
+      caller: "coach_context",
+      modelTarget: "cloud",
+      allowRestrictedMemory: true,
+    },
+    { retrieveMemories: async () => [restricted] },
+  );
+  assert.equal(allowedCloudRestricted.items.length, 1);
+  assert.match(allowedCloudRestricted.items[0]?.memory.content ?? "", /123456789/);
+
   const correction = await recordMemoryCorrection({
     userId: "memory-os-user",
     operation: "correct_existing_memory",

@@ -19,6 +19,7 @@ export type MemoryProvenanceRef = {
 
 export type MemoryCorrectionOperation = "correct_existing_memory" | "propose_new_memory";
 export type MemoryCorrectionStatus = "review_required" | "invalid";
+export type MemoryModelTarget = "runtime" | "local" | "cloud";
 
 export type MemoryCorrectionInput = {
   userId: string;
@@ -81,6 +82,8 @@ export type RetrieveMemoryContextInput = {
   caller: MemoryOsCaller | string;
   skipAccessUpdate?: boolean;
   canonicalOnly?: boolean;
+  modelTarget?: MemoryModelTarget;
+  allowRestrictedMemory?: boolean;
 };
 
 export type MemoryRetrievalOptions = {
@@ -135,6 +138,109 @@ function uniqueRefs(refs: MemoryProvenanceRef[]): MemoryProvenanceRef[] {
     out.push(ref);
   }
   return out;
+}
+
+function cleanSingleLine(value: unknown): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+const RESTRICTED_SOURCE_TOKENS = [
+  "bank",
+  "banking",
+  "bank_statement",
+  "financial",
+  "financial_record",
+  "financial_transaction",
+  "transaction",
+  "plaid",
+  "credit_card",
+  "debit_card",
+  "tax_document",
+  "payroll",
+  "brokerage",
+  "restricted_source",
+];
+
+function isRestrictedSourceType(value: unknown): boolean {
+  const normalized = cleanSingleLine(value).toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) return false;
+  return RESTRICTED_SOURCE_TOKENS.some((token) =>
+    normalized === token ||
+    normalized.startsWith(`${token}_`) ||
+    normalized.endsWith(`_${token}`) ||
+    normalized.includes(`_${token}_`)
+  );
+}
+
+function isRestrictedProvenanceRef(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const sourceType = cleanSingleLine(record.sourceType ?? record.source_type ?? record.kind);
+  const sensitivity = cleanSingleLine(record.sensitivity).toLowerCase();
+  return Boolean(record.restricted) ||
+    sensitivity === "restricted_summary" ||
+    isRestrictedSourceType(sourceType);
+}
+
+function isRestrictedRetrievedMemory(memory: RetrievedMemory): boolean {
+  return cleanSingleLine(memory.sensitivity).toLowerCase() === "restricted_summary" ||
+    (Array.isArray(memory.provenance) && memory.provenance.some(isRestrictedProvenanceRef));
+}
+
+function sanitizeRestrictedMemoryContent(content: string): string {
+  const redacted = content
+    .replace(/\b(?:account|routing|card|debit|credit)\s*(?:number|no\.?|#|ending)?\s*[:#-]?\s*(?:\d[\s-]?){4,}\b/gi, "[redacted identifier]")
+    .replace(/\b(?:ssn|social security)\b[\s\S]{0,40}\d{3}[\s-]?\d{2}[\s-]?\d{4}\b/gi, "[redacted identifier]")
+    .replace(/\b(?:available|current|ending)\s+balance\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/gi, "[redacted balance]")
+    .replace(/^\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+.{2,}\s+[-+]?\$?\d[\d,]*(?:\.\d{2})?\s*$/gim, "[redacted transaction row]")
+    .trim();
+  const compact = redacted.length > 260 ? `${redacted.slice(0, 257).trimEnd()}...` : redacted;
+  return compact || "Restricted summary available; raw details withheld.";
+}
+
+function prepareMemoryForModelTarget(
+  memory: RetrievedMemory,
+  target: MemoryModelTarget,
+  allowRestrictedMemory: boolean,
+): RetrievedMemory | null {
+  if (!isRestrictedRetrievedMemory(memory)) return memory;
+  if (target === "runtime" || (target === "cloud" && allowRestrictedMemory)) return memory;
+  if (target === "cloud") return null;
+  return {
+    ...memory,
+    content: `Restricted summary: ${sanitizeRestrictedMemoryContent(memory.content)}`,
+    sensitivity: "restricted_summary",
+  };
+}
+
+function prepareMemoriesForModelTarget(
+  memories: RetrievedMemory[],
+  target: MemoryModelTarget,
+  allowRestrictedMemory: boolean,
+): { memories: RetrievedMemory[]; uncertainty: string[] } {
+  const prepared: RetrievedMemory[] = [];
+  let withheld = 0;
+  let sanitized = 0;
+
+  for (const memory of memories) {
+    const restricted = isRestrictedRetrievedMemory(memory);
+    const next = prepareMemoryForModelTarget(memory, target, allowRestrictedMemory);
+    if (!next) {
+      withheld += 1;
+      continue;
+    }
+    if (restricted && target === "local") sanitized += 1;
+    prepared.push(next);
+  }
+
+  const uncertainty: string[] = [];
+  if (withheld > 0) {
+    uncertainty.push(`${withheld} restricted MemoryOS item${withheld === 1 ? " was" : "s were"} withheld from cloud model context.`);
+  }
+  if (sanitized > 0) {
+    uncertainty.push(`${sanitized} restricted MemoryOS summar${sanitized === 1 ? "y was" : "ies were"} sanitized for local model context.`);
+  }
+  return { memories: prepared, uncertainty };
 }
 
 export function buildMemoryCorrectionReview(input?: MemoryCorrectionInput): MemoryCorrectionReview {
@@ -254,9 +360,15 @@ export async function retrieveMemoryContext(
   }
 
   try {
-    const memories = await deps.retrieveMemories(input.userId, query, limit, skipAccessUpdate, {
+    const rawMemories = await deps.retrieveMemories(input.userId, query, limit, skipAccessUpdate, {
       canonicalOnly: input.canonicalOnly ?? false,
     });
+    const target = input.modelTarget ?? "cloud";
+    const { memories, uncertainty: boundaryUncertainty } = prepareMemoriesForModelTarget(
+      rawMemories,
+      target,
+      input.allowRestrictedMemory ?? false,
+    );
     const items = memories.map((memory) => ({
       memory,
       provenance: provenanceForMemory(memory),
@@ -274,7 +386,10 @@ export async function retrieveMemoryContext(
         hotState: [],
       },
       provenance,
-      uncertainty: memories.length === 0 ? ["No relevant memories were found."] : [],
+      uncertainty: [
+        ...boundaryUncertainty,
+        ...(memories.length === 0 ? ["No relevant memories were found."] : []),
+      ],
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);

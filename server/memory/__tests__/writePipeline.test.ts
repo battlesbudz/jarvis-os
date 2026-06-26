@@ -272,6 +272,80 @@ async function testDiagnosticWritesAreExcluded(): Promise<void> {
   console.log("OK: diagnostics and tests are excluded from real memories");
 }
 
+async function testRawRestrictedSourceWritesAreExcluded(): Promise<void> {
+  const { planMemoryWrite } = await loadPipeline();
+  const plan = planMemoryWrite({
+    userId: "user-123",
+    content: "Checking account number 123456789 has an available balance of $1,234.56.",
+    trigger: "inferred",
+    sourceType: "plaid_transaction",
+    sourceRef: "plaid-item-1",
+    now,
+  });
+
+  assert.equal(plan.status, "excluded");
+  assert.equal(plan.record, null);
+  assert.match(plan.reason, /Raw restricted-source records/);
+
+  const highLevelButUnapproved = planMemoryWrite({
+    userId: "user-123",
+    content: "Food delivery spending was higher than usual this week.",
+    trigger: "inferred",
+    sourceType: "plaid_transaction_rollup",
+    sourceRef: "rollup-2026-06-26",
+    now,
+  });
+  assert.equal(highLevelButUnapproved.status, "excluded");
+  assert.equal(highLevelButUnapproved.record, null);
+  console.log("OK: raw restricted-source records are excluded from normal MemoryOS");
+}
+
+async function testApprovedRestrictedSummariesCarryMetadata(): Promise<void> {
+  const { planMemoryWrite } = await loadPipeline();
+  const plan = planMemoryWrite({
+    userId: "user-123",
+    content: "The user's food delivery spending was higher than usual this week.",
+    trigger: "inferred",
+    sourceType: "plaid",
+    sourceRef: "plaid-weekly-summary",
+    restrictedSummaryApproved: true,
+    reviewEnabled: false,
+    provenance: [{
+      sourceType: "plaid_transaction_rollup",
+      sourceRef: "rollup-2026-06-26",
+      restricted: true,
+      label: "weekly spending rollup",
+    }],
+    now,
+  });
+
+  assert.equal(plan.status, "auto_write_memory");
+  assert.equal(plan.record?.sourceType, "restricted_summary");
+  assert.equal(plan.record?.sensitivity, "restricted_summary");
+  assert.equal(plan.record?.provenance[0]?.restricted, true);
+  assert.equal(plan.record?.provenance[0]?.sensitivity, "restricted_summary");
+  assert.equal(plan.record?.provenance[0]?.sourceRef, "rollup-2026-06-26");
+  console.log("OK: approved restricted summaries retain provenance and sensitivity metadata");
+}
+
+async function testApprovedRestrictedSummariesRejectRawDetails(): Promise<void> {
+  const { planMemoryWrite } = await loadPipeline();
+  const plan = planMemoryWrite({
+    userId: "user-123",
+    content: "Approved summary: routing number 021000021 appeared in the data.",
+    trigger: "inferred",
+    sourceType: "plaid",
+    restrictedSummaryApproved: true,
+    reviewEnabled: false,
+    now,
+  });
+
+  assert.equal(plan.status, "excluded");
+  assert.equal(plan.record, null);
+  assert.match(plan.reason, /must not include raw account/);
+  console.log("OK: approved restricted summaries still reject raw financial identifiers");
+}
+
 async function testConflictSupersessionIsPlannedForApproval(): Promise<void> {
   const { buildApprovedMemorySupersessions, buildMemoryApprovalResolution, planMemoryWrite } = await loadPipeline();
   const plan = planMemoryWrite({
@@ -318,6 +392,9 @@ async function main(): Promise<void> {
   await testExplicitRememberRequiresReview();
   await testExplicitRememberHonorsDisabledReviewGate();
   await testDiagnosticWritesAreExcluded();
+  await testRawRestrictedSourceWritesAreExcluded();
+  await testApprovedRestrictedSummariesCarryMetadata();
+  await testApprovedRestrictedSummariesRejectRawDetails();
   await testConflictSupersessionIsPlannedForApproval();
 }
 
