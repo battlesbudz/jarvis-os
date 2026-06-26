@@ -159,6 +159,7 @@ const RESTRICTED_SOURCE_TOKENS = [
   "payroll",
   "brokerage",
   "restricted_source",
+  "restricted_summary",
 ];
 
 function isRestrictedSourceType(value: unknown): boolean {
@@ -176,15 +177,20 @@ function isRestrictedProvenanceRef(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
   const sourceType = cleanSingleLine(record.sourceType ?? record.source_type ?? record.kind);
+  const sourceRef = cleanSingleLine(record.sourceRef ?? record.source_ref ?? record.id);
   const sensitivity = cleanSingleLine(record.sensitivity).toLowerCase();
   return Boolean(record.restricted) ||
     sensitivity === "restricted_summary" ||
-    isRestrictedSourceType(sourceType);
+    isRestrictedSourceType(sourceType) ||
+    isRestrictedSourceType(sourceRef);
 }
 
 function isRestrictedRetrievedMemory(memory: RetrievedMemory): boolean {
   return cleanSingleLine(memory.sensitivity).toLowerCase() === "restricted_summary" ||
-    (Array.isArray(memory.provenance) && memory.provenance.some(isRestrictedProvenanceRef));
+    isRestrictedSourceType(memory.sourceType) ||
+    isRestrictedSourceType(memory.sourceRef) ||
+    (Array.isArray(memory.provenance) && memory.provenance.some(isRestrictedProvenanceRef)) ||
+    (Array.isArray(memory.sourceRefs) && memory.sourceRefs.some(isRestrictedProvenanceRef));
 }
 
 function sanitizeRestrictedMemoryContent(content: string): string {

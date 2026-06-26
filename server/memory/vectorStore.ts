@@ -10,6 +10,8 @@ export type MemoryVectorRow = {
   id: string;
   content: string;
   category: string;
+  source_type: string | null;
+  source_ref: string | null;
   tier: string | null;
   memory_type: string | null;
   relevance_score: number | string | null;
@@ -144,6 +146,8 @@ export async function searchMemoryVectors(input: {
         ${userMemories.id} AS id,
         ${userMemories.content} AS content,
         ${userMemories.category} AS category,
+        ${userMemories.sourceType} AS source_type,
+        ${userMemories.sourceRef} AS source_ref,
         ${userMemories.tier} AS tier,
         ${userMemories.memoryType} AS memory_type,
         ${userMemories.relevanceScore} AS relevance_score,

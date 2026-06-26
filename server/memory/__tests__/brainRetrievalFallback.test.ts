@@ -24,6 +24,19 @@ async function main(): Promise<void> {
       score: 42,
       citations: [{ kind: "document", id: "doc-1" }],
     },
+    {
+      pageSlug: "restricted-page",
+      content: "Restricted projected spending summary.",
+      score: 75,
+      citations: [
+        {
+          kind: "user_memory",
+          id: "restricted-memory-1",
+          sourceType: "restricted_summary",
+          sourceRef: "plaid-rollup-1",
+        },
+      ],
+    },
   ];
 
   const mapped = mapBrainChunksToRetrievedMemories(chunks);
@@ -34,6 +47,9 @@ async function main(): Promise<void> {
     "derived user_memory citations should preserve the canonical memory id",
   );
   assert.equal(mapped[1]?.id, "synthetic-page:1", "derived chunks without user_memory citations should use fallback ids");
+  assert.equal(mapped[2]?.id, "restricted-memory-1", "restricted derived chunks should preserve canonical memory id");
+  assert.equal(mapped[2]?.sensitivity, "restricted_summary", "restricted derived chunks should keep restricted sensitivity");
+  assert.equal(mapped[2]?.sourceType, "restricted_summary", "restricted derived chunks should keep citation source type");
 
   const incrementCalls: string[][] = [];
   applyAccessUpdateForRetrievedMemories(mapped, false, (ids) => {
@@ -41,7 +57,7 @@ async function main(): Promise<void> {
   });
   assert.deepEqual(
     incrementCalls,
-    [["memory-canonical-1", "synthetic-page:1"]],
+    [["memory-canonical-1", "synthetic-page:1", "restricted-memory-1"]],
     "access updates should receive mapped canonical and synthetic ids",
   );
 

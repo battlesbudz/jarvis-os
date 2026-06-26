@@ -125,6 +125,24 @@ async function main(): Promise<void> {
   assert.deepEqual(cloudRestricted.items, []);
   assert.match(cloudRestricted.uncertainty.join(" "), /withheld from cloud model context/);
 
+  const legacyRestricted = await retrieveMemoryContext(
+    { userId: "memory-os-user", query: "legacy plaid", caller: "coach_context" },
+    {
+      retrieveMemories: async () => [
+        memory({
+          id: "legacy-plaid-1",
+          content: "Legacy Plaid memory from before the restricted metadata migration.",
+          sourceType: "plaid_transaction_rollup",
+          sourceRef: "legacy-rollup-1",
+          sensitivity: "normal",
+          provenance: [],
+        }),
+      ],
+    },
+  );
+  assert.deepEqual(legacyRestricted.items, []);
+  assert.match(legacyRestricted.uncertainty.join(" "), /withheld from cloud model context/);
+
   const localRestricted = await retrieveMemoryContext(
     {
       userId: "memory-os-user",

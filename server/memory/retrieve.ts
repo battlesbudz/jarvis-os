@@ -28,6 +28,8 @@ export interface RetrievedMemory {
   confidence: number;
   accessCount: number;
   score: number;
+  sourceType?: string | null;
+  sourceRef?: string | null;
   sensitivity?: string;
   provenance?: unknown[];
   source?: "canonical" | "gbrain";
@@ -36,6 +38,36 @@ export interface RetrievedMemory {
 }
 
 type MemoryRow = MemoryVectorRow;
+
+const RESTRICTED_SOURCE_TOKENS = [
+  "bank",
+  "banking",
+  "bank_statement",
+  "financial",
+  "financial_record",
+  "financial_transaction",
+  "transaction",
+  "plaid",
+  "credit_card",
+  "debit_card",
+  "tax_document",
+  "payroll",
+  "brokerage",
+  "account_balance",
+  "restricted_source",
+  "restricted_summary",
+];
+
+function isRestrictedSourceType(value: unknown): boolean {
+  const normalized = String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (!normalized) return false;
+  return RESTRICTED_SOURCE_TOKENS.some((token) =>
+    normalized === token ||
+    normalized.startsWith(`${token}_`) ||
+    normalized.endsWith(`_${token}`) ||
+    normalized.includes(`_${token}_`)
+  );
+}
 
 function envFlagEnabled(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
@@ -187,7 +219,12 @@ function clampRelevanceScore(score: number): number {
 export function mapBrainChunksToRetrievedMemories(chunks: QueryBrainResult["chunks"]): RetrievedMemory[] {
   return chunks.map((chunk, index) => {
     const canonicalMemoryId = chunk.citations.find((citation) => citation.kind === "user_memory")?.id;
+    const canonicalCitation = chunk.citations.find((citation) => citation.kind === "user_memory");
     const brainChunkId = `${chunk.pageSlug}:${index}`;
+    const restricted = chunk.citations.some((citation) =>
+      isRestrictedSourceType(citation.sourceType) ||
+      isRestrictedSourceType(citation.sourceRef)
+    );
 
     return {
       id: canonicalMemoryId ?? brainChunkId,
@@ -199,8 +236,15 @@ export function mapBrainChunksToRetrievedMemories(chunks: QueryBrainResult["chun
       confidence: 80,
       accessCount: 0,
       score: chunk.score,
-      sensitivity: "normal",
-      provenance: [],
+      sourceType: canonicalCitation?.sourceType ?? null,
+      sourceRef: canonicalCitation?.sourceRef ?? null,
+      sensitivity: restricted ? "restricted_summary" : "normal",
+      provenance: chunk.citations.map((citation) => ({
+        sourceType: citation.sourceType ?? citation.kind,
+        sourceRef: citation.sourceRef ?? citation.id,
+        restricted: isRestrictedSourceType(citation.sourceType) || isRestrictedSourceType(citation.sourceRef),
+        sensitivity: restricted ? "restricted_summary" : undefined,
+      })),
       source: "gbrain",
       sourceId: brainChunkId,
       sourceRefs: chunk.citations,
@@ -254,6 +298,8 @@ export function rankMemoryRowsForRetrieval(
       id: r.id,
       content: r.content,
       category: r.category,
+      sourceType: r.source_type,
+      sourceRef: r.source_ref,
       tier: r.tier || "long_term",
       memoryType: r.memory_type || "semantic",
       relevanceScore: Number(r.relevance_score) || 0,
@@ -299,7 +345,7 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
   let rows: { rows: MemoryRow[] };
   try {
     const rawRows = await db.execute(sql`
-      SELECT id, content, category, tier, memory_type, relevance_score, confidence, access_count, embedding,
+      SELECT id, content, category, source_type, source_ref, tier, memory_type, relevance_score, confidence, access_count, embedding,
              COALESCE(sensitivity, 'normal') AS sensitivity, COALESCE(provenance, '[]'::jsonb) AS provenance, extracted_at,
              ts_rank(to_tsvector('english', content), plainto_tsquery('english', ${q})) AS fts_rank
       FROM user_memories

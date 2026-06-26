@@ -183,6 +183,7 @@ const RESTRICTED_SOURCE_TOKENS = [
   "brokerage",
   "account_balance",
   "restricted_source",
+  "restricted_summary",
 ];
 const RAW_RESTRICTED_CONTENT_PATTERNS = [
   /\b(?:account|routing|card|debit|credit)\s*(?:number|no\.?|#|ending)?\s*[:#-]?\s*(?:\d[\s-]?){4,}\b/i,
@@ -429,10 +430,10 @@ export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
   const supersedesMemoryId = cleanSingleLine(input.supersedesMemoryId) || null;
   const reviewEnabled = input.reviewEnabled ?? true;
   const reviewRequired = reviewEnabled;
-  const sourceType = reviewRequired && input.trigger === "explicit_remember"
-    ? "explicit_remember"
-    : approvedRestrictedSummary
-      ? "restricted_summary"
+  const sourceType = approvedRestrictedSummary
+    ? "restricted_summary"
+    : reviewRequired && input.trigger === "explicit_remember"
+      ? "explicit_remember"
       : cleanSingleLine(input.sourceType, input.trigger === "dream" ? "dream_cycle" : "manual");
   const sensitivity: MemorySensitivity = approvedRestrictedSummary ? "restricted_summary" : "normal";
   const reason = reviewRequired
