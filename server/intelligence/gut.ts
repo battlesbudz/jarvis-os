@@ -121,6 +121,8 @@ async function computeBaseline(userId: string, token: string | null): Promise<Gu
       .where(and(
         eq(schema.userMemories.userId, userId),
         eq(schema.userMemories.category, "work_patterns"),
+        eq(schema.userMemories.pendingReview, false),
+        sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
       ))
       .limit(30);
     const workText = past.map((m) => m.content).join(" ").toLowerCase();

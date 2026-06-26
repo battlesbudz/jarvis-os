@@ -82,6 +82,7 @@ async function main(): Promise<void> {
 
   assert.equal(result.ok, true);
   assert.match(result.content, /Memory search returned 1 actual retrieved memory/);
+  assert.match(result.content, /memory_id=__memory_os_tool_1__/);
   assert.match(result.content, /The user prefers crisp morning plans\./);
   assert.deepEqual(incrementedIds, [["__memory_os_tool_1__"]]);
   assert.equal(calls.length, 1);

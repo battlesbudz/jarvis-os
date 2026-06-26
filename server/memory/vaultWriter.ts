@@ -22,6 +22,7 @@ const openai = createRoutedOpenAIChatShim("[MemoryVault]", "balanced");
 
 const VAULT_TTL_MS = 6 * 60 * 60 * 1000;
 const VAULT_NOVELTY_THRESHOLD = 3;
+const APPROVED_MEMORY_STATUS_SQL = sql`('active', 'kept', 'edited')`;
 
 // ── Page definitions ──────────────────────────────────────────────────────────
 
@@ -46,7 +47,7 @@ export async function buildAboutYouSource(userId: string): Promise<string> {
           eq(schema.userMemories.userId, userId),
           eq(schema.userMemories.tier, "long_term"),
           sql`${schema.userMemories.category} IN ('values','communication_style','preferences','fact')`,
-          eq(schema.userMemories.reviewStatus, "active"),
+          sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
         ),
       )
       .orderBy(desc(schema.userMemories.extractedAt))
@@ -69,7 +70,7 @@ export async function buildProjectsSource(userId: string): Promise<string> {
           eq(schema.userMemories.userId, userId),
           eq(schema.userMemories.tier, "long_term"),
           sql`${schema.userMemories.category} IN ('goals_history','accomplishments')`,
-          eq(schema.userMemories.reviewStatus, "active"),
+          sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
         ),
       )
       .orderBy(desc(schema.userMemories.extractedAt))
@@ -115,7 +116,7 @@ export async function buildPeopleSource(userId: string): Promise<string> {
         and(
           eq(schema.userMemories.userId, userId),
           eq(schema.userMemories.category, "relationships"),
-          eq(schema.userMemories.reviewStatus, "active"),
+          sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
         ),
       )
       .orderBy(desc(schema.userMemories.extractedAt))
@@ -175,7 +176,7 @@ export async function buildDecisionsSource(userId: string): Promise<string> {
         eq(schema.userMemories.userId, userId),
         sql`${schema.userMemories.category} IN ('goals_history','values','blockers')`,
         eq(schema.userMemories.tier, "long_term"),
-        eq(schema.userMemories.reviewStatus, "active"),
+        sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
       ),
     )
     .orderBy(desc(schema.userMemories.extractedAt))

@@ -19,6 +19,9 @@ interface Memory {
   extractedAt: string;
   relevanceScore?: number;
   lastReferencedAt?: string | null;
+  pendingReview?: boolean;
+  reviewStatus?: string | null;
+  trustStatus?: string | null;
 }
 
 interface MemoriesResponse {
@@ -48,6 +51,30 @@ const CATEGORY_COLORS: Record<string, string> = {
 
 function getCatColor(cat: string): string {
   return CATEGORY_COLORS[cat?.toLowerCase()] ?? Colors.textSecondary;
+}
+
+function getLifecycle(memory: Memory): string {
+  return (memory.trustStatus || memory.reviewStatus || (memory.pendingReview ? 'pending' : 'active')).toLowerCase();
+}
+
+function getLifecycleColor(status: string): string {
+  switch (status) {
+    case 'pending':
+      return '#F59E0B';
+    case 'superseded':
+    case 'corrected':
+      return Colors.cyan;
+    case 'stale':
+    case 'archived':
+      return Colors.textTertiary;
+    case 'discarded':
+    case 'rejected':
+      return Colors.error;
+    case 'edited':
+      return Colors.purple;
+    default:
+      return Colors.green;
+  }
 }
 
 function formatDate(iso: string): string {
@@ -220,6 +247,8 @@ export default function MemoryScreen() {
             {activeDateEntries.map(m => {
               const catColor = getCatColor(m.category);
               const relevanceLabel = formatRelevanceScore(m.relevanceScore);
+              const lifecycle = getLifecycle(m);
+              const showLifecycle = lifecycle !== 'active' && lifecycle !== 'kept';
               return (
                 <View key={m.id} style={styles.memoryCard}>
                   <View style={styles.memoryCardTop}>
@@ -227,6 +256,11 @@ export default function MemoryScreen() {
                     <Text style={[styles.catLabel, { color: catColor }]}>
                       {m.category?.replace('_', ' ') ?? 'fact'}
                     </Text>
+                    {showLifecycle && (
+                      <Text style={[styles.lifecycleLabel, { color: getLifecycleColor(lifecycle) }]}>
+                        {lifecycle.replace('_', ' ')}
+                      </Text>
+                    )}
                     {relevanceLabel && (
                       <Text style={styles.scoreText}>{relevanceLabel}</Text>
                     )}
@@ -377,6 +411,12 @@ const styles = StyleSheet.create({
   scoreText: {
     fontSize: 10,
     color: Colors.textTertiary,
+  },
+  lifecycleLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    maxWidth: 96,
   },
   memoryContent: {
     fontSize: 14,

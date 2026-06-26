@@ -14,10 +14,25 @@ import { markSoulStale } from "../memory/soul";
 import { deletePerson, listPeople } from "../memory/people";
 import { processLivingContextUpdate } from "../workspace/livingContextRouter";
 import { buildMemoryTrustSummary, normalizeMemoryTrustRecord } from "../memory/trust";
+import { approvePendingMemoryWrite, keepPendingMemoryWrites } from "../memory/writePipeline";
 
 const openai = new OpenAI(getOpenAIClientConfig());
 const paramValue = (value: string | string[]): string => Array.isArray(value) ? (value[0] ?? "") : value;
 const morningNoteSummaryCache = new Map<string, { summary: string; date: string }>();
+
+async function refreshApprovedMemoryDerivedContext(userId: string, memoryIds: string[] = []): Promise<void> {
+  try {
+    await markSoulStale(userId);
+    if (process.env.JARVIS_BRAIN_PROJECTION === "1") {
+      const { projectApprovedMemories } = await import("../brain/adapter");
+      await projectApprovedMemories(userId, {
+        memoryIds: [...new Set(memoryIds.map((id) => id.trim()).filter(Boolean))],
+      });
+    }
+  } catch (error) {
+    console.error("[MemoryReview] derived context refresh failed:", error);
+  }
+}
 
 async function applyLivingContextReviewToFile(relPath: string | null | undefined, oldBlock: string | null | undefined, newBlock?: string | null): Promise<void> {
   if (!relPath || !oldBlock) return;
@@ -162,26 +177,25 @@ export function registerProfileMemoryRoutes(app: Express): void {
         if (!updatedContent || typeof updatedContent !== "string" || !updatedContent.trim()) {
           return res.status(400).json({ error: "updatedContent is required for edit action" });
         }
-        const result = await db.execute(sql`
-          UPDATE user_memories
-          SET content = ${updatedContent.trim()}, pending_review = FALSE, review_status = 'edited'
-          WHERE id = ${id} AND user_id = ${userId} AND pending_review = TRUE
-          RETURNING id
-        `);
-        if ((result.rows ?? []).length === 0) return res.status(404).json({ error: "Memory not found" });
-        markSoulStale(userId).catch(() => {});
-        return res.json({ ok: true });
+        const result = await approvePendingMemoryWrite({
+          userId,
+          memoryId: id,
+          status: "edited",
+          updatedContent,
+        });
+        if (!result.approved) return res.status(404).json({ error: "Memory not found" });
+        await refreshApprovedMemoryDerivedContext(userId, [id, result.supersededMemoryId].filter((memoryId): memoryId is string => Boolean(memoryId)));
+        return res.json({ ok: true, supersededMemoryId: result.supersededMemoryId });
       }
       // action === "keep"
-      const result = await db.execute(sql`
-        UPDATE user_memories
-        SET pending_review = FALSE, review_status = 'kept'
-        WHERE id = ${id} AND user_id = ${userId} AND pending_review = TRUE
-        RETURNING id
-      `);
-      if ((result.rows ?? []).length === 0) return res.status(404).json({ error: "Memory not found" });
-      markSoulStale(userId).catch(() => {});
-      return res.json({ ok: true });
+      const result = await approvePendingMemoryWrite({
+        userId,
+        memoryId: id,
+        status: "kept",
+      });
+      if (!result.approved) return res.status(404).json({ error: "Memory not found" });
+      await refreshApprovedMemoryDerivedContext(userId, [id, result.supersededMemoryId].filter((memoryId): memoryId is string => Boolean(memoryId)));
+      return res.json({ ok: true, supersededMemoryId: result.supersededMemoryId });
     } catch (error) {
       console.error("Error reviewing memory:", error);
       res.status(500).json({ error: "Failed to review memory" });
@@ -192,19 +206,11 @@ export function registerProfileMemoryRoutes(app: Express): void {
     try {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
-      const result = await db.execute(sql`
-        UPDATE user_memories
-        SET pending_review = FALSE, review_status = 'kept'
-        WHERE user_id = ${userId}
-          AND pending_review = TRUE
-          AND review_status = 'pending'
-        RETURNING id
-      `);
-      const count = (result.rows ?? []).length;
-      if (count > 0) {
-        markSoulStale(userId).catch(() => {});
+      const result = await keepPendingMemoryWrites({ userId });
+      if (result.approved > 0) {
+        await refreshApprovedMemoryDerivedContext(userId, [...result.memoryIds, ...result.supersededMemoryIds]);
       }
-      res.json({ ok: true, approved: count });
+      res.json({ ok: true, approved: result.approved, superseded: result.supersededMemoryIds.length });
     } catch (error) {
       console.error("Error bulk-approving pending memories:", error);
       res.status(500).json({ error: "Failed to approve pending memories" });
@@ -344,6 +350,8 @@ export function registerProfileMemoryRoutes(app: Express): void {
         .where(
           sql`${userMemories.userId} = ${userId}
             AND ${userMemories.tier} = 'long_term'
+            AND ${userMemories.pendingReview} = FALSE
+            AND ${userMemories.reviewStatus} IN ('active', 'kept', 'edited')
             AND ${userMemories.relevanceScore} <= 30
             AND COALESCE(${userMemories.lastReferencedAt}, ${userMemories.extractedAt}) < ${thirtyDaysAgo}`
         )

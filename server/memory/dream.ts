@@ -78,6 +78,8 @@ async function hasEnoughData(userId: string): Promise<boolean> {
     .where(
       and(
         eq(schema.userMemories.userId, userId),
+        eq(schema.userMemories.pendingReview, false),
+        sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
         sql`${schema.userMemories.extractedAt} < ${cutoff}`,
       ),
     )
@@ -108,6 +110,8 @@ async function buildCorpus(userId: string): Promise<CorpusResult> {
       .where(
         and(
           eq(schema.userMemories.userId, userId),
+          eq(schema.userMemories.pendingReview, false),
+          sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
           gte(schema.userMemories.extractedAt, since90),
         ),
       )
@@ -272,6 +276,8 @@ async function runConsolidationPass(
       and(
         eq(schema.userMemories.userId, userId),
         eq(schema.userMemories.tier, "short_term"),
+        eq(schema.userMemories.pendingReview, false),
+        sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
         lt(schema.userMemories.extractedAt, sixHoursAgo),
         sql`(${schema.userMemories.expiresAt} IS NULL OR ${schema.userMemories.expiresAt} > NOW())`,
       ),
@@ -427,6 +433,8 @@ async function runSemanticExtractionPass(
       and(
         eq(schema.userMemories.userId, userId),
         eq(schema.userMemories.memoryType, "episodic"),
+        eq(schema.userMemories.pendingReview, false),
+        sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
         gte(schema.userMemories.extractedAt, since7d),
       ),
     )
@@ -606,7 +614,11 @@ async function runAccessReinforcementPass(
     const memories = await db
       .select({ id: schema.userMemories.id, accessCount: schema.userMemories.accessCount })
       .from(schema.userMemories)
-      .where(eq(schema.userMemories.userId, userId));
+      .where(and(
+        eq(schema.userMemories.userId, userId),
+        eq(schema.userMemories.pendingReview, false),
+        sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+      ));
 
     // Compare against the snapshot to find memories with delta > 3.
     // On the very first run (empty snapshot), skip boosting entirely so we

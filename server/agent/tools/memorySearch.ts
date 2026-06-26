@@ -2,12 +2,14 @@ import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
 import { batchIncrementAccessCount } from "../../memory/retrieve";
 import type { RetrievedMemory } from "../../memory/retrieve";
 import { retrieveMemoryContext, memoryContextItemsToRetrievedMemories, type MemoryContext } from "../../memory/memoryOs";
+import { defaultMemoryWriteDeps, planMemoryWrite } from "../../memory/writePipeline";
 import { db } from "../../db";
 import { eq, sql } from "drizzle-orm";
 import {
   MEMORY_CATEGORIES,
   MEMORY_TIERS,
   MEMORY_TYPES,
+  lifeContext,
   userMemories,
   users,
   type MemoryCategory,
@@ -48,7 +50,7 @@ interface MemorySaveDeps {
   embedText: (text: string) => Promise<number[] | null>;
   upsertMemoryEmbedding: (memoryId: string, embedding: number[]) => Promise<unknown>;
   markSoulStale: (userId: string) => Promise<void>;
-  projectApprovedMemories: (userId: string, limit?: number) => Promise<unknown>;
+  projectApprovedMemories: (userId: string, options?: number | { limit?: number; memoryIds?: string[] }) => Promise<unknown>;
 }
 
 function normalizeForDedup(text: string): string {
@@ -82,6 +84,20 @@ function normalizeMemoryType(value: unknown): MemoryType {
     : "semantic";
 }
 
+async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
+  try {
+    const rows = await db
+      .select({ data: lifeContext.data })
+      .from(lifeContext)
+      .where(eq(lifeContext.userId, userId))
+      .limit(1);
+    const data = rows[0]?.data as Record<string, unknown> | undefined;
+    return typeof data?.memoryReviewEnabled === "boolean" ? data.memoryReviewEnabled : true;
+  } catch {
+    return true;
+  }
+}
+
 async function executeMemorySave(
   args: ToolArgs,
   ctx: ToolContext,
@@ -97,16 +113,46 @@ async function executeMemorySave(
   const memoryType = normalizeMemoryType(args.memory_type ?? args.memoryType);
   const confidence = clampInt(args.confidence, 0, 100, 95);
   const sourceRef = String(args.source_ref || args.sourceRef || ctx.channel || "agent").trim();
+  const supersedesMemoryId = String(args.supersedes_memory_id || args.supersedesMemoryId || "").trim();
   const normalized = normalizeForDedup(content);
+  const reviewEnabled = await isMemoryReviewEnabledForUser(ctx.userId);
+  const plan = planMemoryWrite({
+    userId: ctx.userId,
+    content,
+    trigger: "explicit_remember",
+    category,
+    tier,
+    memoryType,
+    confidence,
+    sourceType: "manual",
+    sourceRef: sourceRef || null,
+    supersedesMemoryId: supersedesMemoryId || null,
+    reviewEnabled,
+  });
+
+  if (!plan.record) {
+    return {
+      ok: plan.status !== "invalid",
+      content: plan.reason,
+      label: plan.status === "excluded" ? "Memory save excluded" : "Memory save failed",
+      metadata: { memoryWriteStatus: plan.status },
+    };
+  }
 
   try {
+    const duplicateLifecycleFilter = plan.record.pendingReview
+      ? sql`AND review_status NOT IN ('discarded', 'rejected', 'superseded', 'stale', 'archived')`
+      : sql`
+        AND (pending_review = FALSE OR pending_review IS NULL)
+        AND review_status IN ('active', 'kept', 'edited')
+      `;
     const duplicateResult = await db.execute<{ id: string }>(sql`
       SELECT id
       FROM user_memories
       WHERE user_id = ${ctx.userId}
         AND LOWER(REGEXP_REPLACE(TRIM(content), '\\s+', ' ', 'g')) = ${normalized}
         AND (expires_at IS NULL OR expires_at >= NOW())
-        AND review_status NOT IN ('discarded', 'rejected')
+        ${duplicateLifecycleFilter}
       LIMIT 1
     `);
     const duplicateId = duplicateResult.rows?.[0]?.id;
@@ -128,17 +174,19 @@ async function executeMemorySave(
 
     const [inserted] = await db.insert(userMemories).values({
       userId: ctx.userId,
-      content,
-      category,
-      confidence,
+      content: plan.record.content,
+      category: plan.record.category,
+      confidence: plan.record.confidence,
       relevanceScore: 75,
-      sourceType: "manual",
-      sourceRef: sourceRef || null,
+      sourceType: plan.record.sourceType,
+      sourceRef: plan.record.sourceRef,
       embedding: embedding ?? undefined,
-      tier,
-      memoryType,
-      pendingReview: false,
-      reviewStatus: "active",
+      tier: plan.record.tier,
+      memoryType: plan.record.memoryType,
+      expiresAt: plan.record.expiresAt ?? undefined,
+      pendingReview: plan.record.pendingReview,
+      reviewStatus: plan.record.reviewStatus,
+      supersedesMemoryId: plan.record.supersedesMemoryId,
     }).returning({ id: userMemories.id });
 
     if (embedding && inserted?.id) {
@@ -147,25 +195,38 @@ async function executeMemorySave(
       );
     }
 
-    deps.markSoulStale(ctx.userId).catch((err) =>
-      console.warn("[MemorySave] markSoulStale failed:", err),
+    console.log(
+      `[${ctx.channel || "Agent"}] memory_save ${plan.record.pendingReview ? "pending_review" : "active"} [${category} ${tier}/${memoryType} c=${confidence}] ${content.slice(0, 70)}`,
     );
 
-    if (process.env.JARVIS_BRAIN_PROJECTION === "1") {
-      deps.projectApprovedMemories(ctx.userId, 25).catch((err) =>
-        console.warn("[MemorySave] brain projection failed:", err),
-      );
+    if (!plan.record.pendingReview) {
+      if (inserted?.id && plan.supersedeMemoryIds.length > 0) {
+        await defaultMemoryWriteDeps.markMemoriesSuperseded(ctx.userId, plan.supersedeMemoryIds, inserted.id);
+      }
+      deps.markSoulStale(ctx.userId).catch(() => {});
+      if (process.env.JARVIS_BRAIN_PROJECTION === "1") {
+        deps.projectApprovedMemories(ctx.userId, {
+          memoryIds: [inserted?.id, ...plan.supersedeMemoryIds].filter((id): id is string => Boolean(id)),
+        }).catch(() => {});
+      }
     }
 
-    console.log(
-      `[${ctx.channel || "Agent"}] memory_save [${category} ${tier}/${memoryType} c=${confidence}] ${content.slice(0, 70)}`,
-    );
-
+    const tip = plan.oneTimeReviewTip
+      ? " Tip: you can approve, edit, or delete memories later from Memory Review."
+      : "";
+    const action = plan.record.pendingReview ? "queued for review" : "saved";
     return {
       ok: true,
-      content: `Saved memory: ${content}`,
-      label: "Memory saved",
+      content: `Memory ${action}: ${content}.${tip}`,
+      label: plan.record.pendingReview ? "Memory queued for review" : "Memory saved",
       detail: inserted?.id,
+      metadata: {
+        memoryWriteStatus: plan.status,
+        reviewStatus: plan.record.reviewStatus,
+        pendingReview: plan.record.pendingReview,
+        supersedesMemoryId: plan.record.supersedesMemoryId,
+        supersededMemoryIds: plan.record.pendingReview ? [] : plan.supersedeMemoryIds,
+      },
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -209,6 +270,14 @@ async function fetchProfileIdentity(userId: string): Promise<string | null> {
 
   const identity = user?.displayName || user?.username || user?.email || null;
   return identity?.trim() || null;
+}
+
+function formatRetrievedMemoryLine(memory: RetrievedMemory, index: number): string {
+  return `[${index + 1}] memory_id=${memory.id} [${memory.tier}/${memory.memoryType}] (${memory.category}, confidence: ${memory.confidence}%) ${memory.content}`;
+}
+
+function formatMemoryRowLine(memory: MemoryRow, index: number): string {
+  return `[${index + 1}] memory_id=${memory.id} [${memory.tier || "long_term"}/${memory.memory_type || "semantic"}] (${memory.confidence}% confidence) ${memory.content}`;
 }
 
 async function executeMemorySearch(
@@ -286,7 +355,7 @@ async function executeMemorySearch(
     }
 
     const formatted = top
-      .map((m, i: number) => `[${i + 1}] [${m.tier}/${m.memoryType}] (${m.category}, confidence: ${m.confidence}%) ${m.content}`)
+      .map(formatRetrievedMemoryLine)
       .join("\n");
 
     const content = appendProfileIdentityFallback(
@@ -294,7 +363,7 @@ async function executeMemorySearch(
         `Memory search returned ${top.length} actual retrieved memor${top.length === 1 ? "y" : "ies"} for: "${query}"`,
         "These are real memory entries from the user's memory store. In your final answer, summarize the entries below and do not claim there were no results.",
         "",
-        "Format: [tier/type] (category, confidence%)",
+        "Format: memory_id=<id> [tier/type] (category, confidence%). Use memory_id as supersedes_memory_id when saving a user-approved correction to an existing memory.",
         "",
         formatted,
       ].join("\n"),
@@ -414,6 +483,10 @@ export const memorySaveTool: AgentTool = {
         type: "string",
         description: "Optional source reference for where the memory came from.",
       },
+      supersedes_memory_id: {
+        type: "string",
+        description: "Optional existing memory_id returned by memory_search or memory_get that this correction should supersede after the user approves it.",
+      },
     },
     required: ["content"],
   },
@@ -457,6 +530,7 @@ export const memoryGetTool: AgentTool = {
           AND LOWER(category) = LOWER(${category})
           AND (expires_at IS NULL OR expires_at >= NOW())
           AND (pending_review = FALSE OR pending_review IS NULL)
+          AND review_status IN ('active', 'kept', 'edited')
         ORDER BY confidence DESC, relevance_score DESC
         LIMIT ${limit}
       `);
@@ -480,7 +554,7 @@ export const memoryGetTool: AgentTool = {
       `).catch((err) => console.error("[MemoryGet] access_count update failed:", err));
 
       const formatted = memories
-        .map((m, i) => `[${i + 1}] [${m.tier || "long_term"}/${m.memory_type || "semantic"}] (${m.confidence}% confidence) ${m.content}`)
+        .map(formatMemoryRowLine)
         .join("\n");
 
       const content = `${memories.length} memories in category "${category}":\n\n${formatted}`;

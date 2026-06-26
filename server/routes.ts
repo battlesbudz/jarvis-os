@@ -1631,7 +1631,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
             const [rows, noteSummary, docsCtx] = await Promise.all([
               db.select({ content: userMemories.content, category: userMemories.category })
                 .from(userMemories)
-                .where(eq(userMemories.userId, userId))
+                .where(and(
+                  eq(userMemories.userId, userId),
+                  eq(userMemories.pendingReview, false),
+                  sql`${userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+                ))
                 .orderBy(desc(userMemories.extractedAt))
                 .limit(50),
               getMorningNoteSummary(userId),

@@ -1,5 +1,5 @@
 import { db, pool } from "./db";
-import { eq, and, gt, lt, inArray } from "drizzle-orm";
+import { eq, and, gt, lt, inArray, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { notifyUser } from "./channels/registry";
 import { getGoogleCalendarEvents } from "./integrations/googleCalendar";
@@ -86,7 +86,11 @@ async function getUserMemories(
       category: schema.userMemories.category,
     })
     .from(schema.userMemories)
-    .where(eq(schema.userMemories.userId, userId));
+    .where(and(
+      eq(schema.userMemories.userId, userId),
+      eq(schema.userMemories.pendingReview, false),
+      sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+    ));
 }
 
 interface CuriosityItem {

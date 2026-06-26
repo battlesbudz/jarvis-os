@@ -1,4 +1,13 @@
-export type MemoryTrustStatus = "pending" | "active" | "edited" | "rejected";
+export type MemoryTrustStatus =
+  | "pending"
+  | "active"
+  | "edited"
+  | "superseded"
+  | "corrected"
+  | "stale"
+  | "archived"
+  | "discarded"
+  | "rejected";
 
 export interface MemoryTrustRecordInput {
   id?: string;
@@ -22,6 +31,10 @@ export interface MemoryTrustRecordInput {
   extracted_at?: Date | string | null;
   lastReferencedAt?: Date | string | null;
   last_referenced_at?: Date | string | null;
+  supersedesMemoryId?: string | null;
+  supersedes_memory_id?: string | null;
+  correctedByMemoryId?: string | null;
+  corrected_by_memory_id?: string | null;
 }
 
 export interface MemoryTrustRecord {
@@ -61,7 +74,12 @@ function toIso(value: Date | string | null | undefined): string | null {
 function determineStatus(row: MemoryTrustRecordInput): MemoryTrustStatus {
   const reviewStatus = String(row.reviewStatus ?? row.review_status ?? "").toLowerCase();
   const pendingReview = row.pendingReview ?? row.pending_review ?? false;
-  if (reviewStatus === "discarded" || reviewStatus === "rejected") return "rejected";
+  if (reviewStatus === "discarded") return "discarded";
+  if (reviewStatus === "rejected") return "rejected";
+  if (reviewStatus === "superseded") return "superseded";
+  if (reviewStatus === "corrected") return "corrected";
+  if (reviewStatus === "stale") return "stale";
+  if (reviewStatus === "archived") return "archived";
   if (reviewStatus === "edited") return "edited";
   if (reviewStatus === "pending" || pendingReview) return "pending";
   return "active";
@@ -117,6 +135,11 @@ export function buildMemoryTrustSummary(rows: MemoryTrustRecordInput[]): MemoryT
     pending: [],
     active: [],
     edited: [],
+    superseded: [],
+    corrected: [],
+    stale: [],
+    archived: [],
+    discarded: [],
     rejected: [],
   };
   for (const memory of memories) {
@@ -128,6 +151,11 @@ export function buildMemoryTrustSummary(rows: MemoryTrustRecordInput[]): MemoryT
       pending: buckets.pending.length,
       active: buckets.active.length,
       edited: buckets.edited.length,
+      superseded: buckets.superseded.length,
+      corrected: buckets.corrected.length,
+      stale: buckets.stale.length,
+      archived: buckets.archived.length,
+      discarded: buckets.discarded.length,
       rejected: buckets.rejected.length,
     },
     buckets,

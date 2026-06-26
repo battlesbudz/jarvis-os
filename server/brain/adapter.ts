@@ -16,6 +16,8 @@ import type {
   UpsertEvidenceInput,
 } from "./types";
 
+const APPROVED_USER_MEMORY_REVIEW_STATUSES = new Set(["active", "kept", "edited"]);
+
 function assertWritableApproval(input: Pick<UpsertEvidenceInput, "approvalMode">): void {
   if (input.approvalMode === "review_required") {
     throw new Error("Brain adapter cannot upsert review_required evidence in the first slice");
@@ -296,9 +298,16 @@ export async function upsertEvidence(input: UpsertEvidenceInput): Promise<{ page
 
 export async function projectApprovedMemories(
   userId: string,
-  limit = 100,
+  options: number | { limit?: number; memoryIds?: string[] } = 100,
 ): Promise<{ scanned: number; projected: number; skipped: number }> {
   await retireOrphanedProjectedMemories(userId);
+  const limit = typeof options === "number" ? options : options.limit ?? 100;
+  const memoryIds = typeof options === "number"
+    ? []
+    : [...new Set((options.memoryIds ?? []).map((id) => id.trim()).filter(Boolean))];
+  const memoryWhere = memoryIds.length > 0
+    ? and(eq(schema.userMemories.userId, userId), inArray(schema.userMemories.id, memoryIds))
+    : and(eq(schema.userMemories.userId, userId));
 
   const people = await db
     .select({ id: schema.people.id, name: schema.people.name })
@@ -326,8 +335,8 @@ export async function projectApprovedMemories(
       reviewStatus: schema.userMemories.reviewStatus,
     })
     .from(schema.userMemories)
-    .where(and(eq(schema.userMemories.userId, userId)))
-    .limit(limit);
+    .where(memoryWhere)
+    .limit(memoryIds.length > 0 ? memoryIds.length : limit);
 
   const now = Date.now();
   let projected = 0;
@@ -335,8 +344,7 @@ export async function projectApprovedMemories(
 
   for (const memory of memories) {
     const expired = memory.expiresAt ? memory.expiresAt.getTime() <= now : false;
-    const reviewBlocked =
-      memory.pendingReview || memory.reviewStatus === "pending" || memory.reviewStatus === "discarded";
+    const reviewBlocked = memory.pendingReview || !APPROVED_USER_MEMORY_REVIEW_STATUSES.has(memory.reviewStatus);
 
     if (expired || reviewBlocked) {
       skipped += await retireProjectedMemory({ id: memory.id, userId });

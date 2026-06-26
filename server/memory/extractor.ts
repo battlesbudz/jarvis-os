@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, desc } from "drizzle-orm";
+import { and, eq, desc, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { routeModelTurn } from "../agent/modelRouter";
 
@@ -149,7 +149,10 @@ export async function extractAndStore(input: ExtractInput): Promise<ExtractedMem
     const existingRows = await db
       .select({ content: schema.userMemories.content })
       .from(schema.userMemories)
-      .where(eq(schema.userMemories.userId, userId))
+      .where(and(
+        eq(schema.userMemories.userId, userId),
+        sql`${schema.userMemories.reviewStatus} NOT IN ('discarded', 'rejected', 'superseded', 'stale', 'archived')`,
+      ))
       .orderBy(desc(schema.userMemories.extractedAt))
       .limit(150);
     const existingMemories = existingRows.map((r) => r.content);

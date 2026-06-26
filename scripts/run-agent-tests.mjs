@@ -180,12 +180,14 @@ const tests = [
   { file: "server/memory/__tests__/autoReview.test.ts" },
   { file: "server/memory/__tests__/brainRetrievalFallback.test.ts" },
   { file: "server/memory/__tests__/contextBuilder.test.ts" },
+  { file: "server/memory/__tests__/derivedLifecycleFilters.test.ts" },
   { file: "server/memory/__tests__/embeddingHealth.test.ts" },
   { file: "server/memory/__tests__/memoryOs.test.ts" },
   { file: "server/memory/__tests__/retrieveVectorScoring.test.ts" },
   { file: "server/memory/__tests__/vectorDbVerification.test.ts" },
   { file: "server/memory/__tests__/vectorMigration.test.ts" },
   { file: "server/memory/__tests__/vectorStore.test.ts" },
+  { file: "server/memory/__tests__/writePipeline.test.ts" },
 ];
 
 const hasDatabase = configureDatabaseEnvForTests();

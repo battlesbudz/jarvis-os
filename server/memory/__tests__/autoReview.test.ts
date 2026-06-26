@@ -15,6 +15,7 @@ const baseMemory = {
   memoryType: "semantic",
   pendingReview: true,
   reviewStatus: "pending",
+  supersedesMemoryId: null,
 } as const;
 
 const keepDecision = evaluateMemoryAutoReviewDecision(baseMemory);
@@ -40,6 +41,22 @@ assert.equal(
   evaluateMemoryAutoReviewDecision({
     ...baseMemory,
     content: "The user's API key is stored in a local file.",
+  }).action,
+  "pending",
+);
+
+assert.equal(
+  evaluateMemoryAutoReviewDecision({
+    ...baseMemory,
+    supersedesMemoryId: "older-memory",
+  }).action,
+  "pending",
+);
+
+assert.equal(
+  evaluateMemoryAutoReviewDecision({
+    ...baseMemory,
+    sourceType: "explicit_remember",
   }).action,
   "pending",
 );
@@ -75,6 +92,11 @@ async function main(): Promise<void> {
             id: "m3",
             confidence: 75,
           },
+          {
+            ...baseMemory,
+            id: "m4",
+            supersedesMemoryId: "older-memory",
+          },
         ].map((memory) => ({ ...memory, userId }));
       },
       async keepMemories(userId, memoryIds) {
@@ -101,7 +123,7 @@ async function main(): Promise<void> {
     processed: 1,
     skipped: 1,
     failed: 1,
-    scanned: 3,
+    scanned: 4,
     autoKept: 1,
   });
   assert.deepEqual(keptByUser.get("user-a"), ["m1"]);
