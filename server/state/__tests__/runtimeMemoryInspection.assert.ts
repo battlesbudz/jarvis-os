@@ -315,6 +315,7 @@ async function main(): Promise<void> {
       retrieveMemoryContext: async (input) => {
         assert.equal(input.query, "DoorDash");
         assert.equal(input.limit, 40);
+        assert.equal(input.canonicalOnly, true);
         return memoryContext(input.query);
       },
     },
@@ -324,6 +325,72 @@ async function main(): Promise<void> {
   assert.doesNotMatch(topicAnswer.textContent, /terse next-step/);
   assert.doesNotMatch(topicAnswer.textContent, /Soul\/Core Profile/);
   assert.doesNotMatch(topicAnswer.textContent, /Preferred name/);
+
+  const derivedBrainFilteredAnswer = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{ role: "user", content: "Show memories about DoorDash." }],
+      userId,
+      route: { providerName: "android-local-gemma", model: "gemma-4-e4b-it" },
+    },
+    {
+      retrieveMemoryContext: async (input) => ({
+        userId,
+        query: input.query,
+        caller: "runtime_memory_inspection",
+        items: [
+          {
+            memory: {
+              id: "mem-derived-doordash",
+              content: "Synthesized DoorDash pattern from a derived brain chunk.",
+              category: "fact",
+              tier: "long_term",
+              memoryType: "semantic",
+              relevanceScore: 92,
+              confidence: 80,
+              accessCount: 0,
+              score: 0.95,
+              source: "gbrain",
+              sourceId: "memory/doordash:0",
+              sourceRefs: [{ kind: "user_memory", id: "mem-doordash-cited" }],
+            },
+            provenance: [
+              { kind: "brain_chunk", id: "memory/doordash:0", source: "gbrain", label: "fact" },
+              { kind: "user_memory", id: "mem-doordash-cited", source: "canonical", label: "fact" },
+            ],
+          },
+          {
+            memory: {
+              id: "mem-doordash-exact",
+              content: "Exact stored DoorDash memory.",
+              category: "preferences",
+              tier: "long_term",
+              memoryType: "semantic",
+              relevanceScore: 91,
+              confidence: 96,
+              accessCount: 3,
+              score: 0.9,
+            },
+            provenance: [{ kind: "user_memory", id: "mem-doordash-exact", source: "canonical", label: "preferences" }],
+          },
+        ],
+        sources: {
+          memories: ["mem-doordash-cited", "mem-doordash-exact"],
+          brainChunks: ["memory/doordash:0"],
+          hotState: [],
+        },
+        provenance: [
+          { kind: "brain_chunk", id: "memory/doordash:0", source: "gbrain", label: "fact" },
+          { kind: "user_memory", id: "mem-doordash-cited", source: "canonical", label: "fact" },
+          { kind: "user_memory", id: "mem-doordash-exact", source: "canonical", label: "preferences" },
+        ],
+        uncertainty: [],
+      }),
+    },
+  );
+  assert(derivedBrainFilteredAnswer);
+  assert.match(derivedBrainFilteredAnswer.textContent, /Exact stored DoorDash memory\./);
+  assert.doesNotMatch(derivedBrainFilteredAnswer.textContent, /Synthesized DoorDash pattern/);
+  assert.doesNotMatch(derivedBrainFilteredAnswer.textContent, /memory\/doordash:0/);
 
   const politeTopicAnswer = await answerRuntimeMemoryInspectionQuestion(
     {

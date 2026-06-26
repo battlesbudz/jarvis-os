@@ -31,6 +31,7 @@ type RuntimeMemoryInspectionDeps = {
     limit: number;
     caller: "runtime_memory_inspection";
     skipAccessUpdate: boolean;
+    canonicalOnly?: boolean;
   }) => Promise<MemoryContext>;
 };
 
@@ -494,16 +495,27 @@ function contextWithFilteredItems(context: MemoryContext, items: MemoryContext["
     sources: {
       ...context.sources,
       memories: context.sources.memories.filter((id) => retainedIds.has(id)),
+      brainChunks: context.sources.brainChunks.filter((id) => retainedIds.has(id)),
+      hotState: context.sources.hotState.filter((id) => retainedIds.has(id)),
     },
     provenance: context.provenance.filter((ref) => retainedIds.has(ref.id)),
   };
+}
+
+function isCanonicalMemoryItem(item: MemoryContext["items"][number]): boolean {
+  return item.memory.source !== "gbrain" &&
+    !item.provenance.some((ref) => ref.source === "gbrain" || ref.kind === "brain_chunk");
 }
 
 function filterMemoryContextForInspection(
   context: MemoryContext,
   intent: RuntimeMemoryInspectionIntent,
 ): MemoryContext {
-  if (shouldIncludeCoreProfile(intent)) return context;
+  const canonicalContext = contextWithFilteredItems(
+    context,
+    context.items.filter(isCanonicalMemoryItem),
+  );
+  if (shouldIncludeCoreProfile(intent)) return canonicalContext;
 
   const tokens = topicTokens(intent.query);
   const allowUnorderedMatch = allowsUnorderedTopicMatch(intent.query);
@@ -511,14 +523,14 @@ function filterMemoryContextForInspection(
   const alternatives = topicAlternatives(intent.query);
   if (tokens.length === 0 && symbolTerms.length === 0 && alternatives.length === 0) {
     return contextWithFilteredItems(
-      context,
-      context.items.filter((item) => itemMatchesRawTopic(item, intent.query)).slice(0, DEFAULT_MEMORY_LIMIT),
+      canonicalContext,
+      canonicalContext.items.filter((item) => itemMatchesRawTopic(item, intent.query)).slice(0, DEFAULT_MEMORY_LIMIT),
     );
   }
 
   return contextWithFilteredItems(
-    context,
-    context.items
+    canonicalContext,
+    canonicalContext.items
       .filter((item) => itemMatchesTopic(item, tokens, allowUnorderedMatch, symbolTerms, alternatives))
       .slice(0, DEFAULT_MEMORY_LIMIT),
   );
@@ -588,6 +600,7 @@ export async function answerRuntimeMemoryInspectionQuestion(
       limit: shouldIncludeCoreProfile(intent) ? DEFAULT_MEMORY_LIMIT : TOPIC_INSPECTION_CANDIDATE_LIMIT,
       caller: "runtime_memory_inspection",
       skipAccessUpdate: true,
+      canonicalOnly: true,
     });
   } catch (error) {
     console.warn("[RuntimeMemoryInspection] MemoryOS unavailable:", safeErrorKind(error));
