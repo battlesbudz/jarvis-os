@@ -213,7 +213,8 @@ function isRestrictedRetrievedMemory(memory: RetrievedMemory): boolean {
 
 function sanitizeRestrictedMemoryContent(content: string): string {
   const redacted = content
-    .replace(/\b(?:account|routing|card|debit|credit)\s*(?:number|no\.?|#|ending)?\s*[:#-]?\s*(?:\d[\s-]?){4,}\b/gi, "[redacted identifier]")
+    .replace(/\b(?:account|routing|card|debit|credit)\s*(?:number|no\.?|#|ending(?:\s+in)?|last\s+four)?\s*[:#-]?\s*(?:\d[\s-]?){4,}\b/gi, "[redacted identifier]")
+    .replace(/\blast\s+four\s*(?:digits?)?\s*[:#-]?\s*(?:\d[\s-]?){4}\b/gi, "[redacted identifier]")
     .replace(/\b(?:ssn|social security)\b[\s\S]{0,40}\d{3}[\s-]?\d{2}[\s-]?\d{4}\b/gi, "[redacted identifier]")
     .replace(/\b(?:available|current|ending)\s+balance\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/gi, "[redacted balance]")
     .replace(/\b(?:bank|checking|savings|account)\s+balance\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/gi, "[redacted balance]")

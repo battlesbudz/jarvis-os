@@ -526,6 +526,7 @@ export const memoryGetTool: AgentTool = {
     }
 
     const limit = Math.min(40, Math.max(1, Number(args.limit) || 20));
+    const candidateLimit = Math.min(100, Math.max(limit, limit * 4));
 
     try {
       const rawRowsResult = await db.execute(sql`
@@ -540,11 +541,12 @@ export const memoryGetTool: AgentTool = {
           AND LOWER(COALESCE(source_type, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}
           AND LOWER(COALESCE(source_ref, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}
         ORDER BY confidence DESC, relevance_score DESC
-        LIMIT ${limit}
+        LIMIT ${candidateLimit}
       `);
 
       const memories = ((rawRowsResult.rows ?? []) as MemoryRow[])
-        .filter((row) => !containsRawRestrictedContent(row.content ?? ""));
+        .filter((row) => !containsRawRestrictedContent(row.content ?? ""))
+        .slice(0, limit);
 
       if (memories.length === 0) {
         return {

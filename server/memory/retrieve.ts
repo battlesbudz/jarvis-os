@@ -480,11 +480,14 @@ export async function retrieveRelevantMemories(
   if (process.env.JARVIS_BRAIN_RETRIEVAL === "1") {
     try {
       const { queryBrain } = await import("../brain/adapter");
+      const brainRetrievalLimit = options.includeRestricted === true
+        ? limit
+        : Math.min(50, Math.max(limit, limit * 4));
       const derived = await queryBrain({
         userId,
         actorId: "memory-retrieve",
         query: q,
-        topK: limit,
+        topK: brainRetrievalLimit,
         approvalFilter: "approved_only",
       });
 

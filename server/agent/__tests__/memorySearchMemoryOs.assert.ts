@@ -65,6 +65,11 @@ async function main(): Promise<void> {
     /memoryGetTool[\s\S]*COALESCE\(sensitivity, 'normal'\) = 'normal'[\s\S]*source_type[\s\S]*NOT SIMILAR TO[\s\S]*source_ref[\s\S]*NOT SIMILAR TO/,
     "memory_get should exclude restricted summaries and legacy restricted source rows",
   );
+  assert.match(
+    toolSource,
+    /candidateLimit[\s\S]*Math\.min\(100, Math\.max\(limit, limit \* 4\)\)[\s\S]*LIMIT \$\{candidateLimit\}[\s\S]*containsRawRestrictedContent[\s\S]*slice\(0, limit\)/,
+    "memory_get should over-fetch before filtering legacy raw restricted rows",
+  );
 
   const calls: unknown[] = [];
   const incrementedIds: string[][] = [];

@@ -109,7 +109,7 @@ async function main(): Promise<void> {
 
   const restricted = memory({
     id: "restricted-summary-1",
-    content: "Food delivery spending is trending up. Account number 123456789 and available balance $500 were present in the raw source.",
+    content: "Food delivery spending is trending up. Account number 123456789, debit card ending in 1234, and available balance $500 were present in the raw source.",
     sensitivity: "restricted_summary",
     provenance: [{
       sourceType: "plaid_transaction_rollup",
@@ -244,6 +244,7 @@ async function main(): Promise<void> {
   assert.equal(localRestricted.items.length, 1);
   assert.match(localRestricted.items[0]?.memory.content ?? "", /^Restricted summary:/);
   assert.doesNotMatch(localRestricted.items[0]?.memory.content ?? "", /123456789/);
+  assert.doesNotMatch(localRestricted.items[0]?.memory.content ?? "", /1234/);
   assert.doesNotMatch(localRestricted.items[0]?.memory.content ?? "", /\$500/);
   assert.match(localRestricted.uncertainty.join(" "), /sanitized for local model context/);
 

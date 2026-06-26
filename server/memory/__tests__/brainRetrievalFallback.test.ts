@@ -11,6 +11,14 @@ async function main(): Promise<void> {
     filterRestrictedRetrievedMemories,
     mapBrainChunksToRetrievedMemories,
   } = await import("../retrieve");
+  const retrieveSource = await import("node:fs").then((fs) =>
+    fs.readFileSync(new URL("../retrieve.ts", import.meta.url), "utf8")
+  );
+  assert.match(
+    retrieveSource,
+    /brainRetrievalLimit[\s\S]*Math\.min\(50, Math\.max\(limit, limit \* 4\)\)[\s\S]*topK: brainRetrievalLimit/,
+    "derived G-Brain retrieval should over-fetch before restricted filtering",
+  );
 
   const chunks: QueryBrainResult["chunks"] = [
     {
