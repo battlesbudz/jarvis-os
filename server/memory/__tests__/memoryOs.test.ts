@@ -162,6 +162,24 @@ async function main(): Promise<void> {
   assert.deepEqual(legacyAccountBalanceRestricted.items, []);
   assert.match(legacyAccountBalanceRestricted.uncertainty.join(" "), /withheld from cloud model context/);
 
+  const legacyRestrictedRefOnly = await retrieveMemoryContext(
+    { userId: "memory-os-user", query: "transaction source ref", caller: "coach_context" },
+    {
+      retrieveMemories: async () => [
+        memory({
+          id: "legacy-ref-only-1",
+          content: "Legacy source-ref-only restricted memory from before metadata normalization.",
+          sourceType: "manual",
+          sourceRef: "plaid:transactions:123",
+          sensitivity: "normal",
+          provenance: [],
+        }),
+      ],
+    },
+  );
+  assert.deepEqual(legacyRestrictedRefOnly.items, []);
+  assert.match(legacyRestrictedRefOnly.uncertainty.join(" "), /withheld from cloud model context/);
+
   const legacyRawContentRestricted = await retrieveMemoryContext(
     { userId: "memory-os-user", query: "checking balance", caller: "coach_context" },
     {
@@ -204,6 +222,54 @@ async function main(): Promise<void> {
   assert.equal(underfilledCloudContext.items.length, 1);
   assert.equal(underfilledCloudContext.items[0]?.memory.id, "normal-memory-after-restricted");
   assert.match(underfilledCloudContext.uncertainty.join(" "), /withheld from cloud model context/);
+
+  const fallbackCalls: Array<{ limit: number; canonicalOnly?: boolean }> = [];
+  const canonicalFallbackAfterRestrictedBrain = await retrieveMemoryContext(
+    {
+      userId: "memory-os-user",
+      query: "spending fallback",
+      caller: "coach_context",
+      limit: 2,
+    },
+    {
+      retrieveMemories: async (_userId, _query, limit, _skipAccessUpdate, options) => {
+        fallbackCalls.push({ limit, canonicalOnly: options?.canonicalOnly });
+        if (options?.canonicalOnly) {
+          return [
+            memory({
+              id: "canonical-normal-after-restricted-brain",
+              content: "The user prefers monthly spending summaries.",
+              category: "preferences",
+            }),
+          ];
+        }
+        return [
+          memory({
+            id: "restricted-brain-hit",
+            content: "Restricted projected spending summary.",
+            source: "gbrain",
+            sourceId: "memory/restricted-spending:0",
+            sourceRefs: [{
+              kind: "user_memory",
+              id: "restricted-brain-hit",
+              sourceType: "plaid:transactions",
+              sourceRef: "plaid:transactions:123",
+            }],
+          }),
+        ];
+      },
+    },
+  );
+  assert.deepEqual(fallbackCalls, [
+    { limit: 8, canonicalOnly: false },
+    { limit: 8, canonicalOnly: true },
+  ]);
+  assert.equal(canonicalFallbackAfterRestrictedBrain.items.length, 1);
+  assert.equal(
+    canonicalFallbackAfterRestrictedBrain.items[0]?.memory.id,
+    "canonical-normal-after-restricted-brain",
+  );
+  assert.match(canonicalFallbackAfterRestrictedBrain.uncertainty.join(" "), /withheld from cloud model context/);
 
   const filteredAccessUpdates: string[][] = [];
   const filteredAccessContext = await retrieveMemoryContext(

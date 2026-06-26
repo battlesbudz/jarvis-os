@@ -63,7 +63,7 @@ const RESTRICTED_SOURCE_TOKENS = [
 ];
 
 function isRestrictedSourceType(value: unknown): boolean {
-  const normalized = String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const normalized = String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   if (!normalized) return false;
   return RESTRICTED_SOURCE_TOKENS.some((token) =>
     normalized === token ||

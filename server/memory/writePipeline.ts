@@ -251,7 +251,7 @@ function normalizeProvenance(value: unknown): MemoryProvenanceMetadata[] {
 }
 
 function isRestrictedSourceType(value: unknown): boolean {
-  const normalized = cleanSingleLine(value).toLowerCase().replace(/[\s-]+/g, "_");
+  const normalized = cleanSingleLine(value).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   if (!normalized) return false;
   return RESTRICTED_SOURCE_TOKENS.some((token) =>
     normalized === token ||
@@ -438,7 +438,7 @@ export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
 
   const supersedesMemoryId = cleanSingleLine(input.supersedesMemoryId) || null;
   const reviewEnabled = input.reviewEnabled ?? true;
-  const reviewRequired = reviewEnabled;
+  const reviewRequired = reviewEnabled && !approvedRestrictedSummary;
   const sourceType = approvedRestrictedSummary
     ? "restricted_summary"
     : reviewRequired && input.trigger === "explicit_remember"

@@ -414,7 +414,6 @@ async function testApprovedRestrictedSummariesCarryMetadata(): Promise<void> {
     sourceType: "plaid",
     sourceRef: "plaid-weekly-summary",
     restrictedSummaryApproved: true,
-    reviewEnabled: false,
     provenance: [{
       sourceType: "plaid_transaction_rollup",
       sourceRef: "rollup-2026-06-26",
@@ -425,6 +424,8 @@ async function testApprovedRestrictedSummariesCarryMetadata(): Promise<void> {
   });
 
   assert.equal(plan.status, "auto_write_memory");
+  assert.equal(plan.record?.pendingReview, false);
+  assert.equal(plan.record?.reviewStatus, "active");
   assert.equal(plan.record?.sourceType, "restricted_summary");
   assert.equal(plan.record?.sensitivity, "restricted_summary");
   assert.equal(plan.record?.provenance[0]?.restricted, true);

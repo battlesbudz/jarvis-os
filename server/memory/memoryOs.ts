@@ -180,7 +180,7 @@ const RESTRICTED_SOURCE_TOKENS = [
 ];
 
 function isRestrictedSourceType(value: unknown): boolean {
-  const normalized = cleanSingleLine(value).toLowerCase().replace(/[\s-]+/g, "_");
+  const normalized = cleanSingleLine(value).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   if (!normalized) return false;
   return RESTRICTED_SOURCE_TOKENS.some((token) =>
     normalized === token ||
@@ -271,6 +271,18 @@ function prepareMemoriesForModelTarget(
     uncertainty.push(`${sanitized} restricted MemoryOS summar${sanitized === 1 ? "y was" : "ies were"} sanitized for local model context.`);
   }
   return { memories: prepared, uncertainty };
+}
+
+function appendUniqueMemories(base: RetrievedMemory[], candidates: RetrievedMemory[], limit: number): RetrievedMemory[] {
+  const seen = new Set(base.map((memory) => memory.id).filter(Boolean));
+  const out = [...base];
+  for (const candidate of candidates) {
+    if (out.length >= limit) break;
+    if (seen.has(candidate.id)) continue;
+    seen.add(candidate.id);
+    out.push(candidate);
+  }
+  return out;
 }
 
 export function buildMemoryCorrectionReview(input?: MemoryCorrectionInput): MemoryCorrectionReview {
@@ -403,7 +415,27 @@ export async function retrieveMemoryContext(
       target,
       input.allowRestrictedMemory ?? false,
     );
-    const memories = preparedMemories.slice(0, limit);
+    let memories = preparedMemories.slice(0, limit);
+    let uncertainty = boundaryUncertainty;
+    if (
+      memories.length < limit &&
+      !input.canonicalOnly &&
+      rawMemories.length > 0 &&
+      rawMemories.some(isRestrictedRetrievedMemory)
+    ) {
+      const fallbackLimit = Math.min(50, Math.max(limit, (limit - memories.length) * 4));
+      const canonicalFallback = await deps.retrieveMemories(input.userId, query, fallbackLimit, true, {
+        canonicalOnly: true,
+        includeRestricted: true,
+      });
+      const fallbackPrepared = prepareMemoriesForModelTarget(
+        canonicalFallback,
+        target,
+        input.allowRestrictedMemory ?? false,
+      );
+      memories = appendUniqueMemories(memories, fallbackPrepared.memories, limit);
+      uncertainty = [...uncertainty, ...fallbackPrepared.uncertainty];
+    }
     if (!skipAccessUpdate) {
       deps.incrementAccessCount?.(uniqueMemoryIds(memories));
     }
@@ -425,7 +457,7 @@ export async function retrieveMemoryContext(
       },
       provenance,
       uncertainty: [
-        ...boundaryUncertainty,
+        ...uncertainty,
         ...(memories.length === 0 ? ["No relevant memories were found."] : []),
       ],
     };
