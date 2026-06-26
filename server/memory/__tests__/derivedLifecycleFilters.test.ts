@@ -5,6 +5,7 @@ import path from "node:path";
 const repoRoot = process.cwd();
 const soulSource = fs.readFileSync(path.resolve(repoRoot, "server/memory/soul.ts"), "utf8");
 const brainAdapterSource = fs.readFileSync(path.resolve(repoRoot, "server/brain/adapter.ts"), "utf8");
+const vaultWriterSource = fs.readFileSync(path.resolve(repoRoot, "server/memory/vaultWriter.ts"), "utf8");
 const runtimeContextSources = [
   "server/routes.ts",
   "server/curiosityScanner.ts",
@@ -40,6 +41,19 @@ assert.match(
   soulSource,
   /approvedMemoryLifecycleFilter[\s\S]*sourceType[\s\S]*NOT SIMILAR TO[\s\S]*sourceRef[\s\S]*NOT SIMILAR TO/,
   "Soul generation should not include legacy restricted source_type/source_ref rows",
+);
+
+const voiceRelaySource = runtimeContextSources.find((entry) => entry.file === "server/voiceRelayRoutes.ts")?.source ?? "";
+assert.match(
+  voiceRelaySource,
+  /COALESCE\(\$\{userMemories\.sensitivity\}, 'normal'\) = 'normal'[\s\S]*userMemories\.sourceType[\s\S]*NOT SIMILAR TO[\s\S]*userMemories\.sourceRef[\s\S]*NOT SIMILAR TO/,
+  "Voice relay prompt context should exclude restricted user memories",
+);
+
+assert.match(
+  vaultWriterSource,
+  /approvedNonRestrictedMemoryClauses[\s\S]*COALESCE\(\$\{schema\.userMemories\.sensitivity\}, 'normal'\) = 'normal'[\s\S]*schema\.userMemories\.sourceType[\s\S]*NOT SIMILAR TO[\s\S]*schema\.userMemories\.sourceRef[\s\S]*NOT SIMILAR TO/,
+  "Knowledge vault source builders should exclude restricted user memories",
 );
 
 assert.match(

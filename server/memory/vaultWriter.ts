@@ -23,6 +23,18 @@ const openai = createRoutedOpenAIChatShim("[MemoryVault]", "balanced");
 const VAULT_TTL_MS = 6 * 60 * 60 * 1000;
 const VAULT_NOVELTY_THRESHOLD = 3;
 const APPROVED_MEMORY_STATUS_SQL = sql`('active', 'kept', 'edited')`;
+const RESTRICTED_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
+
+function approvedNonRestrictedMemoryClauses(userId: string) {
+  return [
+    eq(schema.userMemories.userId, userId),
+    eq(schema.userMemories.pendingReview, false),
+    sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
+    sql`COALESCE(${schema.userMemories.sensitivity}, 'normal') = 'normal'`,
+    sql`LOWER(COALESCE(${schema.userMemories.sourceType}, '')) NOT SIMILAR TO ${RESTRICTED_SOURCE_SQL_PATTERN}`,
+    sql`LOWER(COALESCE(${schema.userMemories.sourceRef}, '')) NOT SIMILAR TO ${RESTRICTED_SOURCE_SQL_PATTERN}`,
+  ];
+}
 
 // ── Page definitions ──────────────────────────────────────────────────────────
 
@@ -44,10 +56,9 @@ export async function buildAboutYouSource(userId: string): Promise<string> {
       .from(schema.userMemories)
       .where(
         and(
-          eq(schema.userMemories.userId, userId),
+          ...approvedNonRestrictedMemoryClauses(userId),
           eq(schema.userMemories.tier, "long_term"),
           sql`${schema.userMemories.category} IN ('values','communication_style','preferences','fact')`,
-          sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
         ),
       )
       .orderBy(desc(schema.userMemories.extractedAt))
@@ -67,10 +78,9 @@ export async function buildProjectsSource(userId: string): Promise<string> {
       .from(schema.userMemories)
       .where(
         and(
-          eq(schema.userMemories.userId, userId),
+          ...approvedNonRestrictedMemoryClauses(userId),
           eq(schema.userMemories.tier, "long_term"),
           sql`${schema.userMemories.category} IN ('goals_history','accomplishments')`,
-          sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
         ),
       )
       .orderBy(desc(schema.userMemories.extractedAt))
@@ -114,9 +124,8 @@ export async function buildPeopleSource(userId: string): Promise<string> {
       .from(schema.userMemories)
       .where(
         and(
-          eq(schema.userMemories.userId, userId),
+          ...approvedNonRestrictedMemoryClauses(userId),
           eq(schema.userMemories.category, "relationships"),
-          sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
         ),
       )
       .orderBy(desc(schema.userMemories.extractedAt))
@@ -173,10 +182,9 @@ export async function buildDecisionsSource(userId: string): Promise<string> {
     .from(schema.userMemories)
     .where(
       and(
-        eq(schema.userMemories.userId, userId),
+        ...approvedNonRestrictedMemoryClauses(userId),
         sql`${schema.userMemories.category} IN ('goals_history','values','blockers')`,
         eq(schema.userMemories.tier, "long_term"),
-        sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
       ),
     )
     .orderBy(desc(schema.userMemories.extractedAt))

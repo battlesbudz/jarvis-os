@@ -10,7 +10,7 @@
 
 import { db, pool } from "../../db";
 import * as schema from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   isVaultStale,
   buildAboutYouSource,
@@ -31,6 +31,8 @@ function ok(condition: boolean, label: string): void {
 }
 
 async function setup(): Promise<void> {
+  await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS sensitivity TEXT NOT NULL DEFAULT 'normal'`);
+  await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS provenance JSONB NOT NULL DEFAULT '[]'::jsonb`);
   await db
     .insert(schema.users)
     .values({ id: TEST_USER_ID, username: TEST_USER_ID })
@@ -205,6 +207,46 @@ async function testApprovedReviewStatuses(): Promise<void> {
 
 // ── Runner ────────────────────────────────────────────────────────────────────
 
+async function testRestrictedMemoriesExcluded(): Promise<void> {
+  const normalMarker = "VAULT_TEST_NORMAL_PREF_" + Date.now();
+  const restrictedSourceMarker = "VAULT_TEST_RESTRICTED_SOURCE_" + Date.now();
+  const restrictedSummaryMarker = "VAULT_TEST_RESTRICTED_SUMMARY_" + Date.now();
+
+  await insertMemory("preferences", normalMarker);
+  await db.insert(schema.userMemories).values([
+    {
+      userId: TEST_USER_ID,
+      content: restrictedSourceMarker,
+      category: "preferences",
+      confidence: 90,
+      tier: "long_term",
+      memoryType: "semantic",
+      reviewStatus: "active",
+      relevanceScore: 50,
+      sourceType: "account_balance",
+      sourceRef: "account-balance:primary",
+      sensitivity: "normal",
+    },
+    {
+      userId: TEST_USER_ID,
+      content: restrictedSummaryMarker,
+      category: "preferences",
+      confidence: 90,
+      tier: "long_term",
+      memoryType: "semantic",
+      reviewStatus: "active",
+      relevanceScore: 50,
+      sourceType: "restricted_summary",
+      sensitivity: "restricted_summary",
+    },
+  ]);
+
+  const source = await buildAboutYouSource(TEST_USER_ID);
+  ok(source.includes(normalMarker), "V-10a: about-you still includes normal memories");
+  ok(!source.includes(restrictedSourceMarker), "V-10b: about-you excludes legacy restricted source memories");
+  ok(!source.includes(restrictedSummaryMarker), "V-10c: about-you excludes restricted summaries");
+}
+
 async function main(): Promise<void> {
   await setup();
   try {
@@ -229,6 +271,9 @@ async function main(): Promise<void> {
     await teardown();
     await setup();
     await testApprovedReviewStatuses();
+    await teardown();
+    await setup();
+    await testRestrictedMemoriesExcluded();
   } finally {
     await teardown();
     await db.delete(schema.users).where(eq(schema.users.id, TEST_USER_ID));

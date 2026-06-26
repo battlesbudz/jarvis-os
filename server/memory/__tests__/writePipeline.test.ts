@@ -297,6 +297,26 @@ async function testRawRestrictedSourceWritesAreExcluded(): Promise<void> {
   });
   assert.equal(highLevelButUnapproved.status, "excluded");
   assert.equal(highLevelButUnapproved.record, null);
+
+  const manualBankBalance = planMemoryWrite({
+    userId: "user-123",
+    content: "My bank balance is $5,000.",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(manualBankBalance.status, "excluded");
+  assert.equal(manualBankBalance.record, null);
+
+  const manualCheckingBalance = planMemoryWrite({
+    userId: "user-123",
+    content: "My current checking balance is $5,000.",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(manualCheckingBalance.status, "excluded");
+  assert.equal(manualCheckingBalance.record, null);
   console.log("OK: raw restricted-source records are excluded from normal MemoryOS");
 }
 
