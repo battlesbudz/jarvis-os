@@ -39,7 +39,7 @@ async function main(): Promise<void> {
       retrieveMemories: async (userId, query, limit, skipAccessUpdate) => {
         assert.equal(userId, "memory-os-user");
         assert.equal(query, "morning planning");
-        assert.equal(limit, 3);
+        assert.equal(limit, 12);
         assert.equal(skipAccessUpdate, true);
         return [memory()];
       },
@@ -142,6 +142,31 @@ async function main(): Promise<void> {
   );
   assert.deepEqual(legacyRestricted.items, []);
   assert.match(legacyRestricted.uncertainty.join(" "), /withheld from cloud model context/);
+
+  const underfilledCloudContext = await retrieveMemoryContext(
+    {
+      userId: "memory-os-user",
+      query: "spending preference",
+      caller: "coach_context",
+      limit: 1,
+    },
+    {
+      retrieveMemories: async (_userId, _query, limit) => {
+        assert.equal(limit, 4);
+        return [
+          restricted,
+          memory({
+            id: "normal-memory-after-restricted",
+            content: "The user prefers weekly spending summaries.",
+            category: "preferences",
+          }),
+        ];
+      },
+    },
+  );
+  assert.equal(underfilledCloudContext.items.length, 1);
+  assert.equal(underfilledCloudContext.items[0]?.memory.id, "normal-memory-after-restricted");
+  assert.match(underfilledCloudContext.uncertainty.join(" "), /withheld from cloud model context/);
 
   const localRestricted = await retrieveMemoryContext(
     {

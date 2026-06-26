@@ -31,6 +31,12 @@ assert.match(
 );
 
 assert.match(
+  soulSource,
+  /approvedMemoryLifecycleFilter[\s\S]*COALESCE\(\$\{schema\.userMemories\.sensitivity\}, 'normal'\) = 'normal'/,
+  "Soul generation should not include restricted MemoryOS summaries in model prompt blocks",
+);
+
+assert.match(
   brainAdapterSource,
   /APPROVED_USER_MEMORY_REVIEW_STATUSES[\s\S]*active[\s\S]*kept[\s\S]*edited[\s\S]*!APPROVED_USER_MEMORY_REVIEW_STATUSES\.has\(memory\.reviewStatus\)/,
   "Brain projection should retire derived pages for non-approved memory lifecycle states instead of projecting them",

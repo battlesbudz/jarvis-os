@@ -366,15 +366,19 @@ export async function retrieveMemoryContext(
   }
 
   try {
-    const rawMemories = await deps.retrieveMemories(input.userId, query, limit, skipAccessUpdate, {
+    const target = input.modelTarget ?? "cloud";
+    const rawLimit = target === "runtime" || (target === "cloud" && input.allowRestrictedMemory === true)
+      ? limit
+      : Math.min(50, Math.max(limit, limit * 4));
+    const rawMemories = await deps.retrieveMemories(input.userId, query, rawLimit, skipAccessUpdate, {
       canonicalOnly: input.canonicalOnly ?? false,
     });
-    const target = input.modelTarget ?? "cloud";
-    const { memories, uncertainty: boundaryUncertainty } = prepareMemoriesForModelTarget(
+    const { memories: preparedMemories, uncertainty: boundaryUncertainty } = prepareMemoriesForModelTarget(
       rawMemories,
       target,
       input.allowRestrictedMemory ?? false,
     );
+    const memories = preparedMemories.slice(0, limit);
     const items = memories.map((memory) => ({
       memory,
       provenance: provenanceForMemory(memory),

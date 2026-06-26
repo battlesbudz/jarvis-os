@@ -21,6 +21,7 @@ function approvedMemoryLifecycleFilter() {
   return and(
     eq(schema.userMemories.pendingReview, false),
     sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+    sql`COALESCE(${schema.userMemories.sensitivity}, 'normal') = 'normal'`,
   );
 }
 
