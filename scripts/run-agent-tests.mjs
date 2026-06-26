@@ -111,6 +111,7 @@ const tests = [
   { file: "server/state/__tests__/stateCard.assert.ts" },
   { file: "server/state/__tests__/runtimeCapability.assert.ts" },
   { file: "server/state/__tests__/runtimeMemoryInspection.assert.ts" },
+  { file: "server/state/__tests__/phoneGemmaDiagnostics.assert.ts" },
   { file: "server/core/runtime/__tests__/runtimeExplanation.assert.ts" },
   { file: "server/core/protocol/__tests__/runtimeProtocol.test.ts" },
   { file: "server/core/protocol/__tests__/runtimeRedaction.test.ts" },

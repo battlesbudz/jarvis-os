@@ -71,6 +71,7 @@ export async function runCoachModelTurn(
     allowRuntimeIdentityShortcut: true,
     allowRuntimeCapabilityShortcut: true,
     allowRuntimeMemoryInspectionShortcut: true,
+    allowPhoneGemmaDiagnosticShortcut: true,
   });
 }
 
@@ -102,6 +103,7 @@ export async function streamCoachModelTurn(
     allowRuntimeIdentityShortcut: true,
     allowRuntimeCapabilityShortcut: true,
     allowRuntimeMemoryInspectionShortcut: true,
+    allowPhoneGemmaDiagnosticShortcut: true,
   }, onChunk);
 }
 

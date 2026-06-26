@@ -4,6 +4,10 @@ import { ANDROID_LOCAL_GEMMA_MODEL } from "@shared/modelProviderCatalog";
 import { BaseProvider, isJsonObjectResponseFormat } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { buildRuntimeStateCardPrompt } from "../../state/stateCard";
+import {
+  markPhoneGemmaGenerationFinished,
+  markPhoneGemmaGenerationStarted,
+} from "../../state/phoneGemmaDiagnostics";
 
 type DaemonOpResult = { ok: boolean; data?: unknown; error?: string };
 type ChatCompletionFunctionTool = OpenAI.Chat.Completions.ChatCompletionFunctionTool;
@@ -1624,7 +1628,7 @@ function normalizeAndroidLocalGemmaError(error: string | undefined): string {
     error?.includes("LOCAL_MODEL_GENERATION_FAILED") &&
     (error.includes("Failed to invoke the compiled model") || error.includes("llm_litert_compiled_model_executor.cc:755"))
   ) {
-    return `Phone Gemma could not finish local inference on this device, usually because the phone-local Gemma runtime hit memory or accelerator pressure. Jarvis stayed on the local phone model and did not use any other model. Close heavy apps, let the phone cool down, then retry with the official E4B .litertlm model imported. Details: ${error}`;
+    return `Phone Gemma could not finish inference on this device, usually because Phone Gemma Runtime hit memory or accelerator pressure. Jarvis stayed on Phone Gemma and did not use any other model. Close heavy apps, let the phone cool down, then retry with the official E4B .litertlm model imported. Details: ${error}`;
   }
   if (
     error?.includes("LOCAL_MODEL_GENERATION_FAILED") &&
@@ -1643,7 +1647,7 @@ function normalizeAndroidLocalGemmaError(error: string | undefined): string {
     return `Phone Gemma did not start because Android reported low available memory. Close other heavy apps, then try again. Details: ${error}`;
   }
   if (error?.includes("LOCAL_MODEL_BUSY")) {
-    return "Phone Gemma is still working on the previous message. Wait for it to finish or tap Stop before sending another local-model message.";
+    return "Phone Gemma is still working on the previous message. Wait for it to finish or tap Stop before sending another Phone Gemma message.";
   }
   if (error?.includes("LOCAL_MODEL_CANCELLED")) {
     return "Phone Gemma generation was cancelled before it finished.";
@@ -1726,20 +1730,32 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
     }
 
     const requestId = `phone-gemma-${randomUUID()}`;
-    const result = await sendAbortableAndroidLocalGemmaGenerateOp(
-      params.userId,
-      {
-        type: "android_local_model_generate",
-        requestId,
-        model: normalizeAndroidLocalGemmaModel(params.model),
-        prompt,
-        contextTokens: phoneGemmaContextTokens(),
-        maxTokens: phoneGemmaMaxCompletionTokens(params.maxCompletionTokens),
-        allowCpuFallback: phoneGemmaAllowCpuFallback(),
-      },
-      phoneGemmaTimeoutMs(),
-      params.signal,
-    );
+    const normalizedModel = normalizeAndroidLocalGemmaModel(params.model);
+    markPhoneGemmaGenerationStarted({
+      userId: params.userId,
+      requestId,
+      model: normalizedModel,
+    });
+    const result = await (async () => {
+      try {
+        return await sendAbortableAndroidLocalGemmaGenerateOp(
+          params.userId,
+          {
+            type: "android_local_model_generate",
+            requestId,
+            model: normalizedModel,
+            prompt,
+            contextTokens: phoneGemmaContextTokens(),
+            maxTokens: phoneGemmaMaxCompletionTokens(params.maxCompletionTokens),
+            allowCpuFallback: phoneGemmaAllowCpuFallback(),
+          },
+          phoneGemmaTimeoutMs(),
+          params.signal,
+        );
+      } finally {
+        markPhoneGemmaGenerationFinished({ userId: params.userId!, requestId });
+      }
+    })();
 
     if (shouldCancelTimedOutGeneration(result)) {
       sendAndroidLocalGemmaOp(
@@ -1755,7 +1771,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
 
     const text = textFromDaemonData(result.data);
     if (!text.trim()) {
-      throw new Error("Phone Gemma finished without response text. The phone-local model may have been interrupted or run out of memory; retry after closing other apps.");
+      throw new Error("Phone Gemma finished without response text. Phone Gemma Runtime may have been interrupted or run out of memory; retry after closing other apps.");
     }
 
     const requestText = latestUserText(params.messages);

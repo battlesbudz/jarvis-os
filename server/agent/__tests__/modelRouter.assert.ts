@@ -17,6 +17,12 @@ import {
   classifyRuntimeCapabilityIntent,
   _setRuntimeCapabilityDepsForTesting,
 } from "../../state/runtimeCapability";
+import {
+  classifyPhoneGemmaDiagnosticIntent,
+  clearPhoneGemmaDiagnosticsForTesting,
+  recordPhoneGemmaDiagnosticResult,
+  _setPhoneGemmaDiagnosticDepsForTesting,
+} from "../../state/phoneGemmaDiagnostics";
 
 function userMessage(content: string) {
   return [{ role: "user" as const, content }];
@@ -2261,6 +2267,177 @@ async function runRuntimeCapabilityAnswersBypassSelectedPhoneGemmaAssertion(): P
   }
 }
 
+async function runPhoneGemmaDiagnosticsBypassSelectedPhoneGemmaAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  class UnexpectedAndroidLocalGemmaProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("Phone Gemma diagnostic questions should not be delegated to Phone Gemma");
+    }
+  }
+
+  try {
+    assert.equal(
+      classifyPhoneGemmaDiagnosticIntent([{ role: "user", content: "Is Jarvis working correctly?" }]),
+      null,
+    );
+    assert.equal(
+      classifyPhoneGemmaDiagnosticIntent([{ role: "user", content: "Is Phone Gemma working correctly?" }]),
+      "status",
+    );
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("android-local-gemma", new UnexpectedAndroidLocalGemmaProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-phone-gemma-diagnostics");
+      return "android-local-gemma/gemma-4-e4b-it";
+    });
+    clearPhoneGemmaDiagnosticsForTesting();
+    recordPhoneGemmaDiagnosticResult({
+      userId: "user-phone-gemma-diagnostics",
+      deviceId: "android-phone",
+      model: "gemma-4-e4b-it",
+      profileId: "active",
+      status: "failed",
+      checkedAt: "2026-06-26T08:50:00.000Z",
+      checks: [
+        {
+          id: "ready_response",
+          label: "READY response",
+          status: "passed",
+          detail: "Returned READY.",
+        },
+        {
+          id: "simple_math",
+          label: "Simple math",
+          status: "failed",
+          detail: "Returned blank text.",
+        },
+      ],
+    });
+
+    const status = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Is Phone Gemma working correctly?" }],
+      toolChoice: "auto",
+      maxCompletionTokens: 64,
+      userId: "user-phone-gemma-diagnostics",
+      logPrefix: "[ModelRouterPhoneGemmaDiagnosticsTest]",
+      allowPhoneGemmaDiagnosticShortcut: true,
+    });
+
+    assert.equal(status.providerName, "jarvis-runtime");
+    assert.equal(status.model, "gemma-4-e4b-it");
+    assert.match(status.textContent, /Phone Gemma is not passing diagnostics/);
+    assert.match(status.textContent, /Simple math: failed/);
+    assert.match(status.textContent, /Sources: Diagnostics\./);
+
+    const diagnosticActions: string[] = [];
+    _setPhoneGemmaDiagnosticDepsForTesting({
+      now: () => new Date("2026-06-26T09:00:00.000Z"),
+      runIdentityCheck: async () => {
+        diagnosticActions.push("identity");
+        return { status: "passed", detail: "Jarvis identity came from runtime state." };
+      },
+      runReadyResponseCheck: async () => {
+        diagnosticActions.push("ready");
+        return { status: "passed", detail: "Returned READY." };
+      },
+      runSimpleMathCheck: async () => {
+        diagnosticActions.push("math");
+        return { status: "passed", detail: "7 + 5 matched." };
+      },
+      runMemoryLookupCheck: async () => {
+        diagnosticActions.push("memory");
+        return { status: "skipped", detail: "No test-safe memory fixture available." };
+      },
+      runOpenYoutubeCheck: async () => {
+        diagnosticActions.push("youtube");
+        return { status: "passed", detail: "Open YouTube preflight passed." };
+      },
+      runCancelSanityCheck: async () => {
+        diagnosticActions.push("cancel");
+        return { status: "skipped", detail: "Phone Gemma is idle; cancel sanity skipped." };
+      },
+    });
+
+    const runDiagnostic = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Test Phone Gemma" }],
+      toolChoice: "auto",
+      maxCompletionTokens: 64,
+      userId: "user-phone-gemma-diagnostics",
+      logPrefix: "[ModelRouterPhoneGemmaRunDiagnosticTest]",
+      allowPhoneGemmaDiagnosticShortcut: true,
+    });
+
+    assert.equal(runDiagnostic.providerName, "jarvis-runtime");
+    assert.equal(runDiagnostic.model, "gemma-4-e4b-it");
+    assert.deepEqual(diagnosticActions, ["identity", "ready", "math", "memory", "youtube", "cancel"]);
+    assert.match(runDiagnostic.textContent, /Phone Gemma passed its current diagnostic/);
+    assert.match(runDiagnostic.textContent, /Sources: Diagnostics\./);
+
+    const recoveryActions: string[] = [];
+    _setPhoneGemmaDiagnosticDepsForTesting({
+      now: () => new Date("2026-06-26T09:00:00.000Z"),
+      requestResetApproval: async () => ({ approved: true, gateId: "gate-phone-gemma-reset" }),
+      cancelActiveGeneration: async () => {
+        recoveryActions.push("cancel");
+        return { status: "passed", detail: "Android confirmed cancellation." };
+      },
+      waitForNativeIdle: async () => {
+        recoveryActions.push("idle");
+        return { status: "passed", detail: "Android reported idle." };
+      },
+      clearStaleRequestState: async () => {
+        recoveryActions.push("clear");
+        return { status: "passed", detail: "Cleared stale state." };
+      },
+    });
+
+    const fix = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Fix Phone Gemma" }],
+      toolChoice: "required",
+      maxCompletionTokens: 64,
+      userId: "user-phone-gemma-diagnostics",
+      logPrefix: "[ModelRouterPhoneGemmaFixTest]",
+      allowPhoneGemmaDiagnosticShortcut: true,
+    });
+
+    assert.equal(fix.providerName, "jarvis-runtime");
+    assert.equal(fix.model, "gemma-4-e4b-it");
+    assert.deepEqual(recoveryActions, ["cancel", "idle", "clear"]);
+    assert.match(fix.textContent, /I reset Phone Gemma Runtime/);
+    assert.match(fix.textContent, /Model files and memories were preserved/);
+    console.log("OK: Phone Gemma diagnostics and recovery bypass selected Phone Gemma");
+  } finally {
+    _setPhoneGemmaDiagnosticDepsForTesting(null);
+    clearPhoneGemmaDiagnosticsForTesting();
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 runUserOpenAIProfileRouteAssertion()
   .then(runUserSelectedProviderOverridesRuntimeDefaultsAssertion)
   .then(runUserSelectedAndroidLocalGemmaOverridesCodexRuntimeAssertion)
@@ -2289,6 +2466,7 @@ runUserOpenAIProfileRouteAssertion()
   .then(runRuntimeUserIdentityHidesProfileStoreExceptionDetailsAssertion)
   .then(runRuntimeModelLabelDoesNotTreatUnknownProviderAsLocalAssertion)
   .then(runRuntimeCapabilityAnswersBypassSelectedPhoneGemmaAssertion)
+  .then(runPhoneGemmaDiagnosticsBypassSelectedPhoneGemmaAssertion)
   .then(runLeanContextToolBudgetAssertion)
   .then(() => {
     console.log("\nAll model router assertions passed.");
