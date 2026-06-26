@@ -407,6 +407,48 @@ async function main(): Promise<void> {
   assert.match(csharpTopicAnswer.textContent, /C# desktop automation/);
   assert.doesNotMatch(csharpTopicAnswer.textContent, /C\+\+ build tooling/);
 
+  const mixedCppTopicAnswer = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{ role: "user", content: "Show memories about C++ build tooling." }],
+      userId,
+      route: { providerName: "android-local-gemma", model: "gemma-4-e4b-it" },
+    },
+    {
+      retrieveMemoryContext: async (input) => {
+        assert.equal(input.query, "C++ build tooling");
+        return memoryContextFromContents("C++ build tooling", [
+          { id: "mem-cpp-build", content: "User has notes about C++ build tooling.", category: "technical" },
+          { id: "mem-python-build", content: "User has notes about Python build tooling.", category: "technical" },
+          { id: "mem-cpp-general", content: "User has notes about C++ language examples.", category: "technical" },
+        ]);
+      },
+    },
+  );
+  assert(mixedCppTopicAnswer);
+  assert.match(mixedCppTopicAnswer.textContent, /C\+\+ build tooling/);
+  assert.doesNotMatch(mixedCppTopicAnswer.textContent, /Python build tooling/);
+  assert.doesNotMatch(mixedCppTopicAnswer.textContent, /C\+\+ language examples/);
+
+  const w2TopicAnswer = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{ role: "user", content: "Show memories about W-2 taxes." }],
+      userId,
+      route: { providerName: "android-local-gemma", model: "gemma-4-e4b-it" },
+    },
+    {
+      retrieveMemoryContext: async (input) => {
+        assert.equal(input.query, "W-2 taxes");
+        return memoryContextFromContents("W-2 taxes", [
+          { id: "mem-w2", content: "User needs W-2 taxes tracked for filing.", category: "finance" },
+          { id: "mem-taxes", content: "User has a generic taxes checklist.", category: "finance" },
+        ]);
+      },
+    },
+  );
+  assert(w2TopicAnswer);
+  assert.match(w2TopicAnswer.textContent, /W-2 taxes tracked/);
+  assert.doesNotMatch(w2TopicAnswer.textContent, /generic taxes checklist/);
+
   const rTopicAnswer = await answerRuntimeMemoryInspectionQuestion(
     {
       messages: [{ role: "user", content: "Show memories about R." }],
@@ -519,6 +561,50 @@ async function main(): Promise<void> {
   assert.match(stopwordTopicAnswer.textContent, /DoorDash and Uber delivery patterns/);
   assert.match(stopwordTopicAnswer.textContent, /Uber and DoorDash courier reliability/);
   assert.doesNotMatch(stopwordTopicAnswer.textContent, /DoorDash notifications personally/);
+
+  const orTopicAnswer = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{ role: "user", content: "Show memories about DoorDash or Uber." }],
+      userId,
+      route: { providerName: "android-local-gemma", model: "gemma-4-e4b-it" },
+    },
+    {
+      retrieveMemoryContext: async (input) => {
+        assert.equal(input.query, "DoorDash or Uber");
+        assert.equal(input.limit, 40);
+        return memoryContextFromContents("DoorDash or Uber", [
+          { id: "mem-doordash-only", content: "User manages DoorDash notifications personally.", category: "preferences" },
+          { id: "mem-uber-only", content: "User tracks Uber courier reliability.", category: "work_patterns" },
+          { id: "mem-stripe", content: "User has Stripe payout notes.", category: "finance" },
+        ]);
+      },
+    },
+  );
+  assert(orTopicAnswer);
+  assert.match(orTopicAnswer.textContent, /DoorDash notifications personally/);
+  assert.match(orTopicAnswer.textContent, /Uber courier reliability/);
+  assert.doesNotMatch(orTopicAnswer.textContent, /Stripe payout notes/);
+
+  const versusTopicAnswer = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{ role: "user", content: "Show memories about DoorDash versus Uber." }],
+      userId,
+      route: { providerName: "android-local-gemma", model: "gemma-4-e4b-it" },
+    },
+    {
+      retrieveMemoryContext: async (input) => {
+        assert.equal(input.query, "DoorDash versus Uber");
+        assert.equal(input.limit, 40);
+        return memoryContextFromContents("DoorDash versus Uber", [
+          { id: "mem-versus", content: "User compared DoorDash and Uber courier reliability.", category: "work_patterns" },
+          { id: "mem-doordash-only", content: "User manages DoorDash notifications personally.", category: "preferences" },
+        ]);
+      },
+    },
+  );
+  assert(versusTopicAnswer);
+  assert.match(versusTopicAnswer.textContent, /DoorDash and Uber courier reliability/);
+  assert.doesNotMatch(versusTopicAnswer.textContent, /DoorDash notifications personally/);
 
   const cappedTopicAnswer = await answerRuntimeMemoryInspectionQuestion(
     {

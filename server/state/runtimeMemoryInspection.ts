@@ -329,13 +329,21 @@ const TOPIC_TOKEN_STOPWORDS = new Set([
   "pull",
   "the",
   "and",
+  "or",
+  "vs",
+  "versus",
   "you",
   "user",
 ]);
 
-function topicTokens(query: string): string[] {
+type TopicAlternative = {
+  tokens: string[];
+  symbolTerms: string[];
+};
+
+function tokenizeTopic(value: string): string[] {
   return Array.from(new Set(
-    normalizeForIntent(query)
+    normalizeForIntent(value)
       .replace(/[^a-z0-9]+/g, " ")
       .split(" ")
       .map((token) => token.trim())
@@ -343,8 +351,35 @@ function topicTokens(query: string): string[] {
   ));
 }
 
+function topicTokens(query: string): string[] {
+  return tokenizeTopic(cleanTopic(query));
+}
+
 function allowsUnorderedTopicMatch(query: string): boolean {
   return /\b(?:and|or|vs|versus)\b|&/i.test(cleanTopic(query));
+}
+
+function hasOrTopicConnector(query: string): boolean {
+  return /\bor\b/i.test(cleanTopic(query));
+}
+
+function symbolTopicTerms(value: string): string[] {
+  return Array.from(new Set(
+    (cleanTopic(value).match(/[a-z0-9]+(?:[+#./-]+[a-z0-9]+)*[+#]+|[a-z0-9]+(?:[+#./-]+[a-z0-9]+)+/gi) ?? [])
+      .map((term) => term.toLowerCase()),
+  ));
+}
+
+function topicAlternatives(query: string): TopicAlternative[] {
+  const topic = cleanTopic(query);
+  if (!hasOrTopicConnector(topic)) return [];
+  return topic
+    .split(/\bor\b/i)
+    .map((part) => ({
+      tokens: tokenizeTopic(part),
+      symbolTerms: symbolTopicTerms(part),
+    }))
+    .filter((part) => part.tokens.length > 0 || part.symbolTerms.length > 0);
 }
 
 function searchableTopicText(item: MemoryContext["items"][number]): string {
@@ -384,7 +419,16 @@ function itemMatchesRawTopic(item: MemoryContext["items"][number], query: string
   return matcher.test(searchableRawTopicText(item));
 }
 
-function itemMatchesTopic(item: MemoryContext["items"][number], tokens: string[], allowUnorderedMatch: boolean): boolean {
+function itemMatchesSymbolTerms(item: MemoryContext["items"][number], symbolTerms: string[]): boolean {
+  if (symbolTerms.length === 0) return true;
+  const searchable = searchableRawTopicText(item);
+  return symbolTerms.every((term) => {
+    const matcher = new RegExp(`(^|[^a-z0-9])${escapeRegExp(term)}([^a-z0-9]|$)`, "i");
+    return matcher.test(searchable);
+  });
+}
+
+function itemMatchesTopicTokens(item: MemoryContext["items"][number], tokens: string[], allowUnorderedMatch: boolean): boolean {
   if (tokens.length === 0) return true;
   const searchable = normalizeForIntent(searchableTopicText(item));
   const searchablePhrase = searchable
@@ -406,6 +450,25 @@ function itemMatchesTopic(item: MemoryContext["items"][number], tokens: string[]
       (allowUnorderedMatch && tokens.every((token) => searchableTokens.has(token)));
   }
   return searchableTokens.has(tokens[0]!);
+}
+
+function itemMatchesTopicAlternative(item: MemoryContext["items"][number], alternative: TopicAlternative): boolean {
+  return itemMatchesSymbolTerms(item, alternative.symbolTerms) &&
+    itemMatchesTopicTokens(item, alternative.tokens, false);
+}
+
+function itemMatchesTopic(
+  item: MemoryContext["items"][number],
+  tokens: string[],
+  allowUnorderedMatch: boolean,
+  symbolTerms: string[],
+  alternatives: TopicAlternative[],
+): boolean {
+  if (alternatives.length > 0) {
+    return alternatives.some((alternative) => itemMatchesTopicAlternative(item, alternative));
+  }
+  return itemMatchesSymbolTerms(item, symbolTerms) &&
+    itemMatchesTopicTokens(item, tokens, allowUnorderedMatch);
 }
 
 function contextWithFilteredItems(context: MemoryContext, items: MemoryContext["items"]): MemoryContext {
@@ -434,7 +497,9 @@ function filterMemoryContextForInspection(
 
   const tokens = topicTokens(intent.query);
   const allowUnorderedMatch = allowsUnorderedTopicMatch(intent.query);
-  if (tokens.length === 0) {
+  const symbolTerms = symbolTopicTerms(intent.query);
+  const alternatives = topicAlternatives(intent.query);
+  if (tokens.length === 0 && symbolTerms.length === 0 && alternatives.length === 0) {
     return contextWithFilteredItems(
       context,
       context.items.filter((item) => itemMatchesRawTopic(item, intent.query)).slice(0, DEFAULT_MEMORY_LIMIT),
@@ -443,7 +508,9 @@ function filterMemoryContextForInspection(
 
   return contextWithFilteredItems(
     context,
-    context.items.filter((item) => itemMatchesTopic(item, tokens, allowUnorderedMatch)).slice(0, DEFAULT_MEMORY_LIMIT),
+    context.items
+      .filter((item) => itemMatchesTopic(item, tokens, allowUnorderedMatch, symbolTerms, alternatives))
+      .slice(0, DEFAULT_MEMORY_LIMIT),
   );
 }
 
