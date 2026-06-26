@@ -328,6 +328,16 @@ async function testRawRestrictedSourceWritesAreExcluded(): Promise<void> {
   assert.equal(manualTransactionRows.status, "excluded");
   assert.equal(manualTransactionRows.record, null);
 
+  const manualCsvTransactionRows = planMemoryWrite({
+    userId: "user-123",
+    content: "Transactions:\n2026-06-26, Starbucks, -$5.00",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(manualCsvTransactionRows.status, "excluded");
+  assert.equal(manualCsvTransactionRows.record, null);
+
   const manualCardEnding = planMemoryWrite({
     userId: "user-123",
     content: "My debit card ending in 1234 is for grocery purchases.",
@@ -374,12 +384,12 @@ async function testApprovalEditsRejectRawRestrictedContent(): Promise<void> {
   const pipelineSource = fs.readFileSync(path.resolve(process.cwd(), "server/memory/writePipeline.ts"), "utf8");
   assert.match(
     pipelineSource,
-    /approvePendingMemoryWrite[\s\S]*containsRawRestrictedContent\(rawContent\)[\s\S]*containsRawRestrictedContent\(content\)[\s\S]*Edited memory content contains raw restricted details[\s\S]*SELECT content[\s\S]*review_status = 'pending'[\s\S]*containsRawRestrictedContent\(existingContent\)[\s\S]*Pending memory content contains raw restricted details[\s\S]*UPDATE user_memories/,
+    /approvePendingMemoryWrite[\s\S]*containsRawRestrictedContent\(rawContent\)[\s\S]*containsRawRestrictedContent\(content\)[\s\S]*Edited memory content contains raw restricted details[\s\S]*SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id[\s\S]*hasRestrictedApprovalMetadata\(existingRow\)[\s\S]*Pending memory source is restricted[\s\S]*containsRawRestrictedContent\(existingContent\)[\s\S]*Pending memory content contains raw restricted details[\s\S]*UPDATE user_memories/,
     "Approval edits and keeps should reject raw restricted content before updating pending memories",
   );
   assert.match(
     pipelineSource,
-    /keepPendingMemoryWrites[\s\S]*SELECT id, content, supersedes_memory_id[\s\S]*safeMemoryIds[\s\S]*containsRawRestrictedContent\(row\.content \?\? ""\)[\s\S]*UPDATE user_memories[\s\S]*AND id = ANY\(\$\{safeMemoryIds\}::varchar\[\]\)/,
+    /keepPendingMemoryWrites[\s\S]*SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id[\s\S]*safeMemoryIds[\s\S]*hasRestrictedApprovalMetadata\(row\)[\s\S]*containsRawRestrictedContent\(row\.content \?\? ""\)[\s\S]*UPDATE user_memories[\s\S]*AND id = ANY\(\$\{safeMemoryIds\}::varchar\[\]\)/,
     "Bulk approval should validate pending content before promoting memories",
   );
   console.log("OK: approval edits reject raw restricted details before DB updates");

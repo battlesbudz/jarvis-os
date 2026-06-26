@@ -133,6 +133,10 @@ export interface ApprovedPendingMemoryWriteRow {
 
 interface PendingMemoryApprovalCandidateRow extends ApprovedPendingMemoryWriteRow {
   content: string | null;
+  source_type: string | null;
+  source_ref: string | null;
+  sensitivity: string | null;
+  provenance: unknown;
 }
 
 export interface ApprovedPendingMemoryWritesResult {
@@ -264,6 +268,13 @@ function provenanceHasRestrictedSource(provenance: MemoryProvenanceMetadata[]): 
     isRestrictedSourceType(item.sourceType) ||
     isRestrictedSourceType(item.sourceRef)
   );
+}
+
+function hasRestrictedApprovalMetadata(row: PendingMemoryApprovalCandidateRow): boolean {
+  return normalizeSensitivity(row.sensitivity) === "restricted_summary" ||
+    isRestrictedSourceType(row.source_type) ||
+    isRestrictedSourceType(row.source_ref) ||
+    provenanceHasRestrictedSource(normalizeProvenance(row.provenance));
 }
 
 function isApprovedRestrictedSummary(input: MemoryWriteInput, sourceType: string): boolean {
@@ -632,8 +643,8 @@ export async function approvePendingMemoryWrite(input: {
       reason: "Edited memory content contains raw restricted details.",
     };
   }
-  const existingResult = await db.execute<{ content: string | null }>(sql`
-    SELECT content
+  const existingResult = await db.execute<PendingMemoryApprovalCandidateRow>(sql`
+    SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id
     FROM user_memories
     WHERE id = ${input.memoryId}
       AND user_id = ${input.userId}
@@ -641,8 +652,16 @@ export async function approvePendingMemoryWrite(input: {
       AND review_status = 'pending'
     LIMIT 1
   `);
-  const existingContent = (existingResult.rows ?? [])[0]?.content ?? "";
-  if (!existingContent) return { approved: false, supersededMemoryId: null };
+  const existingRow = (existingResult.rows ?? [])[0];
+  if (!existingRow?.content) return { approved: false, supersededMemoryId: null };
+  if (hasRestrictedApprovalMetadata(existingRow)) {
+    return {
+      approved: false,
+      supersededMemoryId: null,
+      reason: "Pending memory source is restricted.",
+    };
+  }
+  const existingContent = existingRow.content;
   if (!content && containsRawRestrictedContent(existingContent)) {
     return {
       approved: false,
@@ -693,7 +712,7 @@ export async function keepPendingMemoryWrites(input: {
 
   const pendingResult = memoryIds
     ? await db.execute<PendingMemoryApprovalCandidateRow>(sql`
-      SELECT id, content, supersedes_memory_id
+      SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id
       FROM user_memories
       WHERE user_id = ${userId}
         AND id = ANY(${memoryIds}::varchar[])
@@ -701,13 +720,14 @@ export async function keepPendingMemoryWrites(input: {
         AND review_status = 'pending'
     `)
     : await db.execute<PendingMemoryApprovalCandidateRow>(sql`
-      SELECT id, content, supersedes_memory_id
+      SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id
       FROM user_memories
       WHERE user_id = ${userId}
         AND pending_review = TRUE
         AND review_status = 'pending'
     `);
   const safeMemoryIds = (pendingResult.rows ?? [])
+    .filter((row) => !hasRestrictedApprovalMetadata(row))
     .filter((row) => !containsRawRestrictedContent(row.content ?? ""))
     .map((row) => row.id);
   if (safeMemoryIds.length === 0) {
