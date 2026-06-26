@@ -5,6 +5,14 @@ import type { RuntimeCapabilityStateDeps } from "../runtimeCapability";
 
 const fixedNow = new Date("2026-06-26T09:00:00.000Z");
 
+function approvedResetTarget(requestId = "approved-phone-gemma-request") {
+  return {
+    requestId,
+    scope: "tracked_phone_gemma_request" as const,
+    capturedAt: fixedNow.toISOString(),
+  };
+}
+
 function userMessage(content: string) {
   return [{ role: "user" as const, content }];
 }
@@ -536,9 +544,10 @@ async function testFixLocalModelRecoveryCancelsAndPreservesData() {
   } = await resetModule();
 
   const actions: string[] = [];
+  const resetTarget = approvedResetTarget();
   const deps: PhoneGemmaDiagnosticDeps = {
     now: () => fixedNow,
-    requestResetApproval: async () => ({ approved: true, gateId: "gate-phone-gemma-reset" }),
+    requestResetApproval: async () => ({ approved: true, gateId: "gate-phone-gemma-reset", resetTarget }),
     cancelActiveGeneration: async () => {
       actions.push("cancel");
       return { status: "passed", detail: "Android confirmed cancellation." };
@@ -558,6 +567,7 @@ async function testFixLocalModelRecoveryCancelsAndPreservesData() {
     deviceId: "galaxy-fold6",
     model: "gemma-4-e4b-it",
     profileId: "gpu-standard-512",
+    resetTarget,
   }, deps);
 
   assert.equal(result.status, "recovered");
@@ -699,6 +709,42 @@ async function testFixLocalModelUsesApprovedResetTarget() {
   console.log("OK: Phone Gemma reset uses the approved request target and preserves newer request tracking");
 }
 
+async function testFixLocalModelRequiresApprovedResetTarget() {
+  const { fixPhoneGemmaLocalModel } = await resetModule();
+
+  let cancelCalls = 0;
+  let idleCalls = 0;
+  let clearCalls = 0;
+  const result = await fixPhoneGemmaLocalModel({
+    userId: "user-123",
+    deviceId: "galaxy-fold6",
+    model: "gemma-4-e4b-it",
+    profileId: "gpu-standard-512",
+  }, {
+    now: () => fixedNow,
+    cancelActiveGeneration: async () => {
+      cancelCalls += 1;
+      return { status: "passed", detail: "Should not cancel without an approved target." };
+    },
+    waitForNativeIdle: async () => {
+      idleCalls += 1;
+      return { status: "passed", detail: "Should not check native idle without an approved target." };
+    },
+    clearStaleRequestState: async () => {
+      clearCalls += 1;
+      return { status: "passed", detail: "Should not clear without an approved target." };
+    },
+  });
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.steps.find((step) => step.id === "cancel")?.status, "failed");
+  assert.match(result.steps.find((step) => step.id === "cancel")?.detail ?? "", /approval-captured reset target/);
+  assert.equal(cancelCalls, 0);
+  assert.equal(idleCalls, 0);
+  assert.equal(clearCalls, 0);
+  console.log("OK: Phone Gemma recovery refuses to cancel without an approval-captured reset target");
+}
+
 async function testFixLocalModelRecoveryRequiresAndroidNativeIdleConfirmation() {
   const { fixPhoneGemmaLocalModel } = await resetModule();
 
@@ -709,6 +755,7 @@ async function testFixLocalModelRecoveryRequiresAndroidNativeIdleConfirmation() 
     deviceId: "galaxy-fold6",
     model: "gemma-4-e4b-it",
     profileId: "gpu-standard-512",
+    resetTarget: approvedResetTarget("active-request"),
   }, {
     now: () => fixedNow,
     nativeIdlePollTimeoutMs: 20,
@@ -748,6 +795,7 @@ async function testFixLocalModelRecoveryRequiresAndroidNativeIdleConfirmation() 
     deviceId: "galaxy-fold6",
     model: "gemma-4-e4b-it",
     profileId: "gpu-standard-512",
+    resetTarget: approvedResetTarget("settling-request"),
   }, {
     now: () => fixedNow,
     nativeIdlePollTimeoutMs: 50,
@@ -777,6 +825,7 @@ async function testFixLocalModelRecoveryRequiresAndroidNativeIdleConfirmation() 
     deviceId: "galaxy-fold6",
     model: "gemma-4-e4b-it",
     profileId: "gpu-standard-512",
+    resetTarget: approvedResetTarget("idle-request"),
   }, {
     now: () => fixedNow,
     cancelActiveGeneration: async () => ({ status: "passed", detail: "Android confirmed cancellation." }),
@@ -807,6 +856,7 @@ async function testFixLocalModelRecoveryPartialAndFailedOutcomes() {
     deviceId: "galaxy-fold6",
     model: "gemma-4-e4b-it",
     profileId: "gpu-standard-512",
+    resetTarget: approvedResetTarget("partial-request"),
   }, {
     now: () => fixedNow,
     cancelActiveGeneration: async () => ({ status: "passed", detail: "Android confirmed cancellation." }),
@@ -821,6 +871,7 @@ async function testFixLocalModelRecoveryPartialAndFailedOutcomes() {
     deviceId: "galaxy-fold6",
     model: "gemma-4-e4b-it",
     profileId: "gpu-standard-512",
+    resetTarget: approvedResetTarget("native-unavailable-request"),
   }, {
     now: () => fixedNow,
     cancelActiveGeneration: async () => ({ status: "passed", detail: "Android confirmed cancellation." }),
@@ -834,6 +885,7 @@ async function testFixLocalModelRecoveryPartialAndFailedOutcomes() {
     deviceId: "galaxy-fold6",
     model: "gemma-4-e4b-it",
     profileId: "gpu-standard-512",
+    resetTarget: approvedResetTarget("failed-request"),
   }, {
     now: () => fixedNow,
     cancelActiveGeneration: async () => ({ status: "failed", detail: "Cancel failed." }),
@@ -860,6 +912,7 @@ async function main() {
   await testFixLocalModelRecoveryCancelsAndPreservesData();
   await testFixLocalModelRequiresApprovalBeforeRecovery();
   await testFixLocalModelUsesApprovedResetTarget();
+  await testFixLocalModelRequiresApprovedResetTarget();
   await testFixLocalModelRecoveryRequiresAndroidNativeIdleConfirmation();
   await testFixLocalModelRecoveryPartialAndFailedOutcomes();
 }
