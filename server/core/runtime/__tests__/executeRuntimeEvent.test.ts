@@ -25,6 +25,10 @@ function event(message: string, eventId = "event-1") {
   assert.equal(result.decision.approval.required, false);
   assert.ok(result.contextPacket.sources.some((source) => source.label === "always_on_kernel"));
   assert.ok(result.decision.tools.every((tool) => tool.status === "proposed"));
+  assert.equal(result.runtimeExplanation.deterministic, true);
+  assert.equal(result.runtimeExplanation.title, "Runtime gate decision");
+  assert.equal(result.runtimeExplanation.severity, "info");
+  assert.deepEqual(result.runtimeExplanation.sources.used.map((source) => source.label), ["Diagnostics"]);
   console.log("OK: Runtime Gate maps a general question to a read-only inline answer");
 }
 
@@ -39,6 +43,7 @@ function event(message: string, eventId = "event-1") {
   assert.equal(result.decision.riskTier, "T0");
   assert.equal(result.decision.responseMode, "answer");
   assert.ok(result.contextPacket.sources.some((source) => source.kind === "memory"));
+  assert.ok(result.runtimeExplanation.sources.used.some((source) => source.label === "MemoryOS"));
   console.log("OK: Runtime Gate turns a memory query into a ContextPacket and RuntimeDecision");
 }
 
@@ -55,6 +60,9 @@ function event(message: string, eventId = "event-1") {
   assert.equal(result.decision.approval.required, true);
   assert.ok(result.decision.tools.some((tool) => tool.status === "approval_required"));
   assert.ok(result.decision.tools.every((tool) => tool.status !== "executed"));
+  assert.equal(result.runtimeExplanation.severity, "warning");
+  assert.deepEqual(result.runtimeExplanation.sources.attempted.map((source) => source.label), ["Tool"]);
+  assert.equal(result.runtimeExplanation.actions[0]?.id, "review_approval_gate");
   console.log("OK: Runtime Gate preserves approval boundary for external email actions");
 }
 
@@ -87,6 +95,9 @@ function event(message: string, eventId = "event-1") {
   assert.equal(result.decision.responseMode, "blocked");
   assert.equal(result.decision.riskTier, "T5");
   assert.equal(result.decision.errors[0]?.code, "INVALID_RUNTIME_EVENT");
+  assert.equal(result.runtimeExplanation.title, "Runtime event blocked");
+  assert.equal(result.runtimeExplanation.severity, "error");
+  assert.deepEqual(result.runtimeExplanation.sources.attempted.map((source) => source.label), ["Diagnostics"]);
   console.log("OK: Runtime Gate fails closed for invalid events");
 }
 

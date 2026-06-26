@@ -94,6 +94,16 @@ async function main() {
     assert.equal(openWhenDisconnected.detail.source, "runtime_capability_state");
     assert.equal(openWhenDisconnected.detail.status, "offline");
     assert.match(String(openWhenDisconnected.detail.error), /Android Device Control is not connected/);
+    const explanation = openWhenDisconnected.detail.runtimeExplanation as {
+      title?: string;
+      deterministic?: boolean;
+      sources?: { attempted?: Array<{ label: string }> };
+      actions?: Array<{ id: string }>;
+    } | undefined;
+    assert.equal(explanation?.title, "Capability unavailable");
+    assert.equal(explanation?.deterministic, true);
+    assert.deepEqual(explanation?.sources?.attempted?.map((source) => source.label), ["Diagnostics", "Tool"]);
+    assert.equal(explanation?.actions?.[0]?.id, "check_setup");
   } finally {
     _setRuntimeCapabilityDepsForTesting(null);
   }

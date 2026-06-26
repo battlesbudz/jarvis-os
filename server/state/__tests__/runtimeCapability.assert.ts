@@ -108,6 +108,8 @@ async function testRuntimeCapabilityAnswersUseConnectedAccountState() {
   assert.ok(answer);
   assert.equal(answer.providerName, "jarvis-runtime");
   assert.equal(answer.model, "gemma-4-e4b-it");
+  assert.deepEqual(answer.runtimeExplanation?.sources.used.map((source) => source.label), ["Connector"]);
+  assert.match(answer.textContent, /Sources: Connector\./);
   assert.match(answer.textContent, /Google: connected and ready/);
   assert.match(answer.textContent, /Slack: not connected/);
   assert.doesNotMatch(answer.textContent, /I think|probably|maybe/i);
@@ -124,6 +126,8 @@ async function testRuntimeCapabilityAnswersExposeDeviceControlState() {
   }, deps);
 
   assert.ok(answer);
+  assert.deepEqual(answer.runtimeExplanation?.sources.used.map((source) => source.label), ["Diagnostics"]);
+  assert.match(answer.textContent, /Sources: Diagnostics\./);
   assert.match(answer.textContent, /Android Device Control: connected/);
   assert.match(answer.textContent, /active device: Galaxy Fold6/);
   assert.match(answer.textContent, /Accessibility: ready/);
@@ -182,6 +186,8 @@ async function testRuntimeCapabilityToolAnswersUseRouteTools() {
   }, deps);
 
   assert.ok(answer);
+  assert.deepEqual(answer.runtimeExplanation?.sources.used.map((source) => source.label), ["Tool", "Diagnostics", "Connector"]);
+  assert.match(answer.textContent, /Sources: Tool, Diagnostics, Connector\./);
   assert.match(answer.textContent, /Memory: memory_search/);
   assert.match(answer.textContent, /Runtime: android_open_app_by_name/);
   assert.match(answer.textContent, /Email ready via Google: send_email/);
@@ -231,6 +237,7 @@ async function testRuntimeCapabilityToolAnswersExposeAccountReadiness() {
 async function testAndroidActionPreflightReturnsDeterministicReason() {
   const {
     buildRuntimeCapabilityState,
+    explainRuntimeCapabilityPreflight,
     preflightRuntimeCapabilityAction,
   } = await import("../runtimeCapability");
   const state = await buildRuntimeCapabilityState({
@@ -244,6 +251,11 @@ async function testAndroidActionPreflightReturnsDeterministicReason() {
   assert.equal(result.status, "disabled");
   assert.match(result.reason, /android_tap_type permission is disabled/);
   assert.equal(result.lastCheckedAt, "2026-06-25T12:00:00.000Z");
+  const explanation = explainRuntimeCapabilityPreflight(result);
+  assert.equal(explanation.title, "Capability unavailable");
+  assert.deepEqual(explanation.sources.used, []);
+  assert.deepEqual(explanation.sources.attempted.map((source) => source.label), ["Diagnostics", "Tool"]);
+  assert.equal(explanation.actions[0]?.id, "check_setup");
   console.log("OK: runtime capability preflight returns deterministic unavailable-action reasons");
 }
 

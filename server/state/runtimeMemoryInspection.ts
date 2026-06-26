@@ -3,6 +3,13 @@ import { eq } from "drizzle-orm";
 
 import type { ProviderTurnResult } from "../agent/providers/base";
 import type { FallbackChainEntry } from "../agent/providers/fallback";
+import {
+  createRuntimeExplanation,
+  renderRuntimeExplanation,
+  runtimeSource,
+  type RuntimeExplanation,
+  type RuntimeExplanationSource,
+} from "../core/runtime/runtimeExplanation";
 import type { MemoryContext } from "../memory/memoryOs";
 import {
   loadRuntimeProfileStateFromDb,
@@ -186,15 +193,21 @@ export function classifyRuntimeMemoryInspectionIntent(
   return null;
 }
 
-function providerTurnResult(text: string, route: FallbackChainEntry | undefined): ProviderTurnResult {
+function providerTurnResult(
+  text: string,
+  route: FallbackChainEntry | undefined,
+  runtimeExplanation?: RuntimeExplanation,
+): ProviderTurnResult {
+  const renderedText = runtimeExplanation ? renderRuntimeExplanation(runtimeExplanation) : text;
   return {
-    textContent: text,
-    textChunks: [text],
+    textContent: renderedText,
+    textChunks: [renderedText],
     toolCallList: [],
     finishReason: "stop",
     providerName: "jarvis-runtime",
     model: route?.model,
     fallbackUsed: false,
+    runtimeExplanation,
   };
 }
 
@@ -232,12 +245,19 @@ async function defaultRetrieveMemoryContext(input: {
   return retrieveMemoryContext(input);
 }
 
-function hasCoreProfileFields(profile: RuntimeProfileState | null): boolean {
+function hasRenderedProfile(profile: RuntimeProfileState | null): boolean {
   return Boolean(
     profile?.preferredName?.trim()
       || profile?.timezone?.trim()
       || profile?.language?.trim()
       || profile?.communicationStyle?.trim(),
+  );
+}
+
+function hasRenderedSoul(soul: SoulInspectionRecord | null): boolean {
+  return Boolean(
+    soul?.content?.trim()
+      || soul?.manualOverride?.trim(),
   );
 }
 
@@ -296,13 +316,6 @@ function renderMemoryItems(context: MemoryContext, scopeLabel: string): string[]
   });
 
   return lines;
-}
-
-function sourceLine(profile: RuntimeProfileState | null, soul: SoulInspectionRecord | null, memoryContext: MemoryContext): string {
-  const sources = new Set<string>();
-  if (hasCoreProfileFields(profile) || soul?.content?.trim() || soul?.manualOverride?.trim()) sources.add("Soul/Core Profile");
-  if (memoryContext.items.length > 0 || memoryContext.uncertainty.length > 0) sources.add("MemoryOS");
-  return `Sources: ${Array.from(sources).join(", ") || "none"}.`;
 }
 
 function sanitizeMemoryUncertainty(note: string): string | null {
@@ -564,10 +577,13 @@ export async function answerRuntimeMemoryInspectionQuestion(
   if (!intent) return null;
 
   if (!input.userId?.trim()) {
-    return providerTurnResult(
-      "Authentication/runtime error: Jarvis needs a signed-in user before showing stored MemoryOS or Soul records.",
-      input.route,
-    );
+    const explanation = createRuntimeExplanation({
+      title: "Authentication required",
+      message: "Authentication/runtime error: Jarvis needs a signed-in user before showing stored MemoryOS or Soul records.",
+      severity: "error",
+      attemptedSources: [runtimeSource("Diagnostics")],
+    });
+    return providerTurnResult(explanation.message, input.route, explanation);
   }
 
   const userId = input.userId.trim();
@@ -592,10 +608,14 @@ export async function answerRuntimeMemoryInspectionQuestion(
     uncertainty: [],
   };
   const notes: string[] = [];
+  let profileSucceeded = false;
+  let soulSucceeded = false;
+  let memorySucceeded = false;
 
   if (includeCoreProfile) {
     try {
       profile = await loadCoreProfile(userId);
+      profileSucceeded = true;
     } catch (error) {
       console.warn("[RuntimeMemoryInspection] core profile unavailable:", safeErrorKind(error));
       notes.push("Core profile was unavailable.");
@@ -603,6 +623,7 @@ export async function answerRuntimeMemoryInspectionQuestion(
 
     try {
       soul = await loadSoul(userId);
+      soulSucceeded = true;
     } catch (error) {
       console.warn("[RuntimeMemoryInspection] Soul unavailable:", safeErrorKind(error));
       notes.push("Soul was unavailable.");
@@ -618,6 +639,7 @@ export async function answerRuntimeMemoryInspectionQuestion(
       skipAccessUpdate: true,
       canonicalOnly: true,
     });
+    memorySucceeded = true;
   } catch (error) {
     console.warn("[RuntimeMemoryInspection] MemoryOS unavailable:", safeErrorKind(error));
     notes.push("MemoryOS was unavailable.");
@@ -632,8 +654,6 @@ export async function answerRuntimeMemoryInspectionQuestion(
     `Here is a limited MemoryOS inspection for ${intent.scopeLabel}: up to ${DEFAULT_MEMORY_LIMIT} matching records. It may not include every stored memory.`,
     "",
     ...renderMemoryItems(memoryContext, intent.scopeLabel),
-    "",
-    sourceLine(profile, soul, memoryContext),
   ];
   if (includeCoreProfile) {
     lines.splice(2, 0, ...renderCoreProfile(profile, soul), "");
@@ -643,5 +663,35 @@ export async function answerRuntimeMemoryInspectionQuestion(
     lines.push("", "Notes:", ...Array.from(new Set(notes)).map((note) => `- ${note}`));
   }
 
-  return providerTurnResult(lines.join("\n"), input.route);
+  const usedSources: RuntimeExplanationSource[] = [];
+  const attemptedSources: RuntimeExplanationSource[] = [];
+  if (hasRenderedProfile(profile)) {
+    usedSources.push(runtimeSource("Soul", "Profile Store"));
+  }
+  if (hasRenderedSoul(soul)) {
+    usedSources.push(runtimeSource("Soul", "Soul"));
+  }
+  if (memoryContext.items.length > 0 || memoryContext.uncertainty.length > 0) {
+    usedSources.push(runtimeSource("MemoryOS"));
+  }
+  if (includeCoreProfile && !profileSucceeded) {
+    attemptedSources.push(runtimeSource("Soul", "Profile Store"));
+  }
+  if (includeCoreProfile && !soulSucceeded) {
+    attemptedSources.push(runtimeSource("Soul", "Soul"));
+  }
+  if (!memorySucceeded || (memorySucceeded && memoryContext.items.length === 0 && memoryContext.uncertainty.length === 0)) {
+    attemptedSources.push(runtimeSource("MemoryOS"));
+  }
+
+  const message = lines.join("\n");
+  const explanation = createRuntimeExplanation({
+    title: "MemoryOS inspection",
+    message,
+    severity: notes.length > 0 ? "warning" : "info",
+    usedSources,
+    attemptedSources,
+  });
+
+  return providerTurnResult(message, input.route, explanation);
 }

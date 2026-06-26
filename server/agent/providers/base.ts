@@ -17,6 +17,7 @@
  */
 
 import type OpenAI from "openai";
+import type { RuntimeExplanation } from "../../core/runtime/runtimeExplanation";
 
 export type ProviderResponseFormat =
   OpenAI.Chat.Completions.ChatCompletionCreateParams["response_format"];
@@ -61,6 +62,7 @@ export interface ProviderTurnResult {
   providerName?: string;
   model?: string;
   fallbackUsed?: boolean;
+  runtimeExplanation?: RuntimeExplanation;
 }
 
 // ── Accumulator helper ─────────────────────────────────────────────────────────

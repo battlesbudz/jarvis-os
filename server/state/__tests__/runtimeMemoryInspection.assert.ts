@@ -266,8 +266,12 @@ async function main(): Promise<void> {
   assert(answer);
   assert.equal(answer.providerName, "jarvis-runtime");
   assert.equal(answer.model, "gemma-4-e4b-it");
+  assert.deepEqual(answer.runtimeExplanation?.sources.used.map((source) => source.label), ["Soul", "Soul", "MemoryOS"]);
+  assert.deepEqual(answer.runtimeExplanation?.sources.used.map((source) => source.detail), ["Profile Store", "Soul", undefined]);
+  assert.deepEqual(answer.runtimeExplanation?.sources.attempted, []);
   assert.match(answer.textContent, /limited MemoryOS inspection/);
   assert.match(answer.textContent, /up to 10 matching records/);
+  assert.match(answer.textContent, /Sources: Soul, MemoryOS\./);
   assert.match(answer.textContent, /Soul\/Core Profile/);
   assert.match(answer.textContent, /Preferred name: Justin/);
   assert.match(answer.textContent, /Timezone: America\/New_York/);
@@ -312,7 +316,10 @@ async function main(): Promise<void> {
   assert.match(profileFieldsAnswer.textContent, /Timezone: America\/Chicago/);
   assert.match(profileFieldsAnswer.textContent, /Language: en/);
   assert.match(profileFieldsAnswer.textContent, /Communication style: concise/);
-  assert.match(profileFieldsAnswer.textContent, /Sources: Soul\/Core Profile\./);
+  assert.deepEqual(profileFieldsAnswer.runtimeExplanation?.sources.used.map((source) => source.label), ["Soul"]);
+  assert.deepEqual(profileFieldsAnswer.runtimeExplanation?.sources.used.map((source) => source.detail), ["Profile Store"]);
+  assert.deepEqual(profileFieldsAnswer.runtimeExplanation?.sources.attempted.map((source) => source.label), ["MemoryOS"]);
+  assert.match(profileFieldsAnswer.textContent, /Sources: Soul\. Attempted: MemoryOS\./);
   assert.doesNotMatch(profileFieldsAnswer.textContent, /No stored Soul\/Core Profile entries found/);
 
   const topicAnswer = await answerRuntimeMemoryInspectionQuestion(
@@ -337,7 +344,9 @@ async function main(): Promise<void> {
     },
   );
   assert(topicAnswer);
+  assert.deepEqual(topicAnswer.runtimeExplanation?.sources.used.map((source) => source.label), ["MemoryOS"]);
   assert.match(topicAnswer.textContent, /DoorDash notifications personally/);
+  assert.match(topicAnswer.textContent, /Sources: MemoryOS\./);
   assert.doesNotMatch(topicAnswer.textContent, /terse next-step/);
   assert.doesNotMatch(topicAnswer.textContent, /Soul\/Core Profile/);
   assert.doesNotMatch(topicAnswer.textContent, /Preferred name/);
@@ -441,9 +450,12 @@ async function main(): Promise<void> {
     },
   );
   assert(emptyAnswer);
+  assert.deepEqual(emptyAnswer.runtimeExplanation?.sources.used, []);
+  assert.deepEqual(emptyAnswer.runtimeExplanation?.sources.attempted.map((source) => source.label), ["MemoryOS"]);
   assert.doesNotMatch(emptyAnswer.textContent, /Soul\/Core Profile/);
   assert.doesNotMatch(emptyAnswer.textContent, /terse next-step/);
   assert.match(emptyAnswer.textContent, /No matching MemoryOS memories found for Stripe/);
+  assert.match(emptyAnswer.textContent, /Attempted: MemoryOS\./);
 
   const acronymAnswer = await answerRuntimeMemoryInspectionQuestion(
     {
@@ -825,9 +837,13 @@ async function main(): Promise<void> {
     console.warn = originalWarn;
   }
   assert(errorAnswer);
+  assert.deepEqual(errorAnswer.runtimeExplanation?.sources.used, []);
+  assert.deepEqual(errorAnswer.runtimeExplanation?.sources.attempted.map((source) => source.label), ["Soul", "Soul", "MemoryOS"]);
+  assert.deepEqual(errorAnswer.runtimeExplanation?.sources.attempted.map((source) => source.detail), ["Profile Store", "Soul", undefined]);
   assert.match(errorAnswer.textContent, /Core profile was unavailable\./);
   assert.match(errorAnswer.textContent, /Soul was unavailable\./);
   assert.match(errorAnswer.textContent, /MemoryOS was unavailable\./);
+  assert.match(errorAnswer.textContent, /Attempted: Soul, MemoryOS\./);
   assert.doesNotMatch(errorAnswer.textContent, /database password/);
   assert.doesNotMatch(errorAnswer.textContent, /query raw detail/);
   assert.doesNotMatch(errorAnswer.textContent, /connection string/);

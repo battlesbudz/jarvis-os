@@ -1,5 +1,6 @@
 import type { ContextPackDecision } from "../../agent/contextPacks";
 import type { ContextPacket, JarvisEvent, RuntimeDecision } from "../protocol";
+import type { RuntimeExplanation } from "./runtimeExplanation";
 
 export type RuntimeGateOutcome =
   | "inline_answer"
@@ -26,4 +27,5 @@ export interface ExecuteRuntimeEventResult {
   contextPacket: ContextPacket;
   decision: RuntimeDecision;
   gateResult: RuntimeGateResult;
+  runtimeExplanation: RuntimeExplanation;
 }

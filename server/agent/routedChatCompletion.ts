@@ -1,9 +1,14 @@
 import type OpenAI from "openai";
 import { routeModelTurn, type ModelExecutionTier, type RoutedModelTurnParams } from "./modelRouter";
 import type { ProviderTurnResult } from "./providers/base";
+import type { RuntimeExplanation } from "../core/runtime/runtimeExplanation";
 
 type ChatCreateBody = OpenAI.Chat.Completions.ChatCompletionCreateParams;
 type RouteRunner = (params: RoutedModelTurnParams) => Promise<ProviderTurnResult>;
+
+export type RuntimeExplainedChatCompletion = OpenAI.Chat.Completions.ChatCompletion & {
+  runtimeExplanation?: RuntimeExplanation;
+};
 
 export interface RoutedChatCompletionOptions {
   signal?: AbortSignal;
@@ -39,7 +44,7 @@ export async function createRoutedChatCompletion(
   body: ChatCreateBody,
   options: RoutedChatCompletionOptions = {},
   runner: RouteRunner = routeModelTurn,
-): Promise<OpenAI.Chat.Completions.ChatCompletion> {
+): Promise<RuntimeExplainedChatCompletion> {
   const result = await runner({
     tier: options.tier ?? "cheap",
     requestedModel: String(body.model),
@@ -72,7 +77,8 @@ export async function createRoutedChatCompletion(
         },
       },
     ],
-  } as OpenAI.Chat.Completions.ChatCompletion;
+    runtimeExplanation: result.runtimeExplanation,
+  } as RuntimeExplainedChatCompletion;
 }
 
 export function createRoutedOpenAIChatShim(
