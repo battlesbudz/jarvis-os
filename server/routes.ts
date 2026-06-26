@@ -74,7 +74,7 @@ import { logInteraction, getRecentInteractions, formatInteractionTimeline } from
 import { runCoachChatSideEffects } from "./coachChatSideEffects";
 import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoulContent } from "./memory/soul";
 import { buildUntrustedSoulContext, BUDGET_PRESETS } from "./memory/contextBuilder";
-import { containsRawRestrictedContent } from "./memory/writePipeline";
+import { containsRawRestrictedContent } from "./memory/restrictedContent";
 import { listPeople, deletePerson } from "./memory/people";
 import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, type AndroidDaemonAction } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";

@@ -25,7 +25,7 @@ import { logAction, isActionSuppressed } from "./intelligence/actionLog";
 import { claimAndMark } from "./lib/proactiveDedup";
 import { emit as diagEmit } from "./diagnostics/diagnosticsService";
 import { createRoutedOpenAIChatShim } from "./agent/routedChatCompletion";
-import { containsRawRestrictedContent } from "./memory/writePipeline";
+import { containsRawRestrictedContent } from "./memory/restrictedContent";
 
 const openai = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 

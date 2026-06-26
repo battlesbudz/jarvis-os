@@ -14,7 +14,7 @@ import {
   upsertMemoryEmbedding,
   type MemoryVectorRow,
 } from "./vectorStore";
-import { containsRawRestrictedContent } from "./writePipeline";
+import { containsRawRestrictedContent } from "./restrictedContent";
 
 const EMBED_MODEL = "text-embedding-3-small";
 const EMBED_DIMENSIONS = 1536;

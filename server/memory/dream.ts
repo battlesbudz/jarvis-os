@@ -18,7 +18,7 @@ import { eq, desc, and, gte, lt, sql, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { extractAndStore } from "./extractor";
 import { markSoulStale } from "./soul";
-import { containsRawRestrictedContent } from "./writePipeline";
+import { containsRawRestrictedContent } from "./restrictedContent";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 

@@ -17,7 +17,7 @@ import * as schema from "@shared/schema";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 import { isRetriableProviderError } from "../agent/providers/fallback";
-import { containsRawRestrictedContent } from "./writePipeline";
+import { containsRawRestrictedContent } from "./restrictedContent";
 
 const openai = createRoutedOpenAIChatShim("[MemoryVault]", "balanced");
 

@@ -10,7 +10,7 @@ import { getOutlookCalendarEvents, getRecentOutlookEmails } from "./integrations
 import { logInteraction } from "./interactionLog";
 import { logAction, isActionSuppressed } from "./intelligence/actionLog";
 import { createRoutedChatCompletion } from "./agent/routedChatCompletion";
-import { containsRawRestrictedContent } from "./memory/writePipeline";
+import { containsRawRestrictedContent } from "./memory/restrictedContent";
 
 const CURIOSITY_SCAN_LOCK_ID = 7654321098;
 let scannerStarted = false;

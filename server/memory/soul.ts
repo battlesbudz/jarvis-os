@@ -8,7 +8,7 @@ import {
   shouldIncludeMemoryInSoul,
   SOUL_FIELD_MAX_CHARS,
 } from "./soulCuration";
-import { containsRawRestrictedContent } from "./writePipeline";
+import { containsRawRestrictedContent } from "./restrictedContent";
 
 const SOUL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 

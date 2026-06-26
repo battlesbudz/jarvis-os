@@ -21,7 +21,7 @@ import { db } from "./db";
 import { and, eq, desc, sql } from "drizzle-orm";
 import { userMemories } from "@shared/schema";
 import { readWorkspaceFile } from "./workspace/loader";
-import { containsRawRestrictedContent } from "./memory/writePipeline";
+import { containsRawRestrictedContent } from "./memory/restrictedContent";
 
 // ── One-time relay ticket store ───────────────────────────────────────────────
 

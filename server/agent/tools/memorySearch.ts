@@ -2,7 +2,8 @@ import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
 import { batchIncrementAccessCount } from "../../memory/retrieve";
 import type { RetrievedMemory } from "../../memory/retrieve";
 import { retrieveMemoryContext, memoryContextItemsToRetrievedMemories, type MemoryContext } from "../../memory/memoryOs";
-import { containsRawRestrictedContent, defaultMemoryWriteDeps, planMemoryWrite } from "../../memory/writePipeline";
+import { containsRawRestrictedContent } from "../../memory/restrictedContent";
+import { defaultMemoryWriteDeps, planMemoryWrite } from "../../memory/writePipeline";
 import { db } from "../../db";
 import { eq, sql } from "drizzle-orm";
 import {

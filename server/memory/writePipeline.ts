@@ -12,6 +12,7 @@ import {
   type MemoryTier,
   type MemoryType,
 } from "@shared/schema";
+import { containsRawRestrictedContent } from "./restrictedContent";
 
 export const WORKING_CONTEXT_TTL_MS = 72 * 60 * 60 * 1000;
 export const RECENT_CONTEXT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
@@ -185,14 +186,7 @@ const RESTRICTED_SOURCE_TOKENS = [
   "restricted_source",
   "restricted_summary",
 ];
-const RAW_RESTRICTED_CONTENT_PATTERNS = [
-  /\b(?:account|routing|card|debit|credit)\s*(?:number|no\.?|#|ending)?\s*[:#-]?\s*(?:\d[\s-]?){4,}\b/i,
-  /\b(?:ssn|social security)\b[\s\S]{0,40}\d{3}[\s-]?\d{2}[\s-]?\d{4}\b/i,
-  /\b(?:available|current|ending)\s+balance\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/i,
-  /\b(?:bank|checking|savings|account)\s+balance\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/i,
-  /\bbalance\b[\s\S]{0,40}\b(?:bank|checking|savings|account)\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/i,
-  /^\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+.{2,}\s+[-+]?\$?\d[\d,]*(?:\.\d{2})?\s*$/m,
-];
+export { containsRawRestrictedContent } from "./restrictedContent";
 
 function cleanSingleLine(value: unknown, fallback = ""): string {
   return String(value ?? fallback).replace(/\s+/g, " ").trim();
@@ -257,10 +251,6 @@ function isRestrictedSourceType(value: unknown): boolean {
     normalized.endsWith(`_${token}`) ||
     normalized.includes(`_${token}_`)
   );
-}
-
-export function containsRawRestrictedContent(content: string): boolean {
-  return RAW_RESTRICTED_CONTENT_PATTERNS.some((pattern) => pattern.test(content));
 }
 
 function provenanceHasRestrictedSource(provenance: MemoryProvenanceMetadata[]): boolean {

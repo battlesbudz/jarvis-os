@@ -1,5 +1,5 @@
 import type { RetrievedMemory } from "./retrieve";
-import { containsRawRestrictedContent } from "./writePipeline";
+import { containsRawRestrictedContent } from "./restrictedContent";
 
 export type MemoryOsCaller =
   | "memory_search"
