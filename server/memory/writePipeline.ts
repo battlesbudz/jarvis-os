@@ -628,6 +628,24 @@ export async function approvePendingMemoryWrite(input: {
       reason: "Edited memory content contains raw restricted details.",
     };
   }
+  const existingResult = await db.execute<{ content: string | null }>(sql`
+    SELECT content
+    FROM user_memories
+    WHERE id = ${input.memoryId}
+      AND user_id = ${input.userId}
+      AND pending_review = TRUE
+      AND review_status = 'pending'
+    LIMIT 1
+  `);
+  const existingContent = (existingResult.rows ?? [])[0]?.content ?? "";
+  if (!existingContent) return { approved: false, supersededMemoryId: null };
+  if (!content && containsRawRestrictedContent(existingContent)) {
+    return {
+      approved: false,
+      supersededMemoryId: null,
+      reason: "Pending memory content contains raw restricted details.",
+    };
+  }
   const setContent = content ? sql`, content = ${content}` : sql``;
   const result = await db.execute<{ id: string; supersedes_memory_id: string | null }>(sql`
     UPDATE user_memories

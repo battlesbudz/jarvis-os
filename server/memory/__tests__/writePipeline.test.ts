@@ -357,6 +357,16 @@ async function testRawRestrictedSourceWritesAreExcluded(): Promise<void> {
   });
   assert.equal(manualAmountInSavings.status, "excluded");
   assert.equal(manualAmountInSavings.record, null);
+
+  const ordinaryCheckIn = planMemoryWrite({
+    userId: "user-123",
+    content: "The user prefers checking in at 9 before standup.",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(ordinaryCheckIn.status, "review_required");
+  assert.equal(ordinaryCheckIn.record?.content, "The user prefers checking in at 9 before standup.");
   console.log("OK: raw restricted-source records are excluded from normal MemoryOS");
 }
 
@@ -364,8 +374,8 @@ async function testApprovalEditsRejectRawRestrictedContent(): Promise<void> {
   const pipelineSource = fs.readFileSync(path.resolve(process.cwd(), "server/memory/writePipeline.ts"), "utf8");
   assert.match(
     pipelineSource,
-    /approvePendingMemoryWrite[\s\S]*containsRawRestrictedContent\(rawContent\)[\s\S]*containsRawRestrictedContent\(content\)[\s\S]*Edited memory content contains raw restricted details[\s\S]*UPDATE user_memories/,
-    "Approval edits should reject raw restricted content before updating pending memories",
+    /approvePendingMemoryWrite[\s\S]*containsRawRestrictedContent\(rawContent\)[\s\S]*containsRawRestrictedContent\(content\)[\s\S]*Edited memory content contains raw restricted details[\s\S]*SELECT content[\s\S]*review_status = 'pending'[\s\S]*containsRawRestrictedContent\(existingContent\)[\s\S]*Pending memory content contains raw restricted details[\s\S]*UPDATE user_memories/,
+    "Approval edits and keeps should reject raw restricted content before updating pending memories",
   );
   console.log("OK: approval edits reject raw restricted details before DB updates");
 }

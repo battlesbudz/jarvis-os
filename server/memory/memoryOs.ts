@@ -219,8 +219,8 @@ function sanitizeRestrictedMemoryContent(content: string): string {
     .replace(/\b(?:available|current|ending)\s+balance\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/gi, "[redacted balance]")
     .replace(/\b(?:bank|checking|savings|account)\s+balance\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/gi, "[redacted balance]")
     .replace(/\bbalance\b[\s\S]{0,40}\b(?:bank|checking|savings|account)\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/gi, "[redacted balance]")
-    .replace(/\b(?:bank|checking|savings|account)(?:\s+account)?\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/gi, "[redacted balance]")
-    .replace(/\$?\d[\d,]*(?:\.\d{2})?\b[\s\S]{0,80}\b(?:bank|checking|savings|account)(?:\s+account)?\b/gi, "[redacted balance]")
+    .replace(/\b(?:bank|checking|savings|account)(?:\s+account)?\b[\s\S]{0,80}(?:\$\d[\d,]*(?:\.\d{2})?|\b\d{1,3}(?:,\d{3})+(?:\.\d{2})?\b)/gi, "[redacted balance]")
+    .replace(/(?:\$\d[\d,]*(?:\.\d{2})?|\b\d{1,3}(?:,\d{3})+(?:\.\d{2})?\b)[\s\S]{0,80}\b(?:bank|checking|savings|account)(?:\s+account)?\b/gi, "[redacted balance]")
     .replace(/^\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+.{2,}\s+[-+]?\$?\d[\d,]*(?:\.\d{2})?\s*$/gim, "[redacted transaction row]")
     .trim();
   const compact = redacted.length > 260 ? `${redacted.slice(0, 257).trimEnd()}...` : redacted;
