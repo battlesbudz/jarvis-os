@@ -337,7 +337,37 @@ async function testRawRestrictedSourceWritesAreExcluded(): Promise<void> {
   });
   assert.equal(manualCardEnding.status, "excluded");
   assert.equal(manualCardEnding.record, null);
+
+  const manualCheckingAccountHasAmount = planMemoryWrite({
+    userId: "user-123",
+    content: "My checking account has $5,000.",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(manualCheckingAccountHasAmount.status, "excluded");
+  assert.equal(manualCheckingAccountHasAmount.record, null);
+
+  const manualAmountInSavings = planMemoryWrite({
+    userId: "user-123",
+    content: "I have $5,000 in my savings account.",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(manualAmountInSavings.status, "excluded");
+  assert.equal(manualAmountInSavings.record, null);
   console.log("OK: raw restricted-source records are excluded from normal MemoryOS");
+}
+
+async function testApprovalEditsRejectRawRestrictedContent(): Promise<void> {
+  const pipelineSource = fs.readFileSync(path.resolve(process.cwd(), "server/memory/writePipeline.ts"), "utf8");
+  assert.match(
+    pipelineSource,
+    /approvePendingMemoryWrite[\s\S]*containsRawRestrictedContent\(rawContent\)[\s\S]*containsRawRestrictedContent\(content\)[\s\S]*Edited memory content contains raw restricted details[\s\S]*UPDATE user_memories/,
+    "Approval edits should reject raw restricted content before updating pending memories",
+  );
+  console.log("OK: approval edits reject raw restricted details before DB updates");
 }
 
 async function testApprovedRestrictedSummariesCarryMetadata(): Promise<void> {
@@ -433,6 +463,7 @@ async function main(): Promise<void> {
   await testExplicitRememberHonorsDisabledReviewGate();
   await testDiagnosticWritesAreExcluded();
   await testRawRestrictedSourceWritesAreExcluded();
+  await testApprovalEditsRejectRawRestrictedContent();
   await testApprovedRestrictedSummariesCarryMetadata();
   await testApprovedRestrictedSummariesRejectRawDetails();
   await testConflictSupersessionIsPlannedForApproval();

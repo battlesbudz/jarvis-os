@@ -618,8 +618,16 @@ export async function approvePendingMemoryWrite(input: {
   memoryId: string;
   status: Extract<MemoryLifecycleState, "kept" | "edited">;
   updatedContent?: string | null;
-}): Promise<{ approved: boolean; supersededMemoryId: string | null }> {
-  const content = cleanContent(input.updatedContent);
+}): Promise<{ approved: boolean; supersededMemoryId: string | null; reason?: string }> {
+  const rawContent = String(input.updatedContent ?? "");
+  const content = cleanContent(rawContent);
+  if (content && (containsRawRestrictedContent(rawContent) || containsRawRestrictedContent(content))) {
+    return {
+      approved: false,
+      supersededMemoryId: null,
+      reason: "Edited memory content contains raw restricted details.",
+    };
+  }
   const setContent = content ? sql`, content = ${content}` : sql``;
   const result = await db.execute<{ id: string; supersedes_memory_id: string | null }>(sql`
     UPDATE user_memories
