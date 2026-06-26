@@ -187,6 +187,33 @@ async function main(): Promise<void> {
   assert.equal(underfilledCloudContext.items[0]?.memory.id, "normal-memory-after-restricted");
   assert.match(underfilledCloudContext.uncertainty.join(" "), /withheld from cloud model context/);
 
+  const filteredAccessUpdates: string[][] = [];
+  const filteredAccessContext = await retrieveMemoryContext(
+    {
+      userId: "memory-os-user",
+      query: "restricted access update",
+      caller: "coach_context",
+      limit: 2,
+    },
+    {
+      retrieveMemories: async (_userId, _query, _limit, skipAccessUpdate) => {
+        assert.equal(skipAccessUpdate, true);
+        return [
+          restricted,
+          memory({
+            id: "returned-normal-memory",
+            content: "Normal memory that should receive the access update.",
+          }),
+        ];
+      },
+      incrementAccessCount: (ids) => {
+        filteredAccessUpdates.push(ids);
+      },
+    },
+  );
+  assert.equal(filteredAccessContext.items.length, 1);
+  assert.deepEqual(filteredAccessUpdates, [["returned-normal-memory"]]);
+
   const localRestricted = await retrieveMemoryContext(
     {
       userId: "memory-os-user",

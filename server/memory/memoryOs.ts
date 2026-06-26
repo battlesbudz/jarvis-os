@@ -99,6 +99,7 @@ export type MemoryOsDeps = {
     skipAccessUpdate: boolean,
     options?: MemoryRetrievalOptions,
   ) => Promise<RetrievedMemory[]>;
+  incrementAccessCount?: (ids: string[]) => void;
 };
 
 const defaultDeps: MemoryOsDeps = {
@@ -114,6 +115,11 @@ const defaultDeps: MemoryOsDeps = {
     return retrieveRelevantMemories(userId, query, limit, skipAccessUpdate, {
       includeRestricted: options?.includeRestricted,
     });
+  },
+  incrementAccessCount: (ids) => {
+    void import("./retrieve")
+      .then(({ batchIncrementAccessCount }) => batchIncrementAccessCount(ids))
+      .catch((err) => console.error("[MemoryOS] access_count update failed:", err));
   },
 };
 
@@ -143,6 +149,10 @@ function uniqueRefs(refs: MemoryProvenanceRef[]): MemoryProvenanceRef[] {
     out.push(ref);
   }
   return out;
+}
+
+function uniqueMemoryIds(memories: Pick<RetrievedMemory, "id">[]): string[] {
+  return [...new Set(memories.map((memory) => memory.id).filter(Boolean))];
 }
 
 function cleanSingleLine(value: unknown): string {
@@ -376,7 +386,7 @@ export async function retrieveMemoryContext(
     const rawLimit = target === "runtime" || (target === "cloud" && input.allowRestrictedMemory === true)
       ? limit
       : Math.min(50, Math.max(limit, limit * 4));
-    const rawMemories = await deps.retrieveMemories(input.userId, query, rawLimit, skipAccessUpdate, {
+    const rawMemories = await deps.retrieveMemories(input.userId, query, rawLimit, true, {
       canonicalOnly: input.canonicalOnly ?? false,
       includeRestricted: true,
     });
@@ -386,6 +396,9 @@ export async function retrieveMemoryContext(
       input.allowRestrictedMemory ?? false,
     );
     const memories = preparedMemories.slice(0, limit);
+    if (!skipAccessUpdate) {
+      deps.incrementAccessCount?.(uniqueMemoryIds(memories));
+    }
     const items = memories.map((memory) => ({
       memory,
       provenance: provenanceForMemory(memory),
