@@ -163,6 +163,7 @@ const RESTRICTED_SOURCE_TOKENS = [
   "tax_document",
   "payroll",
   "brokerage",
+  "account_balance",
   "restricted_source",
   "restricted_summary",
 ];

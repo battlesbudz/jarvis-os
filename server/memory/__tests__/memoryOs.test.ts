@@ -144,6 +144,24 @@ async function main(): Promise<void> {
   assert.deepEqual(legacyRestricted.items, []);
   assert.match(legacyRestricted.uncertainty.join(" "), /withheld from cloud model context/);
 
+  const legacyAccountBalanceRestricted = await retrieveMemoryContext(
+    { userId: "memory-os-user", query: "account balance", caller: "coach_context" },
+    {
+      retrieveMemories: async () => [
+        memory({
+          id: "legacy-account-balance-1",
+          content: "Legacy account balance memory from before the restricted metadata migration.",
+          sourceType: "account_balance",
+          sourceRef: "account-balance:primary",
+          sensitivity: "normal",
+          provenance: [],
+        }),
+      ],
+    },
+  );
+  assert.deepEqual(legacyAccountBalanceRestricted.items, []);
+  assert.match(legacyAccountBalanceRestricted.uncertainty.join(" "), /withheld from cloud model context/);
+
   const underfilledCloudContext = await retrieveMemoryContext(
     {
       userId: "memory-os-user",
