@@ -6,6 +6,7 @@ import {
 } from "../../daemon/bridge";
 import { storeDaemonScreenshot } from "../../services/coachRuntimeState";
 import {
+  explainRuntimeCapabilityPreflight,
   preflightAndroidRuntimeCapabilityAction,
   type RuntimeCapabilityAndroidAction,
 } from "../../state/runtimeCapability";
@@ -233,6 +234,7 @@ async function runtimeCapabilityUnavailable(
   }
   if (preflight.ok) return null;
 
+  const explanation = explainRuntimeCapabilityPreflight(preflight);
   const label = preflight.status === "offline"
     ? "Android daemon not connected"
     : preflight.status === "disabled"
@@ -247,6 +249,7 @@ async function runtimeCapabilityUnavailable(
       action: preflight.action,
       status: preflight.status,
       lastCheckedAt: preflight.lastCheckedAt,
+      runtimeExplanation: explanation,
     },
   };
 }

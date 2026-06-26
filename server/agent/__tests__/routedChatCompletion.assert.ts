@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createRuntimeExplanation, runtimeSource } from "../../core/runtime/runtimeExplanation";
 import type { ProviderTurnResult } from "../providers/base";
 import { createRoutedChatCompletion, createRoutedOpenAIChatShim } from "../routedChatCompletion";
 
@@ -21,6 +22,11 @@ async function main() {
         finishReason: "stop",
         providerName: "chatgpt-codex-oauth",
         model: "chatgpt-codex-oauth/auto",
+        runtimeExplanation: createRuntimeExplanation({
+          title: "Runtime-owned answer",
+          message: '{"ok":true}',
+          usedSources: [runtimeSource("Diagnostics")],
+        }),
       };
     },
   );
@@ -32,6 +38,8 @@ async function main() {
   assert.deepEqual(capturedRequest?.responseFormat, { type: "json_object" });
   assert.equal(response.model, "chatgpt-codex-oauth/auto");
   assert.equal(response.choices[0]?.message.content, '{"ok":true}');
+  assert.equal(response.runtimeExplanation?.title, "Runtime-owned answer");
+  assert.deepEqual(response.runtimeExplanation?.sources.used.map((source) => source.label), ["Diagnostics"]);
   console.log("OK: routed chat completion maps OpenAI-style requests through the Jarvis router");
 
   captured = null;

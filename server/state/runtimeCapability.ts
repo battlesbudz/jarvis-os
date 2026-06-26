@@ -5,6 +5,14 @@ import type { FallbackChainEntry } from "../agent/providers/fallback";
 import type { ProviderTurnResult } from "../agent/providers/base";
 import type { AndroidDaemonAction } from "../daemon/bridge";
 import { toolDescriptorFromAgentTool } from "../core/tools/agentToolAdapter";
+import {
+  createRuntimeExplanation,
+  renderRuntimeExplanation,
+  runtimeSource,
+  runtimeToolFailureExplanation,
+  type RuntimeExplanation,
+  type RuntimeExplanationSource,
+} from "../core/runtime/runtimeExplanation";
 import { integrationStatus, type IntegrationName, type IntegrationStatusValue } from "@shared/schema";
 
 type RuntimeCapabilityIntent = "tools" | "accounts" | "device_control";
@@ -488,15 +496,21 @@ export async function buildRuntimeCapabilityState(input: {
   };
 }
 
-function providerTurnResult(text: string, route: FallbackChainEntry | undefined): ProviderTurnResult {
+function providerTurnResult(
+  text: string,
+  route: FallbackChainEntry | undefined,
+  runtimeExplanation?: RuntimeExplanation,
+): ProviderTurnResult {
+  const renderedText = runtimeExplanation ? renderRuntimeExplanation(runtimeExplanation) : text;
   return {
-    textContent: text,
-    textChunks: [text],
+    textContent: renderedText,
+    textChunks: [renderedText],
     toolCallList: [],
     finishReason: "stop",
     providerName: "jarvis-runtime",
     model: route?.model,
     fallbackUsed: false,
+    runtimeExplanation,
   };
 }
 
@@ -580,10 +594,13 @@ export async function answerRuntimeCapabilityQuestion(input: {
 
   const userId = input.userId?.trim();
   if (!userId) {
-    return providerTurnResult(
-      "Authentication/runtime error: Jarvis needs a signed-in user before answering connected account, tool, or device-control status.",
-      input.route,
-    );
+    const explanation = createRuntimeExplanation({
+      title: "Authentication required",
+      message: "Authentication/runtime error: Jarvis needs a signed-in user before answering connected account, tool, or device-control status.",
+      severity: "error",
+      attemptedSources: [runtimeSource("Diagnostics")],
+    });
+    return providerTurnResult(explanation.message, input.route, explanation);
   }
 
   let state: RuntimeCapabilityState;
@@ -591,15 +608,66 @@ export async function answerRuntimeCapabilityQuestion(input: {
     state = await buildRuntimeCapabilityState({ userId, routeToolNames: input.routeToolNames }, deps);
   } catch (error) {
     console.warn("[RuntimeCapability] capability state unavailable:", error);
-    return providerTurnResult(
-      "Authentication/runtime error: Capability state is unavailable right now, so Jarvis cannot verify connected accounts, tools, or device control.",
-      input.route,
-    );
+    const explanation = createRuntimeExplanation({
+      title: "Capability state unavailable",
+      message: "Authentication/runtime error: Capability state is unavailable right now, so Jarvis cannot verify connected accounts, tools, or device control.",
+      severity: "error",
+      attemptedSources: [runtimeSource("Diagnostics")],
+      actions: [{ id: "retry_capability_state", label: "Try again", kind: "retry" }],
+    });
+    return providerTurnResult(explanation.message, input.route, explanation);
   }
 
-  if (intent === "accounts") return providerTurnResult(renderAccountsAnswer(state), input.route);
-  if (intent === "device_control") return providerTurnResult(renderDeviceControlAnswer(state), input.route);
-  return providerTurnResult(renderToolsAnswer(state), input.route);
+  if (intent === "accounts") {
+    const message = renderAccountsAnswer(state);
+    const explanation = createRuntimeExplanation({
+      title: "Connected accounts",
+      message,
+      usedSources: [runtimeSource("Connector")],
+    });
+    return providerTurnResult(message, input.route, explanation);
+  }
+  if (intent === "device_control") {
+    const message = renderDeviceControlAnswer(state);
+    const explanation = createRuntimeExplanation({
+      title: "Device control status",
+      message,
+      severity: state.uncertainty.length > 0 ? "warning" : "info",
+      usedSources: [runtimeSource("Diagnostics")],
+    });
+    return providerTurnResult(message, input.route, explanation);
+  }
+  const message = renderToolsAnswer(state);
+  const usedSources: RuntimeExplanationSource[] = [runtimeSource("Tool"), runtimeSource("Diagnostics")];
+  if (state.accounts.length > 0) usedSources.push(runtimeSource("Connector"));
+  const explanation = createRuntimeExplanation({
+    title: "Available tools",
+    message,
+    severity: state.uncertainty.length > 0 ? "warning" : "info",
+    usedSources,
+  });
+  return providerTurnResult(message, input.route, explanation);
+}
+
+export function explainRuntimeCapabilityPreflight(result: RuntimeCapabilityPreflightResult): RuntimeExplanation {
+  if (result.ok) {
+    return createRuntimeExplanation({
+      title: "Capability ready",
+      message: `${result.action} is ready: ${result.reason}`,
+      usedSources: [runtimeSource("Diagnostics"), runtimeSource("Tool", result.action)],
+    });
+  }
+
+  const needsSetup = result.status === "disabled" || result.status === "offline";
+  return runtimeToolFailureExplanation({
+    title: "Capability unavailable",
+    toolLabel: result.action,
+    reason: result.reason,
+    actionId: needsSetup ? "check_setup" : "retry_capability",
+    actionLabel: needsSetup ? "Check setup" : "Try again",
+    actionKind: needsSetup ? "open_settings" : "retry",
+    attemptedSources: [runtimeSource("Diagnostics"), runtimeSource("Tool", result.action)],
+  });
 }
 
 function preflightCheckForAction(

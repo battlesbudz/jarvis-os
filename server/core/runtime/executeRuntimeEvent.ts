@@ -8,6 +8,7 @@ import {
   ContextPacketSchema,
   JarvisEventSchema,
   parseRuntimeDecision,
+  type ContextSource,
   type JarvisEvent,
   type RuntimeDecision,
   type RuntimeRiskTier,
@@ -17,6 +18,14 @@ import {
   adaptRuntimeContextPacketFromEvent,
   runtimeProtocolSafeId,
 } from "./runtimeContextPacketAdapter";
+import {
+  createRuntimeExplanation,
+  runtimeSource,
+  type RuntimeExplanation,
+  type RuntimeExplanationAction,
+  type RuntimeExplanationSource,
+  type RuntimeSourceLabel,
+} from "./runtimeExplanation";
 import type { ExecuteRuntimeEventInput, ExecuteRuntimeEventResult, RuntimeGateOutcome } from "./runtimeTypes";
 
 const READ_ONLY_TOOLS = new Set<ContextToolAllowance>(["read_context", "draft_only", "search"]);
@@ -77,6 +86,72 @@ function toolIntentForAllowance(tool: ContextToolAllowance, decision: ContextPac
     approvalRequired,
     reason: "Runtime Gate preview only; tool execution remains owned by existing modules.",
   };
+}
+
+function runtimeSourceLabelForContextSource(source: ContextSource): RuntimeSourceLabel {
+  switch (source.kind) {
+    case "memory":
+      return "MemoryOS";
+    case "soul":
+      return "Soul";
+    case "email":
+    case "calendar":
+      return "Connector";
+    case "tool":
+      return "Tool";
+    case "hot_state":
+    case "people":
+    case "goals":
+    case "workspace":
+    case "trace":
+    case "unknown":
+    default:
+      return "Diagnostics";
+  }
+}
+
+function severityForGateOutcome(outcome: RuntimeGateOutcome): RuntimeExplanation["severity"] {
+  if (outcome === "blocked") return "error";
+  if (outcome === "needs_approval" || outcome === "degraded") return "warning";
+  return "info";
+}
+
+function actionsForGateOutcome(outcome: RuntimeGateOutcome): RuntimeExplanationAction[] {
+  if (outcome === "needs_approval") {
+    return [{ id: "review_approval_gate", label: "Review approval", kind: "review" }];
+  }
+  if (outcome === "queue_job") {
+    return [{ id: "review_queue", label: "Review queued work", kind: "review" }];
+  }
+  if (outcome === "blocked") {
+    return [{ id: "retry_runtime_event", label: "Try again", kind: "retry" }];
+  }
+  return [];
+}
+
+function runtimeExplanationFromGate(input: {
+  contextPacket: ExecuteRuntimeEventResult["contextPacket"];
+  taskType: ExecuteRuntimeEventResult["gateResult"]["taskType"];
+  route: string;
+  outcome: RuntimeGateOutcome;
+  reasons: string[];
+}): RuntimeExplanation {
+  const usedSources: RuntimeExplanationSource[] = input.contextPacket.sources.map((source) =>
+    runtimeSource(runtimeSourceLabelForContextSource(source), source.label),
+  );
+  const attemptedSources: RuntimeExplanationSource[] = input.outcome === "tool_candidate" || input.outcome === "needs_approval"
+    ? [runtimeSource("Tool", input.taskType)]
+    : [];
+  const reasonText = input.reasons.length > 0 ? ` ${input.reasons.join(" ")}` : "";
+
+  return createRuntimeExplanation({
+    title: "Runtime gate decision",
+    message: `Runtime Gate classified this as ${input.taskType} via ${input.route} with outcome ${input.outcome}.${reasonText}`,
+    severity: severityForGateOutcome(input.outcome),
+    actions: actionsForGateOutcome(input.outcome),
+    usedSources,
+    attemptedSources,
+  });
 }
 
 function runtimeDecisionFromContextDecision(
@@ -184,6 +259,13 @@ function invalidEventResult(error: unknown, createdAt: string): ExecuteRuntimeEv
       taskType: "invalid_event",
       reasons: ["Incoming event failed JarvisEvent protocol validation."],
     },
+    runtimeExplanation: createRuntimeExplanation({
+      title: "Runtime event blocked",
+      message: "Incoming event failed JarvisEvent protocol validation.",
+      severity: "error",
+      attemptedSources: [runtimeSource("Diagnostics", "JarvisEventSchema")],
+      actions: [{ id: "retry_runtime_event", label: "Try again", kind: "retry" }],
+    }),
   };
 }
 
@@ -204,15 +286,24 @@ export function executeRuntimeEvent(input: ExecuteRuntimeEventInput): ExecuteRun
   });
   const decision = runtimeDecisionFromContextDecision(event, contextDecision, createdAt);
 
+  const gateResult = {
+    outcome: gateOutcomeForDecision(contextDecision),
+    route: contextDecision.route,
+    taskType: contextDecision.taskType,
+    reasons: contextDecision.reasons,
+  };
+
   return {
     event,
     contextPacket,
     decision,
-    gateResult: {
-      outcome: gateOutcomeForDecision(contextDecision),
-      route: contextDecision.route,
-      taskType: contextDecision.taskType,
-      reasons: contextDecision.reasons,
-    },
+    gateResult,
+    runtimeExplanation: runtimeExplanationFromGate({
+      contextPacket,
+      taskType: gateResult.taskType,
+      route: gateResult.route,
+      outcome: gateResult.outcome,
+      reasons: gateResult.reasons,
+    }),
   };
 }

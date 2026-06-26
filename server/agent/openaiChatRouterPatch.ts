@@ -3,6 +3,7 @@ import { Completions } from "openai/resources/chat/completions";
 import OpenAI from "openai";
 import { routeModelTurn } from "./modelRouter";
 import { getUserIdFromChatBody } from "./routedChatCompletion";
+import type { RuntimeExplanation } from "../core/runtime/runtimeExplanation";
 import "./providers/envAliases";
 import { hasDirectOpenAIProvider, hasNonOpenAIRoutableProvider } from "./providers/env";
 
@@ -11,6 +12,8 @@ type ChatCreateOptions = { signal?: AbortSignal };
 type ChatCompletion = OpenAI.Chat.Completions.ChatCompletion;
 type ChatCompletionChunk = OpenAI.Chat.Completions.ChatCompletionChunk;
 type ChatCompletionFinishReason = NonNullable<ChatCompletion["choices"][number]["finish_reason"]>;
+type RuntimeExplainedChatCompletion = ChatCompletion & { runtimeExplanation?: RuntimeExplanation };
+type RuntimeExplainedChatCompletionChunk = ChatCompletionChunk & { runtimeExplanation?: RuntimeExplanation };
 
 const ROUTER_PATCHED = Symbol.for("jarvis.openaiChatRouterPatched");
 const CLIENT_POST_PATCHED = Symbol.for("jarvis.openaiClientPostRouterPatched");
@@ -80,7 +83,8 @@ function toCompletion(
   toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[],
   finishReason: string | null,
   routedModel?: string,
-): ChatCompletion {
+  runtimeExplanation?: RuntimeExplanation,
+): RuntimeExplainedChatCompletion {
   return {
     id: `jarvis-routed-${Date.now()}`,
     object: "chat.completion",
@@ -99,10 +103,15 @@ function toCompletion(
         },
       },
     ],
-  } as ChatCompletion;
+    runtimeExplanation,
+  } as RuntimeExplainedChatCompletion;
 }
 
-async function* toStream(text: string, routedModel: string): AsyncGenerator<ChatCompletionChunk> {
+async function* toStream(
+  text: string,
+  routedModel: string,
+  runtimeExplanation?: RuntimeExplanation,
+): AsyncGenerator<RuntimeExplainedChatCompletionChunk> {
   yield {
     id: `jarvis-routed-${Date.now()}`,
     object: "chat.completion.chunk",
@@ -116,7 +125,8 @@ async function* toStream(text: string, routedModel: string): AsyncGenerator<Chat
         logprobs: null,
       },
     ],
-  } as ChatCompletionChunk;
+    runtimeExplanation,
+  } as RuntimeExplainedChatCompletionChunk;
   yield {
     id: `jarvis-routed-${Date.now()}`,
     object: "chat.completion.chunk",
@@ -130,7 +140,8 @@ async function* toStream(text: string, routedModel: string): AsyncGenerator<Chat
         logprobs: null,
       },
     ],
-  } as ChatCompletionChunk;
+    runtimeExplanation,
+  } as RuntimeExplainedChatCompletionChunk;
 }
 
 type OpenAIClientPatchProto = {
@@ -167,8 +178,8 @@ function routeBody(body: ChatCreateBody, signal: AbortSignal | undefined, logPre
     logPrefix,
   }).then((result) => {
     const routedModel = result.model ?? String(body.model);
-    if (body.stream) return toStream(result.textContent, routedModel);
-    return toCompletion(body, result.textContent, result.toolCallList, result.finishReason, routedModel);
+    if (body.stream) return toStream(result.textContent, routedModel, result.runtimeExplanation);
+    return toCompletion(body, result.textContent, result.toolCallList, result.finishReason, routedModel, result.runtimeExplanation);
   }).finally(() => {
     routingDepth--;
   });
