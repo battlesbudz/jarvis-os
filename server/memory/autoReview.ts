@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 
 export interface MemoryAutoReviewDecision {
@@ -18,6 +18,7 @@ type PendingMemoryRow = Pick<
   | "memoryType"
   | "pendingReview"
   | "reviewStatus"
+  | "supersedesMemoryId"
 >;
 
 export interface MemoryAutoReviewResult {
@@ -35,7 +36,7 @@ interface MemoryAutoReviewDeps {
   listPendingMemories(userId: string): Promise<PendingMemoryRow[]>;
   keepMemories(userId: string, memoryIds: string[]): Promise<number>;
   markSoulStale(userId: string): Promise<void>;
-  projectApprovedMemories(userId: string): Promise<void>;
+  projectApprovedMemories(userId: string, memoryIds?: string[]): Promise<void>;
   log(message: string): void;
   error(message: string, error: unknown): void;
 }
@@ -88,6 +89,9 @@ function isTooGeneric(content: string): boolean {
 export function evaluateMemoryAutoReviewDecision(memory: PendingMemoryRow): MemoryAutoReviewDecision {
   if (!memory.pendingReview || memory.reviewStatus !== "pending") {
     return { action: "pending", reason: "not-pending-review" };
+  }
+  if (memory.supersedesMemoryId) {
+    return { action: "pending", reason: "correction-requires-user-approval" };
   }
   if (memory.tier !== "long_term") {
     return { action: "pending", reason: "non-long-term" };
@@ -142,6 +146,7 @@ const defaultDeps: MemoryAutoReviewDeps = {
         memoryType: shared.userMemories.memoryType,
         pendingReview: shared.userMemories.pendingReview,
         reviewStatus: shared.userMemories.reviewStatus,
+        supersedesMemoryId: shared.userMemories.supersedesMemoryId,
       })
       .from(shared.userMemories)
       .where(
@@ -155,26 +160,18 @@ const defaultDeps: MemoryAutoReviewDeps = {
   },
   async keepMemories(userId, memoryIds) {
     if (memoryIds.length === 0) return 0;
-    const { db } = await import("../db");
-    const result = await db.execute(sql`
-      UPDATE user_memories
-      SET pending_review = FALSE, review_status = 'kept'
-      WHERE user_id = ${userId}
-        AND id = ANY(${memoryIds}::varchar[])
-        AND pending_review = TRUE
-        AND review_status = 'pending'
-      RETURNING id
-    `);
-    return (result.rows ?? []).length;
+    const { keepPendingMemoryWrites } = await import("./writePipeline");
+    const result = await keepPendingMemoryWrites({ userId, memoryIds });
+    return result.approved;
   },
   async markSoulStale(userId) {
     const { markSoulStale } = await import("./soul");
     await markSoulStale(userId);
   },
-  async projectApprovedMemories(userId) {
+  async projectApprovedMemories(userId, memoryIds) {
     if (process.env.JARVIS_BRAIN_PROJECTION !== "1") return;
     const { projectApprovedMemories } = await import("../brain/adapter");
-    await projectApprovedMemories(userId, 50);
+    await projectApprovedMemories(userId, memoryIds && memoryIds.length > 0 ? { memoryIds } : 50);
   },
   log(message) {
     console.log(message);
@@ -217,7 +214,7 @@ export async function runMemoryAutoReviewForAllUsers(
       const kept = await deps.keepMemories(userId, keepIds);
       if (kept > 0) {
         await deps.markSoulStale(userId);
-        await deps.projectApprovedMemories(userId);
+        await deps.projectApprovedMemories(userId, keepIds);
       }
 
       result.processed += 1;

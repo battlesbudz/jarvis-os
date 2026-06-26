@@ -257,6 +257,30 @@ export async function ensureTablesExist() {
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS memory_type VARCHAR NOT NULL DEFAULT 'semantic'`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS access_count INTEGER NOT NULL DEFAULT 0`).catch(handleSchemaStepError);
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS pending_review BOOLEAN NOT NULL DEFAULT FALSE`).catch(handleSchemaStepError);
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS review_status VARCHAR NOT NULL DEFAULT 'active'`).catch(handleSchemaStepError);
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS supersedes_memory_id VARCHAR`).catch(handleSchemaStepError);
+    await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS corrected_by_memory_id VARCHAR`).catch(handleSchemaStepError);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS user_memories_user_review_idx ON user_memories(user_id, review_status)`).catch(handleSchemaStepError);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS memory_working_context (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        scope_type VARCHAR NOT NULL,
+        scope_id VARCHAR NOT NULL,
+        active_goal TEXT,
+        current_step TEXT,
+        last_event_id VARCHAR NOT NULL,
+        content TEXT NOT NULL,
+        state VARCHAR NOT NULL DEFAULT 'active',
+        compacted_memory_id VARCHAR,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        expires_at TIMESTAMP NOT NULL
+      )
+    `).catch(handleSchemaStepError);
+    await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS memory_working_context_user_scope_idx ON memory_working_context(user_id, scope_type, scope_id)`).catch(handleSchemaStepError);
+    await db.execute(sql`CREATE INDEX IF NOT EXISTS memory_working_context_user_state_expiry_idx ON memory_working_context(user_id, state, expires_at)`).catch(handleSchemaStepError);
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS people (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),

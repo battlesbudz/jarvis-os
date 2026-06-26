@@ -88,6 +88,28 @@ async function main(): Promise<void> {
   await db.delete(schema.userMemories).where(eq(schema.userMemories.id, linkedMemoryId));
   await jarvisBrainAdapter.projectApprovedMemories(TEST_USER_ID);
 
+  const targetedMemoryId = "adapter-targeted-memory";
+  await db.insert(schema.userMemories).values({
+    id: targetedMemoryId,
+    userId: TEST_USER_ID,
+    content: "A newly approved memory should project by explicit id.",
+    category: "fact",
+    reviewStatus: "active",
+    pendingReview: false,
+  });
+  const targetedProjection = await jarvisBrainAdapter.projectApprovedMemories(TEST_USER_ID, {
+    memoryIds: [targetedMemoryId],
+    limit: 1,
+  });
+  assert.deepEqual(targetedProjection, { scanned: 1, projected: 1, skipped: 0 });
+  const [targetedPage] = await db
+    .select({ sourceId: schema.brainPages.sourceId })
+    .from(schema.brainPages)
+    .where(eq(schema.brainPages.sourceId, targetedMemoryId));
+  assert.equal(targetedPage.sourceId, targetedMemoryId);
+  await db.delete(schema.userMemories).where(eq(schema.userMemories.id, targetedMemoryId));
+  await jarvisBrainAdapter.projectApprovedMemories(TEST_USER_ID, { memoryIds: [targetedMemoryId] });
+
   await db
     .update(schema.people)
     .set({ name: "Jean Brown", updatedAt: new Date("2026-01-02T00:00:00.000Z") })

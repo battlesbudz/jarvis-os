@@ -232,10 +232,14 @@ export const userMemories = pgTable("user_memories", {
   accessCount: integer("access_count").notNull().default(0),
   // Human-in-the-loop review gate (Phase 6).
   // pending_review = true  → memory is awaiting user approval before becoming active
-  // review_status: "active" (default, fully live) | "pending" (awaiting review) | "kept" | "edited" | "discarded"
+  // review_status: active/pending/kept/edited/superseded/corrected/stale/archived/discarded/rejected
   pendingReview: boolean("pending_review").notNull().default(false),
   reviewStatus: varchar("review_status").notNull().default("active"),
-});
+  supersedesMemoryId: varchar("supersedes_memory_id"),
+  correctedByMemoryId: varchar("corrected_by_memory_id"),
+}, (table) => [
+  index("user_memories_user_review_idx").on(table.userId, table.reviewStatus),
+]);
 
 // Biomimetic memory tiers — mirrors human memory architecture.
 export const MEMORY_TIERS = ["working", "short_term", "long_term"] as const;
@@ -244,6 +248,20 @@ export type MemoryTier = typeof MEMORY_TIERS[number];
 // Biomimetic memory types — mirrors human memory classification.
 export const MEMORY_TYPES = ["episodic", "semantic", "procedural", "contextual"] as const;
 export type MemoryType = typeof MEMORY_TYPES[number];
+
+export const MEMORY_LIFECYCLE_STATES = [
+  "active",
+  "pending",
+  "kept",
+  "edited",
+  "superseded",
+  "corrected",
+  "stale",
+  "archived",
+  "discarded",
+  "rejected",
+] as const;
+export type MemoryLifecycleState = typeof MEMORY_LIFECYCLE_STATES[number];
 
 // Phase 4 — canonical memory categories. Stored as plain varchar so we can
 // migrate forward without an enum, but the extractor + UI both clamp to this
@@ -261,6 +279,25 @@ export const MEMORY_CATEGORIES = [
   "fact",
 ] as const;
 export type MemoryCategory = typeof MEMORY_CATEGORIES[number];
+
+export const memoryWorkingContext = pgTable("memory_working_context", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  scopeType: varchar("scope_type").notNull(),
+  scopeId: varchar("scope_id").notNull(),
+  activeGoal: text("active_goal"),
+  currentStep: text("current_step"),
+  lastEventId: varchar("last_event_id").notNull(),
+  content: text("content").notNull(),
+  state: varchar("state").notNull().default("active"),
+  compactedMemoryId: varchar("compacted_memory_id"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+}, (table) => [
+  uniqueIndex("memory_working_context_user_scope_idx").on(table.userId, table.scopeType, table.scopeId),
+  index("memory_working_context_user_state_expiry_idx").on(table.userId, table.state, table.expiresAt),
+]);
 
 // Phase 4 — lightweight people directory built from emails / calendars /
 // chat. The agent uses it to remember names, roles, and last-seen dates

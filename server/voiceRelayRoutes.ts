@@ -18,7 +18,7 @@ import type { Server as HttpServer, IncomingMessage } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import { randomBytes } from "crypto";
 import { db } from "./db";
-import { eq, desc } from "drizzle-orm";
+import { and, eq, desc, sql } from "drizzle-orm";
 import { userMemories } from "@shared/schema";
 import { readWorkspaceFile } from "./workspace/loader";
 
@@ -99,7 +99,11 @@ async function loadUserMemories(userId: string, maxLines = 50): Promise<string> 
         confidence: userMemories.confidence,
       })
       .from(userMemories)
-      .where(eq(userMemories.userId, userId))
+      .where(and(
+        eq(userMemories.userId, userId),
+        eq(userMemories.pendingReview, false),
+        sql`${userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+      ))
       .orderBy(desc(userMemories.confidence))
       .limit(30);
 

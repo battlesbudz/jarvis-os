@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import type OpenAI from "openai";
-import { eq } from "drizzle-orm"; import { db } from "../db";
+import { and, eq, sql } from "drizzle-orm"; import { db } from "../db";
 import * as schema from "@shared/schema"; import { userMemories } from "@shared/schema";
 const validCategories = ["personality", "values", "work_style", "accomplishment", "goal_discovered", "relationship", "pattern", "preference", "fact", "goal", "achievement"];
 const normalizeMemoryContent = (content: string) => content.trim().toLowerCase().replace(/[^\w\s]/g, "").replace(/\s+/g, " ");
@@ -50,7 +50,10 @@ export function registerChatGptImportRoutes(app: Express, openai: OpenAI): void 
       const conversations = req.body.conversations; if (!Array.isArray(conversations) || conversations.length === 0) return res.status(400).json({ error: "No conversations found. Please upload a valid ChatGPT export file." });
       const allTexts = conversations.slice(-150).map(conversationText).filter(Boolean) as string[];
       if (allTexts.length === 0) return res.status(400).json({ error: "No readable conversations found in the file." });
-      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(eq(userMemories.userId, userId));
+      const existingRows = await db.select({ content: userMemories.content }).from(userMemories).where(and(
+        eq(userMemories.userId, userId),
+        sql`${userMemories.reviewStatus} NOT IN ('discarded', 'rejected', 'superseded', 'stale', 'archived')`,
+      ));
       const existingMemories = existingRows.map((r) => r.content);
       const normalizedExisting = new Set(existingMemories.map(normalizeMemoryContent)); let totalAdded = 0;
 

@@ -11,6 +11,11 @@ type Memory = {
   confidence: number | null;
   extracted_at: string;
   source?: string | null;
+  review_status?: string | null;
+  reviewStatus?: string | null;
+  trustStatus?: string | null;
+  pending_review?: boolean | null;
+  pendingReview?: boolean | null;
 };
 
 const CATEGORIES = ["All", "fact", "preference", "skill", "goal", "relationship", "event", "other"];
@@ -28,6 +33,25 @@ const CATEGORY_COLORS: Record<string, string> = {
   event: "#ec4899",
   other: "#6b7280",
 };
+
+function getLifecycle(memory: Memory): string {
+  const status = memory.trustStatus || memory.reviewStatus || memory.review_status;
+  return (status || (memory.pendingReview || memory.pending_review ? "pending" : "active")).toLowerCase();
+}
+
+function lifecycleColor(status: string): string {
+  if (status === "pending") return "#f59e0b";
+  if (status === "superseded" || status === "corrected") return "#06b6d4";
+  if (status === "discarded" || status === "rejected") return "#ef4444";
+  if (status === "edited") return "#a855f7";
+  if (status === "stale" || status === "archived") return "#6b7280";
+  return "#22c55e";
+}
+
+function formatConfidence(value: number): string {
+  const pct = value <= 1 ? value * 100 : value;
+  return `${Math.max(0, Math.min(100, Math.round(pct)))}% CONFIDENCE`;
+}
 
 export default function MemoryPage() {
   const [memories, setMemories] = useState<Memory[]>([]);
@@ -248,6 +272,7 @@ function MemoryListItem({
 }) {
   const catColor = CATEGORY_COLORS[memory.category || ""] || "#6b7280";
   const tierColor = TIER_COLORS[memory.tier || ""] || "#2a2d40";
+  const lifecycle = getLifecycle(memory);
 
   return (
     <button
@@ -280,6 +305,11 @@ function MemoryListItem({
         <span style={{ marginLeft: "auto", fontSize: 8, color: tierColor }}>
           {memory.tier || ""}
         </span>
+        {lifecycle !== "active" && lifecycle !== "kept" && (
+          <span style={{ fontSize: 8, color: lifecycleColor(lifecycle), letterSpacing: "0.08em" }}>
+            {lifecycle.toUpperCase()}
+          </span>
+        )}
       </div>
       <div
         style={{
@@ -308,6 +338,7 @@ function MemoryListItem({
 function MemoryDetail({ memory }: { memory: Memory }) {
   const catColor = CATEGORY_COLORS[memory.category || ""] || "#6b7280";
   const tierColor = TIER_COLORS[memory.tier || ""] || "#2a2d40";
+  const lifecycle = getLifecycle(memory);
 
   return (
     <div>
@@ -358,6 +389,21 @@ function MemoryDetail({ memory }: { memory: Memory }) {
             {memory.tier.toUpperCase()}
           </span>
         )}
+        {lifecycle !== "active" && lifecycle !== "kept" && (
+          <span
+            style={{
+              fontSize: 8,
+              padding: "2px 8px",
+              borderRadius: 4,
+              backgroundColor: `${lifecycleColor(lifecycle)}18`,
+              color: lifecycleColor(lifecycle),
+              border: `1px solid ${lifecycleColor(lifecycle)}30`,
+              letterSpacing: "0.1em",
+            }}
+          >
+            {lifecycle.toUpperCase()}
+          </span>
+        )}
         {memory.confidence != null && (
           <span
             style={{
@@ -370,7 +416,7 @@ function MemoryDetail({ memory }: { memory: Memory }) {
               letterSpacing: "0.1em",
             }}
           >
-            {Math.round(memory.confidence * 100)}% CONFIDENCE
+            {formatConfidence(memory.confidence)}
           </span>
         )}
       </div>

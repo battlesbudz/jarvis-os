@@ -812,6 +812,19 @@ export async function runHeartbeatTick(): Promise<void> {
     }).catch(() => {});
   }
 
+  try {
+    const { compactExpiredWorkingContext } = await import("./memory/writePipeline");
+    await compactExpiredWorkingContext({ limit: 100 });
+  } catch (err) {
+    console.error("[Heartbeat] working context compaction failed:", err);
+    diagEmit({
+      subsystem: "heartbeat",
+      severity: "warning",
+      message: `Working context compaction failed: ${err instanceof Error ? err.message : String(err)}`,
+      metadata: { task: "working_context_compaction" },
+    }).catch(() => {});
+  }
+
   // Once per UTC day, prune emotional state history rows older than 90 days.
   // The in-memory day-key guard makes this a no-op on subsequent ticks.
   try {
@@ -908,7 +921,11 @@ export async function runHeartbeatTick(): Promise<void> {
       memories = await db
         .select({ content: schema.userMemories.content, category: schema.userMemories.category })
         .from(schema.userMemories)
-        .where(eq(schema.userMemories.userId, link.userId))
+        .where(and(
+          eq(schema.userMemories.userId, link.userId),
+          eq(schema.userMemories.pendingReview, false),
+          sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+        ))
         .orderBy(desc(schema.userMemories.extractedAt))
         .limit(30);
     } catch {}

@@ -258,15 +258,27 @@ function hasPack(decision: ContextPackDecision, pack: string): boolean {
     { id: "p", content: "Pending", pendingReview: true, reviewStatus: "pending" },
     { id: "a", content: "Active", pendingReview: false, reviewStatus: "active" },
     { id: "e", content: "Edited", pendingReview: false, reviewStatus: "edited" },
+    { id: "s", content: "Superseded", pendingReview: false, reviewStatus: "superseded" },
+    { id: "c", content: "Corrected", pendingReview: false, reviewStatus: "corrected" },
+    { id: "st", content: "Stale", pendingReview: false, reviewStatus: "stale" },
+    { id: "ar", content: "Archived", pendingReview: false, reviewStatus: "archived" },
     { id: "d", content: "Discarded", pendingReview: true, reviewStatus: "discarded" },
+    { id: "r", content: "Rejected", pendingReview: false, reviewStatus: "rejected" },
   ]);
 
   assert.equal(summary.counts.pending, 1);
   assert.equal(summary.counts.active, 1);
   assert.equal(summary.counts.edited, 1);
+  assert.equal(summary.counts.superseded, 1);
+  assert.equal(summary.counts.corrected, 1);
+  assert.equal(summary.counts.stale, 1);
+  assert.equal(summary.counts.archived, 1);
+  assert.equal(summary.counts.discarded, 1);
   assert.equal(summary.counts.rejected, 1);
   assert.deepEqual(summary.buckets.pending.map((m) => m.id), ["p"]);
-  console.log("OK: memory trust summary groups pending, active, edited, and rejected memories");
+  assert.deepEqual(summary.buckets.superseded.map((m) => m.id), ["s"]);
+  assert.deepEqual(summary.buckets.discarded.map((m) => m.id), ["d"]);
+  console.log("OK: memory trust summary groups expanded lifecycle states");
 }
 
 {

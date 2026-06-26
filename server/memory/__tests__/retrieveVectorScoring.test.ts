@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 
 process.env.DATABASE_URL ??= "postgres://localhost/jarvis_memory_retrieve_vector_import_only";
 process.env.JARVIS_DISABLE_DIRECT_OPENAI = "1";
@@ -46,6 +48,18 @@ async function main(): Promise<void> {
   assert.equal(ranked.length, 2);
 
   assert.deepEqual(rankMemoryRowsForRetrieval([], [1, 0], 3), []);
+
+  const retrieveSource = fs.readFileSync(path.resolve(process.cwd(), "server/memory/retrieve.ts"), "utf8");
+  assert.match(
+    retrieveSource,
+    /new Map<string, MemoryRow>/,
+    "vector retrieval should merge pgvector rows with FTS rows before final ranking",
+  );
+  assert.match(
+    retrieveSource,
+    /mode:\s*"pgvector\+fts"/,
+    "vector retrieval diagnostics should reflect merged pgvector and FTS retrieval",
+  );
 
   console.log("OK: memory retrieval reranker works for canonical vector candidates");
 }

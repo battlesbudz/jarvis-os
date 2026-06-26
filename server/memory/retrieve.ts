@@ -273,6 +273,7 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
   const q = query.trim();
   if (!q) return [];
 
+  let vectorRows: MemoryRow[] = [];
   const vectorSearch = await searchMemoryVectors({
     userId,
     query: q,
@@ -280,18 +281,7 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
     limit,
   });
   if (vectorSearch.status === "ok" && vectorSearch.rows.length > 0) {
-    const top = rankMemoryRowsForRetrieval(vectorSearch.rows, queryVec, limit);
-    if (top.length > 0) {
-      diagEmit({
-        userId,
-        subsystem: "memory",
-        severity: "info",
-        message: "Memory vector retrieval completed successfully",
-        metadata: { recovery: true, operation: "retrieveRelevantMemories", mode: "pgvector" },
-      }).catch(() => {});
-      applyAccessUpdateForRetrievedMemories(top, skipAccessUpdate);
-      return top;
-    }
+    vectorRows = vectorSearch.rows;
   } else if (vectorSearch.status === "unavailable") {
     console.warn("[MemoryRetrieve] canonical vector retrieval unavailable; falling back to FTS/JSONB retrieval:", vectorSearch.error);
   }
@@ -324,6 +314,11 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
   } catch (dbErr) {
     const detail = dbErr instanceof Error ? dbErr.message : String(dbErr);
     console.error("[MemoryRetrieve] DB query failed:", dbErr);
+    if (vectorRows.length > 0) {
+      const top = rankMemoryRowsForRetrieval(vectorRows, queryVec, limit);
+      applyAccessUpdateForRetrievedMemories(top, skipAccessUpdate);
+      return top;
+    }
     diagEmit({
       userId,
       subsystem: "memory",
@@ -334,7 +329,23 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
     return [];
   }
 
-  const top = rankMemoryRowsForRetrieval(rows.rows ?? [], queryVec, limit);
+  const candidates = new Map<string, MemoryRow>();
+  for (const row of rows.rows ?? []) candidates.set(row.id, row);
+  for (const row of vectorRows) {
+    const existing = candidates.get(row.id);
+    candidates.set(row.id, existing ? { ...existing, ...row } : row);
+  }
+  const top = rankMemoryRowsForRetrieval([...candidates.values()], queryVec, limit);
+
+  if (vectorRows.length > 0) {
+    diagEmit({
+      userId,
+      subsystem: "memory",
+      severity: "info",
+      message: "Memory vector retrieval completed successfully",
+      metadata: { recovery: true, operation: "retrieveRelevantMemories", mode: "pgvector+fts" },
+    }).catch(() => {});
+  }
 
   // Batch-update access_count and last_referenced_at for returned memories,
   // unless caller asked to skip (e.g. to do a filtered update after post-processing).

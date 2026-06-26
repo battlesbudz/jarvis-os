@@ -17,6 +17,13 @@ export const SOUL_NOVELTY_THRESHOLD = 5;
 /** Maximum character length before the compact formatting pass kicks in */
 const SOUL_COMPACT_THRESHOLD = 4000;
 
+function approvedMemoryLifecycleFilter() {
+  return and(
+    eq(schema.userMemories.pendingReview, false),
+    sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+  );
+}
+
 interface SoulRecord {
   content: string;
   manualOverride: string | null;
@@ -53,6 +60,7 @@ async function countNewMemoriesSince(userId: string, since: Date): Promise<numbe
           eq(schema.userMemories.userId, userId),
           gte(schema.userMemories.extractedAt, since),
           sql`(${schema.userMemories.tier} = 'short_term' OR ${schema.userMemories.memoryType} = 'episodic')`,
+          approvedMemoryLifecycleFilter(),
         ),
       );
     return Number(result[0]?.count ?? 0);
@@ -98,7 +106,7 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
           eq(schema.userMemories.tier, "long_term"),
           sql`${schema.userMemories.memoryType} IN ('semantic','procedural')`,
           sql`${schema.userMemories.category} IN ('values','communication_style','preferences','fact')`,
-          eq(schema.userMemories.pendingReview, false),
+          approvedMemoryLifecycleFilter(),
         ),
       )
       .orderBy(desc(schema.userMemories.relevanceScore), desc(schema.userMemories.confidence))
@@ -113,7 +121,7 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
           eq(schema.userMemories.userId, userId),
           eq(schema.userMemories.tier, "short_term"),
           eq(schema.userMemories.memoryType, "contextual"),
-          eq(schema.userMemories.pendingReview, false),
+          approvedMemoryLifecycleFilter(),
         ),
       )
       .orderBy(desc(schema.userMemories.extractedAt))
@@ -132,7 +140,7 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
           eq(schema.userMemories.userId, userId),
           eq(schema.userMemories.memoryType, "episodic"),
           gte(schema.userMemories.extractedAt, sevenDaysAgo),
-          eq(schema.userMemories.pendingReview, false),
+          approvedMemoryLifecycleFilter(),
         ),
       )
       .orderBy(desc(schema.userMemories.extractedAt))
@@ -152,7 +160,7 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
           eq(schema.userMemories.tier, "long_term"),
           sql`${schema.userMemories.category} IN ('work_patterns','energy_rhythms','accomplishments','blockers')`,
           gt(schema.userMemories.relevanceScore, 55),
-          eq(schema.userMemories.pendingReview, false),
+          approvedMemoryLifecycleFilter(),
         ),
       )
       .orderBy(desc(schema.userMemories.relevanceScore), desc(schema.userMemories.extractedAt))
@@ -166,7 +174,7 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
         and(
           eq(schema.userMemories.userId, userId),
           eq(schema.userMemories.category, "goals_history"),
-          eq(schema.userMemories.pendingReview, false),
+          approvedMemoryLifecycleFilter(),
         ),
       )
       .orderBy(desc(schema.userMemories.relevanceScore), desc(schema.userMemories.extractedAt))

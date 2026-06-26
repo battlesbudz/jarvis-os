@@ -46,7 +46,12 @@ async function teardown(): Promise<void> {
   await db.delete(schema.dreamInsights).where(eq(schema.dreamInsights.userId, TEST_USER_ID));
 }
 
-async function insertMemory(category: schema.MemoryCategory | "fact", content: string, tier: schema.MemoryTier = "long_term"): Promise<void> {
+async function insertMemory(
+  category: schema.MemoryCategory | "fact",
+  content: string,
+  tier: schema.MemoryTier = "long_term",
+  reviewStatus: schema.MemoryLifecycleState = "active",
+): Promise<void> {
   await db.insert(schema.userMemories).values({
     userId: TEST_USER_ID,
     content,
@@ -54,7 +59,7 @@ async function insertMemory(category: schema.MemoryCategory | "fact", content: s
     confidence: 80,
     tier,
     memoryType: "semantic",
-    reviewStatus: "active",
+    reviewStatus,
     relevanceScore: 50,
     sourceType: "test",
   });
@@ -179,6 +184,25 @@ async function testDecisionsCategories(): Promise<void> {
   ok(source.includes(marker), "V-8: buildDecisionsSource includes 'blockers' category memories");
 }
 
+// ── V-9: vault source builders include approved kept/edited memories ───────
+
+async function testApprovedReviewStatuses(): Promise<void> {
+  const keptPreference = "VAULT_TEST_KEPT_PREFERENCE_" + Date.now();
+  const editedAccomplishment = "VAULT_TEST_EDITED_ACCOMPLISHMENT_" + Date.now();
+  const keptRelationship = "VAULT_TEST_KEPT_RELATIONSHIP_" + Date.now();
+  const editedDecision = "VAULT_TEST_EDITED_DECISION_" + Date.now();
+
+  await insertMemory("preferences", keptPreference, "long_term", "kept");
+  await insertMemory("accomplishments", editedAccomplishment, "long_term", "edited");
+  await insertMemory("relationships", keptRelationship, "long_term", "kept");
+  await insertMemory("blockers", editedDecision, "long_term", "edited");
+
+  ok((await buildAboutYouSource(TEST_USER_ID)).includes(keptPreference), "V-9a: about-you includes kept memories");
+  ok((await buildProjectsSource(TEST_USER_ID)).includes(editedAccomplishment), "V-9b: projects includes edited memories");
+  ok((await buildPeopleSource(TEST_USER_ID)).includes(keptRelationship), "V-9c: people includes kept relationship memories");
+  ok((await buildDecisionsSource(TEST_USER_ID)).includes(editedDecision), "V-9d: decisions includes edited memories");
+}
+
 // ── Runner ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -202,6 +226,9 @@ async function main(): Promise<void> {
     await teardown();
     await setup();
     await testDecisionsCategories();
+    await teardown();
+    await setup();
+    await testApprovedReviewStatuses();
   } finally {
     await teardown();
     await db.delete(schema.users).where(eq(schema.users.id, TEST_USER_ID));
