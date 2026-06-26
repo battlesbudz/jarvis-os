@@ -30,11 +30,17 @@ import {
   classifyRuntimeMemoryInspectionIntent,
   _setRuntimeMemoryInspectionDepsForTesting,
 } from "../state/runtimeMemoryInspection";
+import {
+  answerPhoneGemmaDiagnosticQuestion,
+  classifyPhoneGemmaDiagnosticIntent,
+  _setPhoneGemmaDiagnosticDepsForTesting,
+} from "../state/phoneGemmaDiagnostics";
 
 export {
   _setRuntimeIdentityProfileResolverForTesting,
   _setRuntimeCapabilityDepsForTesting,
   _setRuntimeMemoryInspectionDepsForTesting,
+  _setPhoneGemmaDiagnosticDepsForTesting,
 };
 
 export type ModelTier = "prime" | "smart" | "cheap" | "free";
@@ -101,6 +107,9 @@ export interface RoutedModelTurnParams {
   allowRuntimeIdentityShortcut?: boolean;
   allowRuntimeCapabilityShortcut?: boolean;
   allowRuntimeMemoryInspectionShortcut?: boolean;
+  allowPhoneGemmaDiagnosticShortcut?: boolean;
+  phoneGemmaDeviceId?: string;
+  phoneGemmaProfileId?: string;
 }
 
 interface PreparedModelTurn {
@@ -823,11 +832,18 @@ function canUseRuntimeMemoryInspectionShortcut(params: RoutedModelTurnParams): b
   });
 }
 
+function canUsePhoneGemmaDiagnosticShortcut(params: RoutedModelTurnParams): boolean {
+  if (!params.allowPhoneGemmaDiagnosticShortcut) return false;
+  if (params.responseFormat) return false;
+  return Boolean(classifyPhoneGemmaDiagnosticIntent(params.messages));
+}
+
 export async function routeModelTurn(params: RoutedModelTurnParams): Promise<ProviderTurnResult> {
   const logPrefix = params.logPrefix ?? `[ModelRouter:${params.tier}]`;
   const allowRuntimeIdentityShortcut = canUseRuntimeIdentityShortcut(params);
   const allowRuntimeCapabilityShortcut = canUseRuntimeCapabilityShortcut(params);
   const allowRuntimeMemoryInspectionShortcut = canUseRuntimeMemoryInspectionShortcut(params);
+  const allowPhoneGemmaDiagnosticShortcut = canUsePhoneGemmaDiagnosticShortcut(params);
   const prepared = await prepareModelTurn(params, logPrefix);
   if (allowRuntimeIdentityShortcut) {
     const runtimeIdentityAnswer = await answerRuntimeIdentityQuestion({
@@ -855,6 +871,17 @@ export async function routeModelTurn(params: RoutedModelTurnParams): Promise<Pro
     });
     if (runtimeMemoryInspectionAnswer) return runtimeMemoryInspectionAnswer;
   }
+  if (allowPhoneGemmaDiagnosticShortcut) {
+    const phoneGemmaDiagnosticAnswer = await answerPhoneGemmaDiagnosticQuestion({
+      messages: params.messages,
+      userId: params.userId,
+      route: prepared.chain[0],
+      deviceId: params.phoneGemmaDeviceId,
+      profileId: params.phoneGemmaProfileId,
+      signal: params.signal,
+    });
+    if (phoneGemmaDiagnosticAnswer) return phoneGemmaDiagnosticAnswer;
+  }
 
   return queryWithFallback(
     prepared.chain,
@@ -881,6 +908,7 @@ export async function streamModelTurn(
   const allowRuntimeIdentityShortcut = canUseRuntimeIdentityShortcut(params);
   const allowRuntimeCapabilityShortcut = canUseRuntimeCapabilityShortcut(params);
   const allowRuntimeMemoryInspectionShortcut = canUseRuntimeMemoryInspectionShortcut(params);
+  const allowPhoneGemmaDiagnosticShortcut = canUsePhoneGemmaDiagnosticShortcut(params);
   const prepared = await prepareModelTurn(params, logPrefix);
   if (allowRuntimeIdentityShortcut) {
     const runtimeIdentityAnswer = await answerRuntimeIdentityQuestion({
@@ -918,6 +946,21 @@ export async function streamModelTurn(
       await onChunk({ type: "text", delta: runtimeMemoryInspectionAnswer.textContent });
       await onChunk({ type: "finish", reason: runtimeMemoryInspectionAnswer.finishReason });
       return runtimeMemoryInspectionAnswer;
+    }
+  }
+  if (allowPhoneGemmaDiagnosticShortcut) {
+    const phoneGemmaDiagnosticAnswer = await answerPhoneGemmaDiagnosticQuestion({
+      messages: params.messages,
+      userId: params.userId,
+      route: prepared.chain[0],
+      deviceId: params.phoneGemmaDeviceId,
+      profileId: params.phoneGemmaProfileId,
+      signal: params.signal,
+    });
+    if (phoneGemmaDiagnosticAnswer) {
+      await onChunk({ type: "text", delta: phoneGemmaDiagnosticAnswer.textContent });
+      await onChunk({ type: "finish", reason: phoneGemmaDiagnosticAnswer.finishReason });
+      return phoneGemmaDiagnosticAnswer;
     }
   }
 

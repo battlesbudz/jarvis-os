@@ -4477,7 +4477,7 @@ async function testAndroidLocalGemmaExplainsCompiledModelInvokeFailure() {
         stream: false,
         userId: "user-phone",
       })),
-      /Phone Gemma could not finish local inference/,
+      /Phone Gemma could not finish inference/,
     );
     console.log("OK: Android Local Gemma explains compiled-model invoke failures");
   } finally {
