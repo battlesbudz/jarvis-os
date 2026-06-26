@@ -25,6 +25,7 @@ import { logAction, isActionSuppressed } from "./intelligence/actionLog";
 import { claimAndMark } from "./lib/proactiveDedup";
 import { emit as diagEmit } from "./diagnostics/diagnosticsService";
 import { createRoutedOpenAIChatShim } from "./agent/routedChatCompletion";
+import { containsRawRestrictedContent } from "./memory/writePipeline";
 
 const openai = createRoutedOpenAIChatShim("[Heartbeat]", "balanced");
 
@@ -919,7 +920,7 @@ export async function runHeartbeatTick(): Promise<void> {
 
     let memories: { content: string; category: string }[] = [];
     try {
-      memories = await db
+      const memoryRows = await db
         .select({ content: schema.userMemories.content, category: schema.userMemories.category })
         .from(schema.userMemories)
         .where(and(
@@ -932,6 +933,7 @@ export async function runHeartbeatTick(): Promise<void> {
         ))
         .orderBy(desc(schema.userMemories.extractedAt))
         .limit(30);
+      memories = memoryRows.filter((row) => !containsRawRestrictedContent(row.content ?? ""));
     } catch {}
 
     let actionsFired = 0;

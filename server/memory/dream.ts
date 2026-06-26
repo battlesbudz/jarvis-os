@@ -18,6 +18,7 @@ import { eq, desc, and, gte, lt, sql, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { extractAndStore } from "./extractor";
 import { markSoulStale } from "./soul";
+import { containsRawRestrictedContent } from "./writePipeline";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 
@@ -40,6 +41,22 @@ const openai = createRoutedOpenAIChatShim("[DreamCycle]", "balanced");
 
 const MINIMUM_MEMORY_AGE_DAYS = 14;
 const CONSOLIDATION_BATCH_SIZE = 20;
+const RESTRICTED_MEMORY_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
+
+function approvedNonRestrictedMemoryClauses(userId: string) {
+  return [
+    eq(schema.userMemories.userId, userId),
+    eq(schema.userMemories.pendingReview, false),
+    sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+    sql`COALESCE(${schema.userMemories.sensitivity}, 'normal') = 'normal'`,
+    sql`LOWER(COALESCE(${schema.userMemories.sourceType}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
+    sql`LOWER(COALESCE(${schema.userMemories.sourceRef}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
+  ];
+}
+
+function filterRawRestrictedMemoryRows<T extends { content?: string | null }>(rows: T[]): T[] {
+  return rows.filter((row) => !containsRawRestrictedContent(row.content ?? ""));
+}
 
 interface DreamInsightRaw {
   insight: string;
@@ -77,9 +94,7 @@ async function hasEnoughData(userId: string): Promise<boolean> {
     .from(schema.userMemories)
     .where(
       and(
-        eq(schema.userMemories.userId, userId),
-        eq(schema.userMemories.pendingReview, false),
-        sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+        ...approvedNonRestrictedMemoryClauses(userId),
         sql`${schema.userMemories.extractedAt} < ${cutoff}`,
       ),
     )
@@ -97,7 +112,7 @@ async function buildCorpus(userId: string): Promise<CorpusResult> {
   const since30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const since30Key = since30.toISOString().slice(0, 10);
 
-  const [memoriesRows, insightRows, energyRows, planRows] = await Promise.all([
+  const [rawMemoryRows, insightRows, energyRows, planRows] = await Promise.all([
     db
       .select({
         id: schema.userMemories.id,
@@ -109,9 +124,7 @@ async function buildCorpus(userId: string): Promise<CorpusResult> {
       .from(schema.userMemories)
       .where(
         and(
-          eq(schema.userMemories.userId, userId),
-          eq(schema.userMemories.pendingReview, false),
-          sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+          ...approvedNonRestrictedMemoryClauses(userId),
           gte(schema.userMemories.extractedAt, since90),
         ),
       )
@@ -150,6 +163,7 @@ async function buildCorpus(userId: string): Promise<CorpusResult> {
       .limit(30),
   ]);
 
+  const memoriesRows = filterRawRestrictedMemoryRows(rawMemoryRows);
   const memoryIds: string[] = memoriesRows.map((m) => m.id);
   const sections: string[] = [];
 
@@ -274,10 +288,8 @@ async function runConsolidationPass(
     .from(schema.userMemories)
     .where(
       and(
-        eq(schema.userMemories.userId, userId),
+        ...approvedNonRestrictedMemoryClauses(userId),
         eq(schema.userMemories.tier, "short_term"),
-        eq(schema.userMemories.pendingReview, false),
-        sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
         lt(schema.userMemories.extractedAt, sixHoursAgo),
         sql`(${schema.userMemories.expiresAt} IS NULL OR ${schema.userMemories.expiresAt} > NOW())`,
       ),
@@ -295,8 +307,6 @@ async function runConsolidationPass(
 
   for (let i = 0; i < allIds.length; i += CONSOLIDATION_BATCH_SIZE) {
     const batchIds = allIds.slice(i, i + CONSOLIDATION_BATCH_SIZE);
-    const batchIdSet = new Set(batchIds);
-
     const batch = await db
       .select({
         id: schema.userMemories.id,
@@ -314,7 +324,11 @@ async function runConsolidationPass(
 
     if (batch.length === 0) continue;
 
-    const memoryList = batch
+    const visibleBatch = filterRawRestrictedMemoryRows(batch);
+    if (visibleBatch.length === 0) continue;
+
+    const batchIdSet = new Set(visibleBatch.map((memory) => memory.id));
+    const memoryList = visibleBatch
       .map(
         (m) =>
           `{"id":${JSON.stringify(m.id)},"content":${JSON.stringify(m.content)},"category":${JSON.stringify(m.category)},"confidence":${m.confidence}}`,
@@ -422,7 +436,7 @@ async function runSemanticExtractionPass(
 ): Promise<{ factsExtracted: number }> {
   const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
-  const episodic = await db
+  const rawEpisodic = await db
     .select({
       id: schema.userMemories.id,
       content: schema.userMemories.content,
@@ -431,15 +445,14 @@ async function runSemanticExtractionPass(
     .from(schema.userMemories)
     .where(
       and(
-        eq(schema.userMemories.userId, userId),
+        ...approvedNonRestrictedMemoryClauses(userId),
         eq(schema.userMemories.memoryType, "episodic"),
-        eq(schema.userMemories.pendingReview, false),
-        sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
         gte(schema.userMemories.extractedAt, since7d),
       ),
     )
     .orderBy(desc(schema.userMemories.extractedAt))
     .limit(120);
+  const episodic = filterRawRestrictedMemoryRows(rawEpisodic);
 
   if (episodic.length === 0) return { factsExtracted: 0 };
 

@@ -7,6 +7,7 @@ const soulSource = fs.readFileSync(path.resolve(repoRoot, "server/memory/soul.ts
 const brainAdapterSource = fs.readFileSync(path.resolve(repoRoot, "server/brain/adapter.ts"), "utf8");
 const vaultWriterSource = fs.readFileSync(path.resolve(repoRoot, "server/memory/vaultWriter.ts"), "utf8");
 const extractorSource = fs.readFileSync(path.resolve(repoRoot, "server/memory/extractor.ts"), "utf8");
+const retrieveSource = fs.readFileSync(path.resolve(repoRoot, "server/memory/retrieve.ts"), "utf8");
 const runtimeContextSources = [
   "server/routes.ts",
   "server/curiosityScanner.ts",
@@ -30,6 +31,10 @@ const restrictedPromptReaderSources = [
   "server/curiosityScanner.ts",
   "server/heartbeat.ts",
   "server/voiceRelayRoutes.ts",
+  "server/memory/dream.ts",
+  "server/memory/soul.ts",
+  "server/memory/vaultWriter.ts",
+  "server/agent/tools/memorySearch.ts",
 ].map((file) => ({
   file,
   source: fs.readFileSync(path.resolve(repoRoot, file), "utf8"),
@@ -69,10 +74,24 @@ assert.match(
 for (const { file, source } of restrictedPromptReaderSources) {
   assert.match(
     source,
-    /COALESCE\(\$\{(?:schema\.)?userMemories\.sensitivity\}, 'normal'\) = 'normal'[\s\S]*(?:schema\.)?userMemories\.sourceType[\s\S]*NOT SIMILAR TO[\s\S]*(?:schema\.)?userMemories\.sourceRef[\s\S]*NOT SIMILAR TO/,
+    /COALESCE\(\$\{(?:schema\.)?userMemories\.sensitivity\}, 'normal'\) = 'normal'|COALESCE\(sensitivity, 'normal'\) = 'normal'|filterRawRestrictedMemoryRows|containsRawRestrictedContent/,
     `${file} should exclude restricted user memories from prompt-facing direct reads`,
   );
 }
+
+for (const { file, source } of restrictedPromptReaderSources) {
+  assert.match(
+    source,
+    /containsRawRestrictedContent|filterRawRestrictedMemoryRows/,
+    `${file} should exclude legacy raw restricted content before prompt/tool output`,
+  );
+}
+
+assert.match(
+  retrieveSource,
+  /isRestrictedRetrievedMemory[\s\S]*containsRawRestrictedContent\(memory\.content\)/,
+  "Memory retrieval should treat legacy raw restricted content as restricted even when metadata is normal",
+);
 
 assert.match(
   extractorSource,

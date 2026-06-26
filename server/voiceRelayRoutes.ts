@@ -21,6 +21,7 @@ import { db } from "./db";
 import { and, eq, desc, sql } from "drizzle-orm";
 import { userMemories } from "@shared/schema";
 import { readWorkspaceFile } from "./workspace/loader";
+import { containsRawRestrictedContent } from "./memory/writePipeline";
 
 // ── One-time relay ticket store ───────────────────────────────────────────────
 
@@ -111,10 +112,11 @@ async function loadUserMemories(userId: string, maxLines = 50): Promise<string> 
       .orderBy(desc(userMemories.confidence))
       .limit(30);
 
-    if (!rows.length) return "";
+    const visibleRows = rows.filter((row) => !containsRawRestrictedContent(row.content ?? ""));
+    if (!visibleRows.length) return "";
 
     const lines: string[] = [];
-    for (const row of rows) {
+    for (const row of visibleRows) {
       if (lines.length >= maxLines) break;
       lines.push(`[${row.category ?? "general"}] ${row.content}`);
     }

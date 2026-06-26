@@ -14,6 +14,7 @@ import {
   upsertMemoryEmbedding,
   type MemoryVectorRow,
 } from "./vectorStore";
+import { containsRawRestrictedContent } from "./writePipeline";
 
 const EMBED_MODEL = "text-embedding-3-small";
 const EMBED_DIMENSIONS = 1536;
@@ -85,6 +86,7 @@ export function isRestrictedRetrievedMemory(memory: RetrievedMemory): boolean {
   return String(memory.sensitivity ?? "").trim().toLowerCase() === "restricted_summary" ||
     isRestrictedSourceType(memory.sourceType) ||
     isRestrictedSourceType(memory.sourceRef) ||
+    containsRawRestrictedContent(memory.content) ||
     (Array.isArray(memory.provenance) && memory.provenance.some(isRestrictedProvenanceRef)) ||
     (Array.isArray(memory.sourceRefs) && memory.sourceRefs.some(isRestrictedProvenanceRef));
 }

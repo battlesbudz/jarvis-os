@@ -259,7 +259,7 @@ function isRestrictedSourceType(value: unknown): boolean {
   );
 }
 
-function containsRawRestrictedContent(content: string): boolean {
+export function containsRawRestrictedContent(content: string): boolean {
   return RAW_RESTRICTED_CONTENT_PATTERNS.some((pattern) => pattern.test(content));
 }
 

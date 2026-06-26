@@ -8,6 +8,7 @@ import {
   shouldIncludeMemoryInSoul,
   SOUL_FIELD_MAX_CHARS,
 } from "./soulCuration";
+import { containsRawRestrictedContent } from "./writePipeline";
 
 const SOUL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -26,6 +27,10 @@ function approvedMemoryLifecycleFilter() {
     sql`LOWER(COALESCE(${schema.userMemories.sourceType}, '')) NOT SIMILAR TO ${RESTRICTED_SOURCE_SQL_PATTERN}`,
     sql`LOWER(COALESCE(${schema.userMemories.sourceRef}, '')) NOT SIMILAR TO ${RESTRICTED_SOURCE_SQL_PATTERN}`,
   );
+}
+
+function shouldIncludeNonRestrictedMemoryInSoul(memory: { content?: string | null; sourceType?: string | null }): boolean {
+  return shouldIncludeMemoryInSoul(memory) && !containsRawRestrictedContent(memory.content ?? "");
 }
 
 interface SoulRecord {
@@ -542,7 +547,7 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
 
   // ── Section 1: Identity Core ──────────────────────────────────────────────
   const identityByCat = new Map<MemoryCategory, string[]>();
-  for (const m of identityCoreRows.filter(shouldIncludeMemoryInSoul)) {
+  for (const m of identityCoreRows.filter(shouldIncludeNonRestrictedMemoryInSoul)) {
     const cat = normalizeCategory(m.category);
     const arr = identityByCat.get(cat) || [];
     arr.push(compactSoulText(m.content));
@@ -590,7 +595,7 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
       currentStateLines.push(`- **Morning mood:** ${compactSoulText(mn.moodSignal)}${mn.recordedAt ? ` (${mn.recordedAt})` : ""}`);
     if (mn.intention) currentStateLines.push(`- **Today's intention:** ${compactSoulText(mn.intention)}`);
   }
-  for (const m of currentStateRows.filter(shouldIncludeMemoryInSoul)) {
+  for (const m of currentStateRows.filter(shouldIncludeNonRestrictedMemoryInSoul)) {
     currentStateLines.push(`- ${compactSoulText(m.content)}`);
   }
   if (currentStateLines.length > 0) {
@@ -599,7 +604,7 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
   }
 
   // ── Section 3: Episodic Highlights ───────────────────────────────────────
-  const includedEpisodicRows = episodicRows.filter(shouldIncludeMemoryInSoul);
+  const includedEpisodicRows = episodicRows.filter(shouldIncludeNonRestrictedMemoryInSoul);
   if (includedEpisodicRows.length > 0) {
     sections.push("## 3. Episodic Highlights _(last 7 days)_");
     for (const m of includedEpisodicRows) {
@@ -609,7 +614,7 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
 
   // ── Section 4: Long-Term Patterns ────────────────────────────────────────
   const patternByCat = new Map<MemoryCategory, string[]>();
-  for (const m of longTermPatternRows.filter(shouldIncludeMemoryInSoul)) {
+  for (const m of longTermPatternRows.filter(shouldIncludeNonRestrictedMemoryInSoul)) {
     const cat = normalizeCategory(m.category);
     const arr = patternByCat.get(cat) || [];
     arr.push(compactSoulText(m.content));
@@ -635,9 +640,10 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
   }
 
   // ── Section 5: Dream Insights ─────────────────────────────────────────────
-  if (dreamRows.length > 0) {
+  const nonRestrictedDreamRows = dreamRows.filter((row) => !containsRawRestrictedContent(row.insightText ?? ""));
+  if (nonRestrictedDreamRows.length > 0) {
     sections.push("## 5. Dream Insights");
-    for (const d of dreamRows) {
+    for (const d of nonRestrictedDreamRows) {
       const conf = typeof d.confidenceScore === "number" ? ` _(confidence: ${d.confidenceScore})_` : "";
       sections.push(`- ${d.insightText}${conf}`);
     }
@@ -661,7 +667,7 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
   const aspirationLines: string[] = [];
   if (lc?.priorityGoal) aspirationLines.push(`- **Priority goal:** ${compactSoulText(lc.priorityGoal, SOUL_FIELD_MAX_CHARS)}`);
   if (lc?.improvementArea) aspirationLines.push(`- **Improving:** ${compactSoulText(lc.improvementArea, SOUL_FIELD_MAX_CHARS)}`);
-  for (const m of aspirationRows.filter(shouldIncludeMemoryInSoul)) {
+  for (const m of aspirationRows.filter(shouldIncludeNonRestrictedMemoryInSoul)) {
     aspirationLines.push(`- ${compactSoulText(m.content)}`);
   }
   if (aspirationLines.length > 0) {

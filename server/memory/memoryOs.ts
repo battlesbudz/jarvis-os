@@ -1,4 +1,5 @@
 import type { RetrievedMemory } from "./retrieve";
+import { containsRawRestrictedContent } from "./writePipeline";
 
 export type MemoryOsCaller =
   | "memory_search"
@@ -205,6 +206,7 @@ function isRestrictedRetrievedMemory(memory: RetrievedMemory): boolean {
   return cleanSingleLine(memory.sensitivity).toLowerCase() === "restricted_summary" ||
     isRestrictedSourceType(memory.sourceType) ||
     isRestrictedSourceType(memory.sourceRef) ||
+    containsRawRestrictedContent(memory.content) ||
     (Array.isArray(memory.provenance) && memory.provenance.some(isRestrictedProvenanceRef)) ||
     (Array.isArray(memory.sourceRefs) && memory.sourceRefs.some(isRestrictedProvenanceRef));
 }
@@ -214,6 +216,8 @@ function sanitizeRestrictedMemoryContent(content: string): string {
     .replace(/\b(?:account|routing|card|debit|credit)\s*(?:number|no\.?|#|ending)?\s*[:#-]?\s*(?:\d[\s-]?){4,}\b/gi, "[redacted identifier]")
     .replace(/\b(?:ssn|social security)\b[\s\S]{0,40}\d{3}[\s-]?\d{2}[\s-]?\d{4}\b/gi, "[redacted identifier]")
     .replace(/\b(?:available|current|ending)\s+balance\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/gi, "[redacted balance]")
+    .replace(/\b(?:bank|checking|savings|account)\s+balance\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/gi, "[redacted balance]")
+    .replace(/\bbalance\b[\s\S]{0,40}\b(?:bank|checking|savings|account)\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/gi, "[redacted balance]")
     .replace(/^\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+.{2,}\s+[-+]?\$?\d[\d,]*(?:\.\d{2})?\s*$/gim, "[redacted transaction row]")
     .trim();
   const compact = redacted.length > 260 ? `${redacted.slice(0, 257).trimEnd()}...` : redacted;

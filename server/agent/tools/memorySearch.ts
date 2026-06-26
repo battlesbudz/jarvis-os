@@ -2,7 +2,7 @@ import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
 import { batchIncrementAccessCount } from "../../memory/retrieve";
 import type { RetrievedMemory } from "../../memory/retrieve";
 import { retrieveMemoryContext, memoryContextItemsToRetrievedMemories, type MemoryContext } from "../../memory/memoryOs";
-import { defaultMemoryWriteDeps, planMemoryWrite } from "../../memory/writePipeline";
+import { containsRawRestrictedContent, defaultMemoryWriteDeps, planMemoryWrite } from "../../memory/writePipeline";
 import { db } from "../../db";
 import { eq, sql } from "drizzle-orm";
 import {
@@ -542,7 +542,8 @@ export const memoryGetTool: AgentTool = {
         LIMIT ${limit}
       `);
 
-      const memories = (rawRowsResult.rows ?? []) as MemoryRow[];
+      const memories = ((rawRowsResult.rows ?? []) as MemoryRow[])
+        .filter((row) => !containsRawRestrictedContent(row.content ?? ""));
 
       if (memories.length === 0) {
         return {

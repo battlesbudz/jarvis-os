@@ -162,6 +162,24 @@ async function main(): Promise<void> {
   assert.deepEqual(legacyAccountBalanceRestricted.items, []);
   assert.match(legacyAccountBalanceRestricted.uncertainty.join(" "), /withheld from cloud model context/);
 
+  const legacyRawContentRestricted = await retrieveMemoryContext(
+    { userId: "memory-os-user", query: "checking balance", caller: "coach_context" },
+    {
+      retrieveMemories: async () => [
+        memory({
+          id: "legacy-raw-balance-1",
+          content: "My current checking balance is $5,000.",
+          sourceType: "manual",
+          sourceRef: "legacy-chat",
+          sensitivity: "normal",
+          provenance: [],
+        }),
+      ],
+    },
+  );
+  assert.deepEqual(legacyRawContentRestricted.items, []);
+  assert.match(legacyRawContentRestricted.uncertainty.join(" "), /withheld from cloud model context/);
+
   const underfilledCloudContext = await retrieveMemoryContext(
     {
       userId: "memory-os-user",

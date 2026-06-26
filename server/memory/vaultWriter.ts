@@ -17,6 +17,7 @@ import * as schema from "@shared/schema";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 import { isRetriableProviderError } from "../agent/providers/fallback";
+import { containsRawRestrictedContent } from "./writePipeline";
 
 const openai = createRoutedOpenAIChatShim("[MemoryVault]", "balanced");
 
@@ -34,6 +35,10 @@ function approvedNonRestrictedMemoryClauses(userId: string) {
     sql`LOWER(COALESCE(${schema.userMemories.sourceType}, '')) NOT SIMILAR TO ${RESTRICTED_SOURCE_SQL_PATTERN}`,
     sql`LOWER(COALESCE(${schema.userMemories.sourceRef}, '')) NOT SIMILAR TO ${RESTRICTED_SOURCE_SQL_PATTERN}`,
   ];
+}
+
+function filterRawRestrictedMemoryRows<T extends { content?: string | null }>(rows: T[]): T[] {
+  return rows.filter((row) => !containsRawRestrictedContent(row.content ?? ""));
 }
 
 // ── Page definitions ──────────────────────────────────────────────────────────
@@ -66,7 +71,7 @@ export async function buildAboutYouSource(userId: string): Promise<string> {
   ]);
 
   const soulText = soulRows[0]?.content || "";
-  const memList = memRows.map((m) => `[${m.category}] ${m.content}`).join("\n");
+  const memList = filterRawRestrictedMemoryRows(memRows).map((m) => `[${m.category}] ${m.content}`).join("\n");
 
   return `## Soul Summary\n${soulText.slice(0, 3000)}\n\n## Identity & Preference Memories\n${memList}`;
 }
@@ -92,7 +97,7 @@ export async function buildProjectsSource(userId: string): Promise<string> {
       .limit(1),
   ]);
 
-  const memList = memRows.map((m) => `- ${m.content}`).join("\n");
+  const memList = filterRawRestrictedMemoryRows(memRows).map((m) => `- ${m.content}`).join("\n");
   const goalData = goalRows[0]?.data;
   const goalText =
     Array.isArray(goalData) && goalData.length > 0
@@ -143,7 +148,7 @@ export async function buildPeopleSource(userId: string): Promise<string> {
     })
     .join("\n");
 
-  const memList = memRows.map((m) => `- ${m.content}`).join("\n");
+  const memList = filterRawRestrictedMemoryRows(memRows).map((m) => `- ${m.content}`).join("\n");
   return `## People Directory\n${peopleList || "No people recorded yet."}\n\n## Relationship Memories\n${memList}`;
 }
 
@@ -191,7 +196,7 @@ export async function buildDecisionsSource(userId: string): Promise<string> {
     .limit(80);
 
   const grouped: Record<string, string[]> = {};
-  for (const r of rows) {
+  for (const r of filterRawRestrictedMemoryRows(rows)) {
     if (!grouped[r.category]) grouped[r.category] = [];
     grouped[r.category].push(r.content);
   }

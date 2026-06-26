@@ -10,6 +10,7 @@ import { getOutlookCalendarEvents, getRecentOutlookEmails } from "./integrations
 import { logInteraction } from "./interactionLog";
 import { logAction, isActionSuppressed } from "./intelligence/actionLog";
 import { createRoutedChatCompletion } from "./agent/routedChatCompletion";
+import { containsRawRestrictedContent } from "./memory/writePipeline";
 
 const CURIOSITY_SCAN_LOCK_ID = 7654321098;
 let scannerStarted = false;
@@ -81,7 +82,7 @@ async function getRecentlySurfacedSenders(userId: string, since: Date): Promise<
 async function getUserMemories(
   userId: string
 ): Promise<{ content: string; category: string }[]> {
-  return db
+  const rows = await db
     .select({
       content: schema.userMemories.content,
       category: schema.userMemories.category,
@@ -95,6 +96,7 @@ async function getUserMemories(
       sql`LOWER(COALESCE(${schema.userMemories.sourceType}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
       sql`LOWER(COALESCE(${schema.userMemories.sourceRef}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
     ));
+  return rows.filter((row) => !containsRawRestrictedContent(row.content ?? ""));
 }
 
 interface CuriosityItem {
