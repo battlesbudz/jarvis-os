@@ -2395,7 +2395,15 @@ async function runPhoneGemmaDiagnosticsBypassSelectedPhoneGemmaAssertion(): Prom
     const recoveryActions: string[] = [];
     _setPhoneGemmaDiagnosticDepsForTesting({
       now: () => new Date("2026-06-26T09:00:00.000Z"),
-      requestResetApproval: async () => ({ approved: true, gateId: "gate-phone-gemma-reset" }),
+      requestResetApproval: async () => ({
+        approved: true,
+        gateId: "gate-phone-gemma-reset",
+        resetTarget: {
+          requestId: "approved-phone-gemma-request",
+          scope: "tracked_phone_gemma_request",
+          capturedAt: "2026-06-26T09:00:00.000Z",
+        },
+      }),
       cancelActiveGeneration: async () => {
         recoveryActions.push("cancel");
         return { status: "passed", detail: "Android confirmed cancellation." };

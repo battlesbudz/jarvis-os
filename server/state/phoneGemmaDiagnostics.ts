@@ -124,7 +124,7 @@ const PHONE_GEMMA_ALIAS_PATTERN = /\b(?:phone gemma|local gemma|local model|phon
 const PHONE_GEMMA_FIX_PATTERN = /\b(?:fix|reset|unstick|repair|recover|restart|reinitialize)\b/;
 const PHONE_GEMMA_CANCEL_RUNTIME_PATTERN = /\b(?:stop|cancel|clear)\b.*\b(?:generation|request|inference|runtime|busy|stuck|hung|stale)\b|\b(?:generation|request|inference|runtime|busy|stuck|hung|stale)\b.*\b(?:stop|cancel|clear)\b/;
 const PHONE_GEMMA_RUN_DIAGNOSTIC_PATTERN = /\b(?:run|start|perform|do)\b.*\b(?:diagnostic|diagnostics|test|tests|self test|health check)\b|\b(?:test|check|diagnose)\b\s+(?:the\s+)?(?:phone gemma|local gemma|local model|phone model)\b/;
-const PHONE_GEMMA_STATUS_PATTERN = /\b(?:status|health|health check|healthy|working|stable|unstable|ready|validated|validation|passing|pass|passed|failing|failed|broken|diagnostic|diagnostics|test|tests|self test)\b/;
+const PHONE_GEMMA_STATUS_PATTERN = /\b(?:status|health|health check|healthy|working|stable|unstable|ready|validated|validation|passing|pass|passed|failing|failed|broken|diagnostic|diagnostics)\b/;
 
 const diagnosticStore = new Map<string, PhoneGemmaDiagnosticResult>();
 const activeRequests = new Map<string, ActivePhoneGemmaRequest>();
@@ -873,6 +873,38 @@ function recoveryStatusFromSteps(steps: PhoneGemmaRecoveryResult["steps"]): Phon
   return "failed";
 }
 
+function recoveryRequiresApprovalTarget(key: PhoneGemmaRecoveryKey, deps: PhoneGemmaDiagnosticDeps): PhoneGemmaRecoveryResult {
+  const steps: PhoneGemmaRecoveryResult["steps"] = [
+    {
+      id: "cancel",
+      status: "failed",
+      detail: "Phone Gemma reset needs an approval-captured reset target before cancelling Android local model work.",
+    },
+    {
+      id: "native_idle",
+      status: "skipped",
+      detail: "Skipped native idle confirmation because no approved reset target was provided.",
+    },
+    {
+      id: "clear_stale_state",
+      status: "skipped",
+      detail: "Kept Jarvis server Phone Gemma request state so a later approved reset can retry the tracked request.",
+    },
+  ];
+
+  return {
+    userId: key.userId,
+    deviceId: key.deviceId,
+    model: key.model,
+    profileId: key.profileId,
+    status: "failed",
+    checkedAt: nowFromDeps(deps).toISOString(),
+    steps,
+    preservedModelFiles: true,
+    preservedMemories: true,
+  };
+}
+
 export async function fixPhoneGemmaLocalModel(
   input: Partial<PhoneGemmaDiagnosticKey> & { userId: string; resetTarget?: PhoneGemmaResetTarget },
   deps: PhoneGemmaDiagnosticDeps = {},
@@ -883,6 +915,7 @@ export async function fixPhoneGemmaLocalModel(
   };
   const allDeps = mergedDeps(deps);
   throwIfDiagnosticAborted(allDeps.signal);
+  if (!key.resetTarget) return recoveryRequiresApprovalTarget(key, allDeps);
   const cancel = await (allDeps.cancelActiveGeneration ?? ((runnerKey) => defaultCancelActiveGeneration(runnerKey, allDeps)))(key);
   throwIfDiagnosticAborted(allDeps.signal);
   const nativeIdle = await (allDeps.waitForNativeIdle ?? ((runnerKey) => defaultWaitForNativeIdle(runnerKey, allDeps)))(key);
