@@ -20,6 +20,7 @@ async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
 
 import { normalizeCategory, MEMORY_CATEGORIES } from "./categories";
 import { markSoulStale } from "./soul";
+import { containsRawRestrictedContent } from "./restrictedContent";
 import { planMemoryWrite } from "./writePipeline";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
@@ -357,11 +358,15 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
     // the legacy TTL-gated maybeRegenerateVault.
     const richSourceTypes = ["chat", "telegram", "email", "transcript", "document", "voice"];
     if (richSourceTypes.includes(sourceType)) {
-      import("./vaultWriter").then(({ ingestSource }) => {
-        ingestSource(userId, source, sourceType).catch((err) =>
-          console.error("[Memory] ingestSource:", err),
-        );
-      }).catch((err) => console.error("[Memory] vaultWriter import failed:", err));
+      if (containsRawRestrictedContent(source)) {
+        console.warn(`[Memory] skipped vault source ingest for restricted ${sourceType} source`);
+      } else {
+        import("./vaultWriter").then(({ ingestSource }) => {
+          ingestSource(userId, source, sourceType).catch((err) =>
+            console.error("[Memory] ingestSource:", err),
+          );
+        }).catch((err) => console.error("[Memory] vaultWriter import failed:", err));
+      }
     } else {
       import("./vaultWriter").then(({ maybeRegenerateVault }) => {
         maybeRegenerateVault(userId).catch((err) => console.error("[Memory] maybeRegenerateVault:", err));

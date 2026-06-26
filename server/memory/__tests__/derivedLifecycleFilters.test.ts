@@ -100,6 +100,12 @@ assert.match(
 );
 
 assert.match(
+  extractorSource,
+  /containsRawRestrictedContent\(source\)[\s\S]*skipped vault source ingest[\s\S]*ingestSource\(userId, source, sourceType\)/,
+  "Conversation extraction should not pass restricted raw rich sources into vault ingest",
+);
+
+assert.match(
   brainAdapterSource,
   /APPROVED_USER_MEMORY_REVIEW_STATUSES[\s\S]*active[\s\S]*kept[\s\S]*edited[\s\S]*!APPROVED_USER_MEMORY_REVIEW_STATUSES\.has\(memory\.reviewStatus\)/,
   "Brain projection should retire derived pages for non-approved memory lifecycle states instead of projecting them",
