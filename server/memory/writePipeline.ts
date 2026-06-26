@@ -322,7 +322,8 @@ export function buildWorkingContextRecord(input: WorkingContextRecordInput): Wor
 
 export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
   const userId = cleanSingleLine(input.userId);
-  const content = cleanContent(input.content);
+  const rawContent = String(input.content ?? "");
+  const content = cleanContent(rawContent);
   const now = input.now ?? new Date();
   const inputSourceType = cleanSingleLine(input.sourceType);
   const inputSourceRef = cleanSingleLine(input.sourceRef) || null;
@@ -332,7 +333,8 @@ export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
     isRestrictedSourceType(inputSourceRef) ||
     provenanceHasRestrictedSource(provenance) ||
     requestedSensitivity === "restricted_summary";
-  const rawRestrictedContent = containsRawRestrictedContent(content);
+  const rawRestrictedContent = containsRawRestrictedContent(rawContent) ||
+    containsRawRestrictedContent(content);
   const approvedRestrictedSummary = isApprovedRestrictedSummary(input, inputSourceType);
 
   if (!userId) {
