@@ -348,6 +348,16 @@ async function testRawRestrictedSourceWritesAreExcluded(): Promise<void> {
   assert.equal(manualCardEnding.status, "excluded");
   assert.equal(manualCardEnding.record, null);
 
+  const standaloneLastFour = planMemoryWrite({
+    userId: "user-123",
+    content: "The last four digits are 1234.",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(standaloneLastFour.status, "excluded");
+  assert.equal(standaloneLastFour.record, null);
+
   const manualCheckingAccountHasAmount = planMemoryWrite({
     userId: "user-123",
     content: "My checking account has $5,000.",

@@ -71,9 +71,10 @@ export async function buildAboutYouSource(userId: string): Promise<string> {
   ]);
 
   const soulText = soulRows[0]?.content || "";
+  const safeSoulText = containsRawRestrictedContent(soulText) ? "" : soulText;
   const memList = filterRawRestrictedMemoryRows(memRows).map((m) => `[${m.category}] ${m.content}`).join("\n");
 
-  return `## Soul Summary\n${soulText.slice(0, 3000)}\n\n## Identity & Preference Memories\n${memList}`;
+  return `## Soul Summary\n${safeSoulText.slice(0, 3000)}\n\n## Identity & Preference Memories\n${memList}`;
 }
 
 export async function buildProjectsSource(userId: string): Promise<string> {

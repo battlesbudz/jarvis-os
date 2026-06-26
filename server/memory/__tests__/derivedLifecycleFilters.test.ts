@@ -71,6 +71,12 @@ assert.match(
   "Knowledge vault source builders should exclude restricted user memories",
 );
 
+assert.match(
+  vaultWriterSource,
+  /safeSoulText[\s\S]*containsRawRestrictedContent\(soulText\)[\s\S]*Soul Summary\\n\$\{safeSoulText\.slice\(0, 3000\)\}/,
+  "Knowledge vault source builders should not include stale Soul text containing raw restricted details",
+);
+
 for (const { file, source } of restrictedPromptReaderSources) {
   assert.match(
     source,
