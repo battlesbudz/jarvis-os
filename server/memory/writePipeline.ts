@@ -131,6 +131,10 @@ export interface ApprovedPendingMemoryWriteRow {
   supersedes_memory_id: string | null;
 }
 
+interface PendingMemoryApprovalCandidateRow extends ApprovedPendingMemoryWriteRow {
+  content: string | null;
+}
+
 export interface ApprovedPendingMemoryWritesResult {
   approved: number;
   memoryIds: string[];
@@ -687,22 +691,35 @@ export async function keepPendingMemoryWrites(input: {
     return { approved: 0, memoryIds: [], supersededMemoryIds: [] };
   }
 
-  const result = memoryIds
-    ? await db.execute<ApprovedPendingMemoryWriteRow>(sql`
-      UPDATE user_memories
-      SET pending_review = FALSE,
-          review_status = 'kept'
+  const pendingResult = memoryIds
+    ? await db.execute<PendingMemoryApprovalCandidateRow>(sql`
+      SELECT id, content, supersedes_memory_id
+      FROM user_memories
       WHERE user_id = ${userId}
         AND id = ANY(${memoryIds}::varchar[])
         AND pending_review = TRUE
         AND review_status = 'pending'
-      RETURNING id, supersedes_memory_id
     `)
-    : await db.execute<ApprovedPendingMemoryWriteRow>(sql`
+    : await db.execute<PendingMemoryApprovalCandidateRow>(sql`
+      SELECT id, content, supersedes_memory_id
+      FROM user_memories
+      WHERE user_id = ${userId}
+        AND pending_review = TRUE
+        AND review_status = 'pending'
+    `);
+  const safeMemoryIds = (pendingResult.rows ?? [])
+    .filter((row) => !containsRawRestrictedContent(row.content ?? ""))
+    .map((row) => row.id);
+  if (safeMemoryIds.length === 0) {
+    return { approved: 0, memoryIds: [], supersededMemoryIds: [] };
+  }
+
+  const result = await db.execute<ApprovedPendingMemoryWriteRow>(sql`
       UPDATE user_memories
       SET pending_review = FALSE,
           review_status = 'kept'
       WHERE user_id = ${userId}
+        AND id = ANY(${safeMemoryIds}::varchar[])
         AND pending_review = TRUE
         AND review_status = 'pending'
       RETURNING id, supersedes_memory_id

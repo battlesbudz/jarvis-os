@@ -377,6 +377,11 @@ async function testApprovalEditsRejectRawRestrictedContent(): Promise<void> {
     /approvePendingMemoryWrite[\s\S]*containsRawRestrictedContent\(rawContent\)[\s\S]*containsRawRestrictedContent\(content\)[\s\S]*Edited memory content contains raw restricted details[\s\S]*SELECT content[\s\S]*review_status = 'pending'[\s\S]*containsRawRestrictedContent\(existingContent\)[\s\S]*Pending memory content contains raw restricted details[\s\S]*UPDATE user_memories/,
     "Approval edits and keeps should reject raw restricted content before updating pending memories",
   );
+  assert.match(
+    pipelineSource,
+    /keepPendingMemoryWrites[\s\S]*SELECT id, content, supersedes_memory_id[\s\S]*safeMemoryIds[\s\S]*containsRawRestrictedContent\(row\.content \?\? ""\)[\s\S]*UPDATE user_memories[\s\S]*AND id = ANY\(\$\{safeMemoryIds\}::varchar\[\]\)/,
+    "Bulk approval should validate pending content before promoting memories",
+  );
   console.log("OK: approval edits reject raw restricted details before DB updates");
 }
 
