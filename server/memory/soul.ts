@@ -220,37 +220,70 @@ export async function approveSoulEdit(input: {
   approvedBy?: string | null;
   reason?: string | null;
 }): Promise<SoulEditHistoryRecord | null> {
-  const existing = await db.execute(sql`
-    SELECT id, user_id, target, status, old_value, new_value, source, source_ref,
-      requested_by, approved_by, reason, created_at, resolved_at
-    FROM soul_edit_events
-    WHERE id = ${input.editId} AND user_id = ${input.userId} AND status = 'pending'
-    LIMIT 1
-  `);
-  const row = (existing.rows ?? [])[0] as Record<string, unknown> | undefined;
-  if (!row) return null;
-  const target = normalizeSoulEditTarget(row.target);
-  if (!target) return null;
+  return db.transaction(async (tx) => {
+    const existing = await tx.execute(sql`
+      SELECT id, user_id, target, status, old_value, new_value, source, source_ref,
+        requested_by, approved_by, reason, created_at, resolved_at
+      FROM soul_edit_events
+      WHERE id = ${input.editId} AND user_id = ${input.userId} AND status = 'pending'
+      LIMIT 1
+      FOR UPDATE
+    `);
+    const row = (existing.rows ?? [])[0] as Record<string, unknown> | undefined;
+    if (!row) return null;
+    const target = normalizeSoulEditTarget(row.target);
+    if (!target) return null;
 
-  const now = new Date();
-  const oldValue = normalizeSoulEditValue(await readSoulEditValue(input.userId, target));
-  const newValue = normalizeSoulEditValue(String(row.new_value ?? "")) ?? "";
-  await writeSoulEditValue(input.userId, target, newValue, now);
+    const current = await tx.execute(sql`
+      SELECT content, manual_override
+      FROM jarvis_souls
+      WHERE user_id = ${input.userId}
+      LIMIT 1
+      FOR UPDATE
+    `);
+    const currentRow = (current.rows ?? [])[0] as Record<string, unknown> | undefined;
+    const oldValue = target === "content"
+      ? normalizeSoulEditValue(typeof currentRow?.content === "string" ? currentRow.content : "")
+      : normalizeSoulEditValue(typeof currentRow?.manual_override === "string" ? currentRow.manual_override : null);
+    const newValue = normalizeSoulEditValue(String(row.new_value ?? "")) ?? "";
+    const now = new Date();
 
-  const approvedBy = input.approvedBy ?? input.userId;
-  const reason = input.reason ?? (typeof row.reason === "string" ? row.reason : null);
-  const updated = await db.execute(sql`
-    UPDATE soul_edit_events
-    SET status = 'approved',
-        old_value = ${oldValue},
-        approved_by = ${approvedBy},
-        reason = ${reason},
-        resolved_at = ${now}
-    WHERE id = ${input.editId} AND user_id = ${input.userId} AND status = 'pending'
-    RETURNING id, user_id, target, status, old_value, new_value, source, source_ref,
-      requested_by, approved_by, reason, created_at, resolved_at
-  `);
-  return mapSoulEditRow((updated.rows ?? [])[0] as Record<string, unknown>);
+    if (target === "content") {
+      await tx.execute(sql`
+        INSERT INTO jarvis_souls (user_id, content, manual_override, generated_at, updated_at)
+        VALUES (${input.userId}, ${newValue}, NULL, ${now}, ${now})
+        ON CONFLICT (user_id) DO UPDATE
+        SET content = EXCLUDED.content,
+            manual_override = NULL,
+            generated_at = EXCLUDED.generated_at,
+            updated_at = EXCLUDED.updated_at
+      `);
+    } else {
+      await tx.execute(sql`
+        INSERT INTO jarvis_souls (user_id, content, manual_override, updated_at)
+        VALUES (${input.userId}, '', ${newValue}, ${now})
+        ON CONFLICT (user_id) DO UPDATE
+        SET manual_override = EXCLUDED.manual_override,
+            updated_at = EXCLUDED.updated_at
+      `);
+    }
+
+    const approvedBy = input.approvedBy ?? input.userId;
+    const reason = input.reason ?? (typeof row.reason === "string" ? row.reason : null);
+    const updated = await tx.execute(sql`
+      UPDATE soul_edit_events
+      SET status = 'approved',
+          old_value = ${oldValue},
+          approved_by = ${approvedBy},
+          reason = ${reason},
+          resolved_at = ${now}
+      WHERE id = ${input.editId} AND user_id = ${input.userId} AND status = 'pending'
+      RETURNING id, user_id, target, status, old_value, new_value, source, source_ref,
+        requested_by, approved_by, reason, created_at, resolved_at
+    `);
+    const updatedRow = (updated.rows ?? [])[0] as Record<string, unknown> | undefined;
+    return updatedRow ? mapSoulEditRow(updatedRow) : null;
+  });
 }
 
 export async function rejectSoulEdit(input: {

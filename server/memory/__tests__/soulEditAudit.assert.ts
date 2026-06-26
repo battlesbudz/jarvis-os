@@ -52,8 +52,10 @@ function testSoulEditLifecycleFunctions(): void {
   assert.doesNotMatch(propose, /writeSoulEditValue\(/, "chat proposals must not apply Soul edits");
 
   const approve = functionBody(source, "approveSoulEdit");
+  assert.match(approve, /db\.transaction/);
+  assert.match(approve, /FOR UPDATE/);
   assert.match(approve, /status\s*=\s*'pending'/);
-  assert.match(approve, /writeSoulEditValue\(/);
+  assert.doesNotMatch(approve, /writeSoulEditValue\(/, "approval should write Soul inside the same transaction that claims the pending edit");
   assert.match(approve, /status\s*=\s*'approved'/);
   assert.match(approve, /approved_by\s*=/);
   assert.match(approve, /resolved_at\s*=/);
