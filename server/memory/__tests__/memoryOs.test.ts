@@ -36,11 +36,12 @@ async function main(): Promise<void> {
       skipAccessUpdate: true,
     },
     {
-      retrieveMemories: async (userId, query, limit, skipAccessUpdate) => {
+      retrieveMemories: async (userId, query, limit, skipAccessUpdate, options) => {
         assert.equal(userId, "memory-os-user");
         assert.equal(query, "morning planning");
         assert.equal(limit, 12);
         assert.equal(skipAccessUpdate, true);
+        assert.equal(options?.includeRestricted, true);
         return [memory()];
       },
     },

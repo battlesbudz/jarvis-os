@@ -16,12 +16,15 @@ export const SOUL_NOVELTY_THRESHOLD = 5;
 
 /** Maximum character length before the compact formatting pass kicks in */
 const SOUL_COMPACT_THRESHOLD = 4000;
+const RESTRICTED_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
 
 function approvedMemoryLifecycleFilter() {
   return and(
     eq(schema.userMemories.pendingReview, false),
     sql`${schema.userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
     sql`COALESCE(${schema.userMemories.sensitivity}, 'normal') = 'normal'`,
+    sql`LOWER(COALESCE(${schema.userMemories.sourceType}, '')) NOT SIMILAR TO ${RESTRICTED_SOURCE_SQL_PATTERN}`,
+    sql`LOWER(COALESCE(${schema.userMemories.sourceRef}, '')) NOT SIMILAR TO ${RESTRICTED_SOURCE_SQL_PATTERN}`,
   );
 }
 

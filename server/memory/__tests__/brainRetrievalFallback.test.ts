@@ -6,7 +6,11 @@ process.env.JARVIS_DISABLE_DIRECT_OPENAI = "1";
 process.env.JARVIS_BRAIN_RETRIEVAL = "0";
 
 async function main(): Promise<void> {
-  const { applyAccessUpdateForRetrievedMemories, mapBrainChunksToRetrievedMemories } = await import("../retrieve");
+  const {
+    applyAccessUpdateForRetrievedMemories,
+    filterRestrictedRetrievedMemories,
+    mapBrainChunksToRetrievedMemories,
+  } = await import("../retrieve");
 
   const chunks: QueryBrainResult["chunks"] = [
     {
@@ -50,6 +54,16 @@ async function main(): Promise<void> {
   assert.equal(mapped[2]?.id, "restricted-memory-1", "restricted derived chunks should preserve canonical memory id");
   assert.equal(mapped[2]?.sensitivity, "restricted_summary", "restricted derived chunks should keep restricted sensitivity");
   assert.equal(mapped[2]?.sourceType, "restricted_summary", "restricted derived chunks should keep citation source type");
+  assert.deepEqual(
+    filterRestrictedRetrievedMemories(mapped).map((item) => item.id),
+    ["memory-canonical-1", "synthetic-page:1"],
+    "raw retrieval helper callers should not receive restricted derived chunks by default",
+  );
+  assert.deepEqual(
+    filterRestrictedRetrievedMemories(mapped, { includeRestricted: true }).map((item) => item.id),
+    ["memory-canonical-1", "synthetic-page:1", "restricted-memory-1"],
+    "MemoryOS can opt into restricted candidates before applying model-target policy",
+  );
 
   const incrementCalls: string[][] = [];
   applyAccessUpdateForRetrievedMemories(mapped, false, (ids) => {

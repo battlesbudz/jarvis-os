@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import type { MemoryContext } from "../../memory/memoryOs";
 import type { ToolArgs, ToolContext, ToolResult } from "../types";
 
@@ -57,6 +59,12 @@ function context(): MemoryContext {
 
 async function main(): Promise<void> {
   ({ executeMemorySearchForTest } = await import("../tools/memorySearch"));
+  const toolSource = fs.readFileSync(path.resolve(process.cwd(), "server/agent/tools/memorySearch.ts"), "utf8");
+  assert.match(
+    toolSource,
+    /memoryGetTool[\s\S]*COALESCE\(sensitivity, 'normal'\) = 'normal'[\s\S]*source_type[\s\S]*NOT SIMILAR TO[\s\S]*source_ref[\s\S]*NOT SIMILAR TO/,
+    "memory_get should exclude restricted summaries and legacy restricted source rows",
+  );
 
   const calls: unknown[] = [];
   const incrementedIds: string[][] = [];

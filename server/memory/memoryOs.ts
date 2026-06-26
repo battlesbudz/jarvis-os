@@ -88,6 +88,7 @@ export type RetrieveMemoryContextInput = {
 
 export type MemoryRetrievalOptions = {
   canonicalOnly?: boolean;
+  includeRestricted?: boolean;
 };
 
 export type MemoryOsDeps = {
@@ -104,11 +105,15 @@ const defaultDeps: MemoryOsDeps = {
   retrieveMemories: async (userId, query, limit, skipAccessUpdate, options) => {
     if (options?.canonicalOnly) {
       const { retrieveCanonicalRelevantMemories } = await import("./retrieve");
-      return retrieveCanonicalRelevantMemories(userId, query, limit, skipAccessUpdate);
+      return retrieveCanonicalRelevantMemories(userId, query, limit, skipAccessUpdate, {
+        includeRestricted: options.includeRestricted,
+      });
     }
 
     const { retrieveRelevantMemories } = await import("./retrieve");
-    return retrieveRelevantMemories(userId, query, limit, skipAccessUpdate);
+    return retrieveRelevantMemories(userId, query, limit, skipAccessUpdate, {
+      includeRestricted: options?.includeRestricted,
+    });
   },
 };
 
@@ -372,6 +377,7 @@ export async function retrieveMemoryContext(
       : Math.min(50, Math.max(limit, limit * 4));
     const rawMemories = await deps.retrieveMemories(input.userId, query, rawLimit, skipAccessUpdate, {
       canonicalOnly: input.canonicalOnly ?? false,
+      includeRestricted: true,
     });
     const { memories: preparedMemories, uncertainty: boundaryUncertainty } = prepareMemoriesForModelTarget(
       rawMemories,

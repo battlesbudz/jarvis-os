@@ -38,6 +38,9 @@ export interface RetrievedMemory {
 }
 
 type MemoryRow = MemoryVectorRow;
+export type RetrievedMemoryFilterOptions = {
+  includeRestricted?: boolean;
+};
 
 const RESTRICTED_SOURCE_TOKENS = [
   "bank",
@@ -67,6 +70,30 @@ function isRestrictedSourceType(value: unknown): boolean {
     normalized.endsWith(`_${token}`) ||
     normalized.includes(`_${token}_`)
   );
+}
+
+function isRestrictedProvenanceRef(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Boolean(record.restricted) ||
+    String(record.sensitivity ?? "").trim().toLowerCase() === "restricted_summary" ||
+    isRestrictedSourceType(record.sourceType ?? record.source_type ?? record.kind) ||
+    isRestrictedSourceType(record.sourceRef ?? record.source_ref ?? record.id);
+}
+
+export function isRestrictedRetrievedMemory(memory: RetrievedMemory): boolean {
+  return String(memory.sensitivity ?? "").trim().toLowerCase() === "restricted_summary" ||
+    isRestrictedSourceType(memory.sourceType) ||
+    isRestrictedSourceType(memory.sourceRef) ||
+    (Array.isArray(memory.provenance) && memory.provenance.some(isRestrictedProvenanceRef)) ||
+    (Array.isArray(memory.sourceRefs) && memory.sourceRefs.some(isRestrictedProvenanceRef));
+}
+
+export function filterRestrictedRetrievedMemories<T extends RetrievedMemory>(
+  memories: T[],
+  options: RetrievedMemoryFilterOptions = {},
+): T[] {
+  return options.includeRestricted ? memories : memories.filter((memory) => !isRestrictedRetrievedMemory(memory));
 }
 
 function envFlagEnabled(value: string | undefined): boolean {
@@ -321,16 +348,19 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
   queryVec: number[] | null,
   limit = 12,
   skipAccessUpdate = false,
+  options: RetrievedMemoryFilterOptions = {},
 ): Promise<RetrievedMemory[]> {
   const q = query.trim();
   if (!q) return [];
+  const includeRestricted = options.includeRestricted === true;
+  const retrievalLimit = includeRestricted ? limit : Math.min(50, Math.max(limit, limit * 4));
 
   let vectorRows: MemoryRow[] = [];
   const vectorSearch = await searchMemoryVectors({
     userId,
     query: q,
     queryEmbedding: queryVec,
-    limit,
+    limit: retrievalLimit,
   });
   if (vectorSearch.status === "ok" && vectorSearch.rows.length > 0) {
     vectorRows = vectorSearch.rows;
@@ -368,7 +398,10 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
     const detail = dbErr instanceof Error ? dbErr.message : String(dbErr);
     console.error("[MemoryRetrieve] DB query failed:", dbErr);
     if (vectorRows.length > 0) {
-      const top = rankMemoryRowsForRetrieval(vectorRows, queryVec, limit);
+      const top = filterRestrictedRetrievedMemories(
+        rankMemoryRowsForRetrieval(vectorRows, queryVec, retrievalLimit),
+        options,
+      ).slice(0, limit);
       applyAccessUpdateForRetrievedMemories(top, skipAccessUpdate);
       return top;
     }
@@ -388,7 +421,10 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
     const existing = candidates.get(row.id);
     candidates.set(row.id, existing ? { ...existing, ...row } : row);
   }
-  const top = rankMemoryRowsForRetrieval([...candidates.values()], queryVec, limit);
+  const top = filterRestrictedRetrievedMemories(
+    rankMemoryRowsForRetrieval([...candidates.values()], queryVec, retrievalLimit),
+    options,
+  ).slice(0, limit);
 
   if (vectorRows.length > 0) {
     diagEmit({
@@ -412,12 +448,13 @@ export async function retrieveCanonicalRelevantMemories(
   query: string,
   limit = 12,
   skipAccessUpdate = false,
+  options: RetrievedMemoryFilterOptions = {},
 ): Promise<RetrievedMemory[]> {
   const q = query.trim();
   if (!q) return [];
 
   const queryVec = await embedText(q);
-  return retrieveCanonicalMemoriesWithQueryVector(userId, q, queryVec, limit, skipAccessUpdate);
+  return retrieveCanonicalMemoriesWithQueryVector(userId, q, queryVec, limit, skipAccessUpdate, options);
 }
 
 /**
@@ -433,6 +470,7 @@ export async function retrieveRelevantMemories(
   query: string,
   limit = 12,
   skipAccessUpdate = false,
+  options: RetrievedMemoryFilterOptions = {},
 ): Promise<RetrievedMemory[]> {
   const q = query.trim();
   if (!q) return [];
@@ -448,7 +486,10 @@ export async function retrieveRelevantMemories(
         approvalFilter: "approved_only",
       });
 
-      const mapped = mapBrainChunksToRetrievedMemories(derived.chunks);
+      const mapped = filterRestrictedRetrievedMemories(
+        mapBrainChunksToRetrievedMemories(derived.chunks),
+        options,
+      ).slice(0, limit);
       if (mapped.length > 0) {
         applyAccessUpdateForRetrievedMemories(mapped, skipAccessUpdate);
         return mapped;
@@ -458,5 +499,5 @@ export async function retrieveRelevantMemories(
     }
   }
 
-  return retrieveCanonicalRelevantMemories(userId, q, limit, skipAccessUpdate);
+  return retrieveCanonicalRelevantMemories(userId, q, limit, skipAccessUpdate, options);
 }

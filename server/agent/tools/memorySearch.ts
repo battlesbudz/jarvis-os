@@ -17,6 +17,8 @@ import {
   type MemoryType,
 } from "@shared/schema";
 
+const RESTRICTED_MEMORY_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
+
 interface MemoryRow {
   id: string;
   content: string;
@@ -534,6 +536,8 @@ export const memoryGetTool: AgentTool = {
           AND (pending_review = FALSE OR pending_review IS NULL)
           AND review_status IN ('active', 'kept', 'edited')
           AND COALESCE(sensitivity, 'normal') = 'normal'
+          AND LOWER(COALESCE(source_type, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}
+          AND LOWER(COALESCE(source_ref, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}
         ORDER BY confidence DESC, relevance_score DESC
         LIMIT ${limit}
       `);

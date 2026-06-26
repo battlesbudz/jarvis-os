@@ -37,6 +37,12 @@ assert.match(
 );
 
 assert.match(
+  soulSource,
+  /approvedMemoryLifecycleFilter[\s\S]*sourceType[\s\S]*NOT SIMILAR TO[\s\S]*sourceRef[\s\S]*NOT SIMILAR TO/,
+  "Soul generation should not include legacy restricted source_type/source_ref rows",
+);
+
+assert.match(
   brainAdapterSource,
   /APPROVED_USER_MEMORY_REVIEW_STATUSES[\s\S]*active[\s\S]*kept[\s\S]*edited[\s\S]*!APPROVED_USER_MEMORY_REVIEW_STATUSES\.has\(memory\.reviewStatus\)/,
   "Brain projection should retire derived pages for non-approved memory lifecycle states instead of projecting them",
