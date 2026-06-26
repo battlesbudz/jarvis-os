@@ -7,6 +7,7 @@ import {
   routeModelForTask,
   _setOpenAIProviderStatusResolverForTesting,
   _setRuntimeIdentityProfileResolverForTesting,
+  _setRuntimeMemoryInspectionDepsForTesting,
   _setUserSelectedModelResolverForTesting,
 } from "../modelRouter";
 import { BaseProvider, _clearProviderCacheForTesting, _overrideProviderForTesting } from "../providers";
@@ -1530,6 +1531,103 @@ async function runRuntimeUserIdentityUsesProfileAuthorityAssertion(): Promise<vo
   }
 }
 
+async function runRuntimeMemoryInspectionBypassesSelectedPhoneGemmaAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "JARVIS_MODEL_PROVIDER",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  class UnexpectedAndroidLocalGemmaProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("exact memory inspection should not be delegated to Phone Gemma");
+    }
+  }
+
+  try {
+    process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("android-local-gemma", new UnexpectedAndroidLocalGemmaProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-runtime-memory-inspection-phone");
+      return "android-local-gemma/gemma-4-e4b-it";
+    });
+    _setRuntimeMemoryInspectionDepsForTesting({
+      loadCoreProfile: async (userId) => ({
+        userId,
+        preferredName: "Justin",
+        source: "profile_store",
+      }),
+      loadSoul: async () => ({
+        content: "JARVIS purpose: help the user operate across devices.",
+        manualOverride: null,
+        generatedAt: new Date("2026-06-24T12:00:00.000Z"),
+        updatedAt: new Date("2026-06-24T12:00:00.000Z"),
+      }),
+      retrieveMemoryContext: async (input) => ({
+        userId: input.userId,
+        query: input.query,
+        caller: "runtime_memory_inspection",
+        items: [
+          {
+            memory: {
+              id: "router-memory-inspection-1",
+              content: "User prefers exact stored memory text when inspecting what Jarvis knows.",
+              category: "preferences",
+              tier: "long_term",
+              memoryType: "semantic",
+              relevanceScore: 90,
+              confidence: 95,
+              accessCount: 0,
+              score: 0.96,
+            },
+            provenance: [{ kind: "user_memory", id: "router-memory-inspection-1", source: "canonical" }],
+          },
+        ],
+        sources: { memories: ["router-memory-inspection-1"], brainChunks: [], hotState: [] },
+        provenance: [{ kind: "user_memory", id: "router-memory-inspection-1", source: "canonical" }],
+        uncertainty: [],
+      }),
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "What do you know about me?" }],
+      toolChoice: "none",
+      maxCompletionTokens: 256,
+      userId: "user-runtime-memory-inspection-phone",
+      logPrefix: "[ModelRouterRuntimeMemoryInspectionPhoneTest]",
+      allowRuntimeMemoryInspectionShortcut: true,
+    });
+
+    assert.equal(result.providerName, "jarvis-runtime");
+    assert.equal(result.model, "gemma-4-e4b-it");
+    assert.match(result.textContent, /Soul\/Core Profile/);
+    assert.match(result.textContent, /MemoryOS/);
+    assert.match(result.textContent, /exact stored memory text/);
+    console.log("OK: runtime memory inspection answers bypass selected Phone Gemma");
+  } finally {
+    _setRuntimeMemoryInspectionDepsForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 async function runRuntimeActiveModelUsesCompactLabelAssertion(): Promise<void> {
   const previousEnv = new Map<string, string | undefined>();
   for (const key of [
@@ -2180,6 +2278,7 @@ runUserOpenAIProfileRouteAssertion()
   .then(runRequestedProviderModelOverridesAmbientCodexRouteAssertion)
   .then(runRuntimeIdentityAnswersBypassSelectedPhoneGemmaAssertion)
   .then(runRuntimeUserIdentityUsesProfileAuthorityAssertion)
+  .then(runRuntimeMemoryInspectionBypassesSelectedPhoneGemmaAssertion)
   .then(runRuntimeActiveModelUsesCompactLabelAssertion)
   .then(runRuntimeIdentityStreamsDeterministicAnswerAssertion)
   .then(runRuntimeIdentityPreservesStructuredResponseFormatAssertion)

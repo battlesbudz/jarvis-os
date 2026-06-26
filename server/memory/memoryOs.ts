@@ -7,6 +7,7 @@ export type MemoryOsCaller =
   | "daily_command"
   | "agent_sdk_context"
   | "gbrain_retrieval"
+  | "runtime_memory_inspection"
   | "other";
 
 export type MemoryProvenanceRef = {
@@ -79,6 +80,11 @@ export type RetrieveMemoryContextInput = {
   limit?: number;
   caller: MemoryOsCaller | string;
   skipAccessUpdate?: boolean;
+  canonicalOnly?: boolean;
+};
+
+export type MemoryRetrievalOptions = {
+  canonicalOnly?: boolean;
 };
 
 export type MemoryOsDeps = {
@@ -87,11 +93,17 @@ export type MemoryOsDeps = {
     query: string,
     limit: number,
     skipAccessUpdate: boolean,
+    options?: MemoryRetrievalOptions,
   ) => Promise<RetrievedMemory[]>;
 };
 
 const defaultDeps: MemoryOsDeps = {
-  retrieveMemories: async (userId, query, limit, skipAccessUpdate) => {
+  retrieveMemories: async (userId, query, limit, skipAccessUpdate, options) => {
+    if (options?.canonicalOnly) {
+      const { retrieveCanonicalRelevantMemories } = await import("./retrieve");
+      return retrieveCanonicalRelevantMemories(userId, query, limit, skipAccessUpdate);
+    }
+
     const { retrieveRelevantMemories } = await import("./retrieve");
     return retrieveRelevantMemories(userId, query, limit, skipAccessUpdate);
   },
@@ -242,7 +254,9 @@ export async function retrieveMemoryContext(
   }
 
   try {
-    const memories = await deps.retrieveMemories(input.userId, query, limit, skipAccessUpdate);
+    const memories = await deps.retrieveMemories(input.userId, query, limit, skipAccessUpdate, {
+      canonicalOnly: input.canonicalOnly ?? false,
+    });
     const items = memories.map((memory) => ({
       memory,
       provenance: provenanceForMemory(memory),

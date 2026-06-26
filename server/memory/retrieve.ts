@@ -343,6 +343,19 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
   return top;
 }
 
+export async function retrieveCanonicalRelevantMemories(
+  userId: string,
+  query: string,
+  limit = 12,
+  skipAccessUpdate = false,
+): Promise<RetrievedMemory[]> {
+  const q = query.trim();
+  if (!q) return [];
+
+  const queryVec = await embedText(q);
+  return retrieveCanonicalMemoriesWithQueryVector(userId, q, queryVec, limit, skipAccessUpdate);
+}
+
 /**
  * Retrieve top-N memories for a user, ranked by:
  *   0.4 * fts_rank + 0.4 * embedding_cosine + 0.2 * (relevance/100) + tier_boost + access_boost
@@ -381,6 +394,5 @@ export async function retrieveRelevantMemories(
     }
   }
 
-  const queryVec = await embedText(q);
-  return retrieveCanonicalMemoriesWithQueryVector(userId, q, queryVec, limit, skipAccessUpdate);
+  return retrieveCanonicalRelevantMemories(userId, q, limit, skipAccessUpdate);
 }

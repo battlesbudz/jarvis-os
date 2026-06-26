@@ -70,6 +70,7 @@ export async function runCoachModelTurn(
     logPrefix: params.logPrefix,
     allowRuntimeIdentityShortcut: true,
     allowRuntimeCapabilityShortcut: true,
+    allowRuntimeMemoryInspectionShortcut: true,
   });
 }
 
@@ -100,6 +101,7 @@ export async function streamCoachModelTurn(
     logPrefix: params.logPrefix,
     allowRuntimeIdentityShortcut: true,
     allowRuntimeCapabilityShortcut: true,
+    allowRuntimeMemoryInspectionShortcut: true,
   }, onChunk);
 }
 
