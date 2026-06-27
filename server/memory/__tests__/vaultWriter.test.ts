@@ -33,6 +33,8 @@ function ok(condition: boolean, label: string): void {
 async function setup(): Promise<void> {
   await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS sensitivity TEXT NOT NULL DEFAULT 'normal'`);
   await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS provenance JSONB NOT NULL DEFAULT '[]'::jsonb`);
+  await db.execute(sql`ALTER TABLE dream_insights ADD COLUMN IF NOT EXISTS insight_kind VARCHAR NOT NULL DEFAULT 'insight'`);
+  await db.execute(sql`ALTER TABLE dream_insights ADD COLUMN IF NOT EXISTS review_payload JSONB NOT NULL DEFAULT '{}'::jsonb`);
   await db
     .insert(schema.users)
     .values({ id: TEST_USER_ID, username: TEST_USER_ID })
@@ -165,15 +167,67 @@ async function testPeopleSource(): Promise<void> {
 
 async function testPatternsSource(): Promise<void> {
   const marker = "VAULT_TEST_DREAM_INSIGHT_" + Date.now();
-  await db.insert(schema.dreamInsights).values({
-    userId: TEST_USER_ID,
-    dreamDate: new Date().toISOString().slice(0, 10),
-    insightText: marker,
-    confidenceScore: 85,
-  });
+  const autoKeptMarker = "VAULT_TEST_AUTO_KEPT_DREAM_MEMORY_" + Date.now();
+  const pendingMarker = "VAULT_TEST_PENDING_DREAM_MEMORY_" + Date.now();
+  const proposalMarker = "VAULT_TEST_DREAM_CAPABILITY_PROPOSAL_" + Date.now();
+  const dreamDate = new Date().toISOString().slice(0, 10);
+  await db.insert(schema.dreamInsights).values([
+    {
+      userId: TEST_USER_ID,
+      dreamDate,
+      insightText: marker,
+      confidenceScore: 85,
+      insightKind: "insight",
+    },
+    {
+      userId: TEST_USER_ID,
+      dreamDate,
+      insightText: autoKeptMarker,
+      confidenceScore: 95,
+      insightKind: "memory_candidate",
+      reviewPayload: {
+        memoryReview: {
+          status: "auto_kept",
+          memoryId: "auto-kept-id",
+          deepLink: "jarvis://profile?focus=memory_review",
+        },
+      },
+    },
+    {
+      userId: TEST_USER_ID,
+      dreamDate,
+      insightText: pendingMarker,
+      confidenceScore: 95,
+      insightKind: "memory_candidate",
+      reviewPayload: {
+        memoryReview: {
+          status: "pending",
+          memoryId: "pending-id",
+          deepLink: "jarvis://profile?focus=memory_review",
+        },
+      },
+    },
+    {
+      userId: TEST_USER_ID,
+      dreamDate,
+      insightText: proposalMarker,
+      confidenceScore: 95,
+      insightKind: "capability_proposal",
+      reviewPayload: {
+        capabilityReview: {
+          status: "pending_approval",
+          deliverableId: "proposal-id",
+          deepLink: "jarvis://inbox?focus=deliverables",
+        },
+      },
+    },
+  ]);
 
   const source = await buildPatternsSource(TEST_USER_ID);
   ok(source.includes(marker), "V-7: buildPatternsSource includes dream insight text");
+  ok(source.includes(autoKeptMarker), "V-7b: buildPatternsSource includes auto-kept dream memory text");
+  ok(!source.includes(pendingMarker), "V-7c: buildPatternsSource excludes pending dream memory text");
+  ok(!source.includes(proposalMarker), "V-7d: buildPatternsSource excludes dream capability proposals");
 }
 
 // ── V-8: decisions sources from goals_history/values/blockers memories ────────

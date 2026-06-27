@@ -9,6 +9,7 @@ import {
   SOUL_FIELD_MAX_CHARS,
 } from "./soulCuration";
 import { containsRawRestrictedContent } from "./restrictedContent";
+import { approvedDreamInsightContextFilter } from "./dreamContext";
 
 const SOUL_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -496,7 +497,7 @@ async function buildSoulMarkdown(userId: string): Promise<string> {
         dreamDate: schema.dreamInsights.dreamDate,
       })
       .from(schema.dreamInsights)
-      .where(eq(schema.dreamInsights.userId, userId))
+      .where(approvedDreamInsightContextFilter(userId))
       .orderBy(desc(schema.dreamInsights.confidenceScore), desc(schema.dreamInsights.createdAt))
       .limit(3),
 
