@@ -10,7 +10,7 @@ import {
   hasNonOpenAIRoutableProvider,
 } from "../providers/env";
 import { getModelRouteChain } from "../modelRouter";
-import { _shouldRouteOpenAIChatForTesting } from "../openaiChatRouterPatch";
+import { _shouldDisableRuntimeStateCardForTesting, _shouldRouteOpenAIChatForTesting } from "../openaiChatRouterPatch";
 import { resolveRuntimeAgentModel } from "../runtimeModel";
 import { _clearProviderCacheForTesting } from "../providers";
 
@@ -172,6 +172,27 @@ withCleanEnv({
   assert.equal(_shouldRouteOpenAIChatForTesting({ model: "gpt-4o-mini" }), false);
   console.log("OK: OpenAI chat patch routes user-scoped GPT calls without env auth so selected profiles can resolve");
 });
+
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [
+      { role: "system", content: "Extract facts from this source. Respond with valid JSON only." },
+      { role: "user", content: "Source text" },
+    ],
+  }),
+  true,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [{ role: "user", content: "Show me a JSON example." }],
+  }),
+  false,
+);
+console.log("OK: OpenAI chat patch disables runtime state cards for strict JSON-only SDK calls");
 
 withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "true", JARVIS_DEFAULT_MODEL: "chatgpt-codex-oauth/auto" }, () => {
   const chain = getModelRouteChain("balanced");

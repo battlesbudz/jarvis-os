@@ -47,7 +47,7 @@ function messageContentText(content: OpenAI.Chat.Completions.ChatCompletionMessa
     .join("\n");
 }
 
-function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
+export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
   const text = body.messages
     .map((message) => messageContentText(message.content))
     .join("\n")

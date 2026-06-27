@@ -2,7 +2,7 @@ import { createRequire } from "node:module";
 import { Completions } from "openai/resources/chat/completions";
 import OpenAI from "openai";
 import { routeModelTurn } from "./modelRouter";
-import { getUserIdFromChatBody } from "./routedChatCompletion";
+import { getUserIdFromChatBody, isStrictJsonOnlyRequest } from "./routedChatCompletion";
 import type { RuntimeExplanation } from "../core/runtime/runtimeExplanation";
 import "./providers/envAliases";
 import { hasDirectOpenAIProvider, hasNonOpenAIRoutableProvider } from "./providers/env";
@@ -68,6 +68,10 @@ function shouldRoute(body: unknown): body is ChatCreateBody {
 
 export function _shouldRouteOpenAIChatForTesting(body: unknown): boolean {
   return shouldRoute(body);
+}
+
+export function _shouldDisableRuntimeStateCardForTesting(body: ChatCreateBody): boolean {
+  return isStrictJsonOnlyRequest(body);
 }
 
 function tierForBody(body: ChatCreateBody): "cheap" | "balanced" | "smart" {
@@ -175,6 +179,7 @@ function routeBody(body: ChatCreateBody, signal: AbortSignal | undefined, logPre
     stream: false,
     userId: getUserIdFromChatBody(body),
     signal,
+    disableRuntimeStateCard: isStrictJsonOnlyRequest(body),
     logPrefix,
   }).then((result) => {
     const routedModel = result.model ?? String(body.model);
