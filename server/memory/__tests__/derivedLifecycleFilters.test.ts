@@ -118,6 +118,12 @@ assert.match(
 );
 
 assert.match(
+  extractorSource,
+  /select\(\{[\s\S]*sourceType: schema\.userMemories\.sourceType[\s\S]*sourceRef: schema\.userMemories\.sourceRef[\s\S]*sensitivity: schema\.userMemories\.sensitivity[\s\S]*provenance: schema\.userMemories\.provenance[\s\S]*existingRows[\s\S]*filter\(\(row\) => !isRestrictedExistingMemory\(row\)\)[\s\S]*Existing memories/,
+  "Conversation extraction should filter legacy restricted memories before including existing memories in extraction prompts",
+);
+
+assert.match(
   brainAdapterSource,
   /APPROVED_USER_MEMORY_REVIEW_STATUSES[\s\S]*active[\s\S]*kept[\s\S]*edited[\s\S]*!APPROVED_USER_MEMORY_REVIEW_STATUSES\.has\(memory\.reviewStatus\)/,
   "Brain projection should retire derived pages for non-approved memory lifecycle states instead of projecting them",

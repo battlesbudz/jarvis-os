@@ -136,7 +136,7 @@ function shouldSkipLowSignalExtraction(source: string): boolean {
 }
 
 function isRestrictedExtractionSource(value: unknown): boolean {
-  const normalized = String(value ?? "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
   if (!normalized) return false;
   return [
     "account_balance",
@@ -156,6 +156,29 @@ function isRestrictedExtractionSource(value: unknown): boolean {
     normalized.endsWith(`_${token}`) ||
     normalized.includes(`_${token}_`)
   );
+}
+
+function isRestrictedExtractionProvenanceRef(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Boolean(record.restricted) ||
+    String(record.sensitivity ?? "").trim().toLowerCase() === "restricted_summary" ||
+    isRestrictedExtractionSource(record.sourceType ?? record.source_type ?? record.kind) ||
+    isRestrictedExtractionSource(record.sourceRef ?? record.source_ref ?? record.id);
+}
+
+function isRestrictedExistingMemory(row: {
+  content: string;
+  sourceType?: string | null;
+  sourceRef?: string | null;
+  sensitivity?: string | null;
+  provenance?: unknown;
+}): boolean {
+  return String(row.sensitivity ?? "").trim().toLowerCase() === "restricted_summary" ||
+    isRestrictedExtractionSource(row.sourceType) ||
+    isRestrictedExtractionSource(row.sourceRef) ||
+    containsRawRestrictedContent(row.content) ||
+    (Array.isArray(row.provenance) && row.provenance.some(isRestrictedExtractionProvenanceRef));
 }
 
 export async function extractAndStore(input: ExtractInput): Promise<ExtractedMemory[]> {
@@ -180,7 +203,13 @@ export async function extractAndStore(input: ExtractInput): Promise<ExtractedMem
 
   try {
     const existingRows = await db
-      .select({ content: schema.userMemories.content })
+      .select({
+        content: schema.userMemories.content,
+        sourceType: schema.userMemories.sourceType,
+        sourceRef: schema.userMemories.sourceRef,
+        sensitivity: schema.userMemories.sensitivity,
+        provenance: schema.userMemories.provenance,
+      })
       .from(schema.userMemories)
       .where(and(
         eq(schema.userMemories.userId, userId),
@@ -188,7 +217,9 @@ export async function extractAndStore(input: ExtractInput): Promise<ExtractedMem
       ))
       .orderBy(desc(schema.userMemories.extractedAt))
       .limit(150);
-    const existingMemories = existingRows.map((r) => r.content);
+    const existingMemories = existingRows
+      .filter((row) => !isRestrictedExistingMemory(row))
+      .map((r) => r.content);
     const seen = new Set(existingMemories.map(normalizeForDedup));
 
     const existingList =
