@@ -83,14 +83,23 @@ function hasStrictJsonOnlyWording(text: string): boolean {
 }
 
 function hasInternalStructuredInstruction(text: string): boolean {
-  return /\b(?:extract|classify|label|parse|lint|revise|summari[sz]e|compress|compact|condense)\b/.test(text)
+  return /\b(?:extract|classify|label|parse|lint|revise)\b.{0,160}\b(?:json|source|transcript|conversation|payload|request|labels?)\b/.test(text)
+    || /\b(?:summari[sz]e|compress|compact|condense)\b.{0,160}\b(?:conversation|transcript|source|document|memo|text|content|summary)\b/.test(text)
     || /\bscore\s+(?:this|the|each|every|request|source|transcript|conversation|payload)\b/.test(text)
     || /\b(?:from|using|of)\s+(?:(?:this|the)\s+)?(?:transcript|source|payload|conversation)\b/.test(text)
     || /\b(?:transcript|source|payload|conversation)\s+(?:text|content)\b/.test(text);
 }
 
+function messagesFromBody(
+  body: ChatCreateBody,
+): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  return Array.isArray(body.messages) ? body.messages : [];
+}
+
 export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
-  const normalizedMessages = body.messages.map((message) => ({
+  const messages = messagesFromBody(body);
+  if (messages.length === 0) return false;
+  const normalizedMessages = messages.map((message) => ({
     role: String(message.role),
     text: normalizeMessageText(message),
   }));
@@ -101,7 +110,7 @@ export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
   const lastUserText = [...normalizedMessages].reverse().find((message) => message.role === "user")?.text ?? "";
   if (
     !instructionTexts.some(hasInternalStructuredInstruction) &&
-    directlyRequestsRuntimeStateContext(body.messages, lastUserText)
+    directlyRequestsRuntimeStateContext(messages, lastUserText)
   ) {
     return false;
   }

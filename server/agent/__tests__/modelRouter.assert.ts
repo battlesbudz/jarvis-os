@@ -1370,6 +1370,37 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
     }
 
     captured.delete("openai");
+    const coachRoutingPromptResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "# PRIME Routing Architecture",
+            "## Routing Pipeline",
+            "1. **Classify Task**",
+            "7. **Synthesize Final Response**",
+          ].join("\n"),
+        },
+        { role: "user", content: "What can you help me with today?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-coach-routing-state-card",
+      logPrefix: "[ModelRouterCoachRoutingStateCardTest]",
+    });
+    const coachRoutingPromptRequest = captured.get("openai");
+    assert.equal(coachRoutingPromptResult.providerName, "openai");
+    assert.equal(
+      coachRoutingPromptRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      true,
+    );
+
+    captured.delete("openai");
     const extractionResult = await routeModelTurn({
       tier: "cheap",
       requestedModel: "openai/gpt-4.1-mini",

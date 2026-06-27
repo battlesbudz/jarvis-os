@@ -274,6 +274,16 @@ assert.equal(
   }),
   false,
 );
+assert.doesNotThrow(() => {
+  const malformedJsonBody = {
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+  } as Parameters<typeof _shouldDisableRuntimeStateCardForTesting>[0];
+  assert.equal(
+    _shouldDisableRuntimeStateCardForTesting(malformedJsonBody),
+    false,
+  );
+});
 console.log("OK: OpenAI chat patch disables runtime state cards for strict JSON-only SDK calls");
 
 withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "true", JARVIS_DEFAULT_MODEL: "chatgpt-codex-oauth/auto" }, () => {
