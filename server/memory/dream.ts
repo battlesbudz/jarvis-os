@@ -69,6 +69,25 @@ function filterRawRestrictedMemoryRows<T extends { content?: string | null }>(ro
   return rows.filter((row) => !containsRawRestrictedContent(row.content ?? ""));
 }
 
+function filterRawRestrictedWorkingContextRows<T extends {
+  content?: string | null;
+  activeGoal?: string | null;
+  currentStep?: string | null;
+  scopeType?: string | null;
+  scopeId?: string | null;
+}>(rows: T[]): T[] {
+  return rows.filter((row) => {
+    const promptText = [
+      row.scopeType,
+      row.scopeId,
+      row.activeGoal,
+      row.currentStep,
+      row.content,
+    ].filter(Boolean).join("\n");
+    return !containsRawRestrictedContent(promptText);
+  });
+}
+
 type DreamInsightRaw = NormalizedDreamInsight;
 
 interface CorpusResult {
@@ -212,7 +231,7 @@ async function buildCorpus(userId: string): Promise<CorpusResult> {
     }
   }
 
-  const safeWorkingContextRows = filterRawRestrictedMemoryRows(workingContextRows);
+  const safeWorkingContextRows = filterRawRestrictedWorkingContextRows(workingContextRows);
   if (safeWorkingContextRows.length > 0) {
     sections.push("\n## Active working context (temporary, not durable memory)");
     for (const row of safeWorkingContextRows) {

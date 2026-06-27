@@ -16,8 +16,13 @@ assert.match(
 );
 assert.match(
   source,
-  /const safeWorkingContextRows = filterRawRestrictedMemoryRows\(workingContextRows\);[\s\S]*for \(const row of safeWorkingContextRows\)/,
-  "working context should be filtered for raw restricted content before entering the dream prompt",
+  /function filterRawRestrictedWorkingContextRows[\s\S]*row\.activeGoal[\s\S]*row\.currentStep[\s\S]*row\.content[\s\S]*containsRawRestrictedContent\(promptText\)/,
+  "working context should filter every prompt text field for raw restricted content",
+);
+assert.match(
+  source,
+  /const safeWorkingContextRows = filterRawRestrictedWorkingContextRows\(workingContextRows\);[\s\S]*for \(const row of safeWorkingContextRows\)/,
+  "working context should use the full-row restricted-content filter before entering the dream prompt",
 );
 assert.match(
   source,

@@ -100,7 +100,7 @@ export function inferDreamInsightKind(input: { kind?: unknown; insight: string }
   if (rawKind === "insight") return "insight";
   return CAPABILITY_PATTERNS.some((pattern) => pattern.test(input.insight))
     ? "capability_proposal"
-    : "memory_candidate";
+    : "insight";
 }
 
 export function normalizeDreamInsight(raw: unknown): NormalizedDreamInsight | null {

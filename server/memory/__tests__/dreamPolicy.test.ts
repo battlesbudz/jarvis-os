@@ -85,6 +85,16 @@ assert.equal(
     confidence: 91,
     sourceHints: ["morning work sessions", "weekly review"],
   })?.kind,
+  "insight",
+  "missing kind should stay as a digest insight instead of becoming memory",
+);
+assert.equal(
+  normalizeDreamInsight({
+    insight: "The user prefers morning implementation.",
+    confidence: 91,
+    sourceHints: ["morning work sessions", "weekly review"],
+    kind: "memory_candidate",
+  })?.kind,
   "memory_candidate",
 );
 
