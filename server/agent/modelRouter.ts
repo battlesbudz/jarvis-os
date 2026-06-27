@@ -516,6 +516,32 @@ function chainIncludesAndroidLocalGemma(chain: FallbackChainEntry[]): boolean {
   return chain.some((entry) => entry.providerName === "android-local-gemma");
 }
 
+function hasInternalStructuredInstruction(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): boolean {
+  const instructionText = messages
+    .filter((message) => {
+      const role = String(message.role);
+      return role === "system" || role === "developer";
+    })
+    .map((message) => textFromContent(message.content))
+    .join("\n")
+    .toLowerCase();
+  return /\b(?:extract|classify|label|score|parse|lint|revise|summari[sz]e|transcript|source|payload|schema)\b/.test(instructionText);
+}
+
+function formattedRuntimeStateQueryNeedsStateCard(
+  params: RoutedModelTurnParams,
+): boolean {
+  if (!params.responseFormat) return false;
+  if (hasInternalStructuredInstruction(params.messages)) return false;
+  const text = getLastUserText(params.messages).replace(/\s+/g, " ").toLowerCase();
+  return /\b(?:who am i|what do you know about me|what(?:'s| is) my name)\b/.test(text)
+    || /\b(?:my|current|active|connected|available)\s+(?:active\s+)?(?:tasks?|goals?|profile|identity|memories|memory|state|context|tools?|accounts?|capabilities|model)\b/.test(text)
+    || /\bwhat\s+(?:tools?|accounts?|capabilities|model)\b/.test(text)
+    || /\bis\s+(?:phone gemma|local gemma|the local model|jarvis)\s+working\b/.test(text);
+}
+
 function shouldIncludeRuntimeMemoryContext(
   params: RoutedModelTurnParams,
 ): boolean {
@@ -536,7 +562,7 @@ function shouldAttachProviderRuntimeStateCard(
   chain: FallbackChainEntry[],
 ): boolean {
   if (params.disableRuntimeStateCard) return false;
-  if (params.responseFormat) return false;
+  if (params.responseFormat && !formattedRuntimeStateQueryNeedsStateCard(params)) return false;
   if (!params.userId) return false;
   if (
     canUseRuntimeIdentityShortcut(params) ||

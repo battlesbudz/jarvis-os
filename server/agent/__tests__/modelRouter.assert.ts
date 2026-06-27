@@ -1418,6 +1418,28 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
       false,
     );
 
+    captured.delete("openai");
+    const formattedStateResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [{ role: "user", content: "Return ONLY a JSON object with my active tasks." }],
+      responseFormat: { type: "json_object" },
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-formatted-state-card",
+      logPrefix: "[ModelRouterFormattedStateCardTest]",
+    });
+    const formattedStateRequest = captured.get("openai");
+    assert.equal(formattedStateResult.providerName, "openai");
+    assert.deepEqual(formattedStateRequest?.responseFormat, { type: "json_object" });
+    assert.equal(
+      formattedStateRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      true,
+    );
+
     console.log("OK: cloud providers receive the runtime state-card contract without losing tool access");
   } finally {
     _setOpenAIProviderStatusResolverForTesting(null);
