@@ -143,12 +143,12 @@ async function run() {
       "SB-5e: screenshot detail includes screenContext fields",
     );
     assert.ok(
-      insightsSrc.includes("Temporary chat preview"),
-      "SB-5f: chat UI explains screenshot previews without promising Gallery behavior",
+      insightsSrc.includes("Attached to chat; Gallery save not intended"),
+      "SB-5f: chat UI explains screenshot previews are chat attachments and not intended as Gallery saves",
     );
     assert.ok(
       !insightsSrc.includes("not saved to Gallery"),
-      "SB-5g: chat UI does not promise Gallery absence",
+      "SB-5g: chat UI avoids an absolute Gallery promise",
     );
     ok("SB-5: screenshot attachments are transparent and include local screen context");
   } catch (err) {

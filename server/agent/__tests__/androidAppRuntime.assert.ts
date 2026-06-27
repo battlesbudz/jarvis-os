@@ -14,6 +14,7 @@ async function main() {
     ANDROID_PHONE_RUNTIME_TOOL_NAMES,
     androidPhoneRuntimeTools,
     buildAndroidYoutubeSearchUrl,
+    explainUnsupportedPhoneRuntimeAction,
     runAndroidOpenAppByName,
     resolveAndroidAppName,
   } = await import("../tools/androidAppRuntime");
@@ -60,6 +61,18 @@ async function main() {
     buildAndroidYoutubeSearchUrl("local Gemma on Android videos"),
     "vnd.youtube://results?search_query=local%20Gemma%20on%20Android%20videos",
   );
+
+  const inventedScreenshotTool = explainUnsupportedPhoneRuntimeAction("android_view_screenshot", "tool");
+  assert.equal(inventedScreenshotTool?.ok, false);
+  assert.equal(inventedScreenshotTool?.label, "Unsupported phone action");
+  assert.equal(inventedScreenshotTool?.detail.attemptedAction, "android_view_screenshot");
+  assert.deepEqual(
+    (inventedScreenshotTool?.detail.availablePhoneRuntimeTools as string[]).filter((toolName) => (
+      toolName === "android_capture_screen" || toolName === "android_youtube_search"
+    )),
+    ["android_youtube_search", "android_capture_screen"],
+  );
+  assert.equal(explainUnsupportedPhoneRuntimeAction("identify_user", "tool"), null);
 
   _setRuntimeCapabilityDepsForTesting({
     now: () => new Date("2026-06-25T12:00:00.000Z"),

@@ -81,7 +81,7 @@ import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
 import { filterToolsByGroups, getTool, type ToolGroup } from "./agent/tools/index";
-import { ANDROID_PHONE_RUNTIME_TOOL_NAMES } from "./agent/tools/androidAppRuntime";
+import { ANDROID_PHONE_RUNTIME_TOOL_NAMES, explainUnsupportedPhoneRuntimeAction } from "./agent/tools/androidAppRuntime";
 import { parseNaturalTime, parseRecurringExpr } from "./agent/tools/cronTools";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 import { getPromptData, setPromptData } from "./coachSessionPromptCache";
@@ -910,6 +910,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
               op = { type: 'file_list', path: String(args.path) };
             }
           } else {
+            const unsupportedPhoneAction = explainUnsupportedPhoneRuntimeAction(action, "daemon_action");
+            if (unsupportedPhoneAction) {
+              return {
+                result: 'error',
+                label: unsupportedPhoneAction.label,
+                buttonLabel: 'Phone action unavailable',
+                detail: JSON.stringify(unsupportedPhoneAction.detail),
+              };
+            }
             return { result: 'error', label: 'Unknown action', detail: `Unknown daemon action: ${action}` };
           }
           // Auto-preflight: for every android_* op (except android_notifications_list which
@@ -1302,6 +1311,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
         default:
+          {
+            const unsupportedPhoneTool = explainUnsupportedPhoneRuntimeAction(toolName, "tool");
+            if (unsupportedPhoneTool) {
+              return {
+                result: 'error',
+                label: unsupportedPhoneTool.label,
+                buttonLabel: 'Phone action unavailable',
+                detail: JSON.stringify(unsupportedPhoneTool.detail),
+              };
+            }
+          }
           return { result: 'error', label: 'Unknown action', detail: `Unknown tool: ${toolName}` };
       }
     } catch (error) {

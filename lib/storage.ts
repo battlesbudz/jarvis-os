@@ -303,11 +303,13 @@ export interface ExecutedAction {
   tool: string;
   result: 'success' | 'error';
   label: string;
+  detail?: string;
   url?: string;
   buttonLabel?: string;
   code?: string;
   channel?: string;
   screenshotUrl?: string;
+  galleryPersistence?: string;
   imageUrl?: string;
   imageCaption?: string;
   videoUrl?: string;
