@@ -131,7 +131,9 @@ export async function summarizeAgentMemory(
   // LLM summarization
   let summary = "";
   try {
-    const openai = createRoutedOpenAIChatShim("[AgentMemory]", "balanced");
+    const openai = createRoutedOpenAIChatShim("[AgentMemory]", "balanced", {
+      disableRuntimeStateCard: true,
+    });
     const resp = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       user: userId,
