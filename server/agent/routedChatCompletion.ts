@@ -54,6 +54,15 @@ function requestsRuntimeStateContext(text: string): boolean {
     || /\bis\s+(?:phone gemma|local gemma|the local model|jarvis)\s+working\b/.test(text);
 }
 
+function isPayloadLikeUserText(text: string): boolean {
+  return /(?:^|\n)\s*(?:user|assistant|agent|system|tool):\s+/i.test(text)
+    || /^\s*(?:source|source text|transcript|conversation|payload)\s*[:\n]/i.test(text);
+}
+
+function directlyRequestsRuntimeStateContext(text: string): boolean {
+  return requestsRuntimeStateContext(text) && !isPayloadLikeUserText(text);
+}
+
 function normalizeMessageText(message: OpenAI.Chat.Completions.ChatCompletionMessageParam): string {
   return messageContentText(message.content).replace(/\s+/g, " ").toLowerCase();
 }
@@ -68,6 +77,10 @@ function hasStrictJsonOnlyWording(text: string): boolean {
     || new RegExp(String.raw`\bonly\s+(?:(?:a|the)\s+)?(?:single\s+)?(?:valid\s+)?${jsonTarget.source}`).test(text);
 }
 
+function hasInternalStructuredInstruction(text: string): boolean {
+  return /\b(?:extract|classify|label|score|parse|lint|revise|summari[sz]e|transcript|source|payload|schema)\b/.test(text);
+}
+
 export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
   const normalizedMessages = body.messages.map((message) => ({
     role: String(message.role),
@@ -78,6 +91,9 @@ export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
     .map((message) => message.text)
     .filter(hasStrictJsonOnlyWording);
   const lastUserText = [...normalizedMessages].reverse().find((message) => message.role === "user")?.text ?? "";
+  if (!instructionTexts.some(hasInternalStructuredInstruction) && directlyRequestsRuntimeStateContext(lastUserText)) {
+    return false;
+  }
   const candidateTexts = instructionTexts.length > 0 ? instructionTexts : [lastUserText].filter(hasStrictJsonOnlyWording);
   if (candidateTexts.length === 0) return false;
   return !candidateTexts.some(requestsRuntimeStateContext);

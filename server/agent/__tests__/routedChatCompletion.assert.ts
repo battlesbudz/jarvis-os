@@ -125,6 +125,36 @@ async function main() {
   console.log("OK: routed chat completion disables runtime state cards for strict JSON-only shim calls");
 
   captured = null;
+  await createRoutedChatCompletion(
+    {
+      model: "gpt-4o-mini",
+      user: "user-json-state-shim",
+      messages: [
+        { role: "system", content: "Return only JSON." },
+        { role: "user", content: "What are my active tasks?" },
+      ],
+      response_format: { type: "json_object" },
+      max_tokens: 42,
+    },
+    { tier: "cheap", logPrefix: "[TestRoutedJsonStateShim]" },
+    async (params): Promise<ProviderTurnResult> => {
+      captured = params as unknown as Record<string, unknown>;
+      return {
+        textContent: '{"tasks":[]}',
+        textChunks: ['{"tasks":[]}'],
+        toolCallList: [],
+        finishReason: "stop",
+        providerName: "openai",
+        model: "gpt-4o-mini",
+      };
+    },
+  );
+  assert.equal((captured as Record<string, unknown> | null)?.userId, "user-json-state-shim");
+  assert.deepEqual((captured as Record<string, unknown> | null)?.responseFormat, { type: "json_object" });
+  assert.notEqual((captured as Record<string, unknown> | null)?.disableRuntimeStateCard, true);
+  console.log("OK: routed chat completion keeps runtime state cards for JSON-formatted state questions");
+
+  captured = null;
   const memoryVaultShim = createRoutedOpenAIChatShim("[MemoryVaultTest]", "balanced", {
     disableRuntimeStateCard: true,
     runner: async (params): Promise<ProviderTurnResult> => {
