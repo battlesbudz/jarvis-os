@@ -528,11 +528,7 @@ function shouldIncludeRuntimeMemoryContext(
   ) {
     return false;
   }
-  const lastUserText = getLastUserText(params.messages);
-  if (!lastUserText) return false;
-  if (classifyRuntimeMemoryInspectionIntent(params.messages)) return true;
-  return /\b(memory|memories|remember|about me|who am i|what do you know about me|my preference|my preferences)\b/i
-    .test(lastUserText);
+  return Boolean(classifyRuntimeMemoryInspectionIntent(params.messages));
 }
 
 function shouldAttachProviderRuntimeStateCard(

@@ -126,6 +126,13 @@ async function main(): Promise<void> {
     classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "What's in my memory?" }]),
     { kind: "exact_memory_inspection", query: "user profile preferences relationships work patterns goals blockers values", scopeLabel: "about you" },
   );
+  assert.equal(
+    classifyRuntimeMemoryInspectionIntent([{
+      role: "user",
+      content: "System health: memoryWriteErrors15m=3 and memoryReadErrors15m=0. Write a diagnosis.",
+    }]),
+    null,
+  );
   assert.deepEqual(
     classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "What’s in my memory?" }]),
     { kind: "exact_memory_inspection", query: "user profile preferences relationships work patterns goals blockers values", scopeLabel: "about you" },
