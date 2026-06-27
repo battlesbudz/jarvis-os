@@ -1442,6 +1442,32 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
     );
 
     captured.delete("openai");
+    const synthesisResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [
+        {
+          role: "system",
+          content: "You are synthesizing responses from multiple specialist AI agents into a unified, coherent answer.",
+        },
+        { role: "user", content: "Question: What should we build next?\n\n## Agent Responses:\n\nPlanner: Start with identity." },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-internal-synthesis-state-card",
+      logPrefix: "[ModelRouterInternalSynthesisStateCardTest]",
+    });
+    const synthesisRequest = captured.get("openai");
+    assert.equal(synthesisResult.providerName, "openai");
+    assert.equal(
+      synthesisRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      false,
+    );
+
+    captured.delete("openai");
     const formattedStateResult = await routeModelTurn({
       tier: "cheap",
       requestedModel: "openai/gpt-4.1-mini",
