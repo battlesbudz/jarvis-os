@@ -1300,6 +1300,8 @@ export const dreamInsights = pgTable("dream_insights", {
   insightText: text("insight_text").notNull(),
   confidenceScore: integer("confidence_score").notNull().default(70),
   sourceMemoryIds: jsonb("source_memory_ids").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  insightKind: varchar("insight_kind").$type<"insight" | "memory_candidate" | "capability_proposal">().notNull().default("insight"),
+  reviewPayload: jsonb("review_payload").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
   shownToUser: boolean("shown_to_user").notNull().default(false),
   deliveredAt: timestamp("delivered_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),

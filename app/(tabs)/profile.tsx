@@ -1875,6 +1875,11 @@ export default function ProfileScreen() {
     setActiveProfilePanel('connections');
   }, [focus]);
 
+  useEffect(() => {
+    if (focus !== 'memory_review') return;
+    setActiveProfilePanel('review');
+  }, [focus]);
+
   const lifetimeXp = getLifetimeXp(stats);
   const xpInfo = getXpForNextLevel(lifetimeXp);
   const level = getLevel(lifetimeXp);

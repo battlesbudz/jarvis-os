@@ -16,6 +16,7 @@ const baseMemory = {
   pendingReview: true,
   reviewStatus: "pending",
   supersedesMemoryId: null,
+  provenance: [],
 } as const;
 
 const keepDecision = evaluateMemoryAutoReviewDecision(baseMemory);
@@ -59,6 +60,44 @@ assert.equal(
     sourceType: "explicit_remember",
   }).action,
   "pending",
+);
+
+assert.equal(
+  evaluateMemoryAutoReviewDecision({
+    ...baseMemory,
+    sourceType: "dream_cycle",
+    confidence: 89,
+    provenance: [
+      { sourceType: "dream_evidence", sourceRef: "one" },
+      { sourceType: "dream_evidence", sourceRef: "two" },
+    ],
+  }).action,
+  "pending",
+);
+
+assert.equal(
+  evaluateMemoryAutoReviewDecision({
+    ...baseMemory,
+    sourceType: "dream_cycle",
+    confidence: 92,
+    provenance: [
+      { sourceType: "dream_evidence", sourceRef: "one" },
+    ],
+  }).action,
+  "pending",
+);
+
+assert.equal(
+  evaluateMemoryAutoReviewDecision({
+    ...baseMemory,
+    sourceType: "dream_cycle",
+    confidence: 92,
+    provenance: [
+      { sourceType: "dream_evidence", sourceRef: "one" },
+      { sourceType: "dream_evidence", sourceRef: "two" },
+    ],
+  }).action,
+  "keep",
 );
 
 async function main(): Promise<void> {

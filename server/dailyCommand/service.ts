@@ -16,6 +16,15 @@ import {
   type DailyPlanTask,
 } from "./planOps";
 import { getPlanForUser, savePlanForUser } from "./planPersistence";
+import {
+  DREAM_CAPABILITY_REVIEW_DEEP_LINK,
+  DREAM_MEMORY_REVIEW_DEEP_LINK,
+} from "../memory/dreamPolicy";
+
+type DailyCommandDreamInsight = Pick<
+  typeof schema.dreamInsights.$inferSelect,
+  "id" | "dreamDate" | "insightText" | "confidenceScore" | "sourceMemoryIds" | "shownToUser" | "deliveredAt" | "createdAt"
+>;
 
 export interface DailyCommandSnapshot {
   date: string;
@@ -47,8 +56,12 @@ export interface DailyCommandSnapshot {
     sentAt: string | null;
   };
   dream: {
-    latestInsight: typeof schema.dreamInsights.$inferSelect | null;
+    latestInsight: DailyCommandDreamInsight | null;
     pendingCount: number;
+    pendingMemoryReviewCount: number;
+    pendingCapabilityProposalCount: number;
+    memoryReviewDeepLink: string;
+    capabilityReviewDeepLink: string;
     lastCycle: unknown;
   };
   contextWarnings: DailyCommandContextWarning[];
@@ -107,6 +120,8 @@ export async function getDailyCommandSnapshot(userId: string, now = new Date()):
     scheduleLogs,
     latestDreamRows,
     pendingDreamRows,
+    dreamMemoryReviewRows,
+    dreamCapabilityProposalRows,
   ] = await Promise.all([
     getPlanForUser(userId, date),
     db
@@ -148,17 +163,43 @@ export async function getDailyCommandSnapshot(userId: string, now = new Date()):
         sql`${schema.proactiveScheduleLog.messageType} IN ('morning_briefing', 'evening_wrap', 'evening_wrapup')`,
       )),
     db
-      .select()
+      .select({
+        id: schema.dreamInsights.id,
+        dreamDate: schema.dreamInsights.dreamDate,
+        insightText: schema.dreamInsights.insightText,
+        confidenceScore: schema.dreamInsights.confidenceScore,
+        sourceMemoryIds: schema.dreamInsights.sourceMemoryIds,
+        shownToUser: schema.dreamInsights.shownToUser,
+        deliveredAt: schema.dreamInsights.deliveredAt,
+        createdAt: schema.dreamInsights.createdAt,
+      })
       .from(schema.dreamInsights)
       .where(eq(schema.dreamInsights.userId, userId))
       .orderBy(desc(schema.dreamInsights.createdAt))
       .limit(1),
     db
-      .select()
+      .select({ id: schema.dreamInsights.id })
       .from(schema.dreamInsights)
       .where(and(eq(schema.dreamInsights.userId, userId), eq(schema.dreamInsights.shownToUser, false)))
       .orderBy(desc(schema.dreamInsights.createdAt))
       .limit(10),
+    db
+      .select({ cnt: sql<number>`COUNT(*)::int` })
+      .from(schema.userMemories)
+      .where(and(
+        eq(schema.userMemories.userId, userId),
+        eq(schema.userMemories.pendingReview, true),
+        eq(schema.userMemories.reviewStatus, "pending"),
+        eq(schema.userMemories.sourceType, "dream_cycle"),
+      )),
+    db
+      .select({ cnt: sql<number>`COUNT(*)::int` })
+      .from(schema.deliverables)
+      .where(and(
+        eq(schema.deliverables.userId, userId),
+        eq(schema.deliverables.status, "pending_approval"),
+        sql`${schema.deliverables.meta}->>'source' = 'dream_cycle_capability_proposal'`,
+      )),
   ]);
 
   const resolvedPlan = plan ?? emptyPlan(date);
@@ -220,6 +261,10 @@ export async function getDailyCommandSnapshot(userId: string, now = new Date()):
     dream: {
       latestInsight: latestDreamRows[0] ?? null,
       pendingCount: pendingDreamRows.length,
+      pendingMemoryReviewCount: dreamMemoryReviewRows[0]?.cnt ?? 0,
+      pendingCapabilityProposalCount: dreamCapabilityProposalRows[0]?.cnt ?? 0,
+      memoryReviewDeepLink: DREAM_MEMORY_REVIEW_DEEP_LINK,
+      capabilityReviewDeepLink: DREAM_CAPABILITY_REVIEW_DEEP_LINK,
       lastCycle: prefs.lastDreamCycle ?? null,
     },
     contextWarnings,

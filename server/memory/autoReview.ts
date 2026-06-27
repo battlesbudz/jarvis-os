@@ -19,6 +19,7 @@ type PendingMemoryRow = Pick<
   | "pendingReview"
   | "reviewStatus"
   | "supersedesMemoryId"
+  | "provenance"
 >;
 
 export interface MemoryAutoReviewResult {
@@ -86,6 +87,15 @@ function isTooGeneric(content: string): boolean {
   return GENERIC_CONTENT_PATTERNS.some((pattern) => pattern.test(content));
 }
 
+function dreamEvidenceCount(provenance: unknown): number {
+  if (!Array.isArray(provenance)) return 0;
+  return provenance.filter((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const sourceType = String((item as Record<string, unknown>).sourceType ?? "").trim();
+    return sourceType === "dream_evidence";
+  }).length;
+}
+
 export function evaluateMemoryAutoReviewDecision(memory: PendingMemoryRow): MemoryAutoReviewDecision {
   if (!memory.pendingReview || memory.reviewStatus !== "pending") {
     return { action: "pending", reason: "not-pending-review" };
@@ -101,6 +111,12 @@ export function evaluateMemoryAutoReviewDecision(memory: PendingMemoryRow): Memo
   }
   if (memory.confidence < 80) {
     return { action: "pending", reason: "low-confidence" };
+  }
+  if (memory.sourceType === "dream_cycle" && memory.confidence < 90) {
+    return { action: "pending", reason: "dream-low-confidence" };
+  }
+  if (memory.sourceType === "dream_cycle" && dreamEvidenceCount(memory.provenance) < 2) {
+    return { action: "pending", reason: "dream-needs-repeated-evidence" };
   }
   if (!AUTO_KEEP_CATEGORIES.has(memory.category)) {
     return { action: "pending", reason: "sensitive-or-unsupported-category" };
@@ -147,6 +163,7 @@ const defaultDeps: MemoryAutoReviewDeps = {
         pendingReview: shared.userMemories.pendingReview,
         reviewStatus: shared.userMemories.reviewStatus,
         supersedesMemoryId: shared.userMemories.supersedesMemoryId,
+        provenance: shared.userMemories.provenance,
       })
       .from(shared.userMemories)
       .where(

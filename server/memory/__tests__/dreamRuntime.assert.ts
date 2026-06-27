@@ -1,0 +1,38 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+
+const source = fs.readFileSync(path.resolve(process.cwd(), "server/memory/dream.ts"), "utf8");
+
+assert.match(
+  source,
+  /schema\.memoryWorkingContext[\s\S]*eq\(schema\.memoryWorkingContext\.state, "active"\)[\s\S]*gt\(schema\.memoryWorkingContext\.expiresAt, now\)/,
+  "dream corpus should include active, unexpired working context",
+);
+assert.match(
+  source,
+  /Active working context \(temporary, not durable memory\)/,
+  "working context should be explicitly labeled temporary in the dream corpus",
+);
+assert.match(
+  source,
+  /writeMemoryThroughPipeline\([\s\S]*trigger: "dream"[\s\S]*reviewEnabled: true/,
+  "dream memory candidates should go through MemoryOS review policy",
+);
+assert.match(
+  source,
+  /keepPendingMemoryWrites\([\s\S]*High-confidence repeated dream memory was auto-kept/,
+  "high-confidence repeated dream memories should be auto-kept through the review path",
+);
+assert.match(
+  source,
+  /schema\.deliverables[\s\S]*source: "dream_cycle_capability_proposal"/,
+  "dream capability proposals should be reviewable deliverables, not actions",
+);
+assert.match(
+  source,
+  /JARVIS has not built or run anything\. Review this proposal before any implementation work starts\./,
+  "dream capability proposals should clearly state that no action was taken",
+);
+
+console.log("OK: dream runtime consumes working context and keeps review queues separate");
