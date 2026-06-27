@@ -1980,6 +1980,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           toolChoice: "none",
           userId: job.userId,
           logPrefix: "[BuildFeatureSynthesis]",
+          disableRuntimeStateCard: true,
           messages: [
             {
               role: "system",
