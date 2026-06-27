@@ -73,6 +73,8 @@ assert.match(runtimeSource, /galleryPersistence:\s*["']temporary_chat_preview/);
 assert.match(runtimeSource, /userFacingSummary:\s*["']Attached to this chat as a temporary preview/);
 assert.match(runtimeSource, /explainUnsupportedPhoneRuntimeAction/);
 assert.match(routesSource, /Phone action unavailable/);
+assert.match(routesSource, /buttonLabel\?:\s*string/);
+assert.match(routesSource, /execResult\.buttonLabel[\s\S]*linkData\.buttonLabel = execResult\.buttonLabel/);
 assert.match(runtimeSource, /fallback capture cleanup is best-effort/);
 assert.doesNotMatch(runtimeSource, /savedToGallery:\s*false/);
 assert.doesNotMatch(runtimeSource, /not saved to the user's gallery/i);
