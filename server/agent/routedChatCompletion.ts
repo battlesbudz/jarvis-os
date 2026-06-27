@@ -56,7 +56,7 @@ export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
   if (!text.includes("json")) return false;
   const jsonTarget = /json(?:\s+(?:object|array|document|payload))?\b/;
   return new RegExp(
-    String.raw`\b(?:return|respond|reply|output)\s+(?:with\s+)?(?:only\s+)?(?:(?:a|the)\s+)?(?:single\s+)?(?:valid\s+)?${jsonTarget.source}`,
+    String.raw`\b(?:return|respond|reply|output)\s+(?:with\s+)?only\s+(?:(?:a|the)\s+)?(?:single\s+)?(?:valid\s+)?${jsonTarget.source}`,
   ).test(text)
     || /\b(?:return|respond|reply|output)\s+[^.]{0,80}\bjson\s+only\b/.test(text)
     || new RegExp(String.raw`\bonly\s+(?:(?:a|the)\s+)?(?:single\s+)?(?:valid\s+)?${jsonTarget.source}`).test(text);

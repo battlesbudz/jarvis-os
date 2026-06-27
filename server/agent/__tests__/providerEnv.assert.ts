@@ -203,6 +203,14 @@ assert.equal(
   }),
   false,
 );
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [{ role: "user", content: "Return a JSON object with my active tasks." }],
+  }),
+  false,
+);
 console.log("OK: OpenAI chat patch disables runtime state cards for strict JSON-only SDK calls");
 
 withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "true", JARVIS_DEFAULT_MODEL: "chatgpt-codex-oauth/auto" }, () => {
