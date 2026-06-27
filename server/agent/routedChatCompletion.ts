@@ -15,6 +15,7 @@ export interface RoutedChatCompletionOptions {
   tier?: ModelExecutionTier;
   logPrefix?: string;
   userId?: string;
+  disableRuntimeStateCard?: boolean;
 }
 
 function maxTokensFromBody(body: ChatCreateBody): number {
@@ -27,6 +28,31 @@ function toolChoiceFromBody(body: ChatCreateBody): "auto" | "required" | "none" 
   if (body.tool_choice === "required") return "required";
   if (body.tool_choice === "none") return "none";
   return body.tools?.length ? "auto" : "none";
+}
+
+function messageContentText(content: OpenAI.Chat.Completions.ChatCompletionMessageParam["content"]): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return part.text;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
+  const text = body.messages
+    .map((message) => messageContentText(message.content))
+    .join("\n")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+  if (!text.includes("json")) return false;
+  return /\b(?:return|respond|reply|output)\s+(?:with\s+)?(?:only\s+)?(?:a\s+)?(?:single\s+)?(?:valid\s+)?json\b/.test(text)
+    || /\b(?:return|respond|reply|output)\s+[^.]{0,80}\bjson\s+only\b/.test(text)
+    || /\bonly\s+(?:a\s+)?(?:single\s+)?(?:valid\s+)?json\b/.test(text);
 }
 
 export function getUserIdFromChatBody(body: unknown): string | undefined {
@@ -56,6 +82,7 @@ export async function createRoutedChatCompletion(
     stream: false,
     userId: options.userId ?? getUserIdFromChatBody(body),
     signal: options.signal,
+    disableRuntimeStateCard: options.disableRuntimeStateCard ?? isStrictJsonOnlyRequest(body),
     logPrefix: options.logPrefix,
   });
 

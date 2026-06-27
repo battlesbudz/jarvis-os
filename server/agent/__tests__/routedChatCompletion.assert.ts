@@ -89,7 +89,40 @@ async function main() {
   );
   assert.equal((captured as Record<string, unknown> | null)?.requestedModel, "google/gemini-2.5-pro");
   assert.equal((captured as Record<string, unknown> | null)?.userId, "user-gemini");
+  assert.notEqual((captured as Record<string, unknown> | null)?.disableRuntimeStateCard, true);
   console.log("OK: routed chat completion reads user-scoped provider auth from the OpenAI user field");
+
+  captured = null;
+  await createRoutedChatCompletion(
+    {
+      model: "gpt-4o-mini",
+      user: "user-json-shim",
+      messages: [
+        {
+          role: "system",
+          content: "Extract facts from this conversation. Return ONLY a JSON array of objects. No preamble.",
+        },
+        { role: "user", content: "User: hello\nAgent: hi" },
+      ],
+      max_tokens: 42,
+    },
+    { tier: "cheap", logPrefix: "[TestRoutedJsonOnlyShim]" },
+    async (params): Promise<ProviderTurnResult> => {
+      captured = params as unknown as Record<string, unknown>;
+      return {
+        textContent: "[]",
+        textChunks: ["[]"],
+        toolCallList: [],
+        finishReason: "stop",
+        providerName: "openai",
+        model: "gpt-4o-mini",
+      };
+    },
+  );
+  assert.equal((captured as Record<string, unknown> | null)?.userId, "user-json-shim");
+  assert.equal((captured as Record<string, unknown> | null)?.responseFormat, undefined);
+  assert.equal((captured as Record<string, unknown> | null)?.disableRuntimeStateCard, true);
+  console.log("OK: routed chat completion disables runtime state cards for strict JSON-only shim calls");
 
   const shim = createRoutedOpenAIChatShim("[TestShim]");
   assert.equal(typeof shim.chat.completions.create, "function");
