@@ -65,6 +65,7 @@ export async function runFastOrchestratorReply(input: {
     maxCompletionTokens: FAST_REPLY_MAX_TOKENS,
     userId: input.userId,
     signal: input.signal,
+    disableRuntimeStateCard: true,
     system: [
       "You are Jarvis responding in a fast interactive chat lane.",
       `Channel: ${input.channelName}.`,
