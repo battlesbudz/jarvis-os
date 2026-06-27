@@ -61,6 +61,7 @@ assert.match(routesSource, /tc\.function\.name === 'android_return_to_jarvis_cha
 assert.match(routesSource, /daemonAbsoluteRuleBase/);
 assert.match(routesSource, /daemon_action fallback exposed for this unsupported phone action/);
 assert.match(routesSource, /treat it as a valid phone action/);
+assert.match(routesSource, /Use android_notify_user, then android_return_to_jarvis_chat at the end of multi-step phone tasks/);
 
 assert.match(runtimeSource, /export const ANDROID_PHONE_RUNTIME_TOOL_NAMES/);
 assert.match(runtimeSource, /export const androidPhoneRuntimeTools/);
@@ -69,6 +70,11 @@ assert.match(runtimeSource, /androidCaptureScreenTool/);
 assert.match(runtimeSource, /androidReadNotificationsTool/);
 assert.match(runtimeSource, /\{ type: ["']android_notify["'], title, body \}/);
 assert.match(runtimeSource, /galleryPersistence:\s*["']temporary_chat_preview/);
+assert.match(runtimeSource, /userFacingSummary:\s*["']Attached to this chat as a temporary preview/);
+assert.match(runtimeSource, /explainUnsupportedPhoneRuntimeAction/);
+assert.match(routesSource, /Phone action unavailable/);
+assert.match(routesSource, /buttonLabel\?:\s*string/);
+assert.match(routesSource, /execResult\.buttonLabel[\s\S]*linkData\.buttonLabel = execResult\.buttonLabel/);
 assert.match(runtimeSource, /fallback capture cleanup is best-effort/);
 assert.doesNotMatch(runtimeSource, /savedToGallery:\s*false/);
 assert.doesNotMatch(runtimeSource, /not saved to the user's gallery/i);

@@ -511,7 +511,7 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
                   <Ionicons name="phone-portrait-outline" size={12} color={Colors.success} />
                   <View style={styles.screenshotLabelBlock}>
                     <Text style={styles.screenshotLabel}>{ea.label && ea.label !== 'Screenshot captured' ? ea.label : 'Temporary screen capture'}</Text>
-                    <Text style={styles.screenshotHint}>Temporary chat preview</Text>
+                    <Text style={styles.screenshotHint}>Attached to chat; Gallery save not intended</Text>
                   </View>
                 </View>
                 <Image
@@ -1828,7 +1828,7 @@ export default function InsightsScreen() {
             // If the task that triggered this pending response took a screenshot,
             // include it as an executedAction so the image renders inline.
             ...(pendingData.screenshotUrl ? {
-              executedActions: [{ tool: 'daemon_action', result: 'success', label: 'Screenshot', screenshotUrl: pendingData.screenshotUrl }]
+              executedActions: [{ tool: 'daemon_action', result: 'success', label: 'Temporary screen capture', screenshotUrl: pendingData.screenshotUrl }]
             } : {}),
           };
           const updated = [pendingMsg, ...prev];

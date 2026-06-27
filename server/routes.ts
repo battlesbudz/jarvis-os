@@ -81,7 +81,7 @@ import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
 import { filterToolsByGroups, getTool, type ToolGroup } from "./agent/tools/index";
-import { ANDROID_PHONE_RUNTIME_TOOL_NAMES } from "./agent/tools/androidAppRuntime";
+import { ANDROID_PHONE_RUNTIME_TOOL_NAMES, explainUnsupportedPhoneRuntimeAction } from "./agent/tools/androidAppRuntime";
 import { parseNaturalTime, parseRecurringExpr } from "./agent/tools/cronTools";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 import { getPromptData, setPromptData } from "./coachSessionPromptCache";
@@ -364,12 +364,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }, 60_000);
 
+  type CoachToolExecutionResult = {
+    result: 'success' | 'error' | 'pending';
+    label: string;
+    detail: string;
+    buttonLabel?: string;
+  };
+
   async function executeCoachTool(
     toolName: string,
     args: any,
     userId: string,
     signal?: AbortSignal
-  ): Promise<{ result: 'success' | 'error' | 'pending'; label: string; detail: string }> {
+  ): Promise<CoachToolExecutionResult> {
     const todayKey = new Date().toISOString().slice(0, 10);
     try {
       switch (toolName) {
@@ -910,6 +917,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
               op = { type: 'file_list', path: String(args.path) };
             }
           } else {
+            const unsupportedPhoneAction = explainUnsupportedPhoneRuntimeAction(action, "daemon_action");
+            if (unsupportedPhoneAction) {
+              return {
+                result: 'error',
+                label: unsupportedPhoneAction.label,
+                buttonLabel: 'Phone action unavailable',
+                detail: JSON.stringify(unsupportedPhoneAction.detail),
+              };
+            }
             return { result: 'error', label: 'Unknown action', detail: `Unknown daemon action: ${action}` };
           }
           // Auto-preflight: for every android_* op (except android_notifications_list which
@@ -1302,6 +1318,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }
         }
         default:
+          {
+            const unsupportedPhoneTool = explainUnsupportedPhoneRuntimeAction(toolName, "tool");
+            if (unsupportedPhoneTool) {
+              return {
+                result: 'error',
+                label: unsupportedPhoneTool.label,
+                buttonLabel: 'Phone action unavailable',
+                detail: JSON.stringify(unsupportedPhoneTool.detail),
+              };
+            }
+          }
           return { result: 'error', label: 'Unknown action', detail: `Unknown tool: ${toolName}` };
       }
     } catch (error) {
@@ -2361,7 +2388,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             }
 
             // MCP tools are executed via the agent tool registry (not executeCoachTool)
-            let execResult: { result: 'success' | 'error' | 'pending'; label: string; detail: string };
+            let execResult: CoachToolExecutionResult;
             let plainMcpServerName: string | undefined;
             if (tc.function.name.startsWith('mcp__') && mcpAgentToolsMap.has(tc.function.name)) {
               const mcpAgentTool = mcpAgentToolsMap.get(tc.function.name)!;
@@ -2578,6 +2605,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 if (parsed.videoUrl) linkData.videoUrl = parsed.videoUrl;
                 if (parsed.caption) linkData.videoCaption = parsed.caption;
               } catch {}
+            }
+            if (execResult.buttonLabel && !linkData.buttonLabel) {
+              linkData.buttonLabel = execResult.buttonLabel;
             }
             actionResults.push({
               tool: tc.function.name,

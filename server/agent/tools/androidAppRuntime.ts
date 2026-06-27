@@ -79,6 +79,50 @@ export const STATIC_ANDROID_APP_CATALOG: AndroidAppCatalogEntry[] = [
   { label: "Samsung Notes", packageName: "com.samsung.android.app.notes", aliases: ["notes", "samsung notes"] },
 ];
 
+const PHONE_ACTION_NAME_HINTS = [
+  "android_",
+  "phone",
+  "screen",
+  "screenshot",
+  "capture",
+  "youtube",
+  "you_tube",
+  "open_app",
+  "tap",
+  "swipe",
+  "scroll",
+  "type_text",
+  "notification",
+];
+
+export function explainUnsupportedPhoneRuntimeAction(
+  name: string,
+  kind: "tool" | "daemon_action",
+): RuntimeOutcome | null {
+  const normalizedName = String(name || "").trim().toLowerCase();
+  if (!normalizedName) return null;
+  if (!PHONE_ACTION_NAME_HINTS.some((hint) => normalizedName.includes(hint))) return null;
+
+  return {
+    ok: false,
+    label: "Unsupported phone action",
+    detail: {
+      attemptedAction: name,
+      attemptedKind: kind,
+      error: `The requested phone action "${name}" is not available in Jarvis Phone Runtime.`,
+      guidance: "Use deterministic Phone Runtime tools instead of invented tool or daemon action names.",
+      availablePhoneRuntimeTools: [...ANDROID_PHONE_RUNTIME_TOOL_NAMES],
+      examples: [
+        "android_open_app_by_name",
+        "android_youtube_search",
+        "android_capture_screen",
+        "android_read_screen_context",
+      ],
+      deterministic: true,
+    },
+  };
+}
+
 function normalizeAppLookup(value: string): string {
   return value
     .toLowerCase()
@@ -328,6 +372,7 @@ export async function runAndroidCaptureScreen(args: ToolArgs, userId: string, bu
       screenshotUrl: `/api/daemon/screenshot/${id}`,
       attachmentKind: "temporary_chat_screen_capture",
       galleryPersistence: "temporary_chat_preview; direct capture is not intended to save to Gallery, but Android fallback cleanup is best-effort",
+      userFacingSummary: "Attached to this chat as a temporary preview; Gallery save is not intended. Jarvis reads the accessibility screen context for local reasoning.",
       expiresMinutes: 30,
       modelCanSeeImagePixels: false,
       modelUseNote: "The user sees the image preview inline in chat. Use screenContext to understand the current screen; the local model cannot inspect screenshot pixels from the URL directly.",
