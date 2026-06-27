@@ -211,9 +211,10 @@ async function buildCorpus(userId: string): Promise<CorpusResult> {
     }
   }
 
-  if (workingContextRows.length > 0) {
+  const safeWorkingContextRows = filterRawRestrictedMemoryRows(workingContextRows);
+  if (safeWorkingContextRows.length > 0) {
     sections.push("\n## Active working context (temporary, not durable memory)");
-    for (const row of workingContextRows) {
+    for (const row of safeWorkingContextRows) {
       const bits = [
         `${row.scopeType}:${row.scopeId}`,
         row.activeGoal ? `goal=${row.activeGoal}` : "",

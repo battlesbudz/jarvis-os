@@ -2,7 +2,7 @@ import { containsRawRestrictedContent } from "./restrictedContent";
 import type { MemoryProvenanceMetadata } from "./writePipeline";
 
 export const DREAM_MEMORY_REVIEW_DEEP_LINK = "jarvis://profile?focus=memory_review";
-export const DREAM_CAPABILITY_REVIEW_DEEP_LINK = "jarvis://capability-gaps";
+export const DREAM_CAPABILITY_REVIEW_DEEP_LINK = "jarvis://inbox?focus=deliverables";
 
 export type DreamInsightKind = "insight" | "memory_candidate" | "capability_proposal";
 

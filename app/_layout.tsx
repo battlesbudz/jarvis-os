@@ -135,6 +135,9 @@ function useDeepLinkNavigation() {
       } else if (host === 'profile' || path === 'profile') {
         const focus = typeof parsed.queryParams?.focus === 'string' ? parsed.queryParams.focus : undefined;
         router.push({ pathname: '/(tabs)/profile', params: focus ? { focus } : undefined } as any);
+      } else if (host === 'inbox' || path === 'inbox') {
+        const focus = typeof parsed.queryParams?.focus === 'string' ? parsed.queryParams.focus : undefined;
+        router.push({ pathname: '/(tabs)/inbox', params: focus ? { focus } : undefined } as any);
       } else if (host === 'capability-gaps' || path === 'capability-gaps') {
         router.push('/capability-gaps' as any);
       }

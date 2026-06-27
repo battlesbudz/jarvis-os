@@ -16,6 +16,11 @@ assert.match(
 );
 assert.match(
   source,
+  /const safeWorkingContextRows = filterRawRestrictedMemoryRows\(workingContextRows\);[\s\S]*for \(const row of safeWorkingContextRows\)/,
+  "working context should be filtered for raw restricted content before entering the dream prompt",
+);
+assert.match(
+  source,
   /writeMemoryThroughPipeline\([\s\S]*trigger: "dream"[\s\S]*reviewEnabled: true/,
   "dream memory candidates should go through MemoryOS review policy",
 );
