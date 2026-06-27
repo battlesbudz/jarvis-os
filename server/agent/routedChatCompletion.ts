@@ -83,7 +83,7 @@ function hasStrictJsonOnlyWording(text: string): boolean {
 }
 
 function hasInternalStructuredInstruction(text: string): boolean {
-  return /\b(?:extract|classify|label|parse|lint|revise|summari[sz]e)\b/.test(text)
+  return /\b(?:extract|classify|label|parse|lint|revise|summari[sz]e|compress|compact|condense)\b/.test(text)
     || /\bscore\s+(?:this|the|each|every|request|source|transcript|conversation|payload)\b/.test(text)
     || /\b(?:from|using|of)\s+(?:(?:this|the)\s+)?(?:transcript|source|payload|conversation)\b/.test(text)
     || /\b(?:transcript|source|payload|conversation)\s+(?:text|content)\b/.test(text);

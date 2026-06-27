@@ -1424,7 +1424,7 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
       requestedModel: "openai/gpt-4.1-mini",
       preferRequestedModel: true,
       messages: [
-        { role: "system", content: "Summarize this document into concise notes." },
+        { role: "system", content: "Compress this conversation into a concise summary." },
         { role: "user", content: "Source: Quarterly planning memo." },
       ],
       toolChoice: "none",

@@ -527,7 +527,7 @@ function hasInternalStructuredInstruction(
     .map((message) => textFromContent(message.content))
     .join("\n")
     .toLowerCase();
-  return /\b(?:extract|classify|label|parse|lint|revise|summari[sz]e)\b/.test(instructionText)
+  return /\b(?:extract|classify|label|parse|lint|revise|summari[sz]e|compress|compact|condense)\b/.test(instructionText)
     || /\bscore\s+(?:this|the|each|every|request|source|transcript|conversation|payload)\b/.test(instructionText)
     || /\b(?:from|using|of)\s+(?:(?:this|the)\s+)?(?:transcript|source|payload|conversation)\b/.test(instructionText)
     || /\b(?:transcript|source|payload|conversation)\s+(?:text|content)\b/.test(instructionText);
