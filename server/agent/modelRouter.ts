@@ -536,6 +536,7 @@ function shouldAttachProviderRuntimeStateCard(
   chain: FallbackChainEntry[],
 ): boolean {
   if (params.disableRuntimeStateCard) return false;
+  if (params.responseFormat) return false;
   if (!params.userId) return false;
   if (
     canUseRuntimeIdentityShortcut(params) ||
