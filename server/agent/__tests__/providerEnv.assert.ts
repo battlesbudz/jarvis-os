@@ -200,6 +200,17 @@ assert.equal(
     model: "gpt-4o-mini",
     user: "user-json-sdk",
     messages: [
+      { role: "system", content: "Return only JSON matching this schema." },
+      { role: "user", content: "What are my active tasks?" },
+    ],
+  }),
+  false,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [
       { role: "system", content: "Extract facts from this source. Return ONLY the JSON object." },
       { role: "user", content: "Source text" },
     ],

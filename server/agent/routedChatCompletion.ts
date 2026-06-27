@@ -78,7 +78,7 @@ function hasStrictJsonOnlyWording(text: string): boolean {
 }
 
 function hasInternalStructuredInstruction(text: string): boolean {
-  return /\b(?:extract|classify|label|score|parse|lint|revise|summari[sz]e|transcript|source|payload|schema)\b/.test(text);
+  return /\b(?:extract|classify|label|score|parse|lint|revise|summari[sz]e|transcript|source|payload)\b/.test(text);
 }
 
 export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {

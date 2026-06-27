@@ -130,7 +130,7 @@ async function main() {
       model: "gpt-4o-mini",
       user: "user-json-state-shim",
       messages: [
-        { role: "system", content: "Return only JSON." },
+        { role: "system", content: "Return only JSON matching this schema." },
         { role: "user", content: "What are my active tasks?" },
       ],
       response_format: { type: "json_object" },
