@@ -55,10 +55,29 @@ interface RawGapRow {
   count: number;
 }
 
+interface CapabilityGapEntry {
+  userMessage: string;
+  detectedReason: string;
+}
+
+function getClusterCapabilityGapEntries(cluster: GapCluster, rawGaps: RawGapRow[]): CapabilityGapEntry[] {
+  const memberIndices: number[] = Array.isArray(cluster.memberIndices)
+    ? cluster.memberIndices.filter((i) => typeof i === 'number' && i >= 0 && i < rawGaps.length)
+    : [];
+  return memberIndices.map((i) => ({
+    userMessage: rawGaps[i].userMessage,
+    detectedReason: rawGaps[i].detectedReason,
+  }));
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 /** Create a deliverable inbox item for a gap cluster that cannot be auto-built. */
-async function createGapInboxItem(userId: string, cluster: GapCluster): Promise<void> {
+async function createGapInboxItem(
+  userId: string,
+  cluster: GapCluster,
+  capabilityGapEntries: CapabilityGapEntry[] = [],
+): Promise<void> {
   try {
     const proposal = cluster.toolProposal;
     const body = [
@@ -87,6 +106,7 @@ async function createGapInboxItem(userId: string, cluster: GapCluster): Promise<
         riskLevel: cluster.riskLevel,
         frequency: cluster.frequency,
         toolName: proposal?.name ?? null,
+        capabilityGapEntries,
       },
     });
   } catch (err) {
@@ -293,9 +313,10 @@ memberIndices are required for every cluster. toolProposal is only required when
   let queued = 0;
 
   for (const cluster of clusters) {
+    const capabilityGapEntries = getClusterCapabilityGapEntries(cluster, rawGaps);
     if (!cluster.buildable) {
       console.log(`[CapabilityGap] Queueing non-buildable gap for review: "${cluster.theme}"`);
-      await createGapInboxItem(userId, cluster);
+      await createGapInboxItem(userId, cluster, capabilityGapEntries);
       queued++;
       continue;
     }
@@ -308,7 +329,7 @@ memberIndices are required for every cluster. toolProposal is only required when
       const proposal = cluster.toolProposal;
       if (!proposal?.name || !proposal?.description) {
         console.warn(`[CapabilityGap] Low-risk cluster "${cluster.theme}" missing toolProposal — queueing instead`);
-        await createGapInboxItem(userId, cluster);
+        await createGapInboxItem(userId, cluster, capabilityGapEntries);
         queued++;
         continue;
       }
@@ -354,7 +375,7 @@ memberIndices are required for every cluster. toolProposal is only required when
         // handler calls markCapabilityGapEntriesAddressed() only when allPassed=true.
       } catch (err) {
         console.error(`[CapabilityGap] submitAgentJob failed for "${proposal.name}":`, err);
-        await createGapInboxItem(userId, cluster);
+        await createGapInboxItem(userId, cluster, capabilityGapEntries);
         queued++;
       }
     } else {
@@ -362,7 +383,7 @@ memberIndices are required for every cluster. toolProposal is only required when
       if (submitted >= MAX_AUTO_BUILDS && cluster.riskLevel === 'low') {
         console.log(`[CapabilityGap] Auto-build cap reached — queueing low-risk gap: "${cluster.theme}"`);
       }
-      await createGapInboxItem(userId, cluster);
+      await createGapInboxItem(userId, cluster, capabilityGapEntries);
       queued++;
     }
   }

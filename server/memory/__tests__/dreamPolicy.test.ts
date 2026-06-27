@@ -14,9 +14,30 @@ const repeatedHighConfidence = {
   confidence: 94,
   sourceHints: ["three recent work sessions", "weekly pattern observed the same sequence"],
   kind: "memory_candidate" as const,
+  memoryType: "semantic" as const,
 };
 
 assert.equal(shouldAutoPromoteDreamMemory(repeatedHighConfidence), true);
+assert.equal(
+  shouldAutoPromoteDreamMemory({ ...repeatedHighConfidence, memoryType: "procedural" }),
+  true,
+  "procedural dream memories can auto-keep when evidence is strong",
+);
+assert.equal(
+  shouldAutoPromoteDreamMemory({ ...repeatedHighConfidence, memoryType: "episodic" }),
+  false,
+  "episodic dream memories stay in Memory Review",
+);
+assert.equal(
+  shouldAutoPromoteDreamMemory({ ...repeatedHighConfidence, memoryType: "contextual" }),
+  false,
+  "contextual dream memories stay in Memory Review",
+);
+assert.equal(
+  shouldAutoPromoteDreamMemory({ ...repeatedHighConfidence, memoryType: undefined }),
+  false,
+  "untyped dream memories stay in Memory Review",
+);
 assert.equal(
   shouldAutoPromoteDreamMemory({ ...repeatedHighConfidence, confidence: 89 }),
   false,

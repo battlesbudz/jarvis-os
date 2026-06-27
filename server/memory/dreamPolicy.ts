@@ -20,6 +20,7 @@ export interface DreamMemoryPromotionInput {
   confidence: number;
   sourceHints: string[];
   kind: DreamInsightKind;
+  memoryType?: "semantic" | "procedural" | "episodic" | "contextual";
 }
 
 export interface DreamReviewPayload {
@@ -125,6 +126,7 @@ export function normalizeDreamInsight(raw: unknown): NormalizedDreamInsight | nu
 
 export function shouldAutoPromoteDreamMemory(input: DreamMemoryPromotionInput): boolean {
   if (input.kind !== "memory_candidate") return false;
+  if (input.memoryType !== "semantic" && input.memoryType !== "procedural") return false;
   if (input.confidence < 90) return false;
   if (input.sourceHints.length < 2) return false;
   if (containsRawRestrictedContent(input.insight)) return false;

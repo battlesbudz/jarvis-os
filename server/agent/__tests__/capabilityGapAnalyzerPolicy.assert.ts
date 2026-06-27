@@ -19,8 +19,18 @@ assert.match(
 );
 assert.match(
   source,
-  /Queueing non-buildable gap for review[\s\S]*createGapInboxItem\(userId, cluster\)/,
+  /Queueing non-buildable gap for review[\s\S]*createGapInboxItem\(userId, cluster, capabilityGapEntries\)/,
   "non-buildable capability gaps should still become reviewable proposals",
+);
+assert.match(
+  source,
+  /function getClusterCapabilityGapEntries[\s\S]*userMessage: rawGaps\[i\]\.userMessage[\s\S]*detectedReason: rawGaps\[i\]\.detectedReason/,
+  "review proposals should preserve source capability gap entries",
+);
+assert.match(
+  source,
+  /meta: \{[\s\S]*capabilityGapEntries/,
+  "capability gap proposal deliverables should carry source entries in metadata",
 );
 
 console.log("OK: capability gap analyzer queues proposals without auto-building");
