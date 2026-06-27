@@ -1524,6 +1524,35 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
     );
 
     captured.delete("openai");
+    const formattedRequestStateResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [{
+        role: "user",
+        content: [
+          "Request: What are my active tasks?",
+          "",
+          "Return JSON only.",
+        ].join("\n"),
+      }],
+      responseFormat: { type: "json_object" },
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-formatted-request-state-card",
+      logPrefix: "[ModelRouterFormattedRequestStateCardTest]",
+    });
+    const formattedRequestStateRequest = captured.get("openai");
+    assert.equal(formattedRequestStateResult.providerName, "openai");
+    assert.deepEqual(formattedRequestStateRequest?.responseFormat, { type: "json_object" });
+    assert.equal(
+      formattedRequestStateRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      true,
+    );
+
+    captured.delete("openai");
     const formattedPayloadResult = await routeModelTurn({
       tier: "cheap",
       requestedModel: "openai/gpt-4.1-mini",
@@ -1549,6 +1578,38 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
     assert.deepEqual(formattedPayloadRequest?.responseFormat, { type: "json_object" });
     assert.equal(
       formattedPayloadRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      false,
+    );
+
+    captured.delete("openai");
+    const formattedSourceRequestPayloadResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [{
+        role: "user",
+        content: [
+          "Convert this source request into a compact JSON record.",
+          "",
+          "Source:",
+          'Request: "What are my active tasks?"',
+          "",
+          "Return ONLY a valid JSON object.",
+        ].join("\n"),
+      }],
+      responseFormat: { type: "json_object" },
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-formatted-source-request-payload-state-card",
+      logPrefix: "[ModelRouterFormattedSourceRequestPayloadStateCardTest]",
+    });
+    const formattedSourceRequestPayloadRequest = captured.get("openai");
+    assert.equal(formattedSourceRequestPayloadResult.providerName, "openai");
+    assert.deepEqual(formattedSourceRequestPayloadRequest?.responseFormat, { type: "json_object" });
+    assert.equal(
+      formattedSourceRequestPayloadRequest?.messages.some((message) => (
         message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
       )),
       false,
