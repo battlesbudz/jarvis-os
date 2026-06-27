@@ -991,6 +991,18 @@ export async function ensureTablesExist() {
         ON dream_insights (user_id, shown_to_user)
         WHERE shown_to_user = FALSE
     `).catch(handleSchemaStepError);
+    await db.execute(sql`
+      ALTER TABLE dream_insights
+        ADD COLUMN IF NOT EXISTS insight_kind VARCHAR NOT NULL DEFAULT 'insight'
+    `).catch(handleSchemaStepError);
+    await db.execute(sql`
+      ALTER TABLE dream_insights
+        ADD COLUMN IF NOT EXISTS review_payload JSONB NOT NULL DEFAULT '{}'::jsonb
+    `).catch(handleSchemaStepError);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS dream_insights_user_kind_idx
+        ON dream_insights (user_id, insight_kind, created_at DESC)
+    `).catch(handleSchemaStepError);
 
     // ── Emotional State Engine ────────────────────────────────────────────────
     await db.execute(sql`

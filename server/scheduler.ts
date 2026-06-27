@@ -1434,7 +1434,10 @@ export async function runDreamDeliveryForAllUsers(now: Date): Promise<void> {
         console.log(`[Dream] skipping delivery for ${user.id} (self-correction: suppressed)`);
         continue;
       }
-      const { getPendingDreamInsights, markDreamInsightsDelivered } = await import('./memory/dream');
+      const [{ getPendingDreamInsights, markDreamInsightsDelivered }, { buildDreamDeliveryMessage }] = await Promise.all([
+        import('./memory/dream'),
+        import('./memory/dreamPolicy'),
+      ]);
       const pending = await getPendingDreamInsights(user.id);
       if (pending.length === 0) {
         await db.insert(schema.proactiveScheduleLog).values({
@@ -1443,10 +1446,7 @@ export async function runDreamDeliveryForAllUsers(now: Date): Promise<void> {
         continue;
       }
 
-      const insightLines = pending
-        .map((ins, i) => `${i + 1}. ${ins.insightText}`)
-        .join("\n\n");
-      const msg = `🌙 Jarvis dreamed about you\n\n${insightLines}\n\n_(Synthesised from your last 90 days of memories)_`;
+      const msg = buildDreamDeliveryMessage(pending);
 
       await notifyUser(user.id, "dream_insight", msg);
       await markDreamInsightsDelivered(pending.map((i) => i.id));

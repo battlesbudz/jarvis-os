@@ -2,17 +2,13 @@
  * capabilityGapAnalyzer.ts — Step 2 of the weekly self-improvement cycle.
  *
  * Loads capability gaps accumulated during the past 7 days, clusters them
- * with an LLM, and for low-risk buildable gaps autonomously queues build_feature
- * jobs via the job queue. Higher-risk gaps are queued as inbox deliverables.
- *
- * Build jobs are submitted to the job queue (not executed inline) so they run
- * AFTER the self-improvement cycle completes, preventing the build job's
- * process restart from interrupting the cycle or the Telegram summary.
+ * with an LLM, then queues reviewable proposals. Capability gaps never
+ * auto-build or auto-action; a human must approve implementation work.
  *
  * Safety constraints (all enforced in code):
- *   - Max 2 auto-build job submissions per weekly cycle (MAX_AUTO_BUILDS)
- *   - Only "low" risk clusters trigger auto-build
- *   - Only the source gap rows for a successfully queued cluster are marked addressed
+ *   - Capability proposals are review-only deliverables
+ *   - No build_feature jobs are submitted by this analyzer
+ *   - Source gap rows are marked addressed only after approved implementation work succeeds
  *   - Analyzer failure is fully isolated — never affects the rest of the cycle
  */
 
@@ -23,7 +19,7 @@ import { submitAgentJob } from './jobClient';
 import { routeModelTurn } from './modelRouter';
 
 const MAX_GAP_CLUSTERS = 5;
-const MAX_AUTO_BUILDS = 2;
+const MAX_AUTO_BUILDS = 0;
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -59,10 +55,29 @@ interface RawGapRow {
   count: number;
 }
 
+interface CapabilityGapEntry {
+  userMessage: string;
+  detectedReason: string;
+}
+
+function getClusterCapabilityGapEntries(cluster: GapCluster, rawGaps: RawGapRow[]): CapabilityGapEntry[] {
+  const memberIndices: number[] = Array.isArray(cluster.memberIndices)
+    ? cluster.memberIndices.filter((i) => typeof i === 'number' && i >= 0 && i < rawGaps.length)
+    : [];
+  return memberIndices.map((i) => ({
+    userMessage: rawGaps[i].userMessage,
+    detectedReason: rawGaps[i].detectedReason,
+  }));
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 /** Create a deliverable inbox item for a gap cluster that cannot be auto-built. */
-async function createGapInboxItem(userId: string, cluster: GapCluster): Promise<void> {
+async function createGapInboxItem(
+  userId: string,
+  cluster: GapCluster,
+  capabilityGapEntries: CapabilityGapEntry[] = [],
+): Promise<void> {
   try {
     const proposal = cluster.toolProposal;
     const body = [
@@ -91,6 +106,7 @@ async function createGapInboxItem(userId: string, cluster: GapCluster): Promise<
         riskLevel: cluster.riskLevel,
         frequency: cluster.frequency,
         toolName: proposal?.name ?? null,
+        capabilityGapEntries,
       },
     });
   } catch (err) {
@@ -150,8 +166,7 @@ export function markCapabilityGapEntriesAddressed(
  *   A. Load this week's unaddressed gaps from the DB
  *   B. Cluster with an LLM and decide what's buildable; LLM reports memberIndices
  *      so we know exactly which source rows belong to each cluster
- *   C. Auto-build low-risk tools (cap: MAX_AUTO_BUILDS) and queue the rest;
- *      only mark the cluster's own source rows as addressed after a build
+ *   C. Queue every cluster as a reviewable proposal; build work requires approval
  *   D. Return { submitted, queued }
  *
  * Never throws — all errors are caught and logged. A failure here must not
@@ -298,12 +313,15 @@ memberIndices are required for every cluster. toolProposal is only required when
   let queued = 0;
 
   for (const cluster of clusters) {
+    const capabilityGapEntries = getClusterCapabilityGapEntries(cluster, rawGaps);
     if (!cluster.buildable) {
-      console.log(`[CapabilityGap] Skipping non-buildable gap: "${cluster.theme}"`);
+      console.log(`[CapabilityGap] Queueing non-buildable gap for review: "${cluster.theme}"`);
+      await createGapInboxItem(userId, cluster, capabilityGapEntries);
+      queued++;
       continue;
     }
 
-    if (cluster.riskLevel === 'low' && submitted < MAX_AUTO_BUILDS) {
+    if (MAX_AUTO_BUILDS > 0 && cluster.riskLevel === 'low' && submitted < MAX_AUTO_BUILDS) {
       // Auto-build: submit a build_feature job to the job queue.
       // Using the job queue (rather than calling buildFeatureTool inline) ensures
       // that the build job's process restart happens AFTER the self-improvement
@@ -311,7 +329,7 @@ memberIndices are required for every cluster. toolProposal is only required when
       const proposal = cluster.toolProposal;
       if (!proposal?.name || !proposal?.description) {
         console.warn(`[CapabilityGap] Low-risk cluster "${cluster.theme}" missing toolProposal — queueing instead`);
-        await createGapInboxItem(userId, cluster);
+        await createGapInboxItem(userId, cluster, capabilityGapEntries);
         queued++;
         continue;
       }
@@ -357,7 +375,7 @@ memberIndices are required for every cluster. toolProposal is only required when
         // handler calls markCapabilityGapEntriesAddressed() only when allPassed=true.
       } catch (err) {
         console.error(`[CapabilityGap] submitAgentJob failed for "${proposal.name}":`, err);
-        await createGapInboxItem(userId, cluster);
+        await createGapInboxItem(userId, cluster, capabilityGapEntries);
         queued++;
       }
     } else {
@@ -365,7 +383,7 @@ memberIndices are required for every cluster. toolProposal is only required when
       if (submitted >= MAX_AUTO_BUILDS && cluster.riskLevel === 'low') {
         console.log(`[CapabilityGap] Auto-build cap reached — queueing low-risk gap: "${cluster.theme}"`);
       }
-      await createGapInboxItem(userId, cluster);
+      await createGapInboxItem(userId, cluster, capabilityGapEntries);
       queued++;
     }
   }

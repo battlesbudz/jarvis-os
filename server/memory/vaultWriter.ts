@@ -18,6 +18,7 @@ import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 import { isRetriableProviderError } from "../agent/providers/fallback";
 import { containsRawRestrictedContent } from "./restrictedContent";
+import { approvedDreamInsightContextFilter } from "./dreamContext";
 
 const openai = createRoutedOpenAIChatShim("[MemoryVault]", "balanced", { disableRuntimeStateCard: true });
 
@@ -164,7 +165,7 @@ export async function buildPatternsSource(userId: string): Promise<string> {
     db
       .select({ insightText: schema.dreamInsights.insightText, confidenceScore: schema.dreamInsights.confidenceScore })
       .from(schema.dreamInsights)
-      .where(eq(schema.dreamInsights.userId, userId))
+      .where(approvedDreamInsightContextFilter(userId))
       .orderBy(desc(schema.dreamInsights.createdAt))
       .limit(20),
   ]);

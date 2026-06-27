@@ -14,13 +14,24 @@
  *  4. Access reinforcement — boosts memories whose access_count rose > 3 since last cycle
  */
 import { db } from "../db";
-import { eq, desc, and, gte, lt, sql, inArray } from "drizzle-orm";
+import { eq, desc, and, gte, gt, lt, sql, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { extractAndStore } from "./extractor";
 import { markSoulStale } from "./soul";
 import { containsRawRestrictedContent } from "./restrictedContent";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
+import {
+  DREAM_CAPABILITY_REVIEW_DEEP_LINK,
+  DREAM_MEMORY_REVIEW_DEEP_LINK,
+  buildDreamMemoryProvenance,
+  normalizeDreamInsight,
+  shouldAutoPromoteDreamMemory,
+  type DreamReviewPayload,
+  type NormalizedDreamInsight,
+} from "./dreamPolicy";
+import { evaluateMemoryAutoReviewDecision } from "./autoReview";
+import { keepPendingMemoryWrites, writeMemoryThroughPipeline } from "./writePipeline";
 
 async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   try {
@@ -58,11 +69,26 @@ function filterRawRestrictedMemoryRows<T extends { content?: string | null }>(ro
   return rows.filter((row) => !containsRawRestrictedContent(row.content ?? ""));
 }
 
-interface DreamInsightRaw {
-  insight: string;
-  confidence: number;
-  sourceHints: string[];
+function filterRawRestrictedWorkingContextRows<T extends {
+  content?: string | null;
+  activeGoal?: string | null;
+  currentStep?: string | null;
+  scopeType?: string | null;
+  scopeId?: string | null;
+}>(rows: T[]): T[] {
+  return rows.filter((row) => {
+    const promptText = [
+      row.scopeType,
+      row.scopeId,
+      row.activeGoal,
+      row.currentStep,
+      row.content,
+    ].filter(Boolean).join("\n");
+    return !containsRawRestrictedContent(promptText);
+  });
 }
+
+type DreamInsightRaw = NormalizedDreamInsight;
 
 interface CorpusResult {
   text: string;
@@ -112,13 +138,16 @@ async function buildCorpus(userId: string): Promise<CorpusResult> {
   const since30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
   const since30Key = since30.toISOString().slice(0, 10);
 
-  const [rawMemoryRows, insightRows, energyRows, planRows] = await Promise.all([
+  const [rawMemoryRows, workingContextRows, insightRows, energyRows, planRows] = await Promise.all([
     db
       .select({
         id: schema.userMemories.id,
         content: schema.userMemories.content,
         category: schema.userMemories.category,
         confidence: schema.userMemories.confidence,
+        tier: schema.userMemories.tier,
+        memoryType: schema.userMemories.memoryType,
+        sourceType: schema.userMemories.sourceType,
         extractedAt: schema.userMemories.extractedAt,
       })
       .from(schema.userMemories)
@@ -130,6 +159,27 @@ async function buildCorpus(userId: string): Promise<CorpusResult> {
       )
       .orderBy(desc(schema.userMemories.extractedAt))
       .limit(200),
+
+    db
+      .select({
+        id: schema.memoryWorkingContext.id,
+        scopeType: schema.memoryWorkingContext.scopeType,
+        scopeId: schema.memoryWorkingContext.scopeId,
+        activeGoal: schema.memoryWorkingContext.activeGoal,
+        currentStep: schema.memoryWorkingContext.currentStep,
+        content: schema.memoryWorkingContext.content,
+        updatedAt: schema.memoryWorkingContext.updatedAt,
+      })
+      .from(schema.memoryWorkingContext)
+      .where(
+        and(
+          eq(schema.memoryWorkingContext.userId, userId),
+          eq(schema.memoryWorkingContext.state, "active"),
+          gt(schema.memoryWorkingContext.expiresAt, now),
+        ),
+      )
+      .orderBy(desc(schema.memoryWorkingContext.updatedAt))
+      .limit(40),
 
     db
       .select()
@@ -171,13 +221,26 @@ async function buildCorpus(userId: string): Promise<CorpusResult> {
     const grouped = new Map<string, string[]>();
     for (const m of memoriesRows) {
       const arr = grouped.get(m.category) || [];
-      arr.push(`[c=${m.confidence}] ${m.content}`);
+      arr.push(`[${m.tier}/${m.memoryType} c=${m.confidence} source=${m.sourceType || "memory"}] ${m.content}`);
       grouped.set(m.category, arr);
     }
     sections.push("## Memories by category (last 90 days)");
     for (const [cat, items] of grouped) {
       sections.push(`### ${cat}`);
       items.slice(0, 20).forEach((i) => sections.push(`- ${i}`));
+    }
+  }
+
+  const safeWorkingContextRows = filterRawRestrictedWorkingContextRows(workingContextRows);
+  if (safeWorkingContextRows.length > 0) {
+    sections.push("\n## Active working context (temporary, not durable memory)");
+    for (const row of safeWorkingContextRows) {
+      const bits = [
+        `${row.scopeType}:${row.scopeId}`,
+        row.activeGoal ? `goal=${row.activeGoal}` : "",
+        row.currentStep ? `step=${row.currentStep}` : "",
+      ].filter(Boolean).join(" ");
+      sections.push(`- [${bits}] ${row.content}`);
     }
   }
 
@@ -234,9 +297,10 @@ function parseDreamResponse(raw: string): DreamInsightRaw[] {
     if (parsed && typeof parsed === "object") {
       const obj = parsed as Record<string, unknown>;
       if (Array.isArray(obj.insights)) {
-        return (obj.insights as DreamInsightRaw[]).filter(
-          (i) => typeof i.insight === "string" && i.insight.trim().length > 0,
-        );
+        return obj.insights.flatMap((item) => {
+          const insight = normalizeDreamInsight(item);
+          return insight ? [insight] : [];
+        });
       }
     }
   } catch {
@@ -683,6 +747,178 @@ async function runAccessReinforcementPass(
   }
 }
 
+async function markDreamMemoryDerivedContextFresh(userId: string): Promise<void> {
+  await markSoulStale(userId);
+  import("./vaultWriter").then(({ maybeRegenerateVault }) => {
+    maybeRegenerateVault(userId).catch((err) => console.error("[Dream] maybeRegenerateVault:", err));
+  }).catch((err) => console.error("[Dream] vaultWriter import failed:", err));
+}
+
+async function writeDreamMemoryCandidate(input: {
+  userId: string;
+  dreamDate: string;
+  insight: DreamInsightRaw;
+  sourceMemoryIds: string[];
+}): Promise<DreamReviewPayload> {
+  const category = input.insight.category || "fact";
+  const memoryType = input.insight.memoryType || "contextual";
+  const provenance = buildDreamMemoryProvenance({
+    dreamDate: input.dreamDate,
+    sourceHints: input.insight.sourceHints,
+    sourceMemoryIds: input.sourceMemoryIds,
+  });
+  const result = await writeMemoryThroughPipeline({
+    userId: input.userId,
+    content: input.insight.insight,
+    trigger: "dream",
+    category,
+    tier: "long_term",
+    memoryType,
+    confidence: input.insight.confidence,
+    sourceType: "dream_cycle",
+    sourceRef: input.dreamDate,
+    reviewEnabled: true,
+    provenance,
+  });
+
+  if (!result.insertedMemoryId) {
+    return {
+      memoryReview: {
+        status: result.status === "excluded" ? "excluded" : "failed",
+        deepLink: DREAM_MEMORY_REVIEW_DEEP_LINK,
+        reason: result.reason,
+      },
+      sourceHints: input.insight.sourceHints,
+    };
+  }
+
+  if (shouldAutoPromoteDreamMemory(input.insight)) {
+    const autoReviewDecision = evaluateMemoryAutoReviewDecision({
+      id: result.insertedMemoryId,
+      userId: input.userId,
+      content: input.insight.insight,
+      category,
+      confidence: input.insight.confidence,
+      sourceType: "dream_cycle",
+      tier: "long_term",
+      memoryType,
+      pendingReview: true,
+      reviewStatus: "pending",
+      supersedesMemoryId: null,
+      provenance,
+    });
+    if (autoReviewDecision.action !== "keep") {
+      return {
+        memoryReview: {
+          status: "pending",
+          memoryId: result.insertedMemoryId,
+          deepLink: DREAM_MEMORY_REVIEW_DEEP_LINK,
+          reason: autoReviewDecision.reason,
+        },
+        sourceHints: input.insight.sourceHints,
+      };
+    }
+    const kept = await keepPendingMemoryWrites({
+      userId: input.userId,
+      memoryIds: [result.insertedMemoryId],
+    });
+    if (kept.approved > 0) {
+      await markDreamMemoryDerivedContextFresh(input.userId);
+      return {
+        memoryReview: {
+          status: "auto_kept",
+          memoryId: result.insertedMemoryId,
+          deepLink: DREAM_MEMORY_REVIEW_DEEP_LINK,
+          reason: "High-confidence repeated dream memory was auto-kept with provenance.",
+        },
+        sourceHints: input.insight.sourceHints,
+      };
+    }
+  }
+
+  return {
+    memoryReview: {
+      status: "pending",
+      memoryId: result.insertedMemoryId,
+      deepLink: DREAM_MEMORY_REVIEW_DEEP_LINK,
+      reason: result.reason,
+    },
+    sourceHints: input.insight.sourceHints,
+  };
+}
+
+async function createDreamCapabilityProposal(input: {
+  userId: string;
+  dreamDate: string;
+  insight: DreamInsightRaw;
+  sourceMemoryIds: string[];
+}): Promise<DreamReviewPayload> {
+  try {
+    const [row] = await db.insert(schema.deliverables).values({
+      userId: input.userId,
+      agentType: "planning",
+      type: "plan",
+      title: `Capability proposal: ${input.insight.insight.slice(0, 80)}`,
+      summary: input.insight.insight.slice(0, 300),
+      body: [
+        `## Capability proposal from dream synthesis`,
+        "",
+        input.insight.insight,
+        "",
+        `Confidence: ${input.insight.confidence}%`,
+        input.insight.sourceHints.length > 0 ? "" : "",
+        input.insight.sourceHints.length > 0 ? "## Evidence" : "",
+        ...input.insight.sourceHints.map((hint) => `- ${hint}`),
+        "",
+        "JARVIS has not built or run anything. Review this proposal before any implementation work starts.",
+      ].filter((line) => line !== "").join("\n"),
+      meta: {
+        source: "dream_cycle_capability_proposal",
+        dreamDate: input.dreamDate,
+        confidence: input.insight.confidence,
+        sourceHints: input.insight.sourceHints,
+        sourceMemoryIds: input.sourceMemoryIds.slice(0, 20),
+      },
+      status: "pending_approval",
+      triageStatus: "needs_attention",
+    }).returning({ id: schema.deliverables.id });
+
+    return {
+      capabilityReview: {
+        status: "pending_approval",
+        deliverableId: row?.id ?? null,
+        deepLink: DREAM_CAPABILITY_REVIEW_DEEP_LINK,
+        reason: "Dream synthesis surfaced a capability proposal for review only.",
+      },
+      sourceHints: input.insight.sourceHints,
+    };
+  } catch (err) {
+    return {
+      capabilityReview: {
+        status: "failed",
+        deepLink: DREAM_CAPABILITY_REVIEW_DEEP_LINK,
+        reason: err instanceof Error ? err.message : String(err),
+      },
+      sourceHints: input.insight.sourceHints,
+    };
+  }
+}
+
+async function buildDreamReviewPayload(input: {
+  userId: string;
+  dreamDate: string;
+  insight: DreamInsightRaw;
+  sourceMemoryIds: string[];
+}): Promise<DreamReviewPayload> {
+  if (input.insight.kind === "capability_proposal") {
+    return createDreamCapabilityProposal(input);
+  }
+  if (input.insight.kind === "memory_candidate") {
+    return writeDreamMemoryCandidate(input);
+  }
+  return { sourceHints: input.insight.sourceHints };
+}
+
 /**
  * Run the full dream cycle for a single user.
  * Returns a DreamCycleResult with insight count and consolidation metadata.
@@ -759,14 +995,24 @@ Output JSON:
 {
   "insights": [
     {
-      "insight": "<specific, non-obvious observation — 1–3 sentences, plain English, no markdown>",
+      "kind": "memory_candidate" | "capability_proposal" | "insight",
+      "insight": "<specific, non-obvious observation - 1-3 sentences, plain English, no markdown>",
       "confidence": <50-100 integer — how strongly supported by the data>,
-      "sourceHints": ["<short phrase describing evidence 1>", "<evidence 2>"]
+      "sourceHints": ["<short phrase describing evidence 1>", "<evidence 2>"],
+      "category": "work_patterns" | "communication_style" | "energy_rhythms" | "goals_history" | "blockers" | "accomplishments" | "preferences" | "fact",
+      "memory_type": "semantic" | "procedural" | "episodic"
     }
   ]
 }
 
 Return { "insights": [] } if you cannot find anything genuinely non-obvious and cross-category.
+
+Kind rules:
+- "memory_candidate": a durable pattern or fact JARVIS may remember after MemoryOS policy review.
+- "capability_proposal": JARVIS appears to be missing a tool, integration, deterministic workflow, or runtime capability. Surface the proposal only; never imply it was built or should auto-run.
+- "insight": useful observation for the morning digest that should not be stored as memory.
+
+Use active working context and recent context as evidence, but do not treat it as permanent unless it repeats across other evidence.
 
 ---
 
@@ -816,6 +1062,12 @@ ${corpus.text.slice(0, 12000)}`;
     if (!text) continue;
     const confidence = Math.max(50, Math.min(100, Math.round(raw.confidence || 70)));
     try {
+      const reviewPayload = await buildDreamReviewPayload({
+        userId,
+        dreamDate,
+        insight: { ...raw, confidence },
+        sourceMemoryIds: sourceIds,
+      });
       await db
         .insert(schema.dreamInsights)
         .values({
@@ -824,6 +1076,8 @@ ${corpus.text.slice(0, 12000)}`;
           insightText: text,
           confidenceScore: confidence,
           sourceMemoryIds: sourceIds,
+          insightKind: raw.kind,
+          reviewPayload,
           shownToUser: false,
         });
       stored++;
@@ -839,10 +1093,6 @@ ${corpus.text.slice(0, 12000)}`;
         metadata: { operation: "runDreamForUser_insertInsight" },
       }).catch(() => {});
     }
-  }
-
-  if (stored > 0) {
-    await seedSoulFromDream(userId, rawInsights);
   }
 
   const result: DreamCycleResult = {
@@ -868,46 +1118,6 @@ ${corpus.text.slice(0, 12000)}`;
   }
 
   return result;
-}
-
-/**
- * Extract durable findings from the dream and write them back into
- * user_memories so the Soul compounds Jarvis's understanding over time.
- * Marks the Soul stale so it regenerates on the next read.
- */
-async function seedSoulFromDream(userId: string, insights: DreamInsightRaw[]): Promise<void> {
-  try {
-    const combined = insights
-      .filter((i) => (i.confidence || 0) >= 70)
-      .map((i) => i.insight)
-      .join("\n");
-
-    if (!combined.trim()) return;
-
-    await extractAndStore({
-      userId,
-      source: combined,
-      sourceType: "dream_cycle",
-      sourceRef: new Date().toISOString().slice(0, 10),
-      contextHint: "Durable cross-category finding from nightly dream synthesis",
-      maxNew: 3,
-    });
-
-    await markSoulStale(userId);
-    import("./vaultWriter").then(({ maybeRegenerateVault }) => {
-      maybeRegenerateVault(userId).catch((err) => console.error("[Dream] maybeRegenerateVault:", err));
-    }).catch((err) => console.error("[Dream] vaultWriter import failed:", err));
-    console.log(`[Dream] soul seeded and marked stale for ${userId}`);
-  } catch (err) {
-    console.error(`[Dream] soul seeding failed:`, err);
-    diagEmit({
-      userId,
-      subsystem: "memory",
-      severity: "error",
-      message: `Dream soul seeding failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300),
-      metadata: { operation: "seedSoulFromDream" },
-    }).catch(() => {});
-  }
 }
 
 /**

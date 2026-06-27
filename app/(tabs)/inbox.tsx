@@ -124,7 +124,12 @@ interface DailyCommandSnapshot {
   deliverables: { pendingCount: number };
   approvals: { pendingCount: number };
   reminders: { morningBriefSent: boolean; eveningWrapSent: boolean };
-  dream: { pendingCount: number; latestInsight?: { insightText: string } | null };
+  dream: {
+    pendingCount: number;
+    pendingMemoryReviewCount?: number;
+    pendingCapabilityProposalCount?: number;
+    latestInsight?: { insightText: string } | null;
+  };
   contextWarnings: { source: string; severity: 'info' | 'warning' | 'error'; message: string }[];
   statusReasons?: {
     state: DailyCommandSnapshot['status'];
@@ -865,6 +870,8 @@ export default function InboxScreen() {
     const failedCount = dailyCommand.jobs?.failed?.length ?? 0;
     const approvalCount = dailyCommand.approvals?.pendingCount ?? 0;
     const attentionCount = dailyCommand.attention?.pendingCount ?? 0;
+    const dreamReviewCount = dailyCommand.dream?.pendingMemoryReviewCount ?? 0;
+    const dreamCapabilityCount = dailyCommand.dream?.pendingCapabilityProposalCount ?? 0;
     const statusReasons = dailyCommand.statusReasons || [];
     return (
       <View style={styles.dailyCommandCard}>
@@ -945,6 +952,18 @@ export default function InboxScreen() {
             <Ionicons name="moon-outline" size={12} color={dailyCommand.dream?.pendingCount > 0 ? Colors.primary : Colors.textTertiary} />
             <Text style={styles.loopPillText}>
               Dream{dailyCommand.dream?.pendingCount > 0 ? ` ${dailyCommand.dream.pendingCount}` : ''}
+            </Text>
+          </View>
+          <View style={[styles.loopPill, dreamReviewCount > 0 && styles.loopPillActive]}>
+            <Ionicons name="shield-checkmark-outline" size={12} color={dreamReviewCount > 0 ? Colors.primary : Colors.textTertiary} />
+            <Text style={styles.loopPillText}>
+              Memory{dreamReviewCount > 0 ? ` ${dreamReviewCount}` : ''}
+            </Text>
+          </View>
+          <View style={[styles.loopPill, dreamCapabilityCount > 0 && styles.loopPillActive]}>
+            <Ionicons name="construct-outline" size={12} color={dreamCapabilityCount > 0 ? Colors.primary : Colors.textTertiary} />
+            <Text style={styles.loopPillText}>
+              Capability{dreamCapabilityCount > 0 ? ` ${dreamCapabilityCount}` : ''}
             </Text>
           </View>
         </View>
