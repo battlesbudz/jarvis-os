@@ -1404,6 +1404,104 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
   }
 }
 
+async function runProviderRuntimeStateCardFallbackChainAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "DATABASE_URL",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let googleCaptured: ProviderQueryParams | null = null;
+  class FailingAnthropicProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      const err = new Error("primary rate limit") as Error & { status?: number };
+      err.status = 429;
+      throw err;
+    }
+  }
+
+  class CapturingGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      googleCaptured = params;
+      yield { type: "text", delta: "fallback response" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    delete process.env.DATABASE_URL;
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "false";
+    process.env.PROVIDER_FALLBACK_CHAIN = "anthropic:claude-chain,google:gemini-chain";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    _overrideProviderForTesting("anthropic", new FailingAnthropicProvider());
+    _overrideProviderForTesting("google", new CapturingGoogleProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-provider-fallback-state-card");
+      return null;
+    });
+    _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-provider-fallback-state-card");
+      const openai = {
+        connected: false,
+        defaultAuthType: null,
+        authTypes: {
+          api_key: { connected: false, isDefault: false },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      return {
+        providers: { openai },
+        openai: {
+          ...openai,
+          fallbackEnabled: false,
+        },
+      };
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Use the configured fallback chain." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-provider-fallback-state-card",
+      logPrefix: "[ModelRouterProviderStateCardFallbackTest]",
+    });
+
+    const capturedRequest = googleCaptured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "google");
+    assert.equal(result.model, "gemini-chain");
+    const stateCardMessage = capturedRequest?.messages.find((message) => (
+      message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+    ));
+    assert.ok(stateCardMessage, "fallback provider should receive a runtime state card");
+    const stateCard = messageContentText(stateCardMessage.content);
+    assert.match(stateCard, /Active model: fallback_chain:anthropic:claude-chain -> google:gemini-chain/);
+    assert.doesNotMatch(stateCard, /\n- Active model: anthropic:claude-chain\n/);
+    assert.match(stateCard, /Current context: provider_fallback_chain:/);
+    console.log("OK: provider runtime state cards describe fallback chains without stale primary model state");
+  } finally {
+    _setOpenAIProviderStatusResolverForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
 async function runPlainGptRequestUsesConfiguredChainAssertion(): Promise<void> {
   const previousEnv = new Map<string, string | undefined>();
   for (const key of [
@@ -2641,6 +2739,7 @@ runUserOpenAIProfileRouteAssertion()
   .then(runUserDefaultProviderProfileDoesNotSilentlyFallbackAssertion)
   .then(runExplicitProviderModelRouteAssertion)
   .then(runProviderWideRuntimeStateCardAssertion)
+  .then(runProviderRuntimeStateCardFallbackChainAssertion)
   .then(runPlainGptRequestUsesConfiguredChainAssertion)
   .then(runCoachChatSelectedProviderModelAssertion)
   .then(runRequestedProviderModelOverridesAmbientCodexRouteAssertion)
