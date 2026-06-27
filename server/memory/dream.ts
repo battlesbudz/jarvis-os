@@ -746,7 +746,7 @@ async function writeDreamMemoryCandidate(input: {
     trigger: "dream",
     category: input.insight.category || "fact",
     tier: "long_term",
-    memoryType: input.insight.memoryType || "semantic",
+    memoryType: input.insight.memoryType || "contextual",
     confidence: input.insight.confidence,
     sourceType: "dream_cycle",
     sourceRef: input.dreamDate,

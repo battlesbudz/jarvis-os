@@ -26,6 +26,11 @@ assert.match(
 );
 assert.match(
   source,
+  /memoryType: input\.insight\.memoryType \|\| "contextual"/,
+  "dream memory candidates without a model-supplied type should stay non-durable for review",
+);
+assert.match(
+  source,
   /keepPendingMemoryWrites\([\s\S]*High-confidence repeated dream memory was auto-kept/,
   "high-confidence repeated dream memories should be auto-kept through the review path",
 );
