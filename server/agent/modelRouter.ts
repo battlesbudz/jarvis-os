@@ -538,7 +538,7 @@ function hasInternalStructuredInstruction(
 
 function isPayloadLikeUserText(text: string): boolean {
   return /(?:^|\s)(?:user|assistant|agent|system|tool):\s+/i.test(text)
-    || /(?:^|\s)(?:source|source text|transcript|conversation|payload|task|title|description|context)\s*[:\n]/i.test(text);
+    || /(?:^|\s)(?:source|source text|transcript|conversation|payload|task|title|description|context|clusters?|examples?)\s*[:\n]/i.test(text);
 }
 
 function formattedRuntimeStateQueryNeedsStateCard(

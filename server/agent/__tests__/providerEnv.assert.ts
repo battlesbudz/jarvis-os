@@ -299,6 +299,26 @@ Return JSON only.`,
   }),
   true,
 );
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [{
+      role: "user",
+      content: [
+        "Draft candidate skills from these recurring intent clusters.",
+        "",
+        "Clusters:",
+        "Cluster 1 - 3 occurrences",
+        "Examples:",
+        "- What are my active tasks?",
+        "",
+        "Return ONLY a valid JSON array.",
+      ].join("\n"),
+    }],
+  }),
+  true,
+);
 console.log("OK: OpenAI chat patch disables runtime state cards for strict JSON-only SDK calls");
 
 withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "true", JARVIS_DEFAULT_MODEL: "chatgpt-codex-oauth/auto" }, () => {
