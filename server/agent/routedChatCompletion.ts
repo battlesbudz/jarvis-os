@@ -55,9 +55,15 @@ function requestsRuntimeStateContext(text: string): boolean {
     || /\bis\s+(?:phone gemma|local gemma|the local model|jarvis)\s+working\b/.test(text);
 }
 
-function isPayloadLikeUserText(text: string): boolean {
+function hasStrongPayloadWrapper(text: string): boolean {
   return /(?:^|\s)(?:user|assistant|agent|system|tool):\s+/i.test(text)
-    || /(?:^|\s)(?:source|source text|transcript|conversation|payload|task|title|description|context|clusters?|examples?|bullet|items?|input|request)\s*[:\n]/i.test(text);
+    || /(?:^|\s)(?:source|source text|transcript|conversation|payload|task|title|description|context|clusters?|examples?|bullet|items?)\s*[:\n]/i.test(text);
+}
+
+function isPayloadLikeUserText(text: string): boolean {
+  if (hasStrongPayloadWrapper(text)) return true;
+  if (!/(?:^|\s)(?:input|request)\s*[:\n]/i.test(text)) return false;
+  return hasInternalStructuredInstruction(text);
 }
 
 function directlyRequestsRuntimeStateContext(

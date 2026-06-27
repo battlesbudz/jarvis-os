@@ -516,6 +516,15 @@ function chainIncludesAndroidLocalGemma(chain: FallbackChainEntry[]): boolean {
   return chain.some((entry) => entry.providerName === "android-local-gemma");
 }
 
+function hasInternalStructuredInstructionText(instructionText: string): boolean {
+  return /\b(?:extract|classify|label|parse|lint|revise)\b.{0,160}\b(?:json|source|transcript|conversation|payload|request|labels?)\b/.test(instructionText)
+    || /\b(?:summari[sz]e|compress|compact|condense)\b.{0,160}\b(?:conversation|transcript|source|document|memo|text|content|summary)\b/.test(instructionText)
+    || /\b(?:synthesi[sz]e|synthesi[sz]ing|synthesis)\b.{0,160}\b(?:specialist|agent responses?|multiple ai agents|multiple specialist ai agents)\b/.test(instructionText)
+    || /\bscore\s+(?:this|the|each|every|request|source|transcript|conversation|payload)\b/.test(instructionText)
+    || /\b(?:from|using|of)\s+(?:(?:this|the)\s+)?(?:transcript|source|payload|conversation)\b/.test(instructionText)
+    || /\b(?:transcript|source|payload|conversation)\s+(?:text|content)\b/.test(instructionText);
+}
+
 function hasInternalStructuredInstruction(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
 ): boolean {
@@ -528,17 +537,18 @@ function hasInternalStructuredInstruction(
     .join("\n")
     .replace(/\s+/g, " ")
     .toLowerCase();
-  return /\b(?:extract|classify|label|parse|lint|revise)\b.{0,160}\b(?:json|source|transcript|conversation|payload|request|labels?)\b/.test(instructionText)
-    || /\b(?:summari[sz]e|compress|compact|condense)\b.{0,160}\b(?:conversation|transcript|source|document|memo|text|content|summary)\b/.test(instructionText)
-    || /\b(?:synthesi[sz]e|synthesi[sz]ing|synthesis)\b.{0,160}\b(?:specialist|agent responses?|multiple ai agents|multiple specialist ai agents)\b/.test(instructionText)
-    || /\bscore\s+(?:this|the|each|every|request|source|transcript|conversation|payload)\b/.test(instructionText)
-    || /\b(?:from|using|of)\s+(?:(?:this|the)\s+)?(?:transcript|source|payload|conversation)\b/.test(instructionText)
-    || /\b(?:transcript|source|payload|conversation)\s+(?:text|content)\b/.test(instructionText);
+  return hasInternalStructuredInstructionText(instructionText);
+}
+
+function hasStrongPayloadWrapper(text: string): boolean {
+  return /(?:^|\s)(?:user|assistant|agent|system|tool):\s+/i.test(text)
+    || /(?:^|\s)(?:source|source text|transcript|conversation|payload|task|title|description|context|clusters?|examples?|bullet|items?)\s*[:\n]/i.test(text);
 }
 
 function isPayloadLikeUserText(text: string): boolean {
-  return /(?:^|\s)(?:user|assistant|agent|system|tool):\s+/i.test(text)
-    || /(?:^|\s)(?:source|source text|transcript|conversation|payload|task|title|description|context|clusters?|examples?|bullet|items?|input|request)\s*[:\n]/i.test(text);
+  if (hasStrongPayloadWrapper(text)) return true;
+  if (!/(?:^|\s)(?:input|request)\s*[:\n]/i.test(text)) return false;
+  return hasInternalStructuredInstructionText(text.replace(/\s+/g, " ").toLowerCase());
 }
 
 function formattedRuntimeStateQueryNeedsStateCard(
