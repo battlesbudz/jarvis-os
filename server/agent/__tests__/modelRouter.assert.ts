@@ -28,6 +28,18 @@ function userMessage(content: string) {
   return [{ role: "user" as const, content }];
 }
 
+function messageContentText(content: ProviderQueryParams["messages"][number]["content"] | undefined): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return part.text;
+      return "";
+    })
+    .join("\n");
+}
+
 const CODEX_MODEL = "chatgpt-codex-oauth/auto";
 
 {
@@ -1214,6 +1226,148 @@ async function runExplicitProviderModelRouteAssertion(): Promise<void> {
     assert.equal(capturedRequest?.userId, "user-claude");
     console.log("OK: explicit selected provider model routes directly to that provider");
   } finally {
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "DATABASE_URL",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  const captured = new Map<string, ProviderQueryParams>();
+  class CapturingProvider extends BaseProvider {
+    constructor(private readonly provider: string) {
+      super();
+    }
+
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured.set(this.provider, params);
+      yield { type: "text", delta: `${this.provider} saw state card` };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  const routes = [
+    {
+      provider: "openai" as const,
+      requestedModel: "openai/gpt-4.1-mini",
+      expectedModel: "gpt-4.1-mini",
+      userId: "user-provider-openai",
+    },
+    {
+      provider: "anthropic" as const,
+      requestedModel: "anthropic/claude-sonnet-4-5",
+      expectedModel: "claude-sonnet-4-5",
+      userId: "user-provider-anthropic",
+    },
+    {
+      provider: "google" as const,
+      requestedModel: "google/gemini-2.5-flash",
+      expectedModel: "gemini-2.5-flash",
+      userId: "user-provider-google",
+    },
+    {
+      provider: "chatgpt-codex-oauth" as const,
+      requestedModel: CODEX_MODEL,
+      expectedModel: CODEX_MODEL,
+      userId: "user-provider-codex",
+    },
+  ];
+
+  try {
+    delete process.env.DATABASE_URL;
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "false";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("openai", new CapturingProvider("openai"));
+    _overrideProviderForTesting("anthropic", new CapturingProvider("anthropic"));
+    _overrideProviderForTesting("google", new CapturingProvider("google"));
+    _overrideProviderForTesting("chatgpt-codex-oauth", new CapturingProvider("chatgpt-codex-oauth"));
+    _setOpenAIProviderStatusResolverForTesting(async () => {
+      const openai = {
+        connected: false,
+        defaultAuthType: null,
+        authTypes: {
+          api_key: { connected: false, isDefault: false },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      return {
+        providers: { openai },
+        openai: {
+          ...openai,
+          fallbackEnabled: false,
+        },
+      };
+    });
+
+    for (const route of routes) {
+      const result = await routeModelTurn({
+        tier: "balanced",
+        requestedModel: route.requestedModel,
+        preferRequestedModel: true,
+        messages: [
+          { role: "system", content: "Keep this caller system instruction first." },
+          { role: "user", content: "Check the provider context." },
+        ],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "memory_search",
+              description: "Search runtime-approved memories.",
+              parameters: { type: "object", properties: { query: { type: "string" } } },
+            },
+          },
+        ],
+        toolChoice: "auto",
+        maxCompletionTokens: 64,
+        userId: route.userId,
+        logPrefix: `[ModelRouterProviderStateCardTest:${route.provider}]`,
+      });
+
+      const capturedRequest = captured.get(route.provider);
+      assert.equal(result.providerName, route.provider);
+      assert.equal(result.model, route.expectedModel);
+      assert.equal(capturedRequest?.toolChoice, "auto");
+      assert.equal(capturedRequest?.tools?.[0]?.function.name, "memory_search");
+      assert.equal(capturedRequest?.messages[0]?.role, "system");
+      assert.equal(
+        messageContentText(capturedRequest?.messages[0]?.content),
+        "Keep this caller system instruction first.",
+      );
+
+      const stateCardMessage = capturedRequest?.messages.find((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      ));
+      assert.ok(stateCardMessage, `${route.provider} should receive a runtime state card`);
+      const stateCard = messageContentText(stateCardMessage.content);
+      assert.match(stateCard, /Assistant: Jarvis/);
+      assert.match(stateCard, new RegExp(`User id: ${route.userId}`));
+      assert.match(stateCard, new RegExp(`Active model: ${route.provider}:${route.expectedModel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.match(stateCard, /Active device: cloud/);
+      assert.match(stateCard, /memory_search/);
+    }
+
+    console.log("OK: cloud providers receive the runtime state-card contract without losing tool access");
+  } finally {
+    _setOpenAIProviderStatusResolverForTesting(null);
     _clearProviderCacheForTesting();
     for (const [key, value] of previousEnv) {
       if (value == null) delete process.env[key];
@@ -2458,6 +2612,7 @@ runUserOpenAIProfileRouteAssertion()
   .then(runUserDefaultProviderProfileStreamingRouteAssertion)
   .then(runUserDefaultProviderProfileDoesNotSilentlyFallbackAssertion)
   .then(runExplicitProviderModelRouteAssertion)
+  .then(runProviderWideRuntimeStateCardAssertion)
   .then(runPlainGptRequestUsesConfiguredChainAssertion)
   .then(runCoachChatSelectedProviderModelAssertion)
   .then(runRequestedProviderModelOverridesAmbientCodexRouteAssertion)
