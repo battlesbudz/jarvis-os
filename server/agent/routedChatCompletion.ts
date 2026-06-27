@@ -18,6 +18,10 @@ export interface RoutedChatCompletionOptions {
   disableRuntimeStateCard?: boolean;
 }
 
+export interface RoutedOpenAIChatShimOptions extends Pick<RoutedChatCompletionOptions, "disableRuntimeStateCard"> {
+  runner?: RouteRunner;
+}
+
 function maxTokensFromBody(body: ChatCreateBody): number {
   const raw = Number(body.max_completion_tokens ?? body.max_tokens ?? 1024);
   if (!Number.isFinite(raw) || raw <= 0) return 1024;
@@ -111,16 +115,22 @@ export async function createRoutedChatCompletion(
 export function createRoutedOpenAIChatShim(
   logPrefix: string,
   tier: ModelExecutionTier = "balanced",
+  shimOptions: RoutedOpenAIChatShimOptions = {},
 ): Pick<OpenAI, "chat"> {
   return {
     chat: {
       completions: {
-        create: (body: ChatCreateBody, options?: { signal?: AbortSignal }) =>
-          createRoutedChatCompletion(body, {
-            signal: options?.signal,
-            tier,
-            logPrefix,
-          }),
+        create: (body: ChatCreateBody, requestOptions?: { signal?: AbortSignal }) =>
+          createRoutedChatCompletion(
+            body,
+            {
+              signal: requestOptions?.signal,
+              tier,
+              logPrefix,
+              disableRuntimeStateCard: shimOptions.disableRuntimeStateCard,
+            },
+            shimOptions.runner,
+          ),
       },
     },
   } as Pick<OpenAI, "chat">;

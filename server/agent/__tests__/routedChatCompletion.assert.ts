@@ -124,6 +124,32 @@ async function main() {
   assert.equal((captured as Record<string, unknown> | null)?.disableRuntimeStateCard, true);
   console.log("OK: routed chat completion disables runtime state cards for strict JSON-only shim calls");
 
+  captured = null;
+  const memoryVaultShim = createRoutedOpenAIChatShim("[MemoryVaultTest]", "balanced", {
+    disableRuntimeStateCard: true,
+    runner: async (params): Promise<ProviderTurnResult> => {
+      captured = params as unknown as Record<string, unknown>;
+      return {
+        textContent: "wiki page",
+        textChunks: ["wiki page"],
+        toolCallList: [],
+        finishReason: "stop",
+        providerName: "openai",
+        model: "gpt-4o-mini",
+      };
+    },
+  });
+  await memoryVaultShim.chat.completions.create({
+    model: "gpt-4o-mini",
+    user: "user-memory-vault",
+    messages: [{ role: "user", content: "Write the full revised wiki page content only." }],
+    max_tokens: 42,
+  });
+  assert.equal((captured as Record<string, unknown> | null)?.userId, "user-memory-vault");
+  assert.equal((captured as Record<string, unknown> | null)?.responseFormat, undefined);
+  assert.equal((captured as Record<string, unknown> | null)?.disableRuntimeStateCard, true);
+  console.log("OK: routed OpenAI chat shim can disable runtime state cards for internal memory writers");
+
   const shim = createRoutedOpenAIChatShim("[TestShim]");
   assert.equal(typeof shim.chat.completions.create, "function");
   console.log("OK: routed OpenAI chat shim exposes the existing chat.completions.create shape");
