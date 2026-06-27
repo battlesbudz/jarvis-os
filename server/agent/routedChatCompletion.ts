@@ -47,6 +47,13 @@ function messageContentText(content: OpenAI.Chat.Completions.ChatCompletionMessa
     .join("\n");
 }
 
+function requestsRuntimeStateContext(text: string): boolean {
+  return /\b(?:who am i|what do you know about me|what(?:'s| is) my name)\b/.test(text)
+    || /\b(?:my|current|active|connected|available)\s+(?:active\s+)?(?:tasks?|goals?|profile|identity|memories|memory|state|context|tools?|accounts?|capabilities|model)\b/.test(text)
+    || /\bwhat\s+(?:tools?|accounts?|capabilities|model)\b/.test(text)
+    || /\bis\s+(?:phone gemma|local gemma|the local model|jarvis)\s+working\b/.test(text);
+}
+
 export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
   const text = body.messages
     .map((message) => messageContentText(message.content))
@@ -54,6 +61,7 @@ export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
     .replace(/\s+/g, " ")
     .toLowerCase();
   if (!text.includes("json")) return false;
+  if (requestsRuntimeStateContext(text)) return false;
   const jsonTarget = /json(?:\s+(?:object|array|document|payload))?\b/;
   return new RegExp(
     String.raw`\b(?:return|respond|reply|output)\s+(?:with\s+)?only\s+(?:(?:a|the)\s+)?(?:single\s+)?(?:valid\s+)?${jsonTarget.source}`,
