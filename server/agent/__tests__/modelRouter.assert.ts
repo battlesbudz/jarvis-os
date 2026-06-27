@@ -1423,7 +1423,10 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
       tier: "cheap",
       requestedModel: "openai/gpt-4.1-mini",
       preferRequestedModel: true,
-      messages: [{ role: "user", content: "Return ONLY a JSON object with my active tasks." }],
+      messages: [
+        { role: "system", content: "Return only JSON matching this schema." },
+        { role: "user", content: "What are my active tasks?" },
+      ],
       responseFormat: { type: "json_object" },
       toolChoice: "none",
       maxCompletionTokens: 64,

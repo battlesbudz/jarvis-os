@@ -527,7 +527,7 @@ function hasInternalStructuredInstruction(
     .map((message) => textFromContent(message.content))
     .join("\n")
     .toLowerCase();
-  return /\b(?:extract|classify|label|score|parse|lint|revise|summari[sz]e|transcript|source|payload|schema)\b/.test(instructionText);
+  return /\b(?:extract|classify|label|score|parse|lint|revise|summari[sz]e|transcript|source|payload)\b/.test(instructionText);
 }
 
 function formattedRuntimeStateQueryNeedsStateCard(
