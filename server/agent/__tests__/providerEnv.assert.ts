@@ -188,6 +188,17 @@ assert.equal(
   _shouldDisableRuntimeStateCardForTesting({
     model: "gpt-4o-mini",
     user: "user-json-sdk",
+    messages: [
+      { role: "system", content: "Extract facts from this source. Return ONLY the JSON object." },
+      { role: "user", content: "Source text" },
+    ],
+  }),
+  true,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
     messages: [{ role: "user", content: "Show me a JSON example." }],
   }),
   false,

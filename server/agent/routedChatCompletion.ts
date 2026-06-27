@@ -54,9 +54,12 @@ export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
     .replace(/\s+/g, " ")
     .toLowerCase();
   if (!text.includes("json")) return false;
-  return /\b(?:return|respond|reply|output)\s+(?:with\s+)?(?:only\s+)?(?:a\s+)?(?:single\s+)?(?:valid\s+)?json\b/.test(text)
+  const jsonTarget = /json(?:\s+(?:object|array|document|payload))?\b/;
+  return new RegExp(
+    String.raw`\b(?:return|respond|reply|output)\s+(?:with\s+)?(?:only\s+)?(?:(?:a|the)\s+)?(?:single\s+)?(?:valid\s+)?${jsonTarget.source}`,
+  ).test(text)
     || /\b(?:return|respond|reply|output)\s+[^.]{0,80}\bjson\s+only\b/.test(text)
-    || /\bonly\s+(?:a\s+)?(?:single\s+)?(?:valid\s+)?json\b/.test(text);
+    || new RegExp(String.raw`\bonly\s+(?:(?:a|the)\s+)?(?:single\s+)?(?:valid\s+)?${jsonTarget.source}`).test(text);
 }
 
 export function getUserIdFromChatBody(body: unknown): string | undefined {
