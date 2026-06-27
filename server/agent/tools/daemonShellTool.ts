@@ -224,6 +224,7 @@ async function buildScreenMapElements(userId: string, ctx?: object): Promise<Bui
       stream: false,
       toolChoice: "none",
       userId,
+      disableRuntimeStateCard: true,
       logPrefix: "[ScreenMap]",
       messages: [
         {

@@ -40,6 +40,7 @@ Return ONLY the JSON object.`;
         messages: [{ role: "user", content: prompt }],
         maxCompletionTokens: 600,
         userId: req.userId ?? undefined,
+        disableRuntimeStateCard: true,
         logPrefix: "[CoachSuggestions]",
       });
 

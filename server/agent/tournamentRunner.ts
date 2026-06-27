@@ -118,6 +118,7 @@ async function judgeOutputs(opts: {
     stream: false,
     toolChoice: "none",
     userId: opts.userId,
+    disableRuntimeStateCard: true,
     logPrefix: "[TournamentJudge]",
     messages: [
       {

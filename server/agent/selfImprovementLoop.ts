@@ -372,6 +372,7 @@ async function _runCycleInner(
         toolChoice: 'none',
         userId,
         signal,
+        disableRuntimeStateCard: true,
         logPrefix: '[SelfImprovement]',
         messages: [
           {

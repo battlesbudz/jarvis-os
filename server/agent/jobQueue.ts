@@ -1673,6 +1673,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
           stream: false,
           toolChoice: "none",
           userId: job.userId,
+          disableRuntimeStateCard: true,
           logPrefix: "[BuildFeaturePlan]",
           messages: [
             {
