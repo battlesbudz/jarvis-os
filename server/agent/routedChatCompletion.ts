@@ -2,6 +2,7 @@ import type OpenAI from "openai";
 import { routeModelTurn, type ModelExecutionTier, type RoutedModelTurnParams } from "./modelRouter";
 import type { ProviderTurnResult } from "./providers/base";
 import type { RuntimeExplanation } from "../core/runtime/runtimeExplanation";
+import { classifyRuntimeMemoryInspectionIntent } from "../state/runtimeMemoryInspection";
 
 type ChatCreateBody = OpenAI.Chat.Completions.ChatCompletionCreateParams;
 type RouteRunner = (params: RoutedModelTurnParams) => Promise<ProviderTurnResult>;
@@ -59,8 +60,12 @@ function isPayloadLikeUserText(text: string): boolean {
     || /^\s*(?:source|source text|transcript|conversation|payload)\s*[:\n]/i.test(text);
 }
 
-function directlyRequestsRuntimeStateContext(text: string): boolean {
-  return requestsRuntimeStateContext(text) && !isPayloadLikeUserText(text);
+function directlyRequestsRuntimeStateContext(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  text: string,
+): boolean {
+  if (isPayloadLikeUserText(text)) return false;
+  return requestsRuntimeStateContext(text) || Boolean(classifyRuntimeMemoryInspectionIntent(messages));
 }
 
 function normalizeMessageText(message: OpenAI.Chat.Completions.ChatCompletionMessageParam): string {
@@ -78,7 +83,10 @@ function hasStrictJsonOnlyWording(text: string): boolean {
 }
 
 function hasInternalStructuredInstruction(text: string): boolean {
-  return /\b(?:extract|classify|label|score|parse|lint|revise|summari[sz]e|transcript|source|payload)\b/.test(text);
+  return /\b(?:extract|classify|label|parse|lint|revise|summari[sz]e)\b/.test(text)
+    || /\bscore\s+(?:this|the|each|every|request|source|transcript|conversation|payload)\b/.test(text)
+    || /\b(?:from|using|of)\s+(?:(?:this|the)\s+)?(?:transcript|source|payload|conversation)\b/.test(text)
+    || /\b(?:transcript|source|payload|conversation)\s+(?:text|content)\b/.test(text);
 }
 
 export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
@@ -91,7 +99,10 @@ export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
     .map((message) => message.text)
     .filter(hasStrictJsonOnlyWording);
   const lastUserText = [...normalizedMessages].reverse().find((message) => message.role === "user")?.text ?? "";
-  if (!instructionTexts.some(hasInternalStructuredInstruction) && directlyRequestsRuntimeStateContext(lastUserText)) {
+  if (
+    !instructionTexts.some(hasInternalStructuredInstruction) &&
+    directlyRequestsRuntimeStateContext(body.messages, lastUserText)
+  ) {
     return false;
   }
   const candidateTexts = instructionTexts.length > 0 ? instructionTexts : [lastUserText].filter(hasStrictJsonOnlyWording);

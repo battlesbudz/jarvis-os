@@ -130,7 +130,7 @@ async function main() {
       model: "gpt-4o-mini",
       user: "user-json-state-shim",
       messages: [
-        { role: "system", content: "Return only JSON matching this schema." },
+        { role: "system", content: "Return only JSON matching this schema: { tasks: [{ title, source }] }." },
         { role: "user", content: "What are my active tasks?" },
       ],
       response_format: { type: "json_object" },
@@ -153,6 +153,34 @@ async function main() {
   assert.deepEqual((captured as Record<string, unknown> | null)?.responseFormat, { type: "json_object" });
   assert.notEqual((captured as Record<string, unknown> | null)?.disableRuntimeStateCard, true);
   console.log("OK: routed chat completion keeps runtime state cards for JSON-formatted state questions");
+
+  captured = null;
+  await createRoutedChatCompletion(
+    {
+      model: "gpt-4o-mini",
+      user: "user-json-memory-state-shim",
+      messages: [
+        { role: "system", content: "Return only JSON." },
+        { role: "user", content: "What memories do you have about me?" },
+      ],
+      max_tokens: 42,
+    },
+    { tier: "cheap", logPrefix: "[TestRoutedJsonMemoryStateShim]" },
+    async (params): Promise<ProviderTurnResult> => {
+      captured = params as unknown as Record<string, unknown>;
+      return {
+        textContent: '{"memories":[]}',
+        textChunks: ['{"memories":[]}'],
+        toolCallList: [],
+        finishReason: "stop",
+        providerName: "openai",
+        model: "gpt-4o-mini",
+      };
+    },
+  );
+  assert.equal((captured as Record<string, unknown> | null)?.userId, "user-json-memory-state-shim");
+  assert.notEqual((captured as Record<string, unknown> | null)?.disableRuntimeStateCard, true);
+  console.log("OK: routed chat completion keeps runtime state cards for JSON-formatted memory questions");
 
   captured = null;
   const memoryVaultShim = createRoutedOpenAIChatShim("[MemoryVaultTest]", "balanced", {

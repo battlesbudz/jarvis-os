@@ -527,7 +527,10 @@ function hasInternalStructuredInstruction(
     .map((message) => textFromContent(message.content))
     .join("\n")
     .toLowerCase();
-  return /\b(?:extract|classify|label|score|parse|lint|revise|summari[sz]e|transcript|source|payload)\b/.test(instructionText);
+  return /\b(?:extract|classify|label|parse|lint|revise|summari[sz]e)\b/.test(instructionText)
+    || /\bscore\s+(?:this|the|each|every|request|source|transcript|conversation|payload)\b/.test(instructionText)
+    || /\b(?:from|using|of)\s+(?:(?:this|the)\s+)?(?:transcript|source|payload|conversation)\b/.test(instructionText)
+    || /\b(?:transcript|source|payload|conversation)\s+(?:text|content)\b/.test(instructionText);
 }
 
 function formattedRuntimeStateQueryNeedsStateCard(
@@ -539,7 +542,8 @@ function formattedRuntimeStateQueryNeedsStateCard(
   return /\b(?:who am i|what do you know about me|what(?:'s| is) my name)\b/.test(text)
     || /\b(?:my|current|active|connected|available)\s+(?:active\s+)?(?:tasks?|goals?|profile|identity|memories|memory|state|context|tools?|accounts?|capabilities|model)\b/.test(text)
     || /\bwhat\s+(?:tools?|accounts?|capabilities|model)\b/.test(text)
-    || /\bis\s+(?:phone gemma|local gemma|the local model|jarvis)\s+working\b/.test(text);
+    || /\bis\s+(?:phone gemma|local gemma|the local model|jarvis)\s+working\b/.test(text)
+    || Boolean(classifyRuntimeMemoryInspectionIntent(params.messages));
 }
 
 function shouldIncludeRuntimeMemoryContext(

@@ -1424,7 +1424,7 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
       requestedModel: "openai/gpt-4.1-mini",
       preferRequestedModel: true,
       messages: [
-        { role: "system", content: "Return only JSON matching this schema." },
+        { role: "system", content: "Return only JSON matching this schema: { tasks: [{ title, source }] }." },
         { role: "user", content: "What are my active tasks?" },
       ],
       responseFormat: { type: "json_object" },
@@ -1438,6 +1438,31 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
     assert.deepEqual(formattedStateRequest?.responseFormat, { type: "json_object" });
     assert.equal(
       formattedStateRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      true,
+    );
+
+    captured.delete("openai");
+    const formattedMemoryResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [
+        { role: "system", content: "Return only JSON." },
+        { role: "user", content: "What memories do you have about me?" },
+      ],
+      responseFormat: { type: "json_object" },
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-formatted-memory-state-card",
+      logPrefix: "[ModelRouterFormattedMemoryStateCardTest]",
+    });
+    const formattedMemoryRequest = captured.get("openai");
+    assert.equal(formattedMemoryResult.providerName, "openai");
+    assert.deepEqual(formattedMemoryRequest?.responseFormat, { type: "json_object" });
+    assert.equal(
+      formattedMemoryRequest?.messages.some((message) => (
         message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
       )),
       true,
