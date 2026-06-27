@@ -20,6 +20,8 @@ async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
 
 import { normalizeCategory, MEMORY_CATEGORIES } from "./categories";
 import { markSoulStale } from "./soul";
+import { containsRawRestrictedContent } from "./restrictedContent";
+import { planMemoryWrite } from "./writePipeline";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 
 export interface ExtractInput {
@@ -133,10 +135,64 @@ function shouldSkipLowSignalExtraction(source: string): boolean {
   return false;
 }
 
+function isRestrictedExtractionSource(value: unknown): boolean {
+  const normalized = String(value ?? "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!normalized) return false;
+  return [
+    "account_balance",
+    "bank",
+    "banking",
+    "card",
+    "credit",
+    "debit",
+    "financial",
+    "plaid",
+    "routing",
+    "transaction",
+    "transactions",
+  ].some((token) =>
+    normalized === token ||
+    normalized.startsWith(`${token}_`) ||
+    normalized.endsWith(`_${token}`) ||
+    normalized.includes(`_${token}_`)
+  );
+}
+
+function isRestrictedExtractionProvenanceRef(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Boolean(record.restricted) ||
+    String(record.sensitivity ?? "").trim().toLowerCase() === "restricted_summary" ||
+    isRestrictedExtractionSource(record.sourceType ?? record.source_type ?? record.kind) ||
+    isRestrictedExtractionSource(record.sourceRef ?? record.source_ref ?? record.id);
+}
+
+function isRestrictedExistingMemory(row: {
+  content: string;
+  sourceType?: string | null;
+  sourceRef?: string | null;
+  sensitivity?: string | null;
+  provenance?: unknown;
+}): boolean {
+  return String(row.sensitivity ?? "").trim().toLowerCase() === "restricted_summary" ||
+    isRestrictedExtractionSource(row.sourceType) ||
+    isRestrictedExtractionSource(row.sourceRef) ||
+    containsRawRestrictedContent(row.content) ||
+    (Array.isArray(row.provenance) && row.provenance.some(isRestrictedExtractionProvenanceRef));
+}
+
 export async function extractAndStore(input: ExtractInput): Promise<ExtractedMemory[]> {
   const { userId, source, sourceType, sourceRef, contextHint, maxNew = 3 } = input;
   if (!source.trim()) return [];
   if (shouldSkipLowSignalExtraction(source)) return [];
+  if (
+    containsRawRestrictedContent(source) ||
+    isRestrictedExtractionSource(sourceType) ||
+    isRestrictedExtractionSource(sourceRef)
+  ) {
+    console.warn(`[Memory] extraction skipped for restricted ${sourceType} source`);
+    return [];
+  }
   if (Date.now() < memoryExtractionCooldownUntil) {
     console.warn("[Memory] extraction skipped: provider backpressure cooldown active");
     return [];
@@ -147,7 +203,13 @@ export async function extractAndStore(input: ExtractInput): Promise<ExtractedMem
 
   try {
     const existingRows = await db
-      .select({ content: schema.userMemories.content })
+      .select({
+        content: schema.userMemories.content,
+        sourceType: schema.userMemories.sourceType,
+        sourceRef: schema.userMemories.sourceRef,
+        sensitivity: schema.userMemories.sensitivity,
+        provenance: schema.userMemories.provenance,
+      })
       .from(schema.userMemories)
       .where(and(
         eq(schema.userMemories.userId, userId),
@@ -155,7 +217,9 @@ export async function extractAndStore(input: ExtractInput): Promise<ExtractedMem
       ))
       .orderBy(desc(schema.userMemories.extractedAt))
       .limit(150);
-    const existingMemories = existingRows.map((r) => r.content);
+    const existingMemories = existingRows
+      .filter((row) => !isRestrictedExistingMemory(row))
+      .map((r) => r.content);
     const seen = new Set(existingMemories.map(normalizeForDedup));
 
     const existingList =
@@ -239,22 +303,32 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
       const tier = normalizeTier(typeof r.tier === "string" ? r.tier : null);
       const memoryType = normalizeMemoryType(typeof r.memory_type === "string" ? r.memory_type : null);
       const expiresAt = expiresAtForTier(tier);
-
-      // Determine if this memory needs human review before becoming active.
-      let pendingReview = false;
-      let reviewStatus = "active";
-      if (tier === "long_term" && (memoryType === "semantic" || memoryType === "procedural")) {
-        const reviewEnabled = await isMemoryReviewEnabledForUser(userId);
-        if (reviewEnabled) {
-          pendingReview = true;
-          reviewStatus = "pending";
-        }
+      const reviewEnabled = tier === "long_term" && (memoryType === "semantic" || memoryType === "procedural")
+        ? await isMemoryReviewEnabledForUser(userId)
+        : false;
+      const plan = planMemoryWrite({
+        userId,
+        content: text,
+        trigger: "inferred",
+        category,
+        confidence,
+        tier,
+        memoryType,
+        sourceType,
+        sourceRef,
+        expiresAt,
+        reviewEnabled,
+      });
+      if (!plan.record) {
+        console.log(`[Memory] skipped extracted memory (${plan.status}): ${plan.reason}`);
+        continue;
       }
+      const record = plan.record;
 
       let embedding: number[] | null = null;
       try {
         const { embedText } = await import("./retrieve");
-        embedding = await embedText(text);
+        embedding = await embedText(record.content);
       } catch (embedErr) {
         console.error("[Memory] embed on insert failed:", embedErr);
         diagEmit({
@@ -267,19 +341,21 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
       }
       try {
         const [inserted] = await db.insert(schema.userMemories).values({
-          userId,
-          content: text,
-          category,
-          confidence,
+          userId: record.userId,
+          content: record.content,
+          category: record.category,
+          confidence: record.confidence,
           relevanceScore: 50,
-          sourceType,
-          sourceRef: sourceRef || null,
+          sourceType: record.sourceType,
+          sourceRef: record.sourceRef,
           embedding: embedding ?? undefined,
-          tier,
-          memoryType,
-          expiresAt: expiresAt ?? undefined,
-          pendingReview,
-          reviewStatus,
+          tier: record.tier,
+          memoryType: record.memoryType,
+          expiresAt: record.expiresAt ?? undefined,
+          pendingReview: record.pendingReview,
+          reviewStatus: record.reviewStatus,
+          sensitivity: record.sensitivity,
+          provenance: record.provenance,
         }).returning({ id: schema.userMemories.id });
         if (embedding && inserted?.id) {
           try {
@@ -290,8 +366,14 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
           }
         }
         seen.add(norm);
-        stored.push({ content: text, category, confidence, tier, memoryType });
-        console.log(`[Memory] +${sourceType} [${category} ${tier}/${memoryType} c=${confidence}${embedding ? " e" : ""}${expiresAt ? " ttl" : ""}] ${text.slice(0, 70)}`);
+        stored.push({
+          content: record.content,
+          category: record.category,
+          confidence: record.confidence,
+          tier: record.tier,
+          memoryType: record.memoryType,
+        });
+        console.log(`[Memory] +${record.sourceType} [${record.category} ${record.tier}/${record.memoryType} c=${record.confidence}${embedding ? " e" : ""}${record.expiresAt ? " ttl" : ""}] ${record.content.slice(0, 70)}`);
       } catch (insertErr) {
         hadAnyError = true;
         console.error("[Memory] DB insert failed:", insertErr);
@@ -300,7 +382,7 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
           subsystem: "memory",
           severity: "error",
           message: `Memory DB insert failed: ${insertErr instanceof Error ? insertErr.message : String(insertErr)}`.slice(0, 300),
-          metadata: { operation: "extractAndStore_insert", sourceType, category, tier },
+          metadata: { operation: "extractAndStore_insert", sourceType: record.sourceType, category: record.category, tier: record.tier },
         }).catch(() => {});
       }
     }
@@ -338,11 +420,15 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
     // the legacy TTL-gated maybeRegenerateVault.
     const richSourceTypes = ["chat", "telegram", "email", "transcript", "document", "voice"];
     if (richSourceTypes.includes(sourceType)) {
-      import("./vaultWriter").then(({ ingestSource }) => {
-        ingestSource(userId, source, sourceType).catch((err) =>
-          console.error("[Memory] ingestSource:", err),
-        );
-      }).catch((err) => console.error("[Memory] vaultWriter import failed:", err));
+      if (containsRawRestrictedContent(source)) {
+        console.warn(`[Memory] skipped vault source ingest for restricted ${sourceType} source`);
+      } else {
+        import("./vaultWriter").then(({ ingestSource }) => {
+          ingestSource(userId, source, sourceType).catch((err) =>
+            console.error("[Memory] ingestSource:", err),
+          );
+        }).catch((err) => console.error("[Memory] vaultWriter import failed:", err));
+      }
     } else {
       import("./vaultWriter").then(({ maybeRegenerateVault }) => {
         maybeRegenerateVault(userId).catch((err) => console.error("[Memory] maybeRegenerateVault:", err));

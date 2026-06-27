@@ -36,11 +36,12 @@ async function main(): Promise<void> {
       skipAccessUpdate: true,
     },
     {
-      retrieveMemories: async (userId, query, limit, skipAccessUpdate) => {
+      retrieveMemories: async (userId, query, limit, skipAccessUpdate, options) => {
         assert.equal(userId, "memory-os-user");
         assert.equal(query, "morning planning");
-        assert.equal(limit, 3);
+        assert.equal(limit, 12);
         assert.equal(skipAccessUpdate, true);
+        assert.equal(options?.includeRestricted, true);
         return [memory()];
       },
     },
@@ -105,6 +106,226 @@ async function main(): Promise<void> {
   );
   assert.deepEqual(failed.items, []);
   assert.match(failed.uncertainty[0] ?? "", /database unavailable/);
+
+  const restricted = memory({
+    id: "restricted-summary-1",
+    content: "Food delivery spending is trending up. Account number 123456789, debit card ending in 1234, and available balance $500 were present in the raw source.",
+    sensitivity: "restricted_summary",
+    provenance: [{
+      sourceType: "plaid_transaction_rollup",
+      sourceRef: "rollup-1",
+      restricted: true,
+      sensitivity: "restricted_summary",
+    }],
+  });
+
+  const cloudRestricted = await retrieveMemoryContext(
+    { userId: "memory-os-user", query: "food delivery spending", caller: "coach_context" },
+    { retrieveMemories: async () => [restricted] },
+  );
+  assert.deepEqual(cloudRestricted.items, []);
+  assert.match(cloudRestricted.uncertainty.join(" "), /withheld from cloud model context/);
+
+  const legacyRestricted = await retrieveMemoryContext(
+    { userId: "memory-os-user", query: "legacy plaid", caller: "coach_context" },
+    {
+      retrieveMemories: async () => [
+        memory({
+          id: "legacy-plaid-1",
+          content: "Legacy Plaid memory from before the restricted metadata migration.",
+          sourceType: "plaid_transaction_rollup",
+          sourceRef: "legacy-rollup-1",
+          sensitivity: "normal",
+          provenance: [],
+        }),
+      ],
+    },
+  );
+  assert.deepEqual(legacyRestricted.items, []);
+  assert.match(legacyRestricted.uncertainty.join(" "), /withheld from cloud model context/);
+
+  const legacyAccountBalanceRestricted = await retrieveMemoryContext(
+    { userId: "memory-os-user", query: "account balance", caller: "coach_context" },
+    {
+      retrieveMemories: async () => [
+        memory({
+          id: "legacy-account-balance-1",
+          content: "Legacy account balance memory from before the restricted metadata migration.",
+          sourceType: "account_balance",
+          sourceRef: "account-balance:primary",
+          sensitivity: "normal",
+          provenance: [],
+        }),
+      ],
+    },
+  );
+  assert.deepEqual(legacyAccountBalanceRestricted.items, []);
+  assert.match(legacyAccountBalanceRestricted.uncertainty.join(" "), /withheld from cloud model context/);
+
+  const legacyRestrictedRefOnly = await retrieveMemoryContext(
+    { userId: "memory-os-user", query: "transaction source ref", caller: "coach_context" },
+    {
+      retrieveMemories: async () => [
+        memory({
+          id: "legacy-ref-only-1",
+          content: "Legacy source-ref-only restricted memory from before metadata normalization.",
+          sourceType: "manual",
+          sourceRef: "plaid:transactions:123",
+          sensitivity: "normal",
+          provenance: [],
+        }),
+      ],
+    },
+  );
+  assert.deepEqual(legacyRestrictedRefOnly.items, []);
+  assert.match(legacyRestrictedRefOnly.uncertainty.join(" "), /withheld from cloud model context/);
+
+  const legacyRawContentRestricted = await retrieveMemoryContext(
+    { userId: "memory-os-user", query: "checking balance", caller: "coach_context" },
+    {
+      retrieveMemories: async () => [
+        memory({
+          id: "legacy-raw-balance-1",
+          content: "My current checking balance is $5,000.",
+          sourceType: "manual",
+          sourceRef: "legacy-chat",
+          sensitivity: "normal",
+          provenance: [],
+        }),
+      ],
+    },
+  );
+  assert.deepEqual(legacyRawContentRestricted.items, []);
+  assert.match(legacyRawContentRestricted.uncertainty.join(" "), /withheld from cloud model context/);
+
+  const underfilledCloudContext = await retrieveMemoryContext(
+    {
+      userId: "memory-os-user",
+      query: "spending preference",
+      caller: "coach_context",
+      limit: 1,
+    },
+    {
+      retrieveMemories: async (_userId, _query, limit) => {
+        assert.equal(limit, 4);
+        return [
+          restricted,
+          memory({
+            id: "normal-memory-after-restricted",
+            content: "The user prefers weekly spending summaries.",
+            category: "preferences",
+          }),
+        ];
+      },
+    },
+  );
+  assert.equal(underfilledCloudContext.items.length, 1);
+  assert.equal(underfilledCloudContext.items[0]?.memory.id, "normal-memory-after-restricted");
+  assert.match(underfilledCloudContext.uncertainty.join(" "), /withheld from cloud model context/);
+
+  const fallbackCalls: Array<{ limit: number; canonicalOnly?: boolean }> = [];
+  const canonicalFallbackAfterRestrictedBrain = await retrieveMemoryContext(
+    {
+      userId: "memory-os-user",
+      query: "spending fallback",
+      caller: "coach_context",
+      limit: 2,
+    },
+    {
+      retrieveMemories: async (_userId, _query, limit, _skipAccessUpdate, options) => {
+        fallbackCalls.push({ limit, canonicalOnly: options?.canonicalOnly });
+        if (options?.canonicalOnly) {
+          return [
+            memory({
+              id: "canonical-normal-after-restricted-brain",
+              content: "The user prefers monthly spending summaries.",
+              category: "preferences",
+            }),
+          ];
+        }
+        return [
+          memory({
+            id: "restricted-brain-hit",
+            content: "Restricted projected spending summary.",
+            source: "gbrain",
+            sourceId: "memory/restricted-spending:0",
+            sourceRefs: [{
+              kind: "user_memory",
+              id: "restricted-brain-hit",
+              sourceType: "plaid:transactions",
+              sourceRef: "plaid:transactions:123",
+            }],
+          }),
+        ];
+      },
+    },
+  );
+  assert.deepEqual(fallbackCalls, [
+    { limit: 8, canonicalOnly: false },
+    { limit: 8, canonicalOnly: true },
+  ]);
+  assert.equal(canonicalFallbackAfterRestrictedBrain.items.length, 1);
+  assert.equal(
+    canonicalFallbackAfterRestrictedBrain.items[0]?.memory.id,
+    "canonical-normal-after-restricted-brain",
+  );
+  assert.match(canonicalFallbackAfterRestrictedBrain.uncertainty.join(" "), /withheld from cloud model context/);
+
+  const filteredAccessUpdates: string[][] = [];
+  const filteredAccessContext = await retrieveMemoryContext(
+    {
+      userId: "memory-os-user",
+      query: "restricted access update",
+      caller: "coach_context",
+      limit: 2,
+    },
+    {
+      retrieveMemories: async (_userId, _query, _limit, skipAccessUpdate) => {
+        assert.equal(skipAccessUpdate, true);
+        return [
+          restricted,
+          memory({
+            id: "returned-normal-memory",
+            content: "Normal memory that should receive the access update.",
+          }),
+        ];
+      },
+      incrementAccessCount: (ids) => {
+        filteredAccessUpdates.push(ids);
+      },
+    },
+  );
+  assert.equal(filteredAccessContext.items.length, 1);
+  assert.deepEqual(filteredAccessUpdates, [["returned-normal-memory"]]);
+
+  const localRestricted = await retrieveMemoryContext(
+    {
+      userId: "memory-os-user",
+      query: "food delivery spending",
+      caller: "coach_context",
+      modelTarget: "local",
+    },
+    { retrieveMemories: async () => [restricted] },
+  );
+  assert.equal(localRestricted.items.length, 1);
+  assert.match(localRestricted.items[0]?.memory.content ?? "", /^Restricted summary:/);
+  assert.doesNotMatch(localRestricted.items[0]?.memory.content ?? "", /123456789/);
+  assert.doesNotMatch(localRestricted.items[0]?.memory.content ?? "", /1234/);
+  assert.doesNotMatch(localRestricted.items[0]?.memory.content ?? "", /\$500/);
+  assert.match(localRestricted.uncertainty.join(" "), /sanitized for local model context/);
+
+  const allowedCloudRestricted = await retrieveMemoryContext(
+    {
+      userId: "memory-os-user",
+      query: "food delivery spending",
+      caller: "coach_context",
+      modelTarget: "cloud",
+      allowRestrictedMemory: true,
+    },
+    { retrieveMemories: async () => [restricted] },
+  );
+  assert.equal(allowedCloudRestricted.items.length, 1);
+  assert.match(allowedCloudRestricted.items[0]?.memory.content ?? "", /123456789/);
 
   const correction = await recordMemoryCorrection({
     userId: "memory-os-user",

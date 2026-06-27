@@ -192,7 +192,9 @@ export function registerProfileMemoryRoutes(app: Express): void {
           status: "edited",
           updatedContent,
         });
-        if (!result.approved) return res.status(404).json({ error: "Memory not found" });
+        if (!result.approved) {
+          return res.status(result.reason ? 400 : 404).json({ error: result.reason ?? "Memory not found" });
+        }
         await refreshApprovedMemoryDerivedContext(userId, [id, result.supersededMemoryId].filter((memoryId): memoryId is string => Boolean(memoryId)));
         return res.json({ ok: true, supersededMemoryId: result.supersededMemoryId });
       }
@@ -202,7 +204,9 @@ export function registerProfileMemoryRoutes(app: Express): void {
         memoryId: id,
         status: "kept",
       });
-      if (!result.approved) return res.status(404).json({ error: "Memory not found" });
+      if (!result.approved) {
+        return res.status(result.reason ? 400 : 404).json({ error: result.reason ?? "Memory not found" });
+      }
       await refreshApprovedMemoryDerivedContext(userId, [id, result.supersededMemoryId].filter((memoryId): memoryId is string => Boolean(memoryId)));
       return res.json({ ok: true, supersededMemoryId: result.supersededMemoryId });
     } catch (error) {

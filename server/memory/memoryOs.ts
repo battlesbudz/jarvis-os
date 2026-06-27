@@ -1,4 +1,5 @@
 import type { RetrievedMemory } from "./retrieve";
+import { containsRawRestrictedContent } from "./restrictedContent";
 
 export type MemoryOsCaller =
   | "memory_search"
@@ -19,6 +20,7 @@ export type MemoryProvenanceRef = {
 
 export type MemoryCorrectionOperation = "correct_existing_memory" | "propose_new_memory";
 export type MemoryCorrectionStatus = "review_required" | "invalid";
+export type MemoryModelTarget = "runtime" | "local" | "cloud";
 
 export type MemoryCorrectionInput = {
   userId: string;
@@ -81,10 +83,13 @@ export type RetrieveMemoryContextInput = {
   caller: MemoryOsCaller | string;
   skipAccessUpdate?: boolean;
   canonicalOnly?: boolean;
+  modelTarget?: MemoryModelTarget;
+  allowRestrictedMemory?: boolean;
 };
 
 export type MemoryRetrievalOptions = {
   canonicalOnly?: boolean;
+  includeRestricted?: boolean;
 };
 
 export type MemoryOsDeps = {
@@ -95,17 +100,27 @@ export type MemoryOsDeps = {
     skipAccessUpdate: boolean,
     options?: MemoryRetrievalOptions,
   ) => Promise<RetrievedMemory[]>;
+  incrementAccessCount?: (ids: string[]) => void;
 };
 
 const defaultDeps: MemoryOsDeps = {
   retrieveMemories: async (userId, query, limit, skipAccessUpdate, options) => {
     if (options?.canonicalOnly) {
       const { retrieveCanonicalRelevantMemories } = await import("./retrieve");
-      return retrieveCanonicalRelevantMemories(userId, query, limit, skipAccessUpdate);
+      return retrieveCanonicalRelevantMemories(userId, query, limit, skipAccessUpdate, {
+        includeRestricted: options.includeRestricted,
+      });
     }
 
     const { retrieveRelevantMemories } = await import("./retrieve");
-    return retrieveRelevantMemories(userId, query, limit, skipAccessUpdate);
+    return retrieveRelevantMemories(userId, query, limit, skipAccessUpdate, {
+      includeRestricted: options?.includeRestricted,
+    });
+  },
+  incrementAccessCount: (ids) => {
+    void import("./retrieve")
+      .then(({ batchIncrementAccessCount }) => batchIncrementAccessCount(ids))
+      .catch((err) => console.error("[MemoryOS] access_count update failed:", err));
   },
 };
 
@@ -133,6 +148,139 @@ function uniqueRefs(refs: MemoryProvenanceRef[]): MemoryProvenanceRef[] {
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(ref);
+  }
+  return out;
+}
+
+function uniqueMemoryIds(memories: Pick<RetrievedMemory, "id">[]): string[] {
+  return [...new Set(memories.map((memory) => memory.id).filter(Boolean))];
+}
+
+function cleanSingleLine(value: unknown): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+const RESTRICTED_SOURCE_TOKENS = [
+  "bank",
+  "banking",
+  "bank_statement",
+  "financial",
+  "financial_record",
+  "financial_transaction",
+  "transaction",
+  "plaid",
+  "credit_card",
+  "debit_card",
+  "tax_document",
+  "payroll",
+  "brokerage",
+  "account_balance",
+  "restricted_source",
+  "restricted_summary",
+];
+
+function isRestrictedSourceType(value: unknown): boolean {
+  const normalized = cleanSingleLine(value).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!normalized) return false;
+  return RESTRICTED_SOURCE_TOKENS.some((token) =>
+    normalized === token ||
+    normalized.startsWith(`${token}_`) ||
+    normalized.endsWith(`_${token}`) ||
+    normalized.includes(`_${token}_`)
+  );
+}
+
+function isRestrictedProvenanceRef(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  const sourceType = cleanSingleLine(record.sourceType ?? record.source_type ?? record.kind);
+  const sourceRef = cleanSingleLine(record.sourceRef ?? record.source_ref ?? record.id);
+  const sensitivity = cleanSingleLine(record.sensitivity).toLowerCase();
+  return Boolean(record.restricted) ||
+    sensitivity === "restricted_summary" ||
+    isRestrictedSourceType(sourceType) ||
+    isRestrictedSourceType(sourceRef);
+}
+
+function isRestrictedRetrievedMemory(memory: RetrievedMemory): boolean {
+  return cleanSingleLine(memory.sensitivity).toLowerCase() === "restricted_summary" ||
+    isRestrictedSourceType(memory.sourceType) ||
+    isRestrictedSourceType(memory.sourceRef) ||
+    containsRawRestrictedContent(memory.content) ||
+    (Array.isArray(memory.provenance) && memory.provenance.some(isRestrictedProvenanceRef)) ||
+    (Array.isArray(memory.sourceRefs) && memory.sourceRefs.some(isRestrictedProvenanceRef));
+}
+
+function sanitizeRestrictedMemoryContent(content: string): string {
+  const redacted = content
+    .replace(/\b(?:account|routing|card|debit|credit)\s*(?:number|no\.?|#|ending(?:\s+in)?|last\s+four)?\s*[:#-]?\s*(?:\d[\s-]?){4,}\b/gi, "[redacted identifier]")
+    .replace(/\blast\s+four\s*(?:digits?)?\s*[:#-]?\s*(?:\d[\s-]?){4}\b/gi, "[redacted identifier]")
+    .replace(/\b(?:ssn|social security)\b[\s\S]{0,40}\d{3}[\s-]?\d{2}[\s-]?\d{4}\b/gi, "[redacted identifier]")
+    .replace(/\b(?:available|current|ending)\s+balance\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/gi, "[redacted balance]")
+    .replace(/\b(?:bank|checking|savings|account)\s+balance\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/gi, "[redacted balance]")
+    .replace(/\bbalance\b[\s\S]{0,40}\b(?:bank|checking|savings|account)\b[\s\S]{0,80}\$?\d[\d,]*(?:\.\d{2})?\b/gi, "[redacted balance]")
+    .replace(/\b(?:bank|checking|savings|account)(?:\s+account)?\b[\s\S]{0,80}(?:\$\d[\d,]*(?:\.\d{2})?|\b\d{1,3}(?:,\d{3})+(?:\.\d{2})?\b)/gi, "[redacted balance]")
+    .replace(/(?:\$\d[\d,]*(?:\.\d{2})?|\b\d{1,3}(?:,\d{3})+(?:\.\d{2})?\b)[\s\S]{0,80}\b(?:bank|checking|savings|account)(?:\s+account)?\b/gi, "[redacted balance]")
+    .replace(/^\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+.{2,}\s+[-+]?\$?\d[\d,]*(?:\.\d{2})?\s*$/gim, "[redacted transaction row]")
+    .replace(/^\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}\s*,\s*[^,\n]{2,}\s*,\s*[-+]?\$?\d[\d,]*(?:\.\d{2})?\s*$/gim, "[redacted transaction row]")
+    .trim();
+  const compact = redacted.length > 260 ? `${redacted.slice(0, 257).trimEnd()}...` : redacted;
+  return compact || "Restricted summary available; raw details withheld.";
+}
+
+function prepareMemoryForModelTarget(
+  memory: RetrievedMemory,
+  target: MemoryModelTarget,
+  allowRestrictedMemory: boolean,
+): RetrievedMemory | null {
+  if (!isRestrictedRetrievedMemory(memory)) return memory;
+  if (target === "runtime" || (target === "cloud" && allowRestrictedMemory)) return memory;
+  if (target === "cloud") return null;
+  return {
+    ...memory,
+    content: `Restricted summary: ${sanitizeRestrictedMemoryContent(memory.content)}`,
+    sensitivity: "restricted_summary",
+  };
+}
+
+function prepareMemoriesForModelTarget(
+  memories: RetrievedMemory[],
+  target: MemoryModelTarget,
+  allowRestrictedMemory: boolean,
+): { memories: RetrievedMemory[]; uncertainty: string[] } {
+  const prepared: RetrievedMemory[] = [];
+  let withheld = 0;
+  let sanitized = 0;
+
+  for (const memory of memories) {
+    const restricted = isRestrictedRetrievedMemory(memory);
+    const next = prepareMemoryForModelTarget(memory, target, allowRestrictedMemory);
+    if (!next) {
+      withheld += 1;
+      continue;
+    }
+    if (restricted && target === "local") sanitized += 1;
+    prepared.push(next);
+  }
+
+  const uncertainty: string[] = [];
+  if (withheld > 0) {
+    uncertainty.push(`${withheld} restricted MemoryOS item${withheld === 1 ? " was" : "s were"} withheld from cloud model context.`);
+  }
+  if (sanitized > 0) {
+    uncertainty.push(`${sanitized} restricted MemoryOS summar${sanitized === 1 ? "y was" : "ies were"} sanitized for local model context.`);
+  }
+  return { memories: prepared, uncertainty };
+}
+
+function appendUniqueMemories(base: RetrievedMemory[], candidates: RetrievedMemory[], limit: number): RetrievedMemory[] {
+  const seen = new Set(base.map((memory) => memory.id).filter(Boolean));
+  const out = [...base];
+  for (const candidate of candidates) {
+    if (out.length >= limit) break;
+    if (seen.has(candidate.id)) continue;
+    seen.add(candidate.id);
+    out.push(candidate);
   }
   return out;
 }
@@ -254,9 +402,43 @@ export async function retrieveMemoryContext(
   }
 
   try {
-    const memories = await deps.retrieveMemories(input.userId, query, limit, skipAccessUpdate, {
+    const target = input.modelTarget ?? "cloud";
+    const rawLimit = target === "runtime" || (target === "cloud" && input.allowRestrictedMemory === true)
+      ? limit
+      : Math.min(50, Math.max(limit, limit * 4));
+    const rawMemories = await deps.retrieveMemories(input.userId, query, rawLimit, true, {
       canonicalOnly: input.canonicalOnly ?? false,
+      includeRestricted: true,
     });
+    const { memories: preparedMemories, uncertainty: boundaryUncertainty } = prepareMemoriesForModelTarget(
+      rawMemories,
+      target,
+      input.allowRestrictedMemory ?? false,
+    );
+    let memories = preparedMemories.slice(0, limit);
+    let uncertainty = boundaryUncertainty;
+    if (
+      memories.length < limit &&
+      !input.canonicalOnly &&
+      rawMemories.length > 0 &&
+      rawMemories.some(isRestrictedRetrievedMemory)
+    ) {
+      const fallbackLimit = Math.min(50, Math.max(limit, (limit - memories.length) * 4));
+      const canonicalFallback = await deps.retrieveMemories(input.userId, query, fallbackLimit, true, {
+        canonicalOnly: true,
+        includeRestricted: true,
+      });
+      const fallbackPrepared = prepareMemoriesForModelTarget(
+        canonicalFallback,
+        target,
+        input.allowRestrictedMemory ?? false,
+      );
+      memories = appendUniqueMemories(memories, fallbackPrepared.memories, limit);
+      uncertainty = [...uncertainty, ...fallbackPrepared.uncertainty];
+    }
+    if (!skipAccessUpdate) {
+      deps.incrementAccessCount?.(uniqueMemoryIds(memories));
+    }
     const items = memories.map((memory) => ({
       memory,
       provenance: provenanceForMemory(memory),
@@ -274,7 +456,10 @@ export async function retrieveMemoryContext(
         hotState: [],
       },
       provenance,
-      uncertainty: memories.length === 0 ? ["No relevant memories were found."] : [],
+      uncertainty: [
+        ...uncertainty,
+        ...(memories.length === 0 ? ["No relevant memories were found."] : []),
+      ],
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);

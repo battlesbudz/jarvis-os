@@ -621,6 +621,8 @@ async function defaultMemoryLookupCheck(input: PhoneGemmaDiagnosticKey): Promise
       caller: "runtime_memory_inspection",
       skipAccessUpdate: true,
       canonicalOnly: true,
+      modelTarget: "runtime",
+      allowRestrictedMemory: true,
     });
     const retrievalFailed = context.uncertainty.some((item) => /retrieval failed/i.test(item));
     if (retrievalFailed) {

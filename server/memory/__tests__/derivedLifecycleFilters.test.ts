@@ -5,6 +5,9 @@ import path from "node:path";
 const repoRoot = process.cwd();
 const soulSource = fs.readFileSync(path.resolve(repoRoot, "server/memory/soul.ts"), "utf8");
 const brainAdapterSource = fs.readFileSync(path.resolve(repoRoot, "server/brain/adapter.ts"), "utf8");
+const vaultWriterSource = fs.readFileSync(path.resolve(repoRoot, "server/memory/vaultWriter.ts"), "utf8");
+const extractorSource = fs.readFileSync(path.resolve(repoRoot, "server/memory/extractor.ts"), "utf8");
+const retrieveSource = fs.readFileSync(path.resolve(repoRoot, "server/memory/retrieve.ts"), "utf8");
 const runtimeContextSources = [
   "server/routes.ts",
   "server/curiosityScanner.ts",
@@ -23,11 +26,101 @@ const dedupeSources = [
   file,
   source: fs.readFileSync(path.resolve(repoRoot, file), "utf8"),
 }));
+const restrictedPromptReaderSources = [
+  "server/routes.ts",
+  "server/curiosityScanner.ts",
+  "server/heartbeat.ts",
+  "server/voiceRelayRoutes.ts",
+  "server/memory/dream.ts",
+  "server/memory/soul.ts",
+  "server/memory/vaultWriter.ts",
+  "server/agent/tools/memorySearch.ts",
+].map((file) => ({
+  file,
+  source: fs.readFileSync(path.resolve(repoRoot, file), "utf8"),
+}));
 
 assert.match(
   soulSource,
   /approvedMemoryLifecycleFilter[\s\S]*reviewStatus\} IN \('active', 'kept', 'edited'\)/,
   "Soul generation should only use active, kept, or edited user memories",
+);
+
+assert.match(
+  soulSource,
+  /approvedMemoryLifecycleFilter[\s\S]*COALESCE\(\$\{schema\.userMemories\.sensitivity\}, 'normal'\) = 'normal'/,
+  "Soul generation should not include restricted MemoryOS summaries in model prompt blocks",
+);
+
+assert.match(
+  soulSource,
+  /approvedMemoryLifecycleFilter[\s\S]*sourceType[\s\S]*NOT SIMILAR TO[\s\S]*sourceRef[\s\S]*NOT SIMILAR TO/,
+  "Soul generation should not include legacy restricted source_type/source_ref rows",
+);
+
+const voiceRelaySource = runtimeContextSources.find((entry) => entry.file === "server/voiceRelayRoutes.ts")?.source ?? "";
+assert.match(
+  voiceRelaySource,
+  /COALESCE\(\$\{userMemories\.sensitivity\}, 'normal'\) = 'normal'[\s\S]*userMemories\.sourceType[\s\S]*NOT SIMILAR TO[\s\S]*userMemories\.sourceRef[\s\S]*NOT SIMILAR TO/,
+  "Voice relay prompt context should exclude restricted user memories",
+);
+
+assert.match(
+  vaultWriterSource,
+  /approvedNonRestrictedMemoryClauses[\s\S]*COALESCE\(\$\{schema\.userMemories\.sensitivity\}, 'normal'\) = 'normal'[\s\S]*schema\.userMemories\.sourceType[\s\S]*NOT SIMILAR TO[\s\S]*schema\.userMemories\.sourceRef[\s\S]*NOT SIMILAR TO/,
+  "Knowledge vault source builders should exclude restricted user memories",
+);
+
+assert.match(
+  vaultWriterSource,
+  /safeSoulText[\s\S]*containsRawRestrictedContent\(soulText\)[\s\S]*Soul Summary\\n\$\{safeSoulText\.slice\(0, 3000\)\}/,
+  "Knowledge vault source builders should not include stale Soul text containing raw restricted details",
+);
+
+for (const { file, source } of restrictedPromptReaderSources) {
+  assert.match(
+    source,
+    /COALESCE\(\$\{(?:schema\.)?userMemories\.sensitivity\}, 'normal'\) = 'normal'|COALESCE\(sensitivity, 'normal'\) = 'normal'|filterRawRestrictedMemoryRows|containsRawRestrictedContent/,
+    `${file} should exclude restricted user memories from prompt-facing direct reads`,
+  );
+}
+
+for (const { file, source } of restrictedPromptReaderSources) {
+  assert.match(
+    source,
+    /containsRawRestrictedContent|filterRawRestrictedMemoryRows/,
+    `${file} should exclude legacy raw restricted content before prompt/tool output`,
+  );
+}
+
+assert.match(
+  retrieveSource,
+  /isRestrictedRetrievedMemory[\s\S]*containsRawRestrictedContent\(memory\.content\)/,
+  "Memory retrieval should treat legacy raw restricted content as restricted even when metadata is normal",
+);
+
+assert.match(
+  extractorSource,
+  /planMemoryWrite\([\s\S]*sensitivity: record\.sensitivity[\s\S]*provenance: record\.provenance/,
+  "Conversation extraction should route writes through the restricted memory write planner",
+);
+
+assert.match(
+  extractorSource,
+  /containsRawRestrictedContent\(source\)[\s\S]*skipped vault source ingest[\s\S]*ingestSource\(userId, source, sourceType\)/,
+  "Conversation extraction should not pass restricted raw rich sources into vault ingest",
+);
+
+assert.match(
+  extractorSource,
+  /containsRawRestrictedContent\(source\)[\s\S]*isRestrictedExtractionSource\(sourceType\)[\s\S]*isRestrictedExtractionSource\(sourceRef\)[\s\S]*return \[\][\s\S]*source\.slice\(0, 1800\)/,
+  "Conversation extraction should reject restricted source text before building model extraction prompts",
+);
+
+assert.match(
+  extractorSource,
+  /select\(\{[\s\S]*sourceType: schema\.userMemories\.sourceType[\s\S]*sourceRef: schema\.userMemories\.sourceRef[\s\S]*sensitivity: schema\.userMemories\.sensitivity[\s\S]*provenance: schema\.userMemories\.provenance[\s\S]*existingRows[\s\S]*filter\(\(row\) => !isRestrictedExistingMemory\(row\)\)[\s\S]*Existing memories/,
+  "Conversation extraction should filter legacy restricted memories before including existing memories in extraction prompts",
 );
 
 assert.match(

@@ -12,6 +12,7 @@ import {
   type MemoryTier,
   type MemoryType,
 } from "@shared/schema";
+import { containsRawRestrictedContent } from "./restrictedContent";
 
 export const WORKING_CONTEXT_TTL_MS = 72 * 60 * 60 * 1000;
 export const RECENT_CONTEXT_TTL_MS = 14 * 24 * 60 * 60 * 1000;
@@ -29,6 +30,16 @@ export type MemoryWriteDecisionStatus =
   | "review_required"
   | "excluded"
   | "invalid";
+
+export type MemorySensitivity = "normal" | "restricted_summary";
+
+export interface MemoryProvenanceMetadata {
+  sourceType: string;
+  sourceRef?: string | null;
+  sensitivity?: string;
+  label?: string;
+  restricted?: boolean;
+}
 
 export interface WorkingContextScope {
   scopeType: string;
@@ -70,6 +81,9 @@ export interface MemoryWriteInput {
   expiresAt?: Date | null;
   supersedesMemoryId?: string | null;
   reviewEnabled?: boolean;
+  sensitivity?: unknown;
+  provenance?: unknown;
+  restrictedSummaryApproved?: boolean;
 }
 
 export interface PlannedMemoryRecord {
@@ -85,6 +99,8 @@ export interface PlannedMemoryRecord {
   reviewStatus: MemoryLifecycleState;
   expiresAt: Date | null;
   supersedesMemoryId: string | null;
+  sensitivity: MemorySensitivity;
+  provenance: MemoryProvenanceMetadata[];
 }
 
 export interface MemoryWritePlan {
@@ -113,6 +129,14 @@ export interface MemoryApprovalResolution {
 export interface ApprovedPendingMemoryWriteRow {
   id: string;
   supersedes_memory_id: string | null;
+}
+
+interface PendingMemoryApprovalCandidateRow extends ApprovedPendingMemoryWriteRow {
+  content: string | null;
+  source_type: string | null;
+  source_ref: string | null;
+  sensitivity: string | null;
+  provenance: unknown;
 }
 
 export interface ApprovedPendingMemoryWritesResult {
@@ -152,6 +176,25 @@ export interface WorkingContextDeps {
 }
 
 const DIAGNOSTIC_SOURCE_PATTERN = /\b(diagnostic|diagnostics|self[_ -]?model|phone[_ -]?gemma[_ -]?diagnostic|test[_ -]?run)\b/i;
+const RESTRICTED_SOURCE_TOKENS = [
+  "bank",
+  "banking",
+  "bank_statement",
+  "financial",
+  "financial_record",
+  "financial_transaction",
+  "transaction",
+  "plaid",
+  "credit_card",
+  "debit_card",
+  "tax_document",
+  "payroll",
+  "brokerage",
+  "account_balance",
+  "restricted_source",
+  "restricted_summary",
+];
+export { containsRawRestrictedContent } from "./restrictedContent";
 
 function cleanSingleLine(value: unknown, fallback = ""): string {
   return String(value ?? fallback).replace(/\s+/g, " ").trim();
@@ -180,6 +223,78 @@ function normalizeTier(value: unknown, fallback: MemoryTier): MemoryTier {
 function normalizeMemoryType(value: unknown, fallback: MemoryType): MemoryType {
   const raw = cleanSingleLine(value).toLowerCase();
   return (MEMORY_TYPES as readonly string[]).includes(raw) ? (raw as MemoryType) : fallback;
+}
+
+function normalizeSensitivity(value: unknown): MemorySensitivity {
+  const raw = cleanSingleLine(value).toLowerCase();
+  return raw === "restricted_summary" ? "restricted_summary" : "normal";
+}
+
+function normalizeProvenance(value: unknown): MemoryProvenanceMetadata[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 12).flatMap((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    const sourceType = cleanSingleLine(record.sourceType ?? record.source_type ?? record.kind);
+    if (!sourceType) return [];
+    const sourceRef = cleanSingleLine(record.sourceRef ?? record.source_ref ?? record.id);
+    const sensitivity = cleanSingleLine(record.sensitivity);
+    const label = cleanSingleLine(record.label);
+    return [{
+      sourceType,
+      sourceRef: sourceRef || null,
+      sensitivity: sensitivity || undefined,
+      label: label || undefined,
+      restricted: Boolean(record.restricted),
+    }];
+  });
+}
+
+function isRestrictedSourceType(value: unknown): boolean {
+  const normalized = cleanSingleLine(value).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!normalized) return false;
+  return RESTRICTED_SOURCE_TOKENS.some((token) =>
+    normalized === token ||
+    normalized.startsWith(`${token}_`) ||
+    normalized.endsWith(`_${token}`) ||
+    normalized.includes(`_${token}_`)
+  );
+}
+
+function provenanceHasRestrictedSource(provenance: MemoryProvenanceMetadata[]): boolean {
+  return provenance.some((item) =>
+    item.restricted === true ||
+    normalizeSensitivity(item.sensitivity) === "restricted_summary" ||
+    isRestrictedSourceType(item.sourceType) ||
+    isRestrictedSourceType(item.sourceRef)
+  );
+}
+
+function hasRestrictedApprovalMetadata(row: PendingMemoryApprovalCandidateRow): boolean {
+  return normalizeSensitivity(row.sensitivity) === "restricted_summary" ||
+    isRestrictedSourceType(row.source_type) ||
+    isRestrictedSourceType(row.source_ref) ||
+    provenanceHasRestrictedSource(normalizeProvenance(row.provenance));
+}
+
+function isApprovedRestrictedSummary(input: MemoryWriteInput, sourceType: string): boolean {
+  return input.restrictedSummaryApproved === true || sourceType === "restricted_summary";
+}
+
+function buildRestrictedProvenance(
+  sourceType: string,
+  sourceRef: string | null,
+  provenance: MemoryProvenanceMetadata[],
+): MemoryProvenanceMetadata[] {
+  const refs = provenance.length > 0 ? provenance : [{
+    sourceType: sourceType || "restricted_source",
+    sourceRef,
+  }];
+  return refs.map((item) => ({
+    ...item,
+    sensitivity: "restricted_summary",
+    restricted: true,
+  }));
 }
 
 function addMs(date: Date, ms: number): Date {
@@ -222,8 +337,20 @@ export function buildWorkingContextRecord(input: WorkingContextRecordInput): Wor
 
 export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
   const userId = cleanSingleLine(input.userId);
-  const content = cleanContent(input.content);
+  const rawContent = String(input.content ?? "");
+  const content = cleanContent(rawContent);
   const now = input.now ?? new Date();
+  const inputSourceType = cleanSingleLine(input.sourceType);
+  const inputSourceRef = cleanSingleLine(input.sourceRef) || null;
+  const provenance = normalizeProvenance(input.provenance);
+  const requestedSensitivity = normalizeSensitivity(input.sensitivity);
+  const restrictedSource = isRestrictedSourceType(inputSourceType) ||
+    isRestrictedSourceType(inputSourceRef) ||
+    provenanceHasRestrictedSource(provenance) ||
+    requestedSensitivity === "restricted_summary";
+  const rawRestrictedContent = containsRawRestrictedContent(rawContent) ||
+    containsRawRestrictedContent(content);
+  const approvedRestrictedSummary = isApprovedRestrictedSummary(input, inputSourceType);
 
   if (!userId) {
     return {
@@ -258,7 +385,30 @@ export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
     };
   }
 
+  if ((restrictedSource || rawRestrictedContent) && !approvedRestrictedSummary) {
+    return {
+      status: "excluded",
+      reason: "Raw restricted-source records are excluded from normal MemoryOS. Store an approved high-level restricted summary instead.",
+      userId,
+      record: null,
+      supersedeMemoryIds: [],
+      oneTimeReviewTip: false,
+    };
+  }
+
+  if (approvedRestrictedSummary && rawRestrictedContent) {
+    return {
+      status: "excluded",
+      reason: "Approved restricted summaries must not include raw account, card, routing, balance, or transaction details.",
+      userId,
+      record: null,
+      supersedeMemoryIds: [],
+      oneTimeReviewTip: false,
+    };
+  }
+
   if (input.trigger === "working_context") {
+    const sensitivity: MemorySensitivity = approvedRestrictedSummary ? "restricted_summary" : "normal";
     return {
       status: "auto_write_working_context",
       reason: "Working context is short-lived and can update without manual review.",
@@ -276,6 +426,10 @@ export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
         reviewStatus: "active",
         expiresAt: input.expiresAt === undefined ? addMs(now, WORKING_CONTEXT_TTL_MS) : input.expiresAt,
         supersedesMemoryId: null,
+        sensitivity,
+        provenance: sensitivity === "restricted_summary"
+          ? buildRestrictedProvenance(inputSourceType || "restricted_summary", inputSourceRef, provenance)
+          : provenance,
       },
       supersedeMemoryIds: [],
       oneTimeReviewTip: false,
@@ -284,10 +438,13 @@ export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
 
   const supersedesMemoryId = cleanSingleLine(input.supersedesMemoryId) || null;
   const reviewEnabled = input.reviewEnabled ?? true;
-  const reviewRequired = reviewEnabled;
-  const sourceType = reviewRequired && input.trigger === "explicit_remember"
-    ? "explicit_remember"
-    : cleanSingleLine(input.sourceType, input.trigger === "dream" ? "dream_cycle" : "manual");
+  const reviewRequired = reviewEnabled && !approvedRestrictedSummary;
+  const sourceType = approvedRestrictedSummary
+    ? "restricted_summary"
+    : reviewRequired && input.trigger === "explicit_remember"
+      ? "explicit_remember"
+      : cleanSingleLine(input.sourceType, input.trigger === "dream" ? "dream_cycle" : "manual");
+  const sensitivity: MemorySensitivity = approvedRestrictedSummary ? "restricted_summary" : "normal";
   const reason = reviewRequired
     ? input.trigger === "explicit_remember"
       ? "Explicit long-term memories are queued for user review before they become active."
@@ -311,6 +468,10 @@ export function planMemoryWrite(input: MemoryWriteInput): MemoryWritePlan {
       reviewStatus: reviewRequired ? "pending" : "active",
       expiresAt: input.expiresAt ?? null,
       supersedesMemoryId,
+      sensitivity,
+      provenance: sensitivity === "restricted_summary"
+        ? buildRestrictedProvenance(inputSourceType || sourceType, inputSourceRef, provenance)
+        : provenance,
     },
     supersedeMemoryIds: supersedesMemoryId ? [supersedesMemoryId] : [],
     oneTimeReviewTip: reviewRequired && input.trigger === "explicit_remember",
@@ -340,6 +501,12 @@ export function buildRecentContextMemory(row: ExpiredWorkingContextRow, now = ne
     reviewStatus: "active",
     expiresAt: addMs(now, RECENT_CONTEXT_TTL_MS),
     supersedesMemoryId: null,
+    sensitivity: "normal",
+    provenance: [{
+      sourceType: "working_context",
+      sourceRef: `${scope}:${row.lastEventId}`,
+      label: row.scopeType,
+    }],
   };
 }
 
@@ -466,8 +633,42 @@ export async function approvePendingMemoryWrite(input: {
   memoryId: string;
   status: Extract<MemoryLifecycleState, "kept" | "edited">;
   updatedContent?: string | null;
-}): Promise<{ approved: boolean; supersededMemoryId: string | null }> {
-  const content = cleanContent(input.updatedContent);
+}): Promise<{ approved: boolean; supersededMemoryId: string | null; reason?: string }> {
+  const rawContent = String(input.updatedContent ?? "");
+  const content = cleanContent(rawContent);
+  if (content && (containsRawRestrictedContent(rawContent) || containsRawRestrictedContent(content))) {
+    return {
+      approved: false,
+      supersededMemoryId: null,
+      reason: "Edited memory content contains raw restricted details.",
+    };
+  }
+  const existingResult = await db.execute<PendingMemoryApprovalCandidateRow>(sql`
+    SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id
+    FROM user_memories
+    WHERE id = ${input.memoryId}
+      AND user_id = ${input.userId}
+      AND pending_review = TRUE
+      AND review_status = 'pending'
+    LIMIT 1
+  `);
+  const existingRow = (existingResult.rows ?? [])[0];
+  if (!existingRow?.content) return { approved: false, supersededMemoryId: null };
+  if (hasRestrictedApprovalMetadata(existingRow)) {
+    return {
+      approved: false,
+      supersededMemoryId: null,
+      reason: "Pending memory source is restricted.",
+    };
+  }
+  const existingContent = existingRow.content;
+  if (!content && containsRawRestrictedContent(existingContent)) {
+    return {
+      approved: false,
+      supersededMemoryId: null,
+      reason: "Pending memory content contains raw restricted details.",
+    };
+  }
   const setContent = content ? sql`, content = ${content}` : sql``;
   const result = await db.execute<{ id: string; supersedes_memory_id: string | null }>(sql`
     UPDATE user_memories
@@ -509,22 +710,36 @@ export async function keepPendingMemoryWrites(input: {
     return { approved: 0, memoryIds: [], supersededMemoryIds: [] };
   }
 
-  const result = memoryIds
-    ? await db.execute<ApprovedPendingMemoryWriteRow>(sql`
-      UPDATE user_memories
-      SET pending_review = FALSE,
-          review_status = 'kept'
+  const pendingResult = memoryIds
+    ? await db.execute<PendingMemoryApprovalCandidateRow>(sql`
+      SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id
+      FROM user_memories
       WHERE user_id = ${userId}
         AND id = ANY(${memoryIds}::varchar[])
         AND pending_review = TRUE
         AND review_status = 'pending'
-      RETURNING id, supersedes_memory_id
     `)
-    : await db.execute<ApprovedPendingMemoryWriteRow>(sql`
+    : await db.execute<PendingMemoryApprovalCandidateRow>(sql`
+      SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id
+      FROM user_memories
+      WHERE user_id = ${userId}
+        AND pending_review = TRUE
+        AND review_status = 'pending'
+    `);
+  const safeMemoryIds = (pendingResult.rows ?? [])
+    .filter((row) => !hasRestrictedApprovalMetadata(row))
+    .filter((row) => !containsRawRestrictedContent(row.content ?? ""))
+    .map((row) => row.id);
+  if (safeMemoryIds.length === 0) {
+    return { approved: 0, memoryIds: [], supersededMemoryIds: [] };
+  }
+
+  const result = await db.execute<ApprovedPendingMemoryWriteRow>(sql`
       UPDATE user_memories
       SET pending_review = FALSE,
           review_status = 'kept'
       WHERE user_id = ${userId}
+        AND id = ANY(${safeMemoryIds}::varchar[])
         AND pending_review = TRUE
         AND review_status = 'pending'
       RETURNING id, supersedes_memory_id
@@ -563,6 +778,8 @@ export const defaultMemoryWriteDeps: MemoryWritePipelineDeps = {
       pendingReview: record.pendingReview,
       reviewStatus: record.reviewStatus,
       supersedesMemoryId: record.supersedesMemoryId,
+      sensitivity: record.sensitivity,
+      provenance: record.provenance,
     }).returning({ id: userMemories.id });
     return { id: inserted.id };
   },

@@ -74,6 +74,7 @@ import { logInteraction, getRecentInteractions, formatInteractionTimeline } from
 import { runCoachChatSideEffects } from "./coachChatSideEffects";
 import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoulContent } from "./memory/soul";
 import { buildUntrustedSoulContext, BUDGET_PRESETS } from "./memory/contextBuilder";
+import { containsRawRestrictedContent } from "./memory/restrictedContent";
 import { listPeople, deletePerson } from "./memory/people";
 import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, type AndroidDaemonAction } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
@@ -112,6 +113,8 @@ import {
   runCoachModelTurn,
   streamCoachModelTurn,
 } from "./services/aiCoachContextService";
+
+const RESTRICTED_MEMORY_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
 
 function operatorActionPermKey(operatorAction: Record<string, unknown>): AndroidDaemonAction | null {
   switch (operatorAction.type) {
@@ -1635,13 +1638,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   eq(userMemories.userId, userId),
                   eq(userMemories.pendingReview, false),
                   sql`${userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+                  sql`COALESCE(${userMemories.sensitivity}, 'normal') = 'normal'`,
+                  sql`LOWER(COALESCE(${userMemories.sourceType}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
+                  sql`LOWER(COALESCE(${userMemories.sourceRef}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
                 ))
                 .orderBy(desc(userMemories.extractedAt))
                 .limit(50),
               getMorningNoteSummary(userId),
               getUserDocumentContext(userId),
             ]);
-            memories = rows;
+            memories = rows.filter((row) => !containsRawRestrictedContent(row.content ?? ""));
             morningNoteSummary = noteSummary;
             documentsContext = docsCtx;
           } catch {}

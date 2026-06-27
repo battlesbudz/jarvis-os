@@ -21,6 +21,7 @@ import { db } from "./db";
 import { and, eq, desc, sql } from "drizzle-orm";
 import { userMemories } from "@shared/schema";
 import { readWorkspaceFile } from "./workspace/loader";
+import { containsRawRestrictedContent } from "./memory/restrictedContent";
 
 // ── One-time relay ticket store ───────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ interface RelayTicket {
 
 const ticketStore = new Map<string, RelayTicket>();
 const TICKET_TTL_MS = 30_000;
+const RESTRICTED_MEMORY_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
 
 export function createRelayTicket(userId: string): string {
   const ticket = randomBytes(24).toString("hex");
@@ -103,14 +105,18 @@ async function loadUserMemories(userId: string, maxLines = 50): Promise<string> 
         eq(userMemories.userId, userId),
         eq(userMemories.pendingReview, false),
         sql`${userMemories.reviewStatus} IN ('active', 'kept', 'edited')`,
+        sql`COALESCE(${userMemories.sensitivity}, 'normal') = 'normal'`,
+        sql`LOWER(COALESCE(${userMemories.sourceType}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
+        sql`LOWER(COALESCE(${userMemories.sourceRef}, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}`,
       ))
       .orderBy(desc(userMemories.confidence))
       .limit(30);
 
-    if (!rows.length) return "";
+    const visibleRows = rows.filter((row) => !containsRawRestrictedContent(row.content ?? ""));
+    if (!visibleRows.length) return "";
 
     const lines: string[] = [];
-    for (const row of rows) {
+    for (const row of visibleRows) {
       if (lines.length >= maxLines) break;
       lines.push(`[${row.category ?? "general"}] ${row.content}`);
     }

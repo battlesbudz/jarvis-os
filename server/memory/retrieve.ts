@@ -14,6 +14,7 @@ import {
   upsertMemoryEmbedding,
   type MemoryVectorRow,
 } from "./vectorStore";
+import { containsRawRestrictedContent } from "./restrictedContent";
 
 const EMBED_MODEL = "text-embedding-3-small";
 const EMBED_DIMENSIONS = 1536;
@@ -28,12 +29,74 @@ export interface RetrievedMemory {
   confidence: number;
   accessCount: number;
   score: number;
+  sourceType?: string | null;
+  sourceRef?: string | null;
+  sensitivity?: string;
+  provenance?: unknown[];
   source?: "canonical" | "gbrain";
   sourceId?: string;
   sourceRefs?: QueryBrainResult["chunks"][number]["citations"];
 }
 
 type MemoryRow = MemoryVectorRow;
+export type RetrievedMemoryFilterOptions = {
+  includeRestricted?: boolean;
+};
+
+const RESTRICTED_SOURCE_TOKENS = [
+  "bank",
+  "banking",
+  "bank_statement",
+  "financial",
+  "financial_record",
+  "financial_transaction",
+  "transaction",
+  "plaid",
+  "credit_card",
+  "debit_card",
+  "tax_document",
+  "payroll",
+  "brokerage",
+  "account_balance",
+  "restricted_source",
+  "restricted_summary",
+];
+
+function isRestrictedSourceType(value: unknown): boolean {
+  const normalized = String(value ?? "").replace(/\s+/g, " ").trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  if (!normalized) return false;
+  return RESTRICTED_SOURCE_TOKENS.some((token) =>
+    normalized === token ||
+    normalized.startsWith(`${token}_`) ||
+    normalized.endsWith(`_${token}`) ||
+    normalized.includes(`_${token}_`)
+  );
+}
+
+function isRestrictedProvenanceRef(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Boolean(record.restricted) ||
+    String(record.sensitivity ?? "").trim().toLowerCase() === "restricted_summary" ||
+    isRestrictedSourceType(record.sourceType ?? record.source_type ?? record.kind) ||
+    isRestrictedSourceType(record.sourceRef ?? record.source_ref ?? record.id);
+}
+
+export function isRestrictedRetrievedMemory(memory: RetrievedMemory): boolean {
+  return String(memory.sensitivity ?? "").trim().toLowerCase() === "restricted_summary" ||
+    isRestrictedSourceType(memory.sourceType) ||
+    isRestrictedSourceType(memory.sourceRef) ||
+    containsRawRestrictedContent(memory.content) ||
+    (Array.isArray(memory.provenance) && memory.provenance.some(isRestrictedProvenanceRef)) ||
+    (Array.isArray(memory.sourceRefs) && memory.sourceRefs.some(isRestrictedProvenanceRef));
+}
+
+export function filterRestrictedRetrievedMemories<T extends RetrievedMemory>(
+  memories: T[],
+  options: RetrievedMemoryFilterOptions = {},
+): T[] {
+  return options.includeRestricted ? memories : memories.filter((memory) => !isRestrictedRetrievedMemory(memory));
+}
 
 function envFlagEnabled(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
@@ -185,7 +248,12 @@ function clampRelevanceScore(score: number): number {
 export function mapBrainChunksToRetrievedMemories(chunks: QueryBrainResult["chunks"]): RetrievedMemory[] {
   return chunks.map((chunk, index) => {
     const canonicalMemoryId = chunk.citations.find((citation) => citation.kind === "user_memory")?.id;
+    const canonicalCitation = chunk.citations.find((citation) => citation.kind === "user_memory");
     const brainChunkId = `${chunk.pageSlug}:${index}`;
+    const restricted = chunk.citations.some((citation) =>
+      isRestrictedSourceType(citation.sourceType) ||
+      isRestrictedSourceType(citation.sourceRef)
+    );
 
     return {
       id: canonicalMemoryId ?? brainChunkId,
@@ -197,6 +265,15 @@ export function mapBrainChunksToRetrievedMemories(chunks: QueryBrainResult["chun
       confidence: 80,
       accessCount: 0,
       score: chunk.score,
+      sourceType: canonicalCitation?.sourceType ?? null,
+      sourceRef: canonicalCitation?.sourceRef ?? null,
+      sensitivity: restricted ? "restricted_summary" : "normal",
+      provenance: chunk.citations.map((citation) => ({
+        sourceType: citation.sourceType ?? citation.kind,
+        sourceRef: citation.sourceRef ?? citation.id,
+        restricted: isRestrictedSourceType(citation.sourceType) || isRestrictedSourceType(citation.sourceRef),
+        sensitivity: restricted ? "restricted_summary" : undefined,
+      })),
       source: "gbrain",
       sourceId: brainChunkId,
       sourceRefs: chunk.citations,
@@ -250,12 +327,16 @@ export function rankMemoryRowsForRetrieval(
       id: r.id,
       content: r.content,
       category: r.category,
+      sourceType: r.source_type,
+      sourceRef: r.source_ref,
       tier: r.tier || "long_term",
       memoryType: r.memory_type || "semantic",
       relevanceScore: Number(r.relevance_score) || 0,
       confidence: Number(r.confidence) || 0,
       accessCount: Number(r.access_count) || 0,
       score,
+      sensitivity: String(r.sensitivity || "normal"),
+      provenance: Array.isArray(r.provenance) ? r.provenance : [],
     };
   });
 
@@ -269,16 +350,19 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
   queryVec: number[] | null,
   limit = 12,
   skipAccessUpdate = false,
+  options: RetrievedMemoryFilterOptions = {},
 ): Promise<RetrievedMemory[]> {
   const q = query.trim();
   if (!q) return [];
+  const includeRestricted = options.includeRestricted === true;
+  const retrievalLimit = includeRestricted ? limit : Math.min(50, Math.max(limit, limit * 4));
 
   let vectorRows: MemoryRow[] = [];
   const vectorSearch = await searchMemoryVectors({
     userId,
     query: q,
     queryEmbedding: queryVec,
-    limit,
+    limit: retrievalLimit,
   });
   if (vectorSearch.status === "ok" && vectorSearch.rows.length > 0) {
     vectorRows = vectorSearch.rows;
@@ -293,7 +377,8 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
   let rows: { rows: MemoryRow[] };
   try {
     const rawRows = await db.execute(sql`
-      SELECT id, content, category, tier, memory_type, relevance_score, confidence, access_count, embedding, extracted_at,
+      SELECT id, content, category, source_type, source_ref, tier, memory_type, relevance_score, confidence, access_count, embedding,
+             COALESCE(sensitivity, 'normal') AS sensitivity, COALESCE(provenance, '[]'::jsonb) AS provenance, extracted_at,
              ts_rank(to_tsvector('english', content), plainto_tsquery('english', ${q})) AS fts_rank
       FROM user_memories
       WHERE user_id = ${userId}
@@ -315,7 +400,10 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
     const detail = dbErr instanceof Error ? dbErr.message : String(dbErr);
     console.error("[MemoryRetrieve] DB query failed:", dbErr);
     if (vectorRows.length > 0) {
-      const top = rankMemoryRowsForRetrieval(vectorRows, queryVec, limit);
+      const top = filterRestrictedRetrievedMemories(
+        rankMemoryRowsForRetrieval(vectorRows, queryVec, retrievalLimit),
+        options,
+      ).slice(0, limit);
       applyAccessUpdateForRetrievedMemories(top, skipAccessUpdate);
       return top;
     }
@@ -335,7 +423,10 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
     const existing = candidates.get(row.id);
     candidates.set(row.id, existing ? { ...existing, ...row } : row);
   }
-  const top = rankMemoryRowsForRetrieval([...candidates.values()], queryVec, limit);
+  const top = filterRestrictedRetrievedMemories(
+    rankMemoryRowsForRetrieval([...candidates.values()], queryVec, retrievalLimit),
+    options,
+  ).slice(0, limit);
 
   if (vectorRows.length > 0) {
     diagEmit({
@@ -359,12 +450,13 @@ export async function retrieveCanonicalRelevantMemories(
   query: string,
   limit = 12,
   skipAccessUpdate = false,
+  options: RetrievedMemoryFilterOptions = {},
 ): Promise<RetrievedMemory[]> {
   const q = query.trim();
   if (!q) return [];
 
   const queryVec = await embedText(q);
-  return retrieveCanonicalMemoriesWithQueryVector(userId, q, queryVec, limit, skipAccessUpdate);
+  return retrieveCanonicalMemoriesWithQueryVector(userId, q, queryVec, limit, skipAccessUpdate, options);
 }
 
 /**
@@ -380,6 +472,7 @@ export async function retrieveRelevantMemories(
   query: string,
   limit = 12,
   skipAccessUpdate = false,
+  options: RetrievedMemoryFilterOptions = {},
 ): Promise<RetrievedMemory[]> {
   const q = query.trim();
   if (!q) return [];
@@ -387,15 +480,21 @@ export async function retrieveRelevantMemories(
   if (process.env.JARVIS_BRAIN_RETRIEVAL === "1") {
     try {
       const { queryBrain } = await import("../brain/adapter");
+      const brainRetrievalLimit = options.includeRestricted === true
+        ? limit
+        : Math.min(50, Math.max(limit, limit * 4));
       const derived = await queryBrain({
         userId,
         actorId: "memory-retrieve",
         query: q,
-        topK: limit,
+        topK: brainRetrievalLimit,
         approvalFilter: "approved_only",
       });
 
-      const mapped = mapBrainChunksToRetrievedMemories(derived.chunks);
+      const mapped = filterRestrictedRetrievedMemories(
+        mapBrainChunksToRetrievedMemories(derived.chunks),
+        options,
+      ).slice(0, limit);
       if (mapped.length > 0) {
         applyAccessUpdateForRetrievedMemories(mapped, skipAccessUpdate);
         return mapped;
@@ -405,5 +504,5 @@ export async function retrieveRelevantMemories(
     }
   }
 
-  return retrieveCanonicalRelevantMemories(userId, q, limit, skipAccessUpdate);
+  return retrieveCanonicalRelevantMemories(userId, q, limit, skipAccessUpdate, options);
 }

@@ -17,12 +17,29 @@ import * as schema from "@shared/schema";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 import { isRetriableProviderError } from "../agent/providers/fallback";
+import { containsRawRestrictedContent } from "./restrictedContent";
 
 const openai = createRoutedOpenAIChatShim("[MemoryVault]", "balanced");
 
 const VAULT_TTL_MS = 6 * 60 * 60 * 1000;
 const VAULT_NOVELTY_THRESHOLD = 3;
 const APPROVED_MEMORY_STATUS_SQL = sql`('active', 'kept', 'edited')`;
+const RESTRICTED_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
+
+function approvedNonRestrictedMemoryClauses(userId: string) {
+  return [
+    eq(schema.userMemories.userId, userId),
+    eq(schema.userMemories.pendingReview, false),
+    sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
+    sql`COALESCE(${schema.userMemories.sensitivity}, 'normal') = 'normal'`,
+    sql`LOWER(COALESCE(${schema.userMemories.sourceType}, '')) NOT SIMILAR TO ${RESTRICTED_SOURCE_SQL_PATTERN}`,
+    sql`LOWER(COALESCE(${schema.userMemories.sourceRef}, '')) NOT SIMILAR TO ${RESTRICTED_SOURCE_SQL_PATTERN}`,
+  ];
+}
+
+function filterRawRestrictedMemoryRows<T extends { content?: string | null }>(rows: T[]): T[] {
+  return rows.filter((row) => !containsRawRestrictedContent(row.content ?? ""));
+}
 
 // ── Page definitions ──────────────────────────────────────────────────────────
 
@@ -44,10 +61,9 @@ export async function buildAboutYouSource(userId: string): Promise<string> {
       .from(schema.userMemories)
       .where(
         and(
-          eq(schema.userMemories.userId, userId),
+          ...approvedNonRestrictedMemoryClauses(userId),
           eq(schema.userMemories.tier, "long_term"),
           sql`${schema.userMemories.category} IN ('values','communication_style','preferences','fact')`,
-          sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
         ),
       )
       .orderBy(desc(schema.userMemories.extractedAt))
@@ -55,9 +71,10 @@ export async function buildAboutYouSource(userId: string): Promise<string> {
   ]);
 
   const soulText = soulRows[0]?.content || "";
-  const memList = memRows.map((m) => `[${m.category}] ${m.content}`).join("\n");
+  const safeSoulText = containsRawRestrictedContent(soulText) ? "" : soulText;
+  const memList = filterRawRestrictedMemoryRows(memRows).map((m) => `[${m.category}] ${m.content}`).join("\n");
 
-  return `## Soul Summary\n${soulText.slice(0, 3000)}\n\n## Identity & Preference Memories\n${memList}`;
+  return `## Soul Summary\n${safeSoulText.slice(0, 3000)}\n\n## Identity & Preference Memories\n${memList}`;
 }
 
 export async function buildProjectsSource(userId: string): Promise<string> {
@@ -67,10 +84,9 @@ export async function buildProjectsSource(userId: string): Promise<string> {
       .from(schema.userMemories)
       .where(
         and(
-          eq(schema.userMemories.userId, userId),
+          ...approvedNonRestrictedMemoryClauses(userId),
           eq(schema.userMemories.tier, "long_term"),
           sql`${schema.userMemories.category} IN ('goals_history','accomplishments')`,
-          sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
         ),
       )
       .orderBy(desc(schema.userMemories.extractedAt))
@@ -82,7 +98,7 @@ export async function buildProjectsSource(userId: string): Promise<string> {
       .limit(1),
   ]);
 
-  const memList = memRows.map((m) => `- ${m.content}`).join("\n");
+  const memList = filterRawRestrictedMemoryRows(memRows).map((m) => `- ${m.content}`).join("\n");
   const goalData = goalRows[0]?.data;
   const goalText =
     Array.isArray(goalData) && goalData.length > 0
@@ -114,9 +130,8 @@ export async function buildPeopleSource(userId: string): Promise<string> {
       .from(schema.userMemories)
       .where(
         and(
-          eq(schema.userMemories.userId, userId),
+          ...approvedNonRestrictedMemoryClauses(userId),
           eq(schema.userMemories.category, "relationships"),
-          sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
         ),
       )
       .orderBy(desc(schema.userMemories.extractedAt))
@@ -134,7 +149,7 @@ export async function buildPeopleSource(userId: string): Promise<string> {
     })
     .join("\n");
 
-  const memList = memRows.map((m) => `- ${m.content}`).join("\n");
+  const memList = filterRawRestrictedMemoryRows(memRows).map((m) => `- ${m.content}`).join("\n");
   return `## People Directory\n${peopleList || "No people recorded yet."}\n\n## Relationship Memories\n${memList}`;
 }
 
@@ -173,17 +188,16 @@ export async function buildDecisionsSource(userId: string): Promise<string> {
     .from(schema.userMemories)
     .where(
       and(
-        eq(schema.userMemories.userId, userId),
+        ...approvedNonRestrictedMemoryClauses(userId),
         sql`${schema.userMemories.category} IN ('goals_history','values','blockers')`,
         eq(schema.userMemories.tier, "long_term"),
-        sql`${schema.userMemories.reviewStatus} IN ${APPROVED_MEMORY_STATUS_SQL}`,
       ),
     )
     .orderBy(desc(schema.userMemories.extractedAt))
     .limit(80);
 
   const grouped: Record<string, string[]> = {};
-  for (const r of rows) {
+  for (const r of filterRawRestrictedMemoryRows(rows)) {
     if (!grouped[r.category]) grouped[r.category] = [];
     grouped[r.category].push(r.content);
   }

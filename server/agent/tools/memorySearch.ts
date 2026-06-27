@@ -2,6 +2,7 @@ import type { AgentTool, ToolArgs, ToolContext, ToolResult } from "../types";
 import { batchIncrementAccessCount } from "../../memory/retrieve";
 import type { RetrievedMemory } from "../../memory/retrieve";
 import { retrieveMemoryContext, memoryContextItemsToRetrievedMemories, type MemoryContext } from "../../memory/memoryOs";
+import { containsRawRestrictedContent } from "../../memory/restrictedContent";
 import { defaultMemoryWriteDeps, planMemoryWrite } from "../../memory/writePipeline";
 import { db } from "../../db";
 import { eq, sql } from "drizzle-orm";
@@ -16,6 +17,8 @@ import {
   type MemoryTier,
   type MemoryType,
 } from "@shared/schema";
+
+const RESTRICTED_MEMORY_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
 
 interface MemoryRow {
   id: string;
@@ -187,6 +190,8 @@ async function executeMemorySave(
       pendingReview: plan.record.pendingReview,
       reviewStatus: plan.record.reviewStatus,
       supersedesMemoryId: plan.record.supersedesMemoryId,
+      sensitivity: plan.record.sensitivity,
+      provenance: plan.record.provenance,
     }).returning({ id: userMemories.id });
 
     if (embedding && inserted?.id) {
@@ -521,6 +526,7 @@ export const memoryGetTool: AgentTool = {
     }
 
     const limit = Math.min(40, Math.max(1, Number(args.limit) || 20));
+    const candidateLimit = Math.min(100, Math.max(limit, limit * 4));
 
     try {
       const rawRowsResult = await db.execute(sql`
@@ -531,11 +537,16 @@ export const memoryGetTool: AgentTool = {
           AND (expires_at IS NULL OR expires_at >= NOW())
           AND (pending_review = FALSE OR pending_review IS NULL)
           AND review_status IN ('active', 'kept', 'edited')
+          AND COALESCE(sensitivity, 'normal') = 'normal'
+          AND LOWER(COALESCE(source_type, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}
+          AND LOWER(COALESCE(source_ref, '')) NOT SIMILAR TO ${RESTRICTED_MEMORY_SOURCE_SQL_PATTERN}
         ORDER BY confidence DESC, relevance_score DESC
-        LIMIT ${limit}
+        LIMIT ${candidateLimit}
       `);
 
-      const memories = (rawRowsResult.rows ?? []) as MemoryRow[];
+      const memories = ((rawRowsResult.rows ?? []) as MemoryRow[])
+        .filter((row) => !containsRawRestrictedContent(row.content ?? ""))
+        .slice(0, limit);
 
       if (memories.length === 0) {
         return {

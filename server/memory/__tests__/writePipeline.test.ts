@@ -272,6 +272,186 @@ async function testDiagnosticWritesAreExcluded(): Promise<void> {
   console.log("OK: diagnostics and tests are excluded from real memories");
 }
 
+async function testRawRestrictedSourceWritesAreExcluded(): Promise<void> {
+  const { planMemoryWrite } = await loadPipeline();
+  const plan = planMemoryWrite({
+    userId: "user-123",
+    content: "Checking account number 123456789 has an available balance of $1,234.56.",
+    trigger: "inferred",
+    sourceType: "plaid_transaction",
+    sourceRef: "plaid-item-1",
+    now,
+  });
+
+  assert.equal(plan.status, "excluded");
+  assert.equal(plan.record, null);
+  assert.match(plan.reason, /Raw restricted-source records/);
+
+  const highLevelButUnapproved = planMemoryWrite({
+    userId: "user-123",
+    content: "Food delivery spending was higher than usual this week.",
+    trigger: "inferred",
+    sourceType: "plaid_transaction_rollup",
+    sourceRef: "rollup-2026-06-26",
+    now,
+  });
+  assert.equal(highLevelButUnapproved.status, "excluded");
+  assert.equal(highLevelButUnapproved.record, null);
+
+  const manualBankBalance = planMemoryWrite({
+    userId: "user-123",
+    content: "My bank balance is $5,000.",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(manualBankBalance.status, "excluded");
+  assert.equal(manualBankBalance.record, null);
+
+  const manualCheckingBalance = planMemoryWrite({
+    userId: "user-123",
+    content: "My current checking balance is $5,000.",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(manualCheckingBalance.status, "excluded");
+  assert.equal(manualCheckingBalance.record, null);
+
+  const manualTransactionRows = planMemoryWrite({
+    userId: "user-123",
+    content: "Transactions:\n2026-06-26 Starbucks -$5.00",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(manualTransactionRows.status, "excluded");
+  assert.equal(manualTransactionRows.record, null);
+
+  const manualCsvTransactionRows = planMemoryWrite({
+    userId: "user-123",
+    content: "Transactions:\n2026-06-26, Starbucks, -$5.00",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(manualCsvTransactionRows.status, "excluded");
+  assert.equal(manualCsvTransactionRows.record, null);
+
+  const manualCardEnding = planMemoryWrite({
+    userId: "user-123",
+    content: "My debit card ending in 1234 is for grocery purchases.",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(manualCardEnding.status, "excluded");
+  assert.equal(manualCardEnding.record, null);
+
+  const standaloneLastFour = planMemoryWrite({
+    userId: "user-123",
+    content: "The last four digits are 1234.",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(standaloneLastFour.status, "excluded");
+  assert.equal(standaloneLastFour.record, null);
+
+  const manualCheckingAccountHasAmount = planMemoryWrite({
+    userId: "user-123",
+    content: "My checking account has $5,000.",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(manualCheckingAccountHasAmount.status, "excluded");
+  assert.equal(manualCheckingAccountHasAmount.record, null);
+
+  const manualAmountInSavings = planMemoryWrite({
+    userId: "user-123",
+    content: "I have $5,000 in my savings account.",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(manualAmountInSavings.status, "excluded");
+  assert.equal(manualAmountInSavings.record, null);
+
+  const ordinaryCheckIn = planMemoryWrite({
+    userId: "user-123",
+    content: "The user prefers checking in at 9 before standup.",
+    trigger: "explicit_remember",
+    sourceType: "manual",
+    now,
+  });
+  assert.equal(ordinaryCheckIn.status, "review_required");
+  assert.equal(ordinaryCheckIn.record?.content, "The user prefers checking in at 9 before standup.");
+  console.log("OK: raw restricted-source records are excluded from normal MemoryOS");
+}
+
+async function testApprovalEditsRejectRawRestrictedContent(): Promise<void> {
+  const pipelineSource = fs.readFileSync(path.resolve(process.cwd(), "server/memory/writePipeline.ts"), "utf8");
+  assert.match(
+    pipelineSource,
+    /approvePendingMemoryWrite[\s\S]*containsRawRestrictedContent\(rawContent\)[\s\S]*containsRawRestrictedContent\(content\)[\s\S]*Edited memory content contains raw restricted details[\s\S]*SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id[\s\S]*hasRestrictedApprovalMetadata\(existingRow\)[\s\S]*Pending memory source is restricted[\s\S]*containsRawRestrictedContent\(existingContent\)[\s\S]*Pending memory content contains raw restricted details[\s\S]*UPDATE user_memories/,
+    "Approval edits and keeps should reject raw restricted content before updating pending memories",
+  );
+  assert.match(
+    pipelineSource,
+    /keepPendingMemoryWrites[\s\S]*SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id[\s\S]*safeMemoryIds[\s\S]*hasRestrictedApprovalMetadata\(row\)[\s\S]*containsRawRestrictedContent\(row\.content \?\? ""\)[\s\S]*UPDATE user_memories[\s\S]*AND id = ANY\(\$\{safeMemoryIds\}::varchar\[\]\)/,
+    "Bulk approval should validate pending content before promoting memories",
+  );
+  console.log("OK: approval edits reject raw restricted details before DB updates");
+}
+
+async function testApprovedRestrictedSummariesCarryMetadata(): Promise<void> {
+  const { planMemoryWrite } = await loadPipeline();
+  const plan = planMemoryWrite({
+    userId: "user-123",
+    content: "The user's food delivery spending was higher than usual this week.",
+    trigger: "inferred",
+    sourceType: "plaid",
+    sourceRef: "plaid-weekly-summary",
+    restrictedSummaryApproved: true,
+    provenance: [{
+      sourceType: "plaid_transaction_rollup",
+      sourceRef: "rollup-2026-06-26",
+      restricted: true,
+      label: "weekly spending rollup",
+    }],
+    now,
+  });
+
+  assert.equal(plan.status, "auto_write_memory");
+  assert.equal(plan.record?.pendingReview, false);
+  assert.equal(plan.record?.reviewStatus, "active");
+  assert.equal(plan.record?.sourceType, "restricted_summary");
+  assert.equal(plan.record?.sensitivity, "restricted_summary");
+  assert.equal(plan.record?.provenance[0]?.restricted, true);
+  assert.equal(plan.record?.provenance[0]?.sensitivity, "restricted_summary");
+  assert.equal(plan.record?.provenance[0]?.sourceRef, "rollup-2026-06-26");
+  console.log("OK: approved restricted summaries retain provenance and sensitivity metadata");
+}
+
+async function testApprovedRestrictedSummariesRejectRawDetails(): Promise<void> {
+  const { planMemoryWrite } = await loadPipeline();
+  const plan = planMemoryWrite({
+    userId: "user-123",
+    content: "Approved summary: routing number 021000021 appeared in the data.",
+    trigger: "inferred",
+    sourceType: "plaid",
+    restrictedSummaryApproved: true,
+    reviewEnabled: false,
+    now,
+  });
+
+  assert.equal(plan.status, "excluded");
+  assert.equal(plan.record, null);
+  assert.match(plan.reason, /must not include raw account/);
+  console.log("OK: approved restricted summaries still reject raw financial identifiers");
+}
+
 async function testConflictSupersessionIsPlannedForApproval(): Promise<void> {
   const { buildApprovedMemorySupersessions, buildMemoryApprovalResolution, planMemoryWrite } = await loadPipeline();
   const plan = planMemoryWrite({
@@ -318,6 +498,10 @@ async function main(): Promise<void> {
   await testExplicitRememberRequiresReview();
   await testExplicitRememberHonorsDisabledReviewGate();
   await testDiagnosticWritesAreExcluded();
+  await testRawRestrictedSourceWritesAreExcluded();
+  await testApprovalEditsRejectRawRestrictedContent();
+  await testApprovedRestrictedSummariesCarryMetadata();
+  await testApprovedRestrictedSummariesRejectRawDetails();
   await testConflictSupersessionIsPlannedForApproval();
 }
 
