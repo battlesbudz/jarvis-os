@@ -19,7 +19,7 @@ import { createRoutedOpenAIChatShim } from "../agent/routedChatCompletion";
 import { isRetriableProviderError } from "../agent/providers/fallback";
 import { containsRawRestrictedContent } from "./restrictedContent";
 
-const openai = createRoutedOpenAIChatShim("[MemoryVault]", "balanced");
+const openai = createRoutedOpenAIChatShim("[MemoryVault]", "balanced", { disableRuntimeStateCard: true });
 
 const VAULT_TTL_MS = 6 * 60 * 60 * 1000;
 const VAULT_NOVELTY_THRESHOLD = 3;

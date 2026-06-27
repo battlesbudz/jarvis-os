@@ -35,6 +35,7 @@ import {
   classifyPhoneGemmaDiagnosticIntent,
   _setPhoneGemmaDiagnosticDepsForTesting,
 } from "../state/phoneGemmaDiagnostics";
+import { buildRuntimeStateCardPrompt } from "../state/stateCard";
 
 export {
   _setRuntimeIdentityProfileResolverForTesting,
@@ -108,6 +109,8 @@ export interface RoutedModelTurnParams {
   allowRuntimeCapabilityShortcut?: boolean;
   allowRuntimeMemoryInspectionShortcut?: boolean;
   allowPhoneGemmaDiagnosticShortcut?: boolean;
+  disableRuntimeStateCard?: boolean;
+  disableRuntimeStateCardMemoryContext?: boolean;
   phoneGemmaDeviceId?: string;
   phoneGemmaProfileId?: string;
 }
@@ -115,6 +118,7 @@ export interface RoutedModelTurnParams {
 interface PreparedModelTurn {
   chain: FallbackChainEntry[];
   routedMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
+  leanContextApplied: boolean;
 }
 
 interface SelectedModelRoute {
@@ -447,6 +451,232 @@ function maybeUseLeanContext(
   );
 
   return leanMessages;
+}
+
+function hasRuntimeStateCard(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): boolean {
+  return messages.some((message) => (
+    message.role === "system" &&
+    textFromContent(message.content).includes("## Jarvis Runtime State Card")
+  ));
+}
+
+function insertRuntimeStateCardMessage(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  stateCardPrompt: string,
+): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  if (hasRuntimeStateCard(messages)) return messages;
+
+  const stateCardMessage: OpenAI.Chat.Completions.ChatCompletionMessageParam = {
+    role: "system",
+    content: stateCardPrompt,
+  };
+  const firstNonSystemIndex = messages.findIndex((message) => message.role !== "system");
+  if (firstNonSystemIndex < 0) return [...messages, stateCardMessage];
+  return [
+    ...messages.slice(0, firstNonSystemIndex),
+    stateCardMessage,
+    ...messages.slice(firstNonSystemIndex),
+  ];
+}
+
+function activeDeviceForProviderRoute(entry: FallbackChainEntry): string {
+  if (entry.providerName === "android-local-gemma") return "android";
+  return "cloud";
+}
+
+function currentContextForProviderRoute(
+  entry: FallbackChainEntry,
+  params: RoutedModelTurnParams,
+  chain: FallbackChainEntry[] = [entry],
+): string {
+  const toolChoice = params.toolChoice ?? "none";
+  if (chain.length > 1) {
+    return `provider_fallback_chain:${describeRouteChain(chain)}; tool_choice:${toolChoice}`;
+  }
+  return `provider_route:${entry.providerName}; tool_choice:${toolChoice}`;
+}
+
+function activeModelForProviderRoute(chain: FallbackChainEntry[]): string {
+  if (chain.length === 1) {
+    const primary = chain[0];
+    return `${primary.providerName}:${primary.model}`;
+  }
+  return `fallback_chain:${chain.map((entry) => `${entry.providerName}:${entry.model}`).join(" -> ")}`;
+}
+
+function renderBudgetForProviderRoute(entry: FallbackChainEntry): number {
+  if (entry.providerName === "chatgpt-codex-oauth") return 3_000;
+  if (entry.providerName === "openai-compatible") return 2_000;
+  return 2_400;
+}
+
+function chainIncludesAndroidLocalGemma(chain: FallbackChainEntry[]): boolean {
+  return chain.some((entry) => entry.providerName === "android-local-gemma");
+}
+
+function hasInternalStructuredInstruction(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): boolean {
+  const instructionText = messages
+    .filter((message) => {
+      const role = String(message.role);
+      return role === "system" || role === "developer";
+    })
+    .map((message) => textFromContent(message.content))
+    .join("\n")
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+  return /\b(?:extract|classify|label|parse|lint|revise)\b.{0,160}\b(?:json|source|transcript|conversation|payload|request|labels?)\b/.test(instructionText)
+    || /\b(?:summari[sz]e|compress|compact|condense)\b.{0,160}\b(?:conversation|transcript|source|document|memo|text|content|summary)\b/.test(instructionText)
+    || /\b(?:synthesi[sz]e|synthesi[sz]ing|synthesis)\b.{0,160}\b(?:specialist|agent responses?|multiple ai agents|multiple specialist ai agents)\b/.test(instructionText)
+    || /\bscore\s+(?:this|the|each|every|request|source|transcript|conversation|payload)\b/.test(instructionText)
+    || /\b(?:from|using|of)\s+(?:(?:this|the)\s+)?(?:transcript|source|payload|conversation)\b/.test(instructionText)
+    || /\b(?:transcript|source|payload|conversation)\s+(?:text|content)\b/.test(instructionText);
+}
+
+function isPayloadLikeUserText(text: string): boolean {
+  return /(?:^|\s)(?:user|assistant|agent|system|tool):\s+/i.test(text)
+    || /(?:^|\s)(?:source|source text|transcript|conversation|payload|task|title|description|context|clusters?|examples?|bullet|items?|input|request)\s*[:\n]/i.test(text);
+}
+
+function formattedRuntimeStateQueryNeedsStateCard(
+  params: RoutedModelTurnParams,
+): boolean {
+  if (!params.responseFormat) return false;
+  if (hasInternalStructuredInstruction(params.messages)) return false;
+  const rawText = getLastUserText(params.messages);
+  if (isPayloadLikeUserText(rawText)) return false;
+  const normalizedText = rawText.replace(/\s+/g, " ").toLowerCase();
+  return /\b(?:who am i|what do you know about me|what(?:'s| is) my name)\b/.test(normalizedText)
+    || /\b(?:my|current|active|connected|available)\s+(?:active\s+)?(?:tasks?|goals?|profile|identity|memories|memory|state|context|tools?|accounts?|capabilities|model)\b/.test(normalizedText)
+    || /\bwhat\s+(?:tools?|accounts?|capabilities|model)\b/.test(normalizedText)
+    || /\bis\s+(?:phone gemma|local gemma|the local model|jarvis)\s+working\b/.test(normalizedText)
+    || Boolean(classifyRuntimeMemoryInspectionIntent(params.messages));
+}
+
+function shouldIncludeRuntimeMemoryContext(
+  params: RoutedModelTurnParams,
+): boolean {
+  if (params.disableRuntimeStateCardMemoryContext) return false;
+  if (
+    canUseRuntimeIdentityShortcut(params) ||
+    canUseRuntimeCapabilityShortcut(params) ||
+    canUseRuntimeMemoryInspectionShortcut(params) ||
+    canUsePhoneGemmaDiagnosticShortcut(params)
+  ) {
+    return false;
+  }
+  return Boolean(classifyRuntimeMemoryInspectionIntent(params.messages));
+}
+
+function shouldAttachProviderRuntimeStateCard(
+  params: RoutedModelTurnParams,
+  chain: FallbackChainEntry[],
+): boolean {
+  if (params.disableRuntimeStateCard) return false;
+  if (hasInternalStructuredInstruction(params.messages)) return false;
+  if (params.responseFormat && !formattedRuntimeStateQueryNeedsStateCard(params)) return false;
+  if (!params.userId) return false;
+  if (
+    canUseRuntimeIdentityShortcut(params) ||
+    canUseRuntimeCapabilityShortcut(params) ||
+    canUseRuntimeMemoryInspectionShortcut(params) ||
+    canUsePhoneGemmaDiagnosticShortcut(params)
+  ) {
+    return false;
+  }
+  const primary = chain[0];
+  if (!primary) return false;
+  // Android Local Gemma builds a tighter Phone Gemma prompt internally.
+  // Because the fallback executor shares one message list across attempts,
+  // any chain that can fall through to Android must leave that prompt budget
+  // and native tool protocol state to the Android provider.
+  if (chainIncludesAndroidLocalGemma(chain)) return false;
+  return true;
+}
+
+function fallbackRuntimeStateCardPrompt(
+  params: RoutedModelTurnParams,
+  chain: FallbackChainEntry[],
+): string {
+  const entry = chain[0];
+  return [
+    "## Jarvis Runtime State Card",
+    "Authoritative state generated by Jarvis. Models consume this card; they do not own memory or state.",
+    "",
+    "Assistant: Jarvis",
+    "",
+    "Current User:",
+    `- User id: ${params.userId}`,
+    "- Profile source: fallback",
+    "",
+    "Current Session:",
+    `- Active device: ${activeDeviceForProviderRoute(entry)}`,
+    `- Active model: ${activeModelForProviderRoute(chain)}`,
+    `- Current context: ${currentContextForProviderRoute(entry, params, chain)}`,
+    "",
+    "Active Task State:",
+    "- No active task state loaded.",
+    "",
+    "Relevant Historical Context:",
+    "- No historical memory packet loaded for this turn.",
+    "",
+    "Available Tools:",
+    ...renderAvailableToolFallbackLines(params),
+    "",
+    "Provenance:",
+    "- state_kernel, provider_runtime, fallback",
+    "",
+    "Uncertainty:",
+    "- Runtime state card builder was unavailable.",
+  ].join("\n");
+}
+
+function renderAvailableToolFallbackLines(params: RoutedModelTurnParams): string[] {
+  const toolNames = (params.toolChoice ?? "none") === "none" ? [] : routeToolNames(params);
+  if (toolNames.length === 0) return ["- No tools supplied by this route."];
+  return toolNames.slice(0, 16).map((name) => `- ${name}`);
+}
+
+async function attachProviderRuntimeStateCard(
+  params: RoutedModelTurnParams,
+  chain: FallbackChainEntry[],
+  routedMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  leanContextApplied: boolean,
+  logPrefix: string,
+): Promise<OpenAI.Chat.Completions.ChatCompletionMessageParam[]> {
+  if (!shouldAttachProviderRuntimeStateCard(params, chain)) return routedMessages;
+  if (hasRuntimeStateCard(routedMessages)) return routedMessages;
+
+  const primary = chain[0];
+  const toolNames = !leanContextApplied && (params.toolChoice ?? "none") !== "none"
+    ? routeToolNames(params)
+    : [];
+  try {
+    const prompt = await buildRuntimeStateCardPrompt({
+      userId: params.userId!,
+      assistantName: "Jarvis",
+      activeDevice: activeDeviceForProviderRoute(primary),
+      activeModel: activeModelForProviderRoute(chain),
+      currentContext: currentContextForProviderRoute(primary, params, chain),
+      seedQuery: getLastUserText(params.messages),
+      availableTools: toolNames,
+      includeMemoryContext: shouldIncludeRuntimeMemoryContext(params),
+      taskLimit: 3,
+      memoryLimit: 3,
+      renderMaxChars: renderBudgetForProviderRoute(primary),
+    });
+    return insertRuntimeStateCardMessage(routedMessages, prompt);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`${logPrefix} runtime_state_card_unavailable: ${message.slice(0, 160)}`);
+    return insertRuntimeStateCardMessage(
+      routedMessages,
+      fallbackRuntimeStateCardPrompt(params, chain),
+    );
+  }
 }
 
 function modelForEntry(entry: FallbackChainEntry): string {
@@ -801,8 +1031,8 @@ export async function getUserSelectedModelRouteChain(
 function canUseRuntimeIdentityShortcut(params: RoutedModelTurnParams): boolean {
   if (!params.allowRuntimeIdentityShortcut) return false;
   if (params.responseFormat) return false;
-  if ((params.toolChoice ?? "none") !== "required") return true;
   if (!classifyRuntimeIdentityIntent(params.messages)) return false;
+  if ((params.toolChoice ?? "none") !== "required") return true;
   return (params.tools ?? []).some((tool) => {
     const name = tool.function?.name;
     return name === "memory_search" || name === "memory_get";
@@ -824,8 +1054,8 @@ function routeToolNames(params: RoutedModelTurnParams): string[] {
 function canUseRuntimeMemoryInspectionShortcut(params: RoutedModelTurnParams): boolean {
   if (!params.allowRuntimeMemoryInspectionShortcut) return false;
   if (params.responseFormat) return false;
-  if ((params.toolChoice ?? "none") !== "required") return true;
   if (!classifyRuntimeMemoryInspectionIntent(params.messages)) return false;
+  if ((params.toolChoice ?? "none") !== "required") return true;
   return (params.tools ?? []).some((tool) => {
     const name = tool.function?.name;
     return name === "memory_search" || name === "memory_get";
@@ -888,8 +1118,8 @@ export async function routeModelTurn(params: RoutedModelTurnParams): Promise<Pro
     {
       model: prepared.chain[0].model,
       messages: prepared.routedMessages,
-      tools: prepared.routedMessages !== params.messages ? undefined : params.tools,
-      toolChoice: prepared.routedMessages !== params.messages ? "none" : (params.toolChoice ?? "none"),
+      tools: prepared.leanContextApplied ? undefined : params.tools,
+      toolChoice: prepared.leanContextApplied ? "none" : (params.toolChoice ?? "none"),
       maxCompletionTokens: params.maxCompletionTokens,
       responseFormat: params.responseFormat,
       stream: params.stream ?? false,
@@ -969,8 +1199,8 @@ export async function streamModelTurn(
     {
       model: prepared.chain[0].model,
       messages: prepared.routedMessages,
-      tools: prepared.routedMessages !== params.messages ? undefined : params.tools,
-      toolChoice: prepared.routedMessages !== params.messages ? "none" : (params.toolChoice ?? "none"),
+      tools: prepared.leanContextApplied ? undefined : params.tools,
+      toolChoice: prepared.leanContextApplied ? "none" : (params.toolChoice ?? "none"),
       maxCompletionTokens: params.maxCompletionTokens,
       responseFormat: params.responseFormat,
       stream: true,
@@ -1035,8 +1265,17 @@ async function prepareModelTurn(
     console.log(`${logPrefix} lean_context: omitted ${params.tools.length} tool schema(s)`);
   }
 
-  return {
+  const runtimeStateMessages = await attachProviderRuntimeStateCard(
+    params,
     chain,
     routedMessages,
+    leanContextApplied,
+    logPrefix,
+  );
+
+  return {
+    chain,
+    routedMessages: runtimeStateMessages,
+    leanContextApplied,
   };
 }

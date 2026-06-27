@@ -228,6 +228,7 @@ async function _runAnalysisInner(userId: string): Promise<{ submitted: number; q
       stream: false,
       toolChoice: 'none',
       userId,
+      disableRuntimeStateCard: true,
       logPrefix: '[CapabilityGap]',
       messages: [
         {

@@ -82,6 +82,7 @@ export async function preThink(
       toolChoice: "none",
       userId,
       signal: runSignal,
+      disableRuntimeStateCard: true,
       logPrefix: "[QualityLoop/preThink]",
       messages: [
         {
@@ -127,6 +128,7 @@ export async function postCheck(
       toolChoice: "none",
       userId,
       signal: runSignal,
+      disableRuntimeStateCard: true,
       logPrefix: "[QualityLoop/postCheck]",
       messages: [
         {

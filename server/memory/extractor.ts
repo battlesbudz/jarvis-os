@@ -286,6 +286,7 @@ Return { "memories": [] } if nothing new and high-confidence was learned.`;
       maxCompletionTokens: 250,
       userId: input.userId,
       logPrefix: "[MemoryExtract]",
+      disableRuntimeStateCard: true,
     });
 
     const content = response.textContent || '{"memories":[]}';

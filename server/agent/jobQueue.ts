@@ -1673,6 +1673,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
           stream: false,
           toolChoice: "none",
           userId: job.userId,
+          disableRuntimeStateCard: true,
           logPrefix: "[BuildFeaturePlan]",
           messages: [
             {
@@ -1979,6 +1980,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           toolChoice: "none",
           userId: job.userId,
           logPrefix: "[BuildFeatureSynthesis]",
+          disableRuntimeStateCard: true,
           messages: [
             {
               role: "system",

@@ -2,6 +2,7 @@ import type OpenAI from "openai";
 import { routeModelTurn, type ModelExecutionTier, type RoutedModelTurnParams } from "./modelRouter";
 import type { ProviderTurnResult } from "./providers/base";
 import type { RuntimeExplanation } from "../core/runtime/runtimeExplanation";
+import { classifyRuntimeMemoryInspectionIntent } from "../state/runtimeMemoryInspection";
 
 type ChatCreateBody = OpenAI.Chat.Completions.ChatCompletionCreateParams;
 type RouteRunner = (params: RoutedModelTurnParams) => Promise<ProviderTurnResult>;
@@ -15,6 +16,11 @@ export interface RoutedChatCompletionOptions {
   tier?: ModelExecutionTier;
   logPrefix?: string;
   userId?: string;
+  disableRuntimeStateCard?: boolean;
+}
+
+export interface RoutedOpenAIChatShimOptions extends Pick<RoutedChatCompletionOptions, "disableRuntimeStateCard"> {
+  runner?: RouteRunner;
 }
 
 function maxTokensFromBody(body: ChatCreateBody): number {
@@ -27,6 +33,91 @@ function toolChoiceFromBody(body: ChatCreateBody): "auto" | "required" | "none" 
   if (body.tool_choice === "required") return "required";
   if (body.tool_choice === "none") return "none";
   return body.tools?.length ? "auto" : "none";
+}
+
+function messageContentText(content: OpenAI.Chat.Completions.ChatCompletionMessageParam["content"]): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return part.text;
+      return "";
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+function requestsRuntimeStateContext(text: string): boolean {
+  return /\b(?:who am i|what do you know about me|what(?:'s| is) my name)\b/.test(text)
+    || /\b(?:my|current|active|connected|available)\s+(?:active\s+)?(?:tasks?|goals?|profile|identity|memories|memory|state|context|tools?|accounts?|capabilities|model)\b/.test(text)
+    || /\bwhat\s+(?:tools?|accounts?|capabilities|model)\b/.test(text)
+    || /\bis\s+(?:phone gemma|local gemma|the local model|jarvis)\s+working\b/.test(text);
+}
+
+function isPayloadLikeUserText(text: string): boolean {
+  return /(?:^|\s)(?:user|assistant|agent|system|tool):\s+/i.test(text)
+    || /(?:^|\s)(?:source|source text|transcript|conversation|payload|task|title|description|context|clusters?|examples?|bullet|items?|input|request)\s*[:\n]/i.test(text);
+}
+
+function directlyRequestsRuntimeStateContext(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  text: string,
+): boolean {
+  if (isPayloadLikeUserText(text)) return false;
+  return requestsRuntimeStateContext(text) || Boolean(classifyRuntimeMemoryInspectionIntent(messages));
+}
+
+function normalizeMessageText(message: OpenAI.Chat.Completions.ChatCompletionMessageParam): string {
+  return messageContentText(message.content).replace(/\s+/g, " ").toLowerCase();
+}
+
+function hasStrictJsonOnlyWording(text: string): boolean {
+  if (!text.includes("json")) return false;
+  const jsonTarget = /json(?:\s+(?:object|array|document|payload))?\b/;
+  return new RegExp(
+    String.raw`\b(?:return|respond|reply|output)\s+(?:with\s+)?only\s+(?:(?:a|the)\s+)?(?:single\s+)?(?:valid\s+)?${jsonTarget.source}`,
+  ).test(text)
+    || /\b(?:return|respond|reply|output)\s+json\s+only\b/.test(text)
+    || /\b(?:return|respond|reply|output)\s+[^.]{0,80}\bjson\s+only\b/.test(text)
+    || new RegExp(String.raw`\bonly\s+(?:(?:a|the)\s+)?(?:single\s+)?(?:valid\s+)?${jsonTarget.source}`).test(text);
+}
+
+function hasInternalStructuredInstruction(text: string): boolean {
+  return /\b(?:extract|classify|label|parse|lint|revise)\b.{0,160}\b(?:json|source|transcript|conversation|payload|request|labels?)\b/.test(text)
+    || /\b(?:summari[sz]e|compress|compact|condense)\b.{0,160}\b(?:conversation|transcript|source|document|memo|text|content|summary)\b/.test(text)
+    || /\bscore\s+(?:this|the|each|every|request|source|transcript|conversation|payload)\b/.test(text)
+    || /\b(?:from|using|of)\s+(?:(?:this|the)\s+)?(?:transcript|source|payload|conversation)\b/.test(text)
+    || /\b(?:transcript|source|payload|conversation)\s+(?:text|content)\b/.test(text);
+}
+
+function messagesFromBody(
+  body: ChatCreateBody,
+): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+  return Array.isArray(body.messages) ? body.messages : [];
+}
+
+export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
+  const messages = messagesFromBody(body);
+  if (messages.length === 0) return false;
+  const normalizedMessages = messages.map((message) => ({
+    role: String(message.role),
+    text: normalizeMessageText(message),
+  }));
+  const instructionTexts = normalizedMessages
+    .filter((message) => message.role === "system" || message.role === "developer")
+    .map((message) => message.text)
+    .filter(hasStrictJsonOnlyWording);
+  const lastUserText = [...normalizedMessages].reverse().find((message) => message.role === "user")?.text ?? "";
+  if (
+    !instructionTexts.some(hasInternalStructuredInstruction) &&
+    directlyRequestsRuntimeStateContext(messages, lastUserText)
+  ) {
+    return false;
+  }
+  const candidateTexts = instructionTexts.length > 0 ? instructionTexts : [lastUserText].filter(hasStrictJsonOnlyWording);
+  if (candidateTexts.length === 0) return false;
+  return !candidateTexts.some((text) => directlyRequestsRuntimeStateContext(messages, text));
 }
 
 export function getUserIdFromChatBody(body: unknown): string | undefined {
@@ -56,6 +147,7 @@ export async function createRoutedChatCompletion(
     stream: false,
     userId: options.userId ?? getUserIdFromChatBody(body),
     signal: options.signal,
+    disableRuntimeStateCard: options.disableRuntimeStateCard ?? isStrictJsonOnlyRequest(body),
     logPrefix: options.logPrefix,
   });
 
@@ -84,16 +176,22 @@ export async function createRoutedChatCompletion(
 export function createRoutedOpenAIChatShim(
   logPrefix: string,
   tier: ModelExecutionTier = "balanced",
+  shimOptions: RoutedOpenAIChatShimOptions = {},
 ): Pick<OpenAI, "chat"> {
   return {
     chat: {
       completions: {
-        create: (body: ChatCreateBody, options?: { signal?: AbortSignal }) =>
-          createRoutedChatCompletion(body, {
-            signal: options?.signal,
-            tier,
-            logPrefix,
-          }),
+        create: (body: ChatCreateBody, requestOptions?: { signal?: AbortSignal }) =>
+          createRoutedChatCompletion(
+            body,
+            {
+              signal: requestOptions?.signal,
+              tier,
+              logPrefix,
+              disableRuntimeStateCard: shimOptions.disableRuntimeStateCard,
+            },
+            shimOptions.runner,
+          ),
       },
     },
   } as Pick<OpenAI, "chat">;

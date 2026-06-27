@@ -202,6 +202,7 @@ Output JSON only.`;
         stream: false,
         toolChoice: "none",
         userId,
+        disableRuntimeStateCard: true,
         logPrefix: "[PrimeAudit]",
         messages: [
           { role: "system", content: systemPrompt },

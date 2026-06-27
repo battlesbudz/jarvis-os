@@ -10,7 +10,7 @@ import {
   hasNonOpenAIRoutableProvider,
 } from "../providers/env";
 import { getModelRouteChain } from "../modelRouter";
-import { _shouldRouteOpenAIChatForTesting } from "../openaiChatRouterPatch";
+import { _shouldDisableRuntimeStateCardForTesting, _shouldRouteOpenAIChatForTesting } from "../openaiChatRouterPatch";
 import { resolveRuntimeAgentModel } from "../runtimeModel";
 import { _clearProviderCacheForTesting } from "../providers";
 
@@ -172,6 +172,171 @@ withCleanEnv({
   assert.equal(_shouldRouteOpenAIChatForTesting({ model: "gpt-4o-mini" }), false);
   console.log("OK: OpenAI chat patch routes user-scoped GPT calls without env auth so selected profiles can resolve");
 });
+
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [
+      { role: "system", content: "Extract facts from this source. Respond with valid JSON only." },
+      { role: "user", content: "Source text" },
+    ],
+  }),
+  true,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [
+      { role: "system", content: "Return only JSON." },
+      { role: "user", content: "What are my active tasks?" },
+    ],
+  }),
+  false,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [
+      { role: "system", content: "Return only JSON matching this schema: { tasks: [{ title, source }] }." },
+      { role: "user", content: "What are my active tasks?" },
+    ],
+  }),
+  false,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [
+      { role: "system", content: "Return only JSON." },
+      { role: "user", content: "What memories do you have about me?" },
+    ],
+  }),
+  false,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [
+      { role: "system", content: "Classify this request. Return only JSON." },
+      { role: "user", content: "What tools are available?" },
+    ],
+  }),
+  true,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [
+      { role: "system", content: "Extract facts from this source. Return ONLY the JSON object." },
+      { role: "user", content: "Source text" },
+    ],
+  }),
+  true,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [
+      { role: "system", content: "Extract facts from this transcript. Return ONLY the JSON array." },
+      { role: "user", content: "User: what tools are available?\nAssistant: I can help." },
+    ],
+  }),
+  true,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [{ role: "user", content: "Show me a JSON example." }],
+  }),
+  false,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [{ role: "user", content: "Return a JSON object with my active tasks." }],
+  }),
+  false,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [{ role: "user", content: "Return ONLY a JSON object with my active tasks." }],
+  }),
+  false,
+);
+assert.doesNotThrow(() => {
+  const malformedJsonBody = {
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+  } as Parameters<typeof _shouldDisableRuntimeStateCardForTesting>[0];
+  assert.equal(
+    _shouldDisableRuntimeStateCardForTesting(malformedJsonBody),
+    false,
+  );
+});
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [{
+      role: "user",
+      content: `Break down the following task into clear sub-steps.
+
+Task: "Review my active tasks"
+
+Return JSON only.`,
+    }],
+  }),
+  true,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [{
+      role: "user",
+      content: [
+        "Draft candidate skills from these recurring intent clusters.",
+        "",
+        "Clusters:",
+        "Cluster 1 - 3 occurrences",
+        "Examples:",
+        "- What are my active tasks?",
+        "",
+        "Return ONLY a valid JSON array.",
+      ].join("\n"),
+    }],
+  }),
+  true,
+);
+assert.equal(
+  _shouldDisableRuntimeStateCardForTesting({
+    model: "gpt-4o-mini",
+    user: "user-json-sdk",
+    messages: [{
+      role: "user",
+      content: [
+        "Convert this learning bullet point into a structured Jarvis skill candidate.",
+        "",
+        'Bullet: "What are my active tasks?"',
+        "",
+        "Return ONLY a valid JSON object.",
+      ].join("\n"),
+    }],
+  }),
+  true,
+);
+console.log("OK: OpenAI chat patch disables runtime state cards for strict JSON-only SDK calls");
 
 withCleanEnv({ JARVIS_CODEX_OAUTH_ENABLED: "true", JARVIS_DEFAULT_MODEL: "chatgpt-codex-oauth/auto" }, () => {
   const chain = getModelRouteChain("balanced");

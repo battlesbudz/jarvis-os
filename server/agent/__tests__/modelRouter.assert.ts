@@ -28,6 +28,18 @@ function userMessage(content: string) {
   return [{ role: "user" as const, content }];
 }
 
+function messageContentText(content: ProviderQueryParams["messages"][number]["content"] | undefined): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (typeof part === "string") return part;
+      if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return part.text;
+      return "";
+    })
+    .join("\n");
+}
+
 const CODEX_MODEL = "chatgpt-codex-oauth/auto";
 
 {
@@ -1214,6 +1226,621 @@ async function runExplicitProviderModelRouteAssertion(): Promise<void> {
     assert.equal(capturedRequest?.userId, "user-claude");
     console.log("OK: explicit selected provider model routes directly to that provider");
   } finally {
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "DATABASE_URL",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  const captured = new Map<string, ProviderQueryParams>();
+  class CapturingProvider extends BaseProvider {
+    constructor(private readonly provider: string) {
+      super();
+    }
+
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured.set(this.provider, params);
+      yield { type: "text", delta: `${this.provider} saw state card` };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  const routes = [
+    {
+      provider: "openai" as const,
+      requestedModel: "openai/gpt-4.1-mini",
+      expectedModel: "gpt-4.1-mini",
+      userId: "user-provider-openai",
+    },
+    {
+      provider: "anthropic" as const,
+      requestedModel: "anthropic/claude-sonnet-4-5",
+      expectedModel: "claude-sonnet-4-5",
+      userId: "user-provider-anthropic",
+    },
+    {
+      provider: "google" as const,
+      requestedModel: "google/gemini-2.5-flash",
+      expectedModel: "gemini-2.5-flash",
+      userId: "user-provider-google",
+    },
+    {
+      provider: "chatgpt-codex-oauth" as const,
+      requestedModel: CODEX_MODEL,
+      expectedModel: CODEX_MODEL,
+      userId: "user-provider-codex",
+    },
+  ];
+
+  try {
+    delete process.env.DATABASE_URL;
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "false";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    delete process.env.PROVIDER_FALLBACK_CHAIN;
+    _overrideProviderForTesting("openai", new CapturingProvider("openai"));
+    _overrideProviderForTesting("anthropic", new CapturingProvider("anthropic"));
+    _overrideProviderForTesting("google", new CapturingProvider("google"));
+    _overrideProviderForTesting("chatgpt-codex-oauth", new CapturingProvider("chatgpt-codex-oauth"));
+    _setOpenAIProviderStatusResolverForTesting(async () => {
+      const openai = {
+        connected: false,
+        defaultAuthType: null,
+        authTypes: {
+          api_key: { connected: false, isDefault: false },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      return {
+        providers: { openai },
+        openai: {
+          ...openai,
+          fallbackEnabled: false,
+        },
+      };
+    });
+
+    for (const route of routes) {
+      const result = await routeModelTurn({
+        tier: "balanced",
+        requestedModel: route.requestedModel,
+        preferRequestedModel: true,
+        messages: [
+          { role: "system", content: "Keep this caller system instruction first." },
+          { role: "user", content: "Check the provider context." },
+        ],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "memory_search",
+              description: "Search runtime-approved memories.",
+              parameters: { type: "object", properties: { query: { type: "string" } } },
+            },
+          },
+        ],
+        toolChoice: "auto",
+        maxCompletionTokens: 64,
+        userId: route.userId,
+        logPrefix: `[ModelRouterProviderStateCardTest:${route.provider}]`,
+        allowRuntimeIdentityShortcut: true,
+        allowRuntimeCapabilityShortcut: true,
+        allowRuntimeMemoryInspectionShortcut: true,
+        allowPhoneGemmaDiagnosticShortcut: true,
+      });
+
+      const capturedRequest = captured.get(route.provider);
+      assert.equal(result.providerName, route.provider);
+      assert.equal(result.model, route.expectedModel);
+      assert.equal(capturedRequest?.toolChoice, "auto");
+      assert.equal(capturedRequest?.tools?.[0]?.function.name, "memory_search");
+      assert.equal(capturedRequest?.messages[0]?.role, "system");
+      assert.equal(
+        messageContentText(capturedRequest?.messages[0]?.content),
+        "Keep this caller system instruction first.",
+      );
+
+      const stateCardMessage = capturedRequest?.messages.find((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      ));
+      assert.ok(stateCardMessage, `${route.provider} should receive a runtime state card`);
+      const stateCard = messageContentText(stateCardMessage.content);
+      assert.match(stateCard, /Assistant: Jarvis/);
+      assert.match(stateCard, new RegExp(`User id: ${route.userId}`));
+      assert.match(stateCard, new RegExp(`Active model: ${route.provider}:${route.expectedModel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+      assert.match(stateCard, /Active device: cloud/);
+      assert.match(stateCard, /memory_search/);
+    }
+
+    captured.delete("openai");
+    const coachRoutingPromptResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "# PRIME Routing Architecture",
+            "## Routing Pipeline",
+            "1. **Classify Task**",
+            "7. **Synthesize Final Response**",
+          ].join("\n"),
+        },
+        { role: "user", content: "What can you help me with today?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-coach-routing-state-card",
+      logPrefix: "[ModelRouterCoachRoutingStateCardTest]",
+    });
+    const coachRoutingPromptRequest = captured.get("openai");
+    assert.equal(coachRoutingPromptResult.providerName, "openai");
+    assert.equal(
+      coachRoutingPromptRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      true,
+    );
+
+    captured.delete("openai");
+    const extractionResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [
+        { role: "system", content: "Return only valid JSON." },
+        { role: "user", content: "Extract new memories from this source, but do not recall old memories." },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-memory-extraction",
+      logPrefix: "[ModelRouterMemoryExtractStateCardTest]",
+      disableRuntimeStateCard: true,
+    });
+    const extractionRequest = captured.get("openai");
+    assert.equal(extractionResult.providerName, "openai");
+    assert.equal(
+      extractionRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      false,
+    );
+
+    captured.delete("openai");
+    const structuredResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [
+        { role: "system", content: "Return only valid JSON." },
+        { role: "user", content: "Classify this request into one of the supported labels." },
+      ],
+      responseFormat: { type: "json_object" },
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-structured-state-card",
+      logPrefix: "[ModelRouterStructuredStateCardTest]",
+    });
+    const structuredRequest = captured.get("openai");
+    assert.equal(structuredResult.providerName, "openai");
+    assert.deepEqual(structuredRequest?.responseFormat, { type: "json_object" });
+    assert.equal(
+      structuredRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      false,
+    );
+
+    captured.delete("openai");
+    const summaryResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [
+        { role: "system", content: "Compress this conversation into a concise summary." },
+        { role: "user", content: "Source: Quarterly planning memo." },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-internal-summary-state-card",
+      logPrefix: "[ModelRouterInternalSummaryStateCardTest]",
+    });
+    const summaryRequest = captured.get("openai");
+    assert.equal(summaryResult.providerName, "openai");
+    assert.equal(
+      summaryRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      false,
+    );
+
+    captured.delete("openai");
+    const synthesisResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [
+        {
+          role: "system",
+          content: "You are synthesizing responses from multiple specialist AI agents into a unified, coherent answer.",
+        },
+        { role: "user", content: "Question: What should we build next?\n\n## Agent Responses:\n\nPlanner: Start with identity." },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-internal-synthesis-state-card",
+      logPrefix: "[ModelRouterInternalSynthesisStateCardTest]",
+    });
+    const synthesisRequest = captured.get("openai");
+    assert.equal(synthesisResult.providerName, "openai");
+    assert.equal(
+      synthesisRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      false,
+    );
+
+    captured.delete("openai");
+    const formattedStateResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [
+        { role: "system", content: "Return only JSON matching this schema: { tasks: [{ title, source }] }." },
+        { role: "user", content: "What are my active tasks?" },
+      ],
+      responseFormat: { type: "json_object" },
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-formatted-state-card",
+      logPrefix: "[ModelRouterFormattedStateCardTest]",
+    });
+    const formattedStateRequest = captured.get("openai");
+    assert.equal(formattedStateResult.providerName, "openai");
+    assert.deepEqual(formattedStateRequest?.responseFormat, { type: "json_object" });
+    assert.equal(
+      formattedStateRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      true,
+    );
+
+    captured.delete("openai");
+    const formattedPayloadResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [{
+        role: "user",
+        content: [
+          "Break down the following task into exactly 3-5 clear sub-steps.",
+          "",
+          'Task: "Review my active tasks"',
+          "",
+          "Return JSON only.",
+        ].join("\n"),
+      }],
+      responseFormat: { type: "json_object" },
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-formatted-payload-state-card",
+      logPrefix: "[ModelRouterFormattedPayloadStateCardTest]",
+    });
+    const formattedPayloadRequest = captured.get("openai");
+    assert.equal(formattedPayloadResult.providerName, "openai");
+    assert.deepEqual(formattedPayloadRequest?.responseFormat, { type: "json_object" });
+    assert.equal(
+      formattedPayloadRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      false,
+    );
+
+    captured.delete("openai");
+    const formattedClusterPayloadResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [{
+        role: "user",
+        content: [
+          "Draft candidate skills from these recurring intent clusters.",
+          "",
+          "Clusters:",
+          "Cluster 1 - 3 occurrences",
+          "Examples:",
+          "- What are my active tasks?",
+          "",
+          "Return ONLY a valid JSON array.",
+        ].join("\n"),
+      }],
+      responseFormat: { type: "json_object" },
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-formatted-cluster-payload-state-card",
+      logPrefix: "[ModelRouterFormattedClusterPayloadStateCardTest]",
+    });
+    const formattedClusterPayloadRequest = captured.get("openai");
+    assert.equal(formattedClusterPayloadResult.providerName, "openai");
+    assert.deepEqual(formattedClusterPayloadRequest?.responseFormat, { type: "json_object" });
+    assert.equal(
+      formattedClusterPayloadRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      false,
+    );
+
+    captured.delete("openai");
+    const formattedBulletPayloadResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [{
+        role: "user",
+        content: [
+          "Convert this learning bullet point into a structured Jarvis skill candidate.",
+          "",
+          'Bullet: "What are my active tasks?"',
+          "",
+          "Return ONLY a valid JSON object.",
+        ].join("\n"),
+      }],
+      responseFormat: { type: "json_object" },
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-formatted-bullet-payload-state-card",
+      logPrefix: "[ModelRouterFormattedBulletPayloadStateCardTest]",
+    });
+    const formattedBulletPayloadRequest = captured.get("openai");
+    assert.equal(formattedBulletPayloadResult.providerName, "openai");
+    assert.deepEqual(formattedBulletPayloadRequest?.responseFormat, { type: "json_object" });
+    assert.equal(
+      formattedBulletPayloadRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      false,
+    );
+
+    captured.delete("openai");
+    const formattedMemoryResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [
+        { role: "system", content: "Return only JSON." },
+        { role: "user", content: "What memories do you have about me?" },
+      ],
+      responseFormat: { type: "json_object" },
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-formatted-memory-state-card",
+      logPrefix: "[ModelRouterFormattedMemoryStateCardTest]",
+    });
+    const formattedMemoryRequest = captured.get("openai");
+    assert.equal(formattedMemoryResult.providerName, "openai");
+    assert.deepEqual(formattedMemoryRequest?.responseFormat, { type: "json_object" });
+    assert.equal(
+      formattedMemoryRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      true,
+    );
+
+    console.log("OK: cloud providers receive the runtime state-card contract without losing tool access");
+  } finally {
+    _setOpenAIProviderStatusResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runProviderRuntimeStateCardFallbackChainAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "DATABASE_URL",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let googleCaptured: ProviderQueryParams | null = null;
+  class FailingAnthropicProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      const err = new Error("primary rate limit") as Error & { status?: number };
+      err.status = 429;
+      throw err;
+    }
+  }
+
+  class CapturingGoogleProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      googleCaptured = params;
+      yield { type: "text", delta: "fallback response" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    delete process.env.DATABASE_URL;
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "false";
+    process.env.PROVIDER_FALLBACK_CHAIN = "anthropic:claude-chain,google:gemini-chain";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    _overrideProviderForTesting("anthropic", new FailingAnthropicProvider());
+    _overrideProviderForTesting("google", new CapturingGoogleProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-provider-fallback-state-card");
+      return null;
+    });
+    _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-provider-fallback-state-card");
+      const openai = {
+        connected: false,
+        defaultAuthType: null,
+        authTypes: {
+          api_key: { connected: false, isDefault: false },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      return {
+        providers: { openai },
+        openai: {
+          ...openai,
+          fallbackEnabled: false,
+        },
+      };
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Use the configured fallback chain." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-provider-fallback-state-card",
+      logPrefix: "[ModelRouterProviderStateCardFallbackTest]",
+    });
+
+    const capturedRequest = googleCaptured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "google");
+    assert.equal(result.model, "gemini-chain");
+    const stateCardMessage = capturedRequest?.messages.find((message) => (
+      message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+    ));
+    assert.ok(stateCardMessage, "fallback provider should receive a runtime state card");
+    const stateCard = messageContentText(stateCardMessage.content);
+    assert.match(stateCard, /Active model: fallback_chain:anthropic:claude-chain -> google:gemini-chain/);
+    assert.doesNotMatch(stateCard, /\n- Active model: anthropic:claude-chain\n/);
+    assert.match(stateCard, /Current context: provider_fallback_chain:/);
+    console.log("OK: provider runtime state cards describe fallback chains without stale primary model state");
+  } finally {
+    _setOpenAIProviderStatusResolverForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+    for (const [key, value] of previousEnv) {
+      if (value == null) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runProviderRuntimeStateCardSkipsAndroidFallbackChainAssertion(): Promise<void> {
+  const previousEnv = new Map<string, string | undefined>();
+  for (const key of [
+    "DATABASE_URL",
+    "JARVIS_CODEX_OAUTH_ENABLED",
+    "CHATGPT_CODEX_OAUTH_ENABLED",
+    "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
+    "PROVIDER_FALLBACK_CHAIN",
+  ]) {
+    previousEnv.set(key, process.env[key]);
+  }
+
+  let androidCaptured: ProviderQueryParams | null = null;
+  class FailingAnthropicProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      const err = new Error("primary rate limit") as Error & { status?: number };
+      err.status = 429;
+      throw err;
+    }
+  }
+
+  class CapturingAndroidProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      androidCaptured = params;
+      yield { type: "text", delta: "android fallback response" };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
+  try {
+    delete process.env.DATABASE_URL;
+    process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
+    process.env.JARVIS_CODEX_OAUTH_ENABLED = "false";
+    process.env.PROVIDER_FALLBACK_CHAIN = "anthropic:claude-chain,android-local-gemma:gemma-4-e4b-it";
+    delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
+    _overrideProviderForTesting("anthropic", new FailingAnthropicProvider());
+    _overrideProviderForTesting("android-local-gemma", new CapturingAndroidProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-provider-android-fallback-state-card");
+      return null;
+    });
+    _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-provider-android-fallback-state-card");
+      const openai = {
+        connected: false,
+        defaultAuthType: null,
+        authTypes: {
+          api_key: { connected: false, isDefault: false },
+          oauth: { connected: false, isDefault: false },
+        },
+      };
+      return {
+        providers: { openai },
+        openai: {
+          ...openai,
+          fallbackEnabled: false,
+        },
+      };
+    });
+
+    const result = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Use the configured Android fallback chain." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-provider-android-fallback-state-card",
+      logPrefix: "[ModelRouterProviderAndroidFallbackStateCardTest]",
+    });
+
+    const capturedRequest = androidCaptured as ProviderQueryParams | null;
+    assert.equal(result.providerName, "android-local-gemma");
+    assert.equal(result.model, "gemma-4-e4b-it");
+    assert.equal(
+      capturedRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      false,
+    );
+    console.log("OK: provider runtime state cards stay out of Android fallback chains");
+  } finally {
+    _setOpenAIProviderStatusResolverForTesting(null);
+    _setUserSelectedModelResolverForTesting(null);
     _clearProviderCacheForTesting();
     for (const [key, value] of previousEnv) {
       if (value == null) delete process.env[key];
@@ -2458,6 +3085,9 @@ runUserOpenAIProfileRouteAssertion()
   .then(runUserDefaultProviderProfileStreamingRouteAssertion)
   .then(runUserDefaultProviderProfileDoesNotSilentlyFallbackAssertion)
   .then(runExplicitProviderModelRouteAssertion)
+  .then(runProviderWideRuntimeStateCardAssertion)
+  .then(runProviderRuntimeStateCardFallbackChainAssertion)
+  .then(runProviderRuntimeStateCardSkipsAndroidFallbackChainAssertion)
   .then(runPlainGptRequestUsesConfiguredChainAssertion)
   .then(runCoachChatSelectedProviderModelAssertion)
   .then(runRequestedProviderModelOverridesAmbientCodexRouteAssertion)

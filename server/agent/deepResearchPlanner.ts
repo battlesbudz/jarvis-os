@@ -49,6 +49,7 @@ export async function planResearch(
       stream: false,
       toolChoice: "none",
       userId,
+      disableRuntimeStateCard: true,
       logPrefix: "[DeepResearchPlanner]",
       messages: [
         {

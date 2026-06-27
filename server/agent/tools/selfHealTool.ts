@@ -246,6 +246,7 @@ async function callInnerLLM(
     stream: false,
     toolChoice: "none",
     userId,
+    disableRuntimeStateCard: true,
     logPrefix: "[SelfHealInner]",
     messages: [
       { role: "system", content: INNER_SYSTEM_PROMPT },

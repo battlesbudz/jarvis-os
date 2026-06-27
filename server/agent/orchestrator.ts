@@ -65,6 +65,7 @@ export async function runFastOrchestratorReply(input: {
     maxCompletionTokens: FAST_REPLY_MAX_TOKENS,
     userId: input.userId,
     signal: input.signal,
+    disableRuntimeStateCard: true,
     system: [
       "You are Jarvis responding in a fast interactive chat lane.",
       `Channel: ${input.channelName}.`,
@@ -91,6 +92,7 @@ async function routeOrchestratorText(opts: {
   maxCompletionTokens: number;
   userId?: string;
   signal?: AbortSignal;
+  disableRuntimeStateCard?: boolean;
 }): Promise<string> {
   throwIfAborted(opts.signal);
   const messages = opts.system
@@ -109,6 +111,7 @@ async function routeOrchestratorText(opts: {
     stream: false,
     userId: opts.userId,
     signal: opts.signal,
+    disableRuntimeStateCard: opts.disableRuntimeStateCard,
     logPrefix: `[orchestrator/${opts.label}]`,
   });
 
@@ -234,6 +237,7 @@ async function decomposeRequest(
     maxCompletionTokens: ORCHESTRATOR_MAX_TOKENS,
     userId,
     signal,
+    disableRuntimeStateCard: true,
     system: `You are PRIME, an intelligent task orchestrator. Given a user request and context, break it into discrete, independently executable sub-tasks. Each sub-task must:
 1. Have a unique id (task-1, task-2, ...)
 2. Have a short label (5-8 words)
@@ -298,6 +302,7 @@ async function verifyResult(
       maxCompletionTokens: 512,
       userId,
       signal,
+      disableRuntimeStateCard: true,
       system: `You are a strict quality verifier. Evaluate whether a sub-agent's result meets the acceptance criteria. Respond with JSON only — no other text: {"passed": true/false, "reason": "brief explanation"}`,
       user: [
         `Sub-task: ${task.label}`,
@@ -765,6 +770,7 @@ export async function verifyJobOutput(opts: {
       stream: false,
       toolChoice: "none",
       userId: opts.userId,
+      disableRuntimeStateCard: true,
       logPrefix: "[JobVerifier]",
       messages: [
         {
