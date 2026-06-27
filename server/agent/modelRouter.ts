@@ -536,16 +536,23 @@ function hasInternalStructuredInstruction(
     || /\b(?:transcript|source|payload|conversation)\s+(?:text|content)\b/.test(instructionText);
 }
 
+function isPayloadLikeUserText(text: string): boolean {
+  return /(?:^|\s)(?:user|assistant|agent|system|tool):\s+/i.test(text)
+    || /(?:^|\s)(?:source|source text|transcript|conversation|payload|task|title|description|context)\s*[:\n]/i.test(text);
+}
+
 function formattedRuntimeStateQueryNeedsStateCard(
   params: RoutedModelTurnParams,
 ): boolean {
   if (!params.responseFormat) return false;
   if (hasInternalStructuredInstruction(params.messages)) return false;
-  const text = getLastUserText(params.messages).replace(/\s+/g, " ").toLowerCase();
-  return /\b(?:who am i|what do you know about me|what(?:'s| is) my name)\b/.test(text)
-    || /\b(?:my|current|active|connected|available)\s+(?:active\s+)?(?:tasks?|goals?|profile|identity|memories|memory|state|context|tools?|accounts?|capabilities|model)\b/.test(text)
-    || /\bwhat\s+(?:tools?|accounts?|capabilities|model)\b/.test(text)
-    || /\bis\s+(?:phone gemma|local gemma|the local model|jarvis)\s+working\b/.test(text)
+  const rawText = getLastUserText(params.messages);
+  if (isPayloadLikeUserText(rawText)) return false;
+  const normalizedText = rawText.replace(/\s+/g, " ").toLowerCase();
+  return /\b(?:who am i|what do you know about me|what(?:'s| is) my name)\b/.test(normalizedText)
+    || /\b(?:my|current|active|connected|available)\s+(?:active\s+)?(?:tasks?|goals?|profile|identity|memories|memory|state|context|tools?|accounts?|capabilities|model)\b/.test(normalizedText)
+    || /\bwhat\s+(?:tools?|accounts?|capabilities|model)\b/.test(normalizedText)
+    || /\bis\s+(?:phone gemma|local gemma|the local model|jarvis)\s+working\b/.test(normalizedText)
     || Boolean(classifyRuntimeMemoryInspectionIntent(params.messages));
 }
 

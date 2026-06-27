@@ -1524,6 +1524,37 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
     );
 
     captured.delete("openai");
+    const formattedPayloadResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [{
+        role: "user",
+        content: [
+          "Break down the following task into exactly 3-5 clear sub-steps.",
+          "",
+          'Task: "Review my active tasks"',
+          "",
+          "Return JSON only.",
+        ].join("\n"),
+      }],
+      responseFormat: { type: "json_object" },
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-formatted-payload-state-card",
+      logPrefix: "[ModelRouterFormattedPayloadStateCardTest]",
+    });
+    const formattedPayloadRequest = captured.get("openai");
+    assert.equal(formattedPayloadResult.providerName, "openai");
+    assert.deepEqual(formattedPayloadRequest?.responseFormat, { type: "json_object" });
+    assert.equal(
+      formattedPayloadRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      false,
+    );
+
+    captured.delete("openai");
     const formattedMemoryResult = await routeModelTurn({
       tier: "cheap",
       requestedModel: "openai/gpt-4.1-mini",

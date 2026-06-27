@@ -56,8 +56,8 @@ function requestsRuntimeStateContext(text: string): boolean {
 }
 
 function isPayloadLikeUserText(text: string): boolean {
-  return /(?:^|\n)\s*(?:user|assistant|agent|system|tool):\s+/i.test(text)
-    || /^\s*(?:source|source text|transcript|conversation|payload)\s*[:\n]/i.test(text);
+  return /(?:^|\s)(?:user|assistant|agent|system|tool):\s+/i.test(text)
+    || /(?:^|\s)(?:source|source text|transcript|conversation|payload|task|title|description|context)\s*[:\n]/i.test(text);
 }
 
 function directlyRequestsRuntimeStateContext(
@@ -78,6 +78,7 @@ function hasStrictJsonOnlyWording(text: string): boolean {
   return new RegExp(
     String.raw`\b(?:return|respond|reply|output)\s+(?:with\s+)?only\s+(?:(?:a|the)\s+)?(?:single\s+)?(?:valid\s+)?${jsonTarget.source}`,
   ).test(text)
+    || /\b(?:return|respond|reply|output)\s+json\s+only\b/.test(text)
     || /\b(?:return|respond|reply|output)\s+[^.]{0,80}\bjson\s+only\b/.test(text)
     || new RegExp(String.raw`\bonly\s+(?:(?:a|the)\s+)?(?:single\s+)?(?:valid\s+)?${jsonTarget.source}`).test(text);
 }
@@ -116,7 +117,7 @@ export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
   }
   const candidateTexts = instructionTexts.length > 0 ? instructionTexts : [lastUserText].filter(hasStrictJsonOnlyWording);
   if (candidateTexts.length === 0) return false;
-  return !candidateTexts.some(requestsRuntimeStateContext);
+  return !candidateTexts.some((text) => directlyRequestsRuntimeStateContext(messages, text));
 }
 
 export function getUserIdFromChatBody(body: unknown): string | undefined {
