@@ -109,6 +109,8 @@ export interface RoutedModelTurnParams {
   allowRuntimeCapabilityShortcut?: boolean;
   allowRuntimeMemoryInspectionShortcut?: boolean;
   allowPhoneGemmaDiagnosticShortcut?: boolean;
+  disableRuntimeStateCard?: boolean;
+  disableRuntimeStateCardMemoryContext?: boolean;
   phoneGemmaDeviceId?: string;
   phoneGemmaProfileId?: string;
 }
@@ -501,6 +503,7 @@ function renderBudgetForProviderRoute(entry: FallbackChainEntry): number {
 function shouldIncludeRuntimeMemoryContext(
   params: RoutedModelTurnParams,
 ): boolean {
+  if (params.disableRuntimeStateCardMemoryContext) return false;
   if (
     canUseRuntimeIdentityShortcut(params) ||
     canUseRuntimeCapabilityShortcut(params) ||
@@ -520,6 +523,7 @@ function shouldAttachProviderRuntimeStateCard(
   params: RoutedModelTurnParams,
   chain: FallbackChainEntry[],
 ): boolean {
+  if (params.disableRuntimeStateCard) return false;
   if (!params.userId) return false;
   if (
     canUseRuntimeIdentityShortcut(params) ||
@@ -970,8 +974,8 @@ export async function getUserSelectedModelRouteChain(
 function canUseRuntimeIdentityShortcut(params: RoutedModelTurnParams): boolean {
   if (!params.allowRuntimeIdentityShortcut) return false;
   if (params.responseFormat) return false;
-  if ((params.toolChoice ?? "none") !== "required") return true;
   if (!classifyRuntimeIdentityIntent(params.messages)) return false;
+  if ((params.toolChoice ?? "none") !== "required") return true;
   return (params.tools ?? []).some((tool) => {
     const name = tool.function?.name;
     return name === "memory_search" || name === "memory_get";
@@ -993,8 +997,8 @@ function routeToolNames(params: RoutedModelTurnParams): string[] {
 function canUseRuntimeMemoryInspectionShortcut(params: RoutedModelTurnParams): boolean {
   if (!params.allowRuntimeMemoryInspectionShortcut) return false;
   if (params.responseFormat) return false;
-  if ((params.toolChoice ?? "none") !== "required") return true;
   if (!classifyRuntimeMemoryInspectionIntent(params.messages)) return false;
+  if ((params.toolChoice ?? "none") !== "required") return true;
   return (params.tools ?? []).some((tool) => {
     const name = tool.function?.name;
     return name === "memory_search" || name === "memory_get";

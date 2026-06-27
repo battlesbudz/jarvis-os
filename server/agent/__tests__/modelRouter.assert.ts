@@ -1340,6 +1340,10 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
         maxCompletionTokens: 64,
         userId: route.userId,
         logPrefix: `[ModelRouterProviderStateCardTest:${route.provider}]`,
+        allowRuntimeIdentityShortcut: true,
+        allowRuntimeCapabilityShortcut: true,
+        allowRuntimeMemoryInspectionShortcut: true,
+        allowPhoneGemmaDiagnosticShortcut: true,
       });
 
       const capturedRequest = captured.get(route.provider);
@@ -1364,6 +1368,30 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
       assert.match(stateCard, /Active device: cloud/);
       assert.match(stateCard, /memory_search/);
     }
+
+    captured.delete("openai");
+    const extractionResult = await routeModelTurn({
+      tier: "cheap",
+      requestedModel: "openai/gpt-4.1-mini",
+      preferRequestedModel: true,
+      messages: [
+        { role: "system", content: "Return only valid JSON." },
+        { role: "user", content: "Extract new memories from this source, but do not recall old memories." },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-memory-extraction",
+      logPrefix: "[ModelRouterMemoryExtractStateCardTest]",
+      disableRuntimeStateCard: true,
+    });
+    const extractionRequest = captured.get("openai");
+    assert.equal(extractionResult.providerName, "openai");
+    assert.equal(
+      extractionRequest?.messages.some((message) => (
+        message.role === "system" && messageContentText(message.content).includes("## Jarvis Runtime State Card")
+      )),
+      false,
+    );
 
     console.log("OK: cloud providers receive the runtime state-card contract without losing tool access");
   } finally {
