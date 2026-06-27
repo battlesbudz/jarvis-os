@@ -26,8 +26,13 @@ assert.match(
 );
 assert.match(
   source,
-  /memoryType: input\.insight\.memoryType \|\| "contextual"/,
+  /const memoryType = input\.insight\.memoryType \|\| "contextual"/,
   "dream memory candidates without a model-supplied type should stay non-durable for review",
+);
+assert.match(
+  source,
+  /evaluateMemoryAutoReviewDecision\([\s\S]*sourceType: "dream_cycle"[\s\S]*if \(autoReviewDecision\.action !== "keep"\)/,
+  "dream auto-keep should reuse the shared auto-review gates before approving pending memories",
 );
 assert.match(
   source,

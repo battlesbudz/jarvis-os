@@ -30,6 +30,7 @@ import {
   type DreamReviewPayload,
   type NormalizedDreamInsight,
 } from "./dreamPolicy";
+import { evaluateMemoryAutoReviewDecision } from "./autoReview";
 import { keepPendingMemoryWrites, writeMemoryThroughPipeline } from "./writePipeline";
 
 async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
@@ -740,22 +741,25 @@ async function writeDreamMemoryCandidate(input: {
   insight: DreamInsightRaw;
   sourceMemoryIds: string[];
 }): Promise<DreamReviewPayload> {
+  const category = input.insight.category || "fact";
+  const memoryType = input.insight.memoryType || "contextual";
+  const provenance = buildDreamMemoryProvenance({
+    dreamDate: input.dreamDate,
+    sourceHints: input.insight.sourceHints,
+    sourceMemoryIds: input.sourceMemoryIds,
+  });
   const result = await writeMemoryThroughPipeline({
     userId: input.userId,
     content: input.insight.insight,
     trigger: "dream",
-    category: input.insight.category || "fact",
+    category,
     tier: "long_term",
-    memoryType: input.insight.memoryType || "contextual",
+    memoryType,
     confidence: input.insight.confidence,
     sourceType: "dream_cycle",
     sourceRef: input.dreamDate,
     reviewEnabled: true,
-    provenance: buildDreamMemoryProvenance({
-      dreamDate: input.dreamDate,
-      sourceHints: input.insight.sourceHints,
-      sourceMemoryIds: input.sourceMemoryIds,
-    }),
+    provenance,
   });
 
   if (!result.insertedMemoryId) {
@@ -770,6 +774,31 @@ async function writeDreamMemoryCandidate(input: {
   }
 
   if (shouldAutoPromoteDreamMemory(input.insight)) {
+    const autoReviewDecision = evaluateMemoryAutoReviewDecision({
+      id: result.insertedMemoryId,
+      userId: input.userId,
+      content: input.insight.insight,
+      category,
+      confidence: input.insight.confidence,
+      sourceType: "dream_cycle",
+      tier: "long_term",
+      memoryType,
+      pendingReview: true,
+      reviewStatus: "pending",
+      supersedesMemoryId: null,
+      provenance,
+    });
+    if (autoReviewDecision.action !== "keep") {
+      return {
+        memoryReview: {
+          status: "pending",
+          memoryId: result.insertedMemoryId,
+          deepLink: DREAM_MEMORY_REVIEW_DEEP_LINK,
+          reason: autoReviewDecision.reason,
+        },
+        sourceHints: input.insight.sourceHints,
+      };
+    }
     const kept = await keepPendingMemoryWrites({
       userId: input.userId,
       memoryIds: [result.insertedMemoryId],
