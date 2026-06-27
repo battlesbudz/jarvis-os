@@ -512,6 +512,10 @@ function renderBudgetForProviderRoute(entry: FallbackChainEntry): number {
   return 2_400;
 }
 
+function chainIncludesAndroidLocalGemma(chain: FallbackChainEntry[]): boolean {
+  return chain.some((entry) => entry.providerName === "android-local-gemma");
+}
+
 function shouldIncludeRuntimeMemoryContext(
   params: RoutedModelTurnParams,
 ): boolean {
@@ -548,9 +552,11 @@ function shouldAttachProviderRuntimeStateCard(
   }
   const primary = chain[0];
   if (!primary) return false;
-  // The Android provider builds a tighter Phone Gemma prompt internally to
-  // preserve local context-window budget and native tool protocol details.
-  if (primary.providerName === "android-local-gemma") return false;
+  // Android Local Gemma builds a tighter Phone Gemma prompt internally.
+  // Because the fallback executor shares one message list across attempts,
+  // any chain that can fall through to Android must leave that prompt budget
+  // and native tool protocol state to the Android provider.
+  if (chainIncludesAndroidLocalGemma(chain)) return false;
   return true;
 }
 
