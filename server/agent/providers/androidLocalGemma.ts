@@ -271,14 +271,17 @@ function messageForPrompt(message: OpenAI.Chat.Completions.ChatCompletionMessage
   const content = message.role === "system"
     ? sanitizeSystemPromptForPhoneGemma(textFromContent(message.content))
     : textFromContent(message.content);
-  if (!content.trim()) return "";
   if (message.role === "assistant" && message.tool_calls?.length) {
     const calls = message.tool_calls
       .filter((call): call is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall => call.type === "function")
       .map((call) => `${call.function.name}(${call.function.arguments || "{}"})`)
       .join("\n");
-    return `assistant: ${content}\nassistant tool calls:\n${calls}`.trim();
+    return [content.trim() ? `assistant: ${content.trim()}` : "", `assistant tool calls:\n${calls}`]
+      .filter(Boolean)
+      .join("\n")
+      .trim();
   }
+  if (!content.trim()) return "";
   return `${message.role}: ${content}`;
 }
 
@@ -1160,6 +1163,13 @@ function wantsNotificationReadRequest(text: string): boolean {
   );
 }
 
+function wantsScreenReadContextRequest(text: string): boolean {
+  return (
+    /\b(?:what(?:'s| is)|read|show|inspect|look at)\b[\s\S]{0,48}\b(?:screen|display|phone|device)\b/i.test(text) ||
+    /\b(?:screen|phone|device)\b[\s\S]{0,32}\b(?:says|shows|visible)\b/i.test(text)
+  );
+}
+
 function recoverAndroidRuntimeToolFromRequest(
   params: ProviderQueryParams,
   options: { requireRequiredToolChoice?: boolean } = {},
@@ -1233,10 +1243,7 @@ function recoverAndroidRuntimeToolFromRequest(
 
   if (
     hasFunctionTool(params.tools, "android_read_screen_context") &&
-    (
-       /\b(?:what(?:'s| is)|read|show|inspect|look at)\b[\s\S]{0,48}\b(?:screen|display|phone|device)\b/i.test(recoveryText) ||
-      /\b(?:screen|phone|device)\b[\s\S]{0,32}\b(?:says|shows|visible)\b/i.test(recoveryText)
-    )
+    wantsScreenReadContextRequest(recoveryText)
   ) {
     return {
       id: generatedToolCallId(0),
@@ -1297,6 +1304,7 @@ function isExplicitAndroidRuntimeActionRequest(text: string): boolean {
   }
   return (
     wantsNotificationReadRequest(requestText) ||
+    wantsScreenReadContextRequest(requestText) ||
     /^(?:hey\s+jarvis[, ]*)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:open|launch|start|take|capture|screenshot|read|show|list|check|view|search|find|look\s+up|tap|click|press|swipe|scroll|type|go\s+to)\b/i.test(requestText)
   );
 }

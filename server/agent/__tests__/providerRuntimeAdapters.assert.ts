@@ -1477,6 +1477,48 @@ async function testAndroidLocalGemmaPreservesToolContinuationWhenTrimming() {
   }
 }
 
+async function testAndroidLocalGemmaPreservesEmptyAssistantToolCallContinuation() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: JSON.stringify({ type: "final", content: "The screen result is available." }), finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Read my screen." },
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [{
+            id: "call_screen",
+            type: "function",
+            function: { name: "android_read_screen_context", arguments: "{}" },
+          }],
+        },
+        { role: "tool", tool_call_id: "call_screen", content: "Visible text: JARVIS" },
+        { role: "user", content: "What does it show?" },
+      ],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "The screen result is available.");
+    assert.match(requests[0].op.prompt, /assistant tool calls:\nandroid_read_screen_context\(\{\}\)/);
+    assert.match(requests[0].op.prompt, /tool\(call_screen\): Visible text: JARVIS/);
+    console.log("OK: Android Local Gemma preserves empty assistant tool-call continuations");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaPreservesNewestTurnWhenTrimming() {
   const previousBudget = process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
   process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = "1200";
@@ -2892,6 +2934,47 @@ async function testAndroidLocalGemmaDoesNotAutoRecoverInformationalScreenshotQue
     assert.equal(result.textContent, "On Android, use the device screenshot shortcut or the quick settings option.");
     assert.equal(result.toolCallList.length, 0);
     console.log("OK: Android Local Gemma does not auto-recover informational screenshot questions");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaRecoversScreenReadQuestionsInAutoMode() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "final",
+        content: "I cannot access your screen directly.",
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "What's on my screen?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_read_screen_context",
+          description: "Read the current Android screen context.",
+          parameters: { type: "object", properties: {} },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_read_screen_context");
+    assert.equal(result.toolCallList[0].function.arguments, "{}");
+    console.log("OK: Android Local Gemma recovers screen-read questions in auto mode");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -4902,6 +4985,7 @@ async function main() {
   await testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming();
   await testAndroidLocalGemmaOmitsCodeProposalSystemPromptForPhoneActions();
   await testAndroidLocalGemmaPreservesToolContinuationWhenTrimming();
+  await testAndroidLocalGemmaPreservesEmptyAssistantToolCallContinuation();
   await testAndroidLocalGemmaPreservesNewestTurnWhenTrimming();
   await testAndroidLocalGemmaRecoversRequiredScreenshotFinalAnswer();
   await testAndroidLocalGemmaRecoversRequiredScreenshotToPhoneRuntime();
@@ -4934,6 +5018,7 @@ async function main() {
   await testAndroidLocalGemmaDoesNotReadNotificationsForMetaQuestions();
   await testAndroidLocalGemmaDoesNotReadNotificationsForNegatedRequests();
   await testAndroidLocalGemmaDoesNotAutoRecoverInformationalScreenshotQuestions();
+  await testAndroidLocalGemmaRecoversScreenReadQuestionsInAutoMode();
   await testAndroidLocalGemmaRoutesCompoundScreenshotRequestsToNavigationFirst();
   await testAndroidLocalGemmaDoesNotRecoverHomeScreenAsScreenshot();
   await testAndroidLocalGemmaReadsScreenAfterRecoveredNavigation();
