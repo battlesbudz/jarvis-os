@@ -2997,6 +2997,84 @@ async function testAndroidLocalGemmaDoesNotRecoverOpenSourceQuestions() {
   }
 }
 
+async function testAndroidLocalGemmaPreservesRequiredInformationalPhoneFinalAnswers() {
+  try {
+    const cases: Array<{
+      request: string;
+      toolName: string;
+      description: string;
+      parameters: Record<string, unknown>;
+      expected: string;
+    }> = [
+      {
+        request: "What are notifications?",
+        toolName: "android_read_notifications",
+        description: "Read visible Android notifications.",
+        parameters: { type: "object", properties: { limit: { type: "number" } } },
+        expected: "Notifications are alerts from apps or the system.",
+      },
+      {
+        request: "Can you show me how to take a screenshot?",
+        toolName: "android_capture_screen",
+        description: "Capture the current Android screen.",
+        parameters: { type: "object", properties: {} },
+        expected: "Use the phone screenshot shortcut.",
+      },
+      {
+        request: "Open Calendar and Calculator.",
+        toolName: "android_open_app_by_name",
+        description: "Open a phone app by name.",
+        parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+        expected: "Please choose one app to open.",
+      },
+      {
+        request: "What's wrong with my phone?",
+        toolName: "android_read_screen_context",
+        description: "Read the current Android screen context.",
+        parameters: { type: "object", properties: {} },
+        expected: "I can answer generic phone questions without reading your screen.",
+      },
+    ];
+
+    for (const testCase of cases) {
+      _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+        ok: true,
+        data: {
+          text: JSON.stringify({
+            type: "final",
+            content: testCase.expected,
+          }),
+          finishReason: "stop",
+        },
+      }));
+
+      const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: testCase.request }],
+        tools: [{
+          type: "function",
+          function: {
+            name: testCase.toolName,
+            description: testCase.description,
+            parameters: testCase.parameters,
+          },
+        }],
+        toolChoice: "required",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      }));
+
+      assert.equal(result.finishReason, "stop");
+      assert.equal(result.textContent, testCase.expected);
+      assert.equal(result.toolCallList.length, 0);
+    }
+    console.log("OK: Android Local Gemma preserves required informational phone final answers");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaDoesNotAutoRecoverInformationalScreenshotQuestions() {
   try {
     for (const request of [
@@ -5182,6 +5260,7 @@ async function main() {
   await testAndroidLocalGemmaDoesNotReadNotificationsForNegatedRequests();
   await testAndroidLocalGemmaDoesNotRecoverMultiAppOpenRequests();
   await testAndroidLocalGemmaDoesNotRecoverOpenSourceQuestions();
+  await testAndroidLocalGemmaPreservesRequiredInformationalPhoneFinalAnswers();
   await testAndroidLocalGemmaDoesNotAutoRecoverInformationalScreenshotQuestions();
   await testAndroidLocalGemmaDoesNotReadScreenForGenericPhoneQuestions();
   await testAndroidLocalGemmaRecoversScreenReadQuestionsInAutoMode();
