@@ -2824,6 +2824,7 @@ async function testAndroidLocalGemmaDoesNotReadNotificationsForMetaQuestions() {
       "Are notifications enabled?",
       "Do I have notifications enabled?",
       "Any notification settings I should change?",
+      "What are notifications?",
     ]) {
       _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
         ok: true,
@@ -2902,6 +2903,45 @@ async function testAndroidLocalGemmaDoesNotReadNotificationsForNegatedRequests()
       assert.equal(result.toolCallList.length, 0);
     }
     console.log("OK: Android Local Gemma does not read notifications for negated requests");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotRecoverMultiAppOpenRequests() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "final",
+        content: "Please choose one app to open.",
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open YouTube and Chrome." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_app_by_name",
+          description: "Open a phone app by name.",
+          parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, "Please choose one app to open.");
+    assert.equal(result.toolCallList.length, 0);
+    console.log("OK: Android Local Gemma does not recover multi-app open requests");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -5090,6 +5130,7 @@ async function main() {
   await testAndroidLocalGemmaRecoversNotificationRequestsFromFinalDenials();
   await testAndroidLocalGemmaDoesNotReadNotificationsForMetaQuestions();
   await testAndroidLocalGemmaDoesNotReadNotificationsForNegatedRequests();
+  await testAndroidLocalGemmaDoesNotRecoverMultiAppOpenRequests();
   await testAndroidLocalGemmaDoesNotAutoRecoverInformationalScreenshotQuestions();
   await testAndroidLocalGemmaDoesNotReadScreenForGenericPhoneQuestions();
   await testAndroidLocalGemmaRecoversScreenReadQuestionsInAutoMode();

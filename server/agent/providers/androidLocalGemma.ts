@@ -1170,7 +1170,8 @@ function wantsNotificationReadRequest(text: string): boolean {
   }
   return (
     /\b(?:read|show|list|check|view|see|summari[sz]e)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
-    /\bwhat(?:'s| is| are)?\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
+    /\bwhat(?:'s| is| are)?\b[\s\S]{0,64}\b(?:my|current|new|unread|recent|pending)\s+notifications?\b/i.test(text) ||
+    /\bwhat\s+notifications?\s+(?:do|did)\s+i\s+have\b/i.test(text) ||
     /\b(?:do i have|are there|any)\b[\s\S]{0,24}\b(?:any\s+|new\s+|unread\s+|recent\s+)?notifications?\b/i.test(text) ||
     /\bnotifications?\b[\s\S]{0,64}\b(?:do i have|are there|show|list|read|check|view|see)\b/i.test(text)
   );
@@ -1233,6 +1234,7 @@ function recoverAndroidRuntimeToolFromRequest(
   }
 
   if (hasFunctionTool(params.tools, "android_open_app_by_name") && /\b(?:open|launch|start)\b/i.test(recoveryText)) {
+    if (inferPackageNamesFromText(recoveryText).length > 1) return null;
     const packageName = inferPackageNameFromText(recoveryText);
     const appName = packageName
       ? packageAliases(packageName)[0]?.replace(/_/g, " ") || recoveryText
