@@ -2825,6 +2825,7 @@ async function testAndroidLocalGemmaDoesNotReadNotificationsForMetaQuestions() {
       "Do I have notifications enabled?",
       "Any notification settings I should change?",
       "What are notifications?",
+      "Summarize how Android notifications work.",
     ]) {
       _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
         ok: true,

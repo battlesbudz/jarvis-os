@@ -1180,6 +1180,13 @@ function wantsNotificationReadRequest(text: string): boolean {
   ) {
     return false;
   }
+  if (
+    /\b(?:how|why)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
+    /\bnotifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept)\b/i.test(text) ||
+    /\b(?:explain|describe|define|summari[sz]e)\b[\s\S]{0,64}\b(?:how\s+)?(?:android\s+)?notifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept)\b/i.test(text)
+  ) {
+    return false;
+  }
   return (
     /\b(?:read|show|list|check|view|see|summari[sz]e)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
     /\bwhat(?:'s| is| are)?\b[\s\S]{0,64}\b(?:my|current|new|unread|recent|pending)\s+notifications?\b/i.test(text) ||
