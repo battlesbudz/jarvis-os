@@ -1155,7 +1155,7 @@ function shouldUseServerYoutubeResearchWorkflow(text: string): boolean {
 }
 
 function looksLikeDeviceInstructionRequest(text: string): boolean {
-  if (!/\b(?:how\s+to|show\s+me\s+how\s+to|tell\s+me\s+how\s+to|teach\s+me\s+how\s+to|help\s+me\s+(?:learn\s+)?how\s+to)\b/i.test(text)) {
+  if (!/\b(?:how\s+(?:do|can|would|should)\s+i|how\s+to|show\s+me\s+how\s+to|tell\s+me\s+how\s+to|teach\s+me\s+how\s+to|help\s+me\s+(?:learn\s+)?how\s+to)\b/i.test(text)) {
     return false;
   }
   return /\b(?:screenshot|screen shot|capture|open|launch|start|tap|click|press|swipe|scroll|type|read|show|notification|notifications|screen|display|phone|device|app|youtube|chrome|browser|back|home|recents|enter)\b/i.test(text);

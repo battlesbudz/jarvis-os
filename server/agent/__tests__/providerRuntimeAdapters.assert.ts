@@ -3021,6 +3021,20 @@ async function testAndroidLocalGemmaPreservesRequiredInformationalPhoneFinalAnsw
         expected: "Use the phone screenshot shortcut.",
       },
       {
+        request: "How do I take a screenshot on Android?",
+        toolName: "android_capture_screen",
+        description: "Capture the current Android screen.",
+        parameters: { type: "object", properties: {} },
+        expected: "Use Power and Volume Down to take a screenshot.",
+      },
+      {
+        request: "How do I open Chrome?",
+        toolName: "android_open_app_by_name",
+        description: "Open a phone app by name.",
+        parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+        expected: "Tap Chrome from your app launcher.",
+      },
+      {
         request: "Open Calendar and Calculator.",
         toolName: "android_open_app_by_name",
         description: "Open a phone app by name.",
