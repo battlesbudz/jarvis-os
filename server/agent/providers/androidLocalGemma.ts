@@ -1285,7 +1285,20 @@ function recoverExplicitAndroidRuntimeToolFromRequest(
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
   if (params.toolChoice === "required") return null;
   if (hasActiveToolContinuation(params.messages)) return null;
+  if (!isExplicitAndroidRuntimeActionRequest(latestUserText(params.messages))) return null;
   return recoverAndroidRuntimeToolFromRequest(params, { requireRequiredToolChoice: false });
+}
+
+function isExplicitAndroidRuntimeActionRequest(text: string): boolean {
+  const requestText = correctiveDeviceCommandText(text).trim();
+  if (!requestText) return false;
+  if (/^(?:how|why|where|when|what(?:'s| is)?(?:\s+the)?\s+(?:best\s+)?way)\b/i.test(requestText)) {
+    return wantsNotificationReadRequest(requestText);
+  }
+  return (
+    wantsNotificationReadRequest(requestText) ||
+    /^(?:hey\s+jarvis[, ]*)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:open|launch|start|take|capture|screenshot|read|show|list|check|view|search|find|look\s+up|tap|click|press|swipe|scroll|type|go\s+to)\b/i.test(requestText)
+  );
 }
 
 function recoverRequiredToolCallFromRequest(

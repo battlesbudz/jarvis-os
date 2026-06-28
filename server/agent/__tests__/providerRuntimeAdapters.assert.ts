@@ -2858,6 +2858,45 @@ async function testAndroidLocalGemmaDoesNotReadNotificationsForNegatedRequests()
   }
 }
 
+async function testAndroidLocalGemmaDoesNotAutoRecoverInformationalScreenshotQuestions() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "final",
+        content: "On Android, use the device screenshot shortcut or the quick settings option.",
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "How do I take a screenshot on Android?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_capture_screen",
+          description: "Capture the current Android screen.",
+          parameters: { type: "object", properties: {} },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.textContent, "On Android, use the device screenshot shortcut or the quick settings option.");
+    assert.equal(result.toolCallList.length, 0);
+    console.log("OK: Android Local Gemma does not auto-recover informational screenshot questions");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaRoutesCompoundScreenshotRequestsToNavigationFirst() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -4894,6 +4933,7 @@ async function main() {
   await testAndroidLocalGemmaRecoversNotificationRequestsFromFinalDenials();
   await testAndroidLocalGemmaDoesNotReadNotificationsForMetaQuestions();
   await testAndroidLocalGemmaDoesNotReadNotificationsForNegatedRequests();
+  await testAndroidLocalGemmaDoesNotAutoRecoverInformationalScreenshotQuestions();
   await testAndroidLocalGemmaRoutesCompoundScreenshotRequestsToNavigationFirst();
   await testAndroidLocalGemmaDoesNotRecoverHomeScreenAsScreenshot();
   await testAndroidLocalGemmaReadsScreenAfterRecoveredNavigation();
