@@ -671,7 +671,7 @@ function isYouTubeUrl(url: string): boolean {
 function hasProhibitedDeviceActionRequest(text: string): boolean {
   const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
   if (!normalized) return false;
-  const deviceActionPattern = /\b(?:screenshot|screen shot|capture|snap|open|launch|start|browse|tap|click|press|swipe|scroll|type|read|show|inspect|look at|screen|display|phone|device|app|youtube|chrome|browser|back|home|recents|enter)\b/;
+  const deviceActionPattern = /\b(?:screenshot|screen shot|capture|snap|open|launch|start|browse|tap|click|press|swipe|scroll|type|read|show|inspect|look at|notification|notifications|notification shade|screen|display|phone|device|app|youtube|chrome|browser|back|home|recents|enter)\b/;
   if (hasLaterCorrectiveDeviceCommand(normalized)) return false;
   if (/\b(?:did not|didn't|didnt)\b[\s\S]{0,80}\b(?:ask|request|tell|instruct)\b/.test(normalized) && deviceActionPattern.test(normalized)) {
     return true;
@@ -686,10 +686,9 @@ function hasProhibitedDeviceActionRequest(text: string): boolean {
 }
 
 function hasLaterCorrectiveDeviceCommand(normalizedText: string): boolean {
-  return (
-    /[.;!?]\s*(?:please\s+)?(?:open|launch|start|take|capture|read|show|tap|click|press|swipe|scroll|type|go to|search)\b/.test(normalizedText) ||
-    /\b(?:but|instead|rather)\b[\s\S]{0,32}\b(?:open|launch|start|take|capture|read|show|tap|click|press|swipe|scroll|type|go to|search)\b/.test(normalizedText)
-  );
+  const correctiveText = correctiveDeviceCommandText(normalizedText);
+  if (correctiveText === normalizedText) return false;
+  return !/^(?:please\s+)?(?:do not|don['’]?t|dont|never|avoid|without|can['’]?t|cannot|cant)\b/.test(correctiveText);
 }
 
 function correctiveDeviceCommandText(text: string): string {

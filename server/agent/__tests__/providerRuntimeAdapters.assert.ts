@@ -2645,6 +2645,42 @@ async function testAndroidLocalGemmaAllowsCorrectiveCommandsAfterProtest() {
   }
 }
 
+async function testAndroidLocalGemmaBlocksNegatedCorrectiveCommandsAfterProtest() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I will not open Calculator." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "I didn't ask you to open YouTube but don't open Calculator." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_app_by_name",
+          description: "Open a phone app by name.",
+          parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.equal(result.textContent, "I will not open Calculator.");
+    console.log("OK: Android Local Gemma blocks negated corrective commands after protest wording");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaRecoversCompoundOpenYoutubeSearchToPhoneRuntime() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -2773,6 +2809,50 @@ async function testAndroidLocalGemmaDoesNotReadNotificationsForMetaQuestions() {
       assert.equal(result.toolCallList.length, 0);
     }
     console.log("OK: Android Local Gemma does not read notifications for meta questions");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotReadNotificationsForNegatedRequests() {
+  try {
+    for (const request of [
+      "Don't list my notifications.",
+      "Please don't check my notifications.",
+    ]) {
+      _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+        ok: true,
+        data: {
+          text: JSON.stringify({
+            type: "final",
+            content: "I will not read your notifications.",
+          }),
+          finishReason: "stop",
+        },
+      }));
+
+      const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: request }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "android_read_notifications",
+            description: "Read visible Android notifications.",
+            parameters: { type: "object", properties: { limit: { type: "number" } } },
+          },
+        }],
+        toolChoice: "auto",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      }));
+
+      assert.equal(result.finishReason, "stop");
+      assert.equal(result.textContent, "I will not read your notifications.");
+      assert.equal(result.toolCallList.length, 0);
+    }
+    console.log("OK: Android Local Gemma does not read notifications for negated requests");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -4809,9 +4889,11 @@ async function main() {
   await testAndroidLocalGemmaDoesNotRecoverNegatedRequiredActions();
   await testAndroidLocalGemmaDoesNotScreenshotWhenUserSaysTheyDidNotAsk();
   await testAndroidLocalGemmaAllowsCorrectiveCommandsAfterProtest();
+  await testAndroidLocalGemmaBlocksNegatedCorrectiveCommandsAfterProtest();
   await testAndroidLocalGemmaRecoversCompoundOpenYoutubeSearchToPhoneRuntime();
   await testAndroidLocalGemmaRecoversNotificationRequestsFromFinalDenials();
   await testAndroidLocalGemmaDoesNotReadNotificationsForMetaQuestions();
+  await testAndroidLocalGemmaDoesNotReadNotificationsForNegatedRequests();
   await testAndroidLocalGemmaRoutesCompoundScreenshotRequestsToNavigationFirst();
   await testAndroidLocalGemmaDoesNotRecoverHomeScreenAsScreenshot();
   await testAndroidLocalGemmaReadsScreenAfterRecoveredNavigation();
