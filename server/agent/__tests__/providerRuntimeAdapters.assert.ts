@@ -3028,11 +3028,25 @@ async function testAndroidLocalGemmaPreservesRequiredInformationalPhoneFinalAnsw
         expected: "Use Power and Volume Down to take a screenshot.",
       },
       {
+        request: "Can you tell me how I can take a screenshot?",
+        toolName: "android_capture_screen",
+        description: "Capture the current Android screen.",
+        parameters: { type: "object", properties: {} },
+        expected: "Use Power and Volume Down to take a screenshot.",
+      },
+      {
         request: "How do I open Chrome?",
         toolName: "android_open_app_by_name",
         description: "Open a phone app by name.",
         parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
         expected: "Tap Chrome from your app launcher.",
+      },
+      {
+        request: "What's the best way to read my notifications?",
+        toolName: "android_read_notifications",
+        description: "Read visible Android notifications.",
+        parameters: { type: "object", properties: { limit: { type: "number" } } },
+        expected: "Use the notification shade or notification settings.",
       },
       {
         request: "Open Calendar and Calculator.",

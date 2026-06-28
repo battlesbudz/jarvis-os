@@ -1155,7 +1155,14 @@ function shouldUseServerYoutubeResearchWorkflow(text: string): boolean {
 }
 
 function looksLikeDeviceInstructionRequest(text: string): boolean {
-  if (!/\b(?:how\s+(?:do|can|would|should)\s+i|how\s+to|show\s+me\s+how\s+to|tell\s+me\s+how\s+to|teach\s+me\s+how\s+to|help\s+me\s+(?:learn\s+)?how\s+to)\b/i.test(text)) {
+  if (
+    !(
+      /\b(?:how\s+(?:do|can|would|should)\s+i|how\s+i\s+(?:can|could|would|should)|how\s+to)\b/i.test(text) ||
+      /\b(?:show|tell|teach|explain|describe)\s+(?:me\s+)?how\b/i.test(text) ||
+      /\bhelp\s+me\s+(?:learn\s+)?how\b/i.test(text) ||
+      /\b(?:what(?:'s| is)\s+(?:the\s+)?(?:best\s+|easiest\s+|right\s+)?way\s+to|(?:best|easiest|right)\s+way\s+to)\b/i.test(text)
+    )
+  ) {
     return false;
   }
   return /\b(?:screenshot|screen shot|capture|open|launch|start|tap|click|press|swipe|scroll|type|read|show|notification|notifications|screen|display|phone|device|app|youtube|chrome|browser|back|home|recents|enter)\b/i.test(text);
