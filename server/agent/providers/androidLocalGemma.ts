@@ -1187,11 +1187,28 @@ function wantsNotificationReadRequest(text: string): boolean {
     return false;
   }
   return (
+    /\b(?:open|pull\s+down|swipe\s+down|expand)\b[\s\S]{0,64}\b(?:my\s+|the\s+)?(?:notifications?|notification\s+shade)\b/i.test(text) ||
+    /\b(?:notifications?|notification\s+shade)\b[\s\S]{0,64}\b(?:open|pull(?:ed)?\s+down|swipe(?:d)?\s+down|expand(?:ed)?)\b/i.test(text) ||
     /\b(?:read|show|list|check|view|see|summari[sz]e)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
     /\bwhat(?:'s| is| are)?\b[\s\S]{0,64}\b(?:my|current|new|unread|recent|pending)\s+notifications?\b/i.test(text) ||
     /\bwhat\s+notifications?\s+(?:do|did)\s+i\s+have\b/i.test(text) ||
     /\b(?:do i have|are there|any)\b[\s\S]{0,24}\b(?:any\s+|new\s+|unread\s+|recent\s+)?notifications?\b/i.test(text) ||
     /\bnotifications?\b[\s\S]{0,64}\b(?:do i have|are there|show|list|read|check|view|see)\b/i.test(text)
+  );
+}
+
+function looksLikeNotificationNonActionQuestion(text: string): boolean {
+  if (!/\bnotifications?\b/i.test(text) || wantsNotificationReadRequest(text)) return false;
+  if (
+    /\b(?:open|launch|start|pull\s+down|swipe\s+down|expand|clear|dismiss|reply|tap|click|press)\b[\s\S]{0,64}\b(?:notifications?|notification\s+shade)\b/i.test(text) ||
+    /\b(?:notifications?|notification\s+shade)\b[\s\S]{0,64}\b(?:open|launch|start|pull(?:ed)?\s+down|swipe(?:d)?\s+down|expand(?:ed)?|clear|dismiss|reply|tap|click|press)\b/i.test(text)
+  ) {
+    return false;
+  }
+  return (
+    /\b(?:what|why|how)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
+    /\bnotifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept|settings?|enabled|disabled|noisy|muted|silenced|allowed|blocked)\b/i.test(text) ||
+    /\b(?:explain|describe|define|summari[sz]e)\b[\s\S]{0,64}\b(?:how\s+)?(?:android\s+)?notifications?\b/i.test(text)
   );
 }
 
@@ -1339,7 +1356,7 @@ function recoverExplicitAndroidRuntimeToolFromRequest(
 function shouldPreserveRequiredFinalAnswer(requestText: string): boolean {
   const recoveryText = correctiveDeviceCommandText(requestText).trim();
   if (!recoveryText) return false;
-  const notificationConceptQuestion = /\bnotifications?\b/i.test(recoveryText) && !wantsNotificationReadRequest(recoveryText);
+  const notificationConceptQuestion = looksLikeNotificationNonActionQuestion(recoveryText);
   const genericPhoneQuestion = /\b(?:phone|device|screen|display)\b/i.test(recoveryText) &&
     !wantsScreenReadContextRequest(recoveryText) &&
     !wantsScreenshotRequest(recoveryText) &&
