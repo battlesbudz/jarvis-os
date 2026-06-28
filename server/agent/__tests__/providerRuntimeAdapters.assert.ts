@@ -2908,38 +2908,54 @@ async function testAndroidLocalGemmaDoesNotReadNotificationsForNegatedRequests()
 }
 
 async function testAndroidLocalGemmaDoesNotAutoRecoverInformationalScreenshotQuestions() {
-  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
-    ok: true,
-    data: {
-      text: JSON.stringify({
-        type: "final",
-        content: "On Android, use the device screenshot shortcut or the quick settings option.",
-      }),
-      finishReason: "stop",
-    },
-  }));
-
   try {
-    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
-      model: "android-local-gemma/gemma-4-e4b-it",
-      messages: [{ role: "user", content: "How do I take a screenshot on Android?" }],
-      tools: [{
-        type: "function",
-        function: {
-          name: "android_capture_screen",
-          description: "Capture the current Android screen.",
-          parameters: { type: "object", properties: {} },
+    for (const request of [
+      "How do I take a screenshot on Android?",
+      "Can you show me how to take a screenshot?",
+      "Can you show me how to open Chrome?",
+    ]) {
+      _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+        ok: true,
+        data: {
+          text: JSON.stringify({
+            type: "final",
+            content: "On Android, use the device shortcut or app icon.",
+          }),
+          finishReason: "stop",
         },
-      }],
-      toolChoice: "auto",
-      maxCompletionTokens: 128,
-      stream: false,
-      userId: "user-phone",
-    }));
+      }));
 
-    assert.equal(result.finishReason, "stop");
-    assert.equal(result.textContent, "On Android, use the device screenshot shortcut or the quick settings option.");
-    assert.equal(result.toolCallList.length, 0);
+      const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: request }],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "android_capture_screen",
+              description: "Capture the current Android screen.",
+              parameters: { type: "object", properties: {} },
+            },
+          },
+          {
+            type: "function",
+            function: {
+              name: "android_open_app_by_name",
+              description: "Open a phone app by name.",
+              parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+            },
+          },
+        ],
+        toolChoice: "auto",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      }));
+
+      assert.equal(result.finishReason, "stop");
+      assert.equal(result.textContent, "On Android, use the device shortcut or app icon.");
+      assert.equal(result.toolCallList.length, 0);
+    }
     console.log("OK: Android Local Gemma does not auto-recover informational screenshot questions");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
@@ -2951,6 +2967,7 @@ async function testAndroidLocalGemmaDoesNotReadScreenForGenericPhoneQuestions() 
     for (const request of [
       "What's wrong with my phone?",
       "What's the best phone?",
+      "My phone screen is cracked; what should I do?",
     ]) {
       _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
         ok: true,
@@ -2991,40 +3008,45 @@ async function testAndroidLocalGemmaDoesNotReadScreenForGenericPhoneQuestions() 
 }
 
 async function testAndroidLocalGemmaRecoversScreenReadQuestionsInAutoMode() {
-  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
-    ok: true,
-    data: {
-      text: JSON.stringify({
-        type: "final",
-        content: "I cannot access your screen directly.",
-      }),
-      finishReason: "stop",
-    },
-  }));
-
   try {
-    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
-      model: "android-local-gemma/gemma-4-e4b-it",
-      messages: [{ role: "user", content: "What's on my screen?" }],
-      tools: [{
-        type: "function",
-        function: {
-          name: "android_read_screen_context",
-          description: "Read the current Android screen context.",
-          parameters: { type: "object", properties: {} },
+    for (const request of [
+      "What's on my screen?",
+      "What does my phone show?",
+    ]) {
+      _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+        ok: true,
+        data: {
+          text: JSON.stringify({
+            type: "final",
+            content: "I cannot access your screen directly.",
+          }),
+          finishReason: "stop",
         },
-      }],
-      toolChoice: "auto",
-      maxCompletionTokens: 128,
-      stream: false,
-      userId: "user-phone",
-    }));
+      }));
 
-    assert.equal(result.finishReason, "tool_calls");
-    assert.equal(result.textContent, "");
-    assert.equal(result.toolCallList.length, 1);
-    assert.equal(result.toolCallList[0].function.name, "android_read_screen_context");
-    assert.equal(result.toolCallList[0].function.arguments, "{}");
+      const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: request }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "android_read_screen_context",
+            description: "Read the current Android screen context.",
+            parameters: { type: "object", properties: {} },
+          },
+        }],
+        toolChoice: "auto",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      }));
+
+      assert.equal(result.finishReason, "tool_calls");
+      assert.equal(result.textContent, "");
+      assert.equal(result.toolCallList.length, 1);
+      assert.equal(result.toolCallList[0].function.name, "android_read_screen_context");
+      assert.equal(result.toolCallList[0].function.arguments, "{}");
+    }
     console.log("OK: Android Local Gemma recovers screen-read questions in auto mode");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);

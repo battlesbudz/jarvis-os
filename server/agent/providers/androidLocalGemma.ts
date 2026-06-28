@@ -1154,6 +1154,13 @@ function shouldUseServerYoutubeResearchWorkflow(text: string): boolean {
   return /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|compare|rank|recommend|recommendation|best videos?|top videos?|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
 }
 
+function looksLikeDeviceInstructionRequest(text: string): boolean {
+  if (!/\b(?:how\s+to|show\s+me\s+how\s+to|tell\s+me\s+how\s+to|teach\s+me\s+how\s+to|help\s+me\s+(?:learn\s+)?how\s+to)\b/i.test(text)) {
+    return false;
+  }
+  return /\b(?:screenshot|screen shot|capture|open|launch|start|tap|click|press|swipe|scroll|type|read|show|notification|notifications|screen|display|phone|device|app|youtube|chrome|browser|back|home|recents|enter)\b/i.test(text);
+}
+
 function wantsNotificationReadRequest(text: string): boolean {
   if (!/\bnotifications?\b/i.test(text)) return false;
   if (
@@ -1177,7 +1184,7 @@ function wantsScreenReadContextRequest(text: string): boolean {
     /\b(?:what(?:'s| is)|what can you see|what do you see|read|show|inspect|look at|describe|check)\b[\s\S]{0,48}\b(?:screen|display)\b/i.test(text) ||
     /\b(?:screen|display)\b[\s\S]{0,48}\b(?:says|shows|visible|displaying|on it|currently)\b/i.test(text) ||
     /\b(?:what(?:'s| is)|what can you see|what do you see|read|show|inspect|look at|describe|check)\b[\s\S]{0,48}\b(?:on|visible on|showing on|displayed on)\b[\s\S]{0,24}\b(?:my\s+|the\s+)?(?:phone|device)\b/i.test(text) ||
-    /\b(?:phone|device)\b[\s\S]{0,24}\b(?:screen|display)\b/i.test(text)
+    /\bwhat\s+(?:does|do|can)\s+(?:my\s+|the\s+)?(?:phone|device)\s+(?:show|display|say)\b/i.test(text)
   );
 }
 
@@ -1193,6 +1200,7 @@ function recoverAndroidRuntimeToolFromRequest(
   if (hasProhibitedDeviceActionRequest(requestText)) return null;
   if (looksLikeMemorySaveRequest(requestText) || looksLikeMemoryLookupRequest(requestText)) return null;
   const recoveryText = correctiveDeviceCommandText(requestText);
+  if (looksLikeDeviceInstructionRequest(recoveryText)) return null;
 
   if (hasFunctionTool(params.tools, "android_youtube_search") && !shouldUseServerYoutubeResearchWorkflow(recoveryText)) {
     const query = youtubeSearchQueryFromRequest(recoveryText);
@@ -1310,6 +1318,7 @@ function recoverExplicitAndroidRuntimeToolFromRequest(
 function isExplicitAndroidRuntimeActionRequest(text: string): boolean {
   const requestText = correctiveDeviceCommandText(text).trim();
   if (!requestText) return false;
+  if (looksLikeDeviceInstructionRequest(requestText)) return false;
   if (/^(?:how|why|where|when|what(?:'s| is)?(?:\s+the)?\s+(?:best\s+)?way)\b/i.test(requestText)) {
     return wantsNotificationReadRequest(requestText);
   }
