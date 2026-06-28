@@ -2777,40 +2777,45 @@ async function testAndroidLocalGemmaRecoversCompoundOpenYoutubeSearchToPhoneRunt
 }
 
 async function testAndroidLocalGemmaRecoversNotificationRequestsFromFinalDenials() {
-  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
-    ok: true,
-    data: {
-      text: JSON.stringify({
-        type: "final",
-        content: "I cannot access your personal notifications or system-level data.",
-      }),
-      finishReason: "stop",
-    },
-  }));
-
   try {
-    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
-      model: "android-local-gemma/gemma-4-e4b-it",
-      messages: [{ role: "user", content: "What are my notifications?" }],
-      tools: [{
-        type: "function",
-        function: {
-          name: "android_read_notifications",
-          description: "Read visible Android notifications.",
-          parameters: { type: "object", properties: { limit: { type: "number" } } },
+    for (const request of [
+      "What are my notifications?",
+      "How many notifications do I have?",
+    ]) {
+      _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+        ok: true,
+        data: {
+          text: JSON.stringify({
+            type: "final",
+            content: "I cannot access your personal notifications or system-level data.",
+          }),
+          finishReason: "stop",
         },
-      }],
-      toolChoice: "auto",
-      maxCompletionTokens: 128,
-      stream: false,
-      userId: "user-phone",
-    }));
+      }));
 
-    assert.equal(result.finishReason, "tool_calls");
-    assert.equal(result.textContent, "");
-    assert.equal(result.toolCallList.length, 1);
-    assert.equal(result.toolCallList[0].function.name, "android_read_notifications");
-    assert.equal(result.toolCallList[0].function.arguments, "{}");
+      const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: request }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "android_read_notifications",
+            description: "Read visible Android notifications.",
+            parameters: { type: "object", properties: { limit: { type: "number" } } },
+          },
+        }],
+        toolChoice: "auto",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      }));
+
+      assert.equal(result.finishReason, "tool_calls");
+      assert.equal(result.textContent, "");
+      assert.equal(result.toolCallList.length, 1);
+      assert.equal(result.toolCallList[0].function.name, "android_read_notifications");
+      assert.equal(result.toolCallList[0].function.arguments, "{}");
+    }
     console.log("OK: Android Local Gemma recovers notification requests from final denials");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
