@@ -2650,37 +2650,42 @@ async function testAndroidLocalGemmaDoesNotScreenshotWhenUserSaysTheyDidNotAsk()
 }
 
 async function testAndroidLocalGemmaAllowsCorrectiveCommandsAfterProtest() {
-  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
-    ok: true,
-    data: {
-      text: JSON.stringify({ type: "final", content: "I can open Chrome instead." }),
-      finishReason: "stop",
-    },
-  }));
-
   try {
-    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
-      model: "android-local-gemma/gemma-4-e4b-it",
-      messages: [{ role: "user", content: "I didn't ask you to open YouTube; open Chrome instead." }],
-      tools: [{
-        type: "function",
-        function: {
-          name: "android_open_app_by_name",
-          description: "Open a phone app by name.",
-          parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+    for (const request of [
+      "I didn't ask you to open YouTube; open Chrome instead.",
+      "I didn't ask you to open YouTube; can you open Chrome instead?",
+    ]) {
+      _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+        ok: true,
+        data: {
+          text: JSON.stringify({ type: "final", content: "I can open Chrome instead." }),
+          finishReason: "stop",
         },
-      }],
-      toolChoice: "required",
-      maxCompletionTokens: 128,
-      stream: false,
-      userId: "user-phone",
-    }));
+      }));
 
-    assert.equal(result.finishReason, "tool_calls");
-    assert.equal(result.textContent, "");
-    assert.equal(result.toolCallList.length, 1);
-    assert.equal(result.toolCallList[0].function.name, "android_open_app_by_name");
-    assert.equal(result.toolCallList[0].function.arguments, '{"appName":"chrome"}');
+      const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: request }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "android_open_app_by_name",
+            description: "Open a phone app by name.",
+            parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+          },
+        }],
+        toolChoice: "required",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      }));
+
+      assert.equal(result.finishReason, "tool_calls");
+      assert.equal(result.textContent, "");
+      assert.equal(result.toolCallList.length, 1);
+      assert.equal(result.toolCallList[0].function.name, "android_open_app_by_name");
+      assert.equal(result.toolCallList[0].function.arguments, '{"appName":"chrome"}');
+    }
     console.log("OK: Android Local Gemma allows corrective commands after protest wording");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
@@ -2817,6 +2822,8 @@ async function testAndroidLocalGemmaDoesNotReadNotificationsForMetaQuestions() {
     for (const request of [
       "Why are my notifications noisy?",
       "Are notifications enabled?",
+      "Do I have notifications enabled?",
+      "Any notification settings I should change?",
     ]) {
       _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
         ok: true,
@@ -2934,6 +2941,50 @@ async function testAndroidLocalGemmaDoesNotAutoRecoverInformationalScreenshotQue
     assert.equal(result.textContent, "On Android, use the device screenshot shortcut or the quick settings option.");
     assert.equal(result.toolCallList.length, 0);
     console.log("OK: Android Local Gemma does not auto-recover informational screenshot questions");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotReadScreenForGenericPhoneQuestions() {
+  try {
+    for (const request of [
+      "What's wrong with my phone?",
+      "What's the best phone?",
+    ]) {
+      _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+        ok: true,
+        data: {
+          text: JSON.stringify({
+            type: "final",
+            content: "I can answer generic phone questions without reading your screen.",
+          }),
+          finishReason: "stop",
+        },
+      }));
+
+      const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: request }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "android_read_screen_context",
+            description: "Read the current Android screen context.",
+            parameters: { type: "object", properties: {} },
+          },
+        }],
+        toolChoice: "auto",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      }));
+
+      assert.equal(result.finishReason, "stop");
+      assert.equal(result.textContent, "I can answer generic phone questions without reading your screen.");
+      assert.equal(result.toolCallList.length, 0);
+    }
+    console.log("OK: Android Local Gemma does not read screen for generic phone questions");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -5018,6 +5069,7 @@ async function main() {
   await testAndroidLocalGemmaDoesNotReadNotificationsForMetaQuestions();
   await testAndroidLocalGemmaDoesNotReadNotificationsForNegatedRequests();
   await testAndroidLocalGemmaDoesNotAutoRecoverInformationalScreenshotQuestions();
+  await testAndroidLocalGemmaDoesNotReadScreenForGenericPhoneQuestions();
   await testAndroidLocalGemmaRecoversScreenReadQuestionsInAutoMode();
   await testAndroidLocalGemmaRoutesCompoundScreenshotRequestsToNavigationFirst();
   await testAndroidLocalGemmaDoesNotRecoverHomeScreenAsScreenshot();

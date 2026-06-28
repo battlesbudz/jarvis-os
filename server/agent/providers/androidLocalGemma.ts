@@ -695,7 +695,7 @@ function hasLaterCorrectiveDeviceCommand(normalizedText: string): boolean {
 }
 
 function correctiveDeviceCommandText(text: string): string {
-  const commandPattern = "(?:please\\s+)?(?:open|launch|start|take|capture|read|show|tap|click|press|swipe|scroll|type|go to|search)\\b[\\s\\S]*";
+  const commandPattern = "(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?(?:open|launch|start|take|capture|read|show|tap|click|press|swipe|scroll|type|go to|search)\\b[\\s\\S]*";
   const punctuationMatch = text.match(new RegExp(`[.;!?]\\s*(${commandPattern})$`, "i"));
   if (punctuationMatch?.[1]?.trim()) return punctuationMatch[1].trim();
 
@@ -1156,17 +1156,28 @@ function shouldUseServerYoutubeResearchWorkflow(text: string): boolean {
 
 function wantsNotificationReadRequest(text: string): boolean {
   if (!/\bnotifications?\b/i.test(text)) return false;
+  if (
+    /\b(?:settings?|enabled|disabled|turn(?:ed)?\s+on|turn(?:ed)?\s+off|permission|permissions|access|allowed|blocked|muted|silenced|configure|configured|configuration)\b/i.test(text)
+  ) {
+    return false;
+  }
   return (
     /\b(?:read|show|list|check|view|see|summari[sz]e)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
-    /\b(?:what(?:'s| is| are)?|do i have|any)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
+    /\bwhat(?:'s| is| are)?\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
+    /\b(?:do i have|are there|any)\b[\s\S]{0,24}\b(?:any\s+|new\s+|unread\s+|recent\s+)?notifications?\b/i.test(text) ||
     /\bnotifications?\b[\s\S]{0,64}\b(?:do i have|are there|show|list|read|check|view|see)\b/i.test(text)
   );
 }
 
 function wantsScreenReadContextRequest(text: string): boolean {
+  if (/\b(?:settings?|enabled|disabled|permission|permissions|access|allowed|blocked|configure|configured|configuration|best|wrong|problem|issue)\b[\s\S]{0,48}\b(?:phone|device)\b/i.test(text)) {
+    return false;
+  }
   return (
-    /\b(?:what(?:'s| is)|read|show|inspect|look at)\b[\s\S]{0,48}\b(?:screen|display|phone|device)\b/i.test(text) ||
-    /\b(?:screen|phone|device)\b[\s\S]{0,32}\b(?:says|shows|visible)\b/i.test(text)
+    /\b(?:what(?:'s| is)|what can you see|what do you see|read|show|inspect|look at|describe|check)\b[\s\S]{0,48}\b(?:screen|display)\b/i.test(text) ||
+    /\b(?:screen|display)\b[\s\S]{0,48}\b(?:says|shows|visible|displaying|on it|currently)\b/i.test(text) ||
+    /\b(?:what(?:'s| is)|what can you see|what do you see|read|show|inspect|look at|describe|check)\b[\s\S]{0,48}\b(?:on|visible on|showing on|displayed on)\b[\s\S]{0,24}\b(?:my\s+|the\s+)?(?:phone|device)\b/i.test(text) ||
+    /\b(?:phone|device)\b[\s\S]{0,24}\b(?:screen|display)\b/i.test(text)
   );
 }
 
