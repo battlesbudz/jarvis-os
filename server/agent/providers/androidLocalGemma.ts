@@ -268,7 +268,10 @@ function messageForPrompt(message: OpenAI.Chat.Completions.ChatCompletionMessage
   if (message.role === "tool") {
     return `tool(${message.tool_call_id}): ${textFromContent(message.content)}`;
   }
-  const content = textFromContent(message.content);
+  const content = message.role === "system"
+    ? sanitizeSystemPromptForPhoneGemma(textFromContent(message.content))
+    : textFromContent(message.content);
+  if (!content.trim()) return "";
   if (message.role === "assistant" && message.tool_calls?.length) {
     const calls = message.tool_calls
       .filter((call): call is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall => call.type === "function")
@@ -277,6 +280,16 @@ function messageForPrompt(message: OpenAI.Chat.Completions.ChatCompletionMessage
     return `assistant: ${content}\nassistant tool calls:\n${calls}`.trim();
   }
   return `${message.role}: ${content}`;
+}
+
+function sanitizeSystemPromptForPhoneGemma(content: string): string {
+  return content
+    .replace(/\bSELF-INSPECTION\s*&\s*CODE PROPOSALS:[\s\S]*$/i, "")
+    .replace(/\bSelf-Inspection\s*&\s*Code Proposals[\s\S]*$/i, "")
+    .replace(/[^.!?\n]*(?:Code Proposals|propose_code_change|list_source_files|read_source_file)[^.!?\n]*[.!?]?/gi, "")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function truncateText(value: string | undefined, maxChars: number): string {
@@ -326,7 +339,7 @@ function hasActiveToolContinuation(messages: OpenAI.Chat.Completions.ChatComplet
 }
 
 function looksLikeLocalToolRequest(text: string): boolean {
-  return /\b(screenshot|screen shot|photo|picture|camera|microphone|mic|record|open|launch|tap|click|press|swipe|scroll|type|enter|back|home|settings|permission|bluetooth|wifi|wi-fi|call|text|sms|message|location|map|maps|navigate|alarm|timer|reminder|calendar|volume|brightness|flashlight|read|show|look at|what'?s on|what is on|phone|device|app|apps|control|enable|disable|turn on|turn off)\b/i.test(text);
+  return /\b(screenshot|screen shot|photo|picture|camera|microphone|mic|record|open|launch|tap|click|press|swipe|scroll|type|enter|back|home|settings|permission|bluetooth|wifi|wi-fi|call|text|sms|message|notification|notifications|notification shade|location|map|maps|navigate|alarm|timer|reminder|calendar|volume|brightness|flashlight|read|show|look at|what'?s on|what is on|phone|device|app|apps|control|enable|disable|turn on|turn off)\b/i.test(text);
 }
 
 function looksLikeUrlToolRequest(text: string): boolean {
@@ -659,6 +672,9 @@ function hasProhibitedDeviceActionRequest(text: string): boolean {
   const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
   if (!normalized) return false;
   const deviceActionPattern = /\b(?:screenshot|screen shot|capture|snap|open|launch|start|browse|tap|click|press|swipe|scroll|type|read|show|inspect|look at|screen|display|phone|device|app|youtube|chrome|browser|back|home|recents|enter)\b/;
+  if (/\b(?:did not|didn't|didnt)\b[\s\S]{0,80}\b(?:ask|request|tell|instruct)\b/.test(normalized) && deviceActionPattern.test(normalized)) {
+    return true;
+  }
   return (
     /\b(?:do not|don['’]?t|can['’]?t|cannot|cant|never|please don['’]?t|won['’]?t|wont|unable to|avoid|without)\b/.test(normalized) &&
     deviceActionPattern.test(normalized)
@@ -1097,6 +1113,7 @@ function recoverRequiredMemoryToolFromRequest(
 function youtubeSearchQueryFromRequest(text: string): string | null {
   if (shouldUseServerYoutubeResearchWorkflow(text)) return null;
   const patterns = [
+    /\b(?:open|launch|start)(?:\s+up)?\s+(?:the\s+)?(?:you\s*tube|youtube|yt)(?:\s+app)?\s+(?:and|then)?\s*(?:search|find|look\s+up|look\s+for)\s+(?:for\s+)?(.+)$/i,
     /\b(?:search|find|look\s+up|look\s+for)\s+(?:for\s+)?(.+?)\s+(?:on|in)\s+(?:you\s*tube|youtube|yt)\b/i,
     /\b(?:search|find|look\s+up|look\s+for)\s+(?:on\s+)?youtube\s+(?:for\s+)?(.+)$/i,
     /\byoutube\s+(?:search|find|look\s+up|look\s+for)\s+(?:for\s+)?(.+)$/i,
@@ -1116,10 +1133,13 @@ function shouldUseServerYoutubeResearchWorkflow(text: string): boolean {
   return /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|compare|rank|recommend|recommendation|best videos?|top videos?|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
 }
 
-function recoverRequiredAndroidRuntimeToolFromRequest(
+function recoverAndroidRuntimeToolFromRequest(
   params: ProviderQueryParams,
+  options: { requireRequiredToolChoice?: boolean } = {},
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
-  if (params.toolChoice !== "required") return null;
+  const requireRequiredToolChoice = options.requireRequiredToolChoice ?? true;
+  if (requireRequiredToolChoice && params.toolChoice !== "required") return null;
+  if (params.toolChoice === "none") return null;
   const requestText = latestUserText(params.messages).trim();
   if (!requestText) return null;
   if (hasProhibitedDeviceActionRequest(requestText)) return null;
@@ -1226,6 +1246,20 @@ function recoverRequiredAndroidRuntimeToolFromRequest(
   return null;
 }
 
+function recoverRequiredAndroidRuntimeToolFromRequest(
+  params: ProviderQueryParams,
+): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
+  return recoverAndroidRuntimeToolFromRequest(params, { requireRequiredToolChoice: true });
+}
+
+function recoverExplicitAndroidRuntimeToolFromRequest(
+  params: ProviderQueryParams,
+): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
+  if (params.toolChoice === "required") return null;
+  if (hasActiveToolContinuation(params.messages)) return null;
+  return recoverAndroidRuntimeToolFromRequest(params, { requireRequiredToolChoice: false });
+}
+
 function recoverRequiredToolCallFromRequest(
   params: ProviderQueryParams,
   finalContent = "",
@@ -1324,6 +1358,10 @@ function parseLocalGemmaStructuredOutput(
       ? data.toolCalls
       : [];
   if (type === "tool_calls" || rawToolCalls.length > 0) {
+    if (rawToolCalls.length === 0) {
+      const content = jsonEnvelopeText(data);
+      if (content) return { type: "final", content };
+    }
     const toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] = rawToolCalls
       .map((toolCall, index) => {
         if (!toolCall || typeof toolCall !== "object") return null;
@@ -1354,7 +1392,9 @@ function localGemmaFinalText(raw: string, options: { preserveWholeJson?: boolean
     return raw.trim();
   }
 
-  if (data.type === "tool_calls" || Array.isArray(data.tool_calls) || Array.isArray(data.toolCalls)) {
+  const toolCalls = Array.isArray(data.tool_calls) ? data.tool_calls : [];
+  const camelToolCalls = Array.isArray(data.toolCalls) ? data.toolCalls : [];
+  if (toolCalls.length > 0 || camelToolCalls.length > 0 || (data.type === "tool_calls" && !jsonEnvelopeText(data))) {
     return raw.trim();
   }
 
@@ -1366,7 +1406,7 @@ function localGemmaFinalText(raw: string, options: { preserveWholeJson?: boolean
 }
 
 function jsonEnvelopeText(data: Record<string, unknown>): string | null {
-  for (const key of ["content", "response", "reply", "text", "message", "error"]) {
+  for (const key of ["content", "response", "reply", "text", "message", "output", "error"]) {
     const value = data[key];
     if (typeof value === "string" && value.trim()) {
       return value.trim();
@@ -1788,7 +1828,8 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
           ),
         );
         if (toolCalls.length === 0) {
-          const recoveredToolCall = recoverRequiredToolCallFromRequest(params);
+          const recoveredToolCall = recoverRequiredToolCallFromRequest(params) ||
+            recoverExplicitAndroidRuntimeToolFromRequest(params);
           if (recoveredToolCall) {
             yield {
               type: "tool_call_start",
@@ -1860,7 +1901,29 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
           yield { type: "finish", reason: "stop" };
           return;
         }
+        if (hasProhibitedDeviceActionRequest(requestText)) {
+          yield { type: "text", delta: parsed.content.trim() || "No device action was run." };
+          yield { type: "finish", reason: "stop" };
+          return;
+        }
         throw new Error("Phone Gemma returned a final answer when the local harness required a tool call. No cloud model was used.");
+      }
+
+      const recoveredToolCall = recoverExplicitAndroidRuntimeToolFromRequest(params);
+      if (recoveredToolCall) {
+        yield {
+          type: "tool_call_start",
+          index: 0,
+          id: recoveredToolCall.id,
+          name: recoveredToolCall.function.name,
+        };
+        yield {
+          type: "tool_call_args",
+          index: 0,
+          args: recoveredToolCall.function.arguments,
+        };
+        yield { type: "finish", reason: "tool_calls" };
+        return;
       }
 
       if (parsed.content.trim()) {

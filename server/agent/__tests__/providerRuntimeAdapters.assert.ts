@@ -1355,6 +1355,52 @@ async function testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming() {
   }
 }
 
+async function testAndroidLocalGemmaOmitsCodeProposalSystemPromptForPhoneActions() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: JSON.stringify({ type: "final", content: "I can capture the screen when asked." }), finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        {
+          role: "system",
+          content: "SELF-INSPECTION & CODE PROPOSALS: use list_source_files, read_source_file, and propose_code_change. After proposing, tell the user a suggestion is waiting in the Code Proposals screen.",
+        },
+        { role: "user", content: "Can you screenshot my device?" },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_capture_screen",
+          description: "Capture the current Android screen.",
+          parameters: { type: "object", properties: {} },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "");
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_capture_screen");
+    assert.doesNotMatch(requests[0].op.prompt, /Code Proposals|propose_code_change|list_source_files|read_source_file/i);
+    assert.match(requests[0].op.prompt, /user: Can you screenshot my device\?/);
+    console.log("OK: Android Local Gemma omits Code Proposal system prompt for phone actions");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaPreservesToolContinuationWhenTrimming() {
   const previousBudget = process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
   process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = "1200";
@@ -2483,27 +2529,157 @@ async function testAndroidLocalGemmaDoesNotRecoverNegatedRequiredActions() {
         },
       }));
 
-      await assert.rejects(
-        () => accumulateTurn(new AndroidLocalGemmaProvider().query({
-          model: "android-local-gemma/gemma-4-e4b-it",
-          messages: [{ role: "user", content: request }],
-          tools: [{
-            type: "function",
-            function: {
-              name: "daemon_action",
-              description: "Perform an Android daemon action.",
-              parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
-            },
-          }],
-          toolChoice: "required",
-          maxCompletionTokens: 128,
-          stream: false,
-          userId: "user-phone",
-        })),
-        /local harness required a tool call[\s\S]*No cloud model was used/,
-      );
+      const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: request }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "daemon_action",
+            description: "Perform an Android daemon action.",
+            parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+          },
+        }],
+        toolChoice: "required",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      }));
+
+      assert.equal(result.finishReason, "stop");
+      assert.equal(result.toolCallList.length, 0);
+      assert.equal(result.textContent, "I will not take a screenshot.");
     }
     console.log("OK: Android Local Gemma does not recover negated required actions");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotScreenshotWhenUserSaysTheyDidNotAsk() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [],
+        output: "I did not initiate a screenshot request.",
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Why did you screenshot my screen I didn't ask for that?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_capture_screen",
+          description: "Capture the current Android screen.",
+          parameters: { type: "object", properties: {} },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.equal(result.textContent, "I did not initiate a screenshot request.");
+    console.log("OK: Android Local Gemma does not screenshot when the user says they did not ask");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaRecoversCompoundOpenYoutubeSearchToPhoneRuntime() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I can open YouTube and search for that." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open YouTube and search for Alex Hormozi videos." }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "android_open_app_by_name",
+            description: "Open a phone app by name.",
+            parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "android_youtube_search",
+            description: "Search the native YouTube app on the phone.",
+            parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+          },
+        },
+      ],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_youtube_search");
+    assert.equal(result.toolCallList[0].function.arguments, '{"query":"Alex Hormozi videos"}');
+    console.log("OK: Android Local Gemma recovers compound open-YouTube search to phone runtime");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaRecoversNotificationRequestsFromFinalDenials() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "final",
+        content: "I cannot access your personal notifications or system-level data.",
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "What are my notifications?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_read_notifications",
+          description: "Read visible Android notifications.",
+          parameters: { type: "object", properties: { limit: { type: "number" } } },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_read_notifications");
+    assert.equal(result.toolCallList[0].function.arguments, "{}");
+    console.log("OK: Android Local Gemma recovers notification requests from final denials");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -4512,6 +4688,7 @@ async function main() {
   await testAndroidLocalGemmaCompactsLocalToolPrompt();
   await testAndroidLocalGemmaHonorsReducedToolPromptBudget();
   await testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming();
+  await testAndroidLocalGemmaOmitsCodeProposalSystemPromptForPhoneActions();
   await testAndroidLocalGemmaPreservesToolContinuationWhenTrimming();
   await testAndroidLocalGemmaPreservesNewestTurnWhenTrimming();
   await testAndroidLocalGemmaRecoversRequiredScreenshotFinalAnswer();
@@ -4537,6 +4714,9 @@ async function main() {
   await testAndroidLocalGemmaKeepsAllowedPackagesAfterAndNegation();
   await testAndroidLocalGemmaDropsAmbiguousBareOpenAppToolCalls();
   await testAndroidLocalGemmaDoesNotRecoverNegatedRequiredActions();
+  await testAndroidLocalGemmaDoesNotScreenshotWhenUserSaysTheyDidNotAsk();
+  await testAndroidLocalGemmaRecoversCompoundOpenYoutubeSearchToPhoneRuntime();
+  await testAndroidLocalGemmaRecoversNotificationRequestsFromFinalDenials();
   await testAndroidLocalGemmaRoutesCompoundScreenshotRequestsToNavigationFirst();
   await testAndroidLocalGemmaDoesNotRecoverHomeScreenAsScreenshot();
   await testAndroidLocalGemmaReadsScreenAfterRecoveredNavigation();
