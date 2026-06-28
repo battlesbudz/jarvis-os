@@ -2909,12 +2909,56 @@ async function testAndroidLocalGemmaDoesNotReadNotificationsForNegatedRequests()
 }
 
 async function testAndroidLocalGemmaDoesNotRecoverMultiAppOpenRequests() {
+  try {
+    for (const request of [
+      "Open YouTube and Chrome.",
+      "Open Calendar and Calculator.",
+    ]) {
+      _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+        ok: true,
+        data: {
+          text: JSON.stringify({
+            type: "final",
+            content: "Please choose one app to open.",
+          }),
+          finishReason: "stop",
+        },
+      }));
+
+      const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: request }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "android_open_app_by_name",
+            description: "Open a phone app by name.",
+            parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+          },
+        }],
+        toolChoice: "auto",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      }));
+
+      assert.equal(result.finishReason, "stop");
+      assert.equal(result.textContent, "Please choose one app to open.");
+      assert.equal(result.toolCallList.length, 0);
+    }
+    console.log("OK: Android Local Gemma does not recover multi-app open requests");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotRecoverOpenSourceQuestions() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
     data: {
       text: JSON.stringify({
         type: "final",
-        content: "Please choose one app to open.",
+        content: "Open source licenses are software license terms.",
       }),
       finishReason: "stop",
     },
@@ -2923,7 +2967,7 @@ async function testAndroidLocalGemmaDoesNotRecoverMultiAppOpenRequests() {
   try {
     const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
       model: "android-local-gemma/gemma-4-e4b-it",
-      messages: [{ role: "user", content: "Open YouTube and Chrome." }],
+      messages: [{ role: "user", content: "Open source licenses?" }],
       tools: [{
         type: "function",
         function: {
@@ -2939,9 +2983,9 @@ async function testAndroidLocalGemmaDoesNotRecoverMultiAppOpenRequests() {
     }));
 
     assert.equal(result.finishReason, "stop");
-    assert.equal(result.textContent, "Please choose one app to open.");
+    assert.equal(result.textContent, "Open source licenses are software license terms.");
     assert.equal(result.toolCallList.length, 0);
-    console.log("OK: Android Local Gemma does not recover multi-app open requests");
+    console.log("OK: Android Local Gemma does not recover open-source questions as app launches");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -5131,6 +5175,7 @@ async function main() {
   await testAndroidLocalGemmaDoesNotReadNotificationsForMetaQuestions();
   await testAndroidLocalGemmaDoesNotReadNotificationsForNegatedRequests();
   await testAndroidLocalGemmaDoesNotRecoverMultiAppOpenRequests();
+  await testAndroidLocalGemmaDoesNotRecoverOpenSourceQuestions();
   await testAndroidLocalGemmaDoesNotAutoRecoverInformationalScreenshotQuestions();
   await testAndroidLocalGemmaDoesNotReadScreenForGenericPhoneQuestions();
   await testAndroidLocalGemmaRecoversScreenReadQuestionsInAutoMode();

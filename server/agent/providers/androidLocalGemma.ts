@@ -1161,6 +1161,18 @@ function looksLikeDeviceInstructionRequest(text: string): boolean {
   return /\b(?:screenshot|screen shot|capture|open|launch|start|tap|click|press|swipe|scroll|type|read|show|notification|notifications|screen|display|phone|device|app|youtube|chrome|browser|back|home|recents|enter)\b/i.test(text);
 }
 
+function looksLikeOpenSourceQuestion(text: string): boolean {
+  return /^\s*(?:hey\s+jarvis[, ]*)?(?:please\s+)?(?:can|could|would|will)?\s*(?:you\s+)?open\s+source\b/i.test(text);
+}
+
+function looksLikeMultiAppOpenRequest(text: string): boolean {
+  const match = text.match(/\b(?:open|launch|start)\s+(?:the\s+)?(.+?)\s+and\s+(.+?)(?:[.!?]|$)/i);
+  if (!match) return false;
+  const rightSide = match[2]?.trim() || "";
+  if (!rightSide) return false;
+  return !/^(?:then\s+)?(?:search|find|look\s+up|look\s+for|go\s+to|browse|navigate|take|capture|read|show|tap|click|press|swipe|scroll|type|enter|ask|tell|explain|describe|answer|say|what|why|how|when|where|which)\b/i.test(rightSide);
+}
+
 function wantsNotificationReadRequest(text: string): boolean {
   if (!/\bnotifications?\b/i.test(text)) return false;
   if (
@@ -1202,6 +1214,7 @@ function recoverAndroidRuntimeToolFromRequest(
   if (looksLikeMemorySaveRequest(requestText) || looksLikeMemoryLookupRequest(requestText)) return null;
   const recoveryText = correctiveDeviceCommandText(requestText);
   if (looksLikeDeviceInstructionRequest(recoveryText)) return null;
+  if (looksLikeOpenSourceQuestion(recoveryText)) return null;
 
   if (hasFunctionTool(params.tools, "android_youtube_search") && !shouldUseServerYoutubeResearchWorkflow(recoveryText)) {
     const query = youtubeSearchQueryFromRequest(recoveryText);
@@ -1234,7 +1247,7 @@ function recoverAndroidRuntimeToolFromRequest(
   }
 
   if (hasFunctionTool(params.tools, "android_open_app_by_name") && /\b(?:open|launch|start)\b/i.test(recoveryText)) {
-    if (inferPackageNamesFromText(recoveryText).length > 1) return null;
+    if (inferPackageNamesFromText(recoveryText).length > 1 || looksLikeMultiAppOpenRequest(recoveryText)) return null;
     const packageName = inferPackageNameFromText(recoveryText);
     const appName = packageName
       ? packageAliases(packageName)[0]?.replace(/_/g, " ") || recoveryText
@@ -1321,6 +1334,7 @@ function isExplicitAndroidRuntimeActionRequest(text: string): boolean {
   const requestText = correctiveDeviceCommandText(text).trim();
   if (!requestText) return false;
   if (looksLikeDeviceInstructionRequest(requestText)) return false;
+  if (looksLikeOpenSourceQuestion(requestText)) return false;
   if (/^(?:how|why|where|when|what(?:'s| is)?(?:\s+the)?\s+(?:best\s+)?way)\b/i.test(requestText)) {
     return wantsNotificationReadRequest(requestText);
   }
