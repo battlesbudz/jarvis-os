@@ -1371,7 +1371,16 @@ async function testAndroidLocalGemmaOmitsCodeProposalSystemPromptForPhoneActions
       messages: [
         {
           role: "system",
-          content: "SELF-INSPECTION & CODE PROPOSALS: use list_source_files, read_source_file, and propose_code_change. After proposing, tell the user a suggestion is waiting in the Code Proposals screen.",
+          content: [
+            "## Identity",
+            "MUST_KEEP_IDENTITY_RULE",
+            "",
+            "## Self-Inspection & Code Proposals",
+            "Use list_source_files, read_source_file, and propose_code_change. After proposing, tell the user a suggestion is waiting in the Code Proposals screen.",
+            "",
+            "## Critical rules - no empty promises",
+            "MUST_KEEP_LATER_GUARDRAIL",
+          ].join("\n"),
         },
         { role: "user", content: "Can you screenshot my device?" },
       ],
@@ -1394,6 +1403,8 @@ async function testAndroidLocalGemmaOmitsCodeProposalSystemPromptForPhoneActions
     assert.equal(result.toolCallList.length, 1);
     assert.equal(result.toolCallList[0].function.name, "android_capture_screen");
     assert.doesNotMatch(requests[0].op.prompt, /Code Proposals|propose_code_change|list_source_files|read_source_file/i);
+    assert.match(requests[0].op.prompt, /MUST_KEEP_IDENTITY_RULE/);
+    assert.match(requests[0].op.prompt, /MUST_KEEP_LATER_GUARDRAIL/);
     assert.match(requests[0].op.prompt, /user: Can you screenshot my device\?/);
     console.log("OK: Android Local Gemma omits Code Proposal system prompt for phone actions");
   } finally {
@@ -2591,6 +2602,44 @@ async function testAndroidLocalGemmaDoesNotScreenshotWhenUserSaysTheyDidNotAsk()
     assert.equal(result.toolCallList.length, 0);
     assert.equal(result.textContent, "I did not initiate a screenshot request.");
     console.log("OK: Android Local Gemma does not screenshot when the user says they did not ask");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaAllowsCorrectiveCommandsAfterProtest() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I can open Chrome instead." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "I didn't ask you to open YouTube; open Chrome instead." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_app_by_name",
+          description: "Open a phone app by name.",
+          parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_open_app_by_name");
+    assert.equal(result.toolCallList[0].function.arguments, '{"appName":"chrome"}');
+    console.log("OK: Android Local Gemma allows corrective commands after protest wording");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -4759,6 +4808,7 @@ async function main() {
   await testAndroidLocalGemmaDropsAmbiguousBareOpenAppToolCalls();
   await testAndroidLocalGemmaDoesNotRecoverNegatedRequiredActions();
   await testAndroidLocalGemmaDoesNotScreenshotWhenUserSaysTheyDidNotAsk();
+  await testAndroidLocalGemmaAllowsCorrectiveCommandsAfterProtest();
   await testAndroidLocalGemmaRecoversCompoundOpenYoutubeSearchToPhoneRuntime();
   await testAndroidLocalGemmaRecoversNotificationRequestsFromFinalDenials();
   await testAndroidLocalGemmaDoesNotReadNotificationsForMetaQuestions();
