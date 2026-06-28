@@ -1133,6 +1133,15 @@ function shouldUseServerYoutubeResearchWorkflow(text: string): boolean {
   return /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|compare|rank|recommend|recommendation|best videos?|top videos?|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
 }
 
+function wantsNotificationReadRequest(text: string): boolean {
+  if (!/\bnotifications?\b/i.test(text)) return false;
+  return (
+    /\b(?:read|show|list|check|view|see|summari[sz]e)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
+    /\b(?:what(?:'s| is| are)?|do i have|any)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
+    /\bnotifications?\b[\s\S]{0,64}\b(?:do i have|are there|show|list|read|check|view|see)\b/i.test(text)
+  );
+}
+
 function recoverAndroidRuntimeToolFromRequest(
   params: ProviderQueryParams,
   options: { requireRequiredToolChoice?: boolean } = {},
@@ -1220,7 +1229,7 @@ function recoverAndroidRuntimeToolFromRequest(
     };
   }
 
-  if (hasFunctionTool(params.tools, "android_read_notifications") && /\bnotifications?\b/i.test(requestText)) {
+  if (hasFunctionTool(params.tools, "android_read_notifications") && wantsNotificationReadRequest(requestText)) {
     return {
       id: generatedToolCallId(0),
       type: "function",
