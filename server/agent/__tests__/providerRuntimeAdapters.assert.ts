@@ -3217,6 +3217,8 @@ async function testAndroidLocalGemmaDoesNotAutoRecoverInformationalScreenshotQue
     for (const request of [
       "How do I take a screenshot on Android?",
       "Can you show me how to take a screenshot?",
+      "Can you show me screenshots of Android notification settings?",
+      "Search for screenshots of Android notification settings.",
       "Can you show me how to open Chrome?",
     ]) {
       _setAndroidLocalGemmaDaemonOpForTesting(async () => ({

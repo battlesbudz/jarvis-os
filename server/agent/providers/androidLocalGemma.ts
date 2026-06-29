@@ -709,9 +709,13 @@ function correctiveDeviceCommandText(text: string): string {
 }
 
 function wantsScreenshotRequest(text: string): boolean {
-  return /\b(?:screenshot|screen shot|screen capture)\b/i.test(text) ||
-    /\b(?:capture|snap)\b[\s\S]{0,24}\b(?:screen|display)\b/i.test(text) ||
-    /\btake\b[\s\S]{0,16}\b(?:screenshot|screen shot|screen capture)\b/i.test(text);
+  return (
+    /\b(?:take|capture|snap|grab|get|send|attach)\b[\s\S]{0,24}\b(?:a\s+)?(?:screenshot|screen shot|screen capture)\b/i.test(text) ||
+    /\b(?:capture|snap|grab|get|send|attach)\b[\s\S]{0,24}\b(?:screen|display)\b/i.test(text) ||
+    /^(?:hey\s+jarvis[, ]*)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:screenshot|screen shot|screen capture)\b/i.test(text) ||
+    /\b(?:screenshot|screen shot|screen capture)\b[\s\S]{0,32}\b(?:my|this|current|the)\s+(?:phone|device|screen|display)\b/i.test(text) ||
+    /\b(?:my|this|current|the)\s+(?:phone|device|screen|display)\b[\s\S]{0,32}\b(?:screenshot|screen shot|screen capture)\b/i.test(text)
+  );
 }
 
 function targetsFlagSecureScreenshotApp(text: string): boolean {
