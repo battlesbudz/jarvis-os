@@ -268,15 +268,31 @@ function messageForPrompt(message: OpenAI.Chat.Completions.ChatCompletionMessage
   if (message.role === "tool") {
     return `tool(${message.tool_call_id}): ${textFromContent(message.content)}`;
   }
-  const content = textFromContent(message.content);
+  const content = message.role === "system"
+    ? sanitizeSystemPromptForPhoneGemma(textFromContent(message.content))
+    : textFromContent(message.content);
   if (message.role === "assistant" && message.tool_calls?.length) {
     const calls = message.tool_calls
       .filter((call): call is OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall => call.type === "function")
       .map((call) => `${call.function.name}(${call.function.arguments || "{}"})`)
       .join("\n");
-    return `assistant: ${content}\nassistant tool calls:\n${calls}`.trim();
+    return [content.trim() ? `assistant: ${content.trim()}` : "", `assistant tool calls:\n${calls}`]
+      .filter(Boolean)
+      .join("\n")
+      .trim();
   }
+  if (!content.trim()) return "";
   return `${message.role}: ${content}`;
+}
+
+function sanitizeSystemPromptForPhoneGemma(content: string): string {
+  return content
+    .replace(/\bSELF-INSPECTION\s*&\s*CODE PROPOSALS:[\s\S]*$/i, "")
+    .replace(/(^|\n)#{1,6}\s*Self-Inspection\s*&\s*Code Proposals\b[\s\S]*?(?=\n#{1,6}\s+\S|$)/gi, "$1")
+    .replace(/[^.!?\n]*(?:Code Proposals|propose_code_change|list_source_files|read_source_file)[^.!?\n]*[.!?]?/gi, "")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function truncateText(value: string | undefined, maxChars: number): string {
@@ -326,7 +342,7 @@ function hasActiveToolContinuation(messages: OpenAI.Chat.Completions.ChatComplet
 }
 
 function looksLikeLocalToolRequest(text: string): boolean {
-  return /\b(screenshot|screen shot|photo|picture|camera|microphone|mic|record|open|launch|tap|click|press|swipe|scroll|type|enter|back|home|settings|permission|bluetooth|wifi|wi-fi|call|text|sms|message|location|map|maps|navigate|alarm|timer|reminder|calendar|volume|brightness|flashlight|read|show|look at|what'?s on|what is on|phone|device|app|apps|control|enable|disable|turn on|turn off)\b/i.test(text);
+  return /\b(screenshot|screen shot|photo|picture|camera|microphone|mic|record|open|launch|tap|click|press|swipe|scroll|type|enter|back|home|settings|permission|bluetooth|wifi|wi-fi|call|text|sms|message|notification|notifications|notification shade|location|map|maps|navigate|alarm|timer|reminder|calendar|volume|brightness|flashlight|read|show|look at|what'?s on|what is on|phone|device|app|apps|control|enable|disable|turn on|turn off)\b/i.test(text);
 }
 
 function looksLikeUrlToolRequest(text: string): boolean {
@@ -593,6 +609,7 @@ function openAppNameFromRequest(text: string): string | null {
   const match = text.match(/\b(?:open|launch|start)\s+(?:the\s+)?(.+?)\s*(?:app)?[.!?]*$/i);
   const appName = match?.[1]
     ?.replace(/\b(?:please|for me|on my phone|on the phone)\b/gi, "")
+    .replace(/\b(?:instead|rather|now)\b\s*$/i, "")
     .replace(/\s+/g, " ")
     .trim();
   if (!appName) return null;
@@ -658,7 +675,11 @@ function isYouTubeUrl(url: string): boolean {
 function hasProhibitedDeviceActionRequest(text: string): boolean {
   const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
   if (!normalized) return false;
-  const deviceActionPattern = /\b(?:screenshot|screen shot|capture|snap|open|launch|start|browse|tap|click|press|swipe|scroll|type|read|show|inspect|look at|screen|display|phone|device|app|youtube|chrome|browser|back|home|recents|enter)\b/;
+  const deviceActionPattern = /\b(?:screenshot|screen shot|capture|snap|open|launch|start|browse|tap|click|press|swipe|scroll|type|read|show|inspect|look at|notification|notifications|notification shade|screen|display|phone|device|app|youtube|chrome|browser|back|home|recents|enter)\b/;
+  if (hasLaterCorrectiveDeviceCommand(normalized)) return false;
+  if (/\b(?:did not|didn't|didnt)\b[\s\S]{0,80}\b(?:ask|request|tell|instruct)\b/.test(normalized) && deviceActionPattern.test(normalized)) {
+    return true;
+  }
   return (
     /\b(?:do not|don['’]?t|can['’]?t|cannot|cant|never|please don['’]?t|won['’]?t|wont|unable to|avoid|without)\b/.test(normalized) &&
     deviceActionPattern.test(normalized)
@@ -668,10 +689,33 @@ function hasProhibitedDeviceActionRequest(text: string): boolean {
   );
 }
 
+function hasLaterCorrectiveDeviceCommand(normalizedText: string): boolean {
+  const correctiveText = correctiveDeviceCommandText(normalizedText);
+  if (correctiveText === normalizedText) return false;
+  return !/^(?:please\s+)?(?:do not|don['’]?t|dont|never|avoid|without|can['’]?t|cannot|cant)\b/.test(correctiveText);
+}
+
+function correctiveDeviceCommandText(text: string): string {
+  const imperativePattern = "(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?(?:open|launch|start|take|capture|read|show|list|check|view|see|tap|click|press|swipe|scroll|type|go to|search)\\b[\\s\\S]*";
+  const notificationQuestionPattern = "(?:(?:what(?:'s|\\s+is|\\s+are)?|how\\s+many|do\\s+i\\s+have|are\\s+there|any)\\b[\\s\\S]{0,64}\\bnotifications?\\b[\\s\\S]*)";
+  const commandPattern = `(?:${imperativePattern}|${notificationQuestionPattern})`;
+  const punctuationMatch = text.match(new RegExp(`[.;!?]\\s*(${commandPattern})$`, "i"));
+  if (punctuationMatch?.[1]?.trim()) return punctuationMatch[1].trim();
+
+  const connectiveMatch = text.match(new RegExp(`\\b(?:but|instead|rather)\\b\\s*(${commandPattern})$`, "i"));
+  if (connectiveMatch?.[1]?.trim()) return connectiveMatch[1].trim();
+
+  return text;
+}
+
 function wantsScreenshotRequest(text: string): boolean {
-  return /\b(?:screenshot|screen shot|screen capture)\b/i.test(text) ||
-    /\b(?:capture|snap)\b[\s\S]{0,24}\b(?:screen|display)\b/i.test(text) ||
-    /\btake\b[\s\S]{0,16}\b(?:screenshot|screen shot|screen capture)\b/i.test(text);
+  return (
+    /\b(?:take|capture|snap|grab|get|send|attach)\b[\s\S]{0,24}\b(?:a\s+)?(?:screenshot|screen shot|screen capture)\b/i.test(text) ||
+    /\b(?:capture|snap|grab|get|send|attach)\b[\s\S]{0,24}\b(?:screen|display)\b/i.test(text) ||
+    /^(?:hey\s+jarvis[, ]*)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:screenshot|screen shot|screen capture)\b/i.test(text) ||
+    /\b(?:screenshot|screen shot|screen capture)\b[\s\S]{0,32}\b(?:my|this|current|the)\s+(?:phone|device|screen|display)\b/i.test(text) ||
+    /\b(?:my|this|current|the)\s+(?:phone|device|screen|display)\b[\s\S]{0,32}\b(?:screenshot|screen shot|screen capture)\b/i.test(text)
+  );
 }
 
 function targetsFlagSecureScreenshotApp(text: string): boolean {
@@ -1097,6 +1141,7 @@ function recoverRequiredMemoryToolFromRequest(
 function youtubeSearchQueryFromRequest(text: string): string | null {
   if (shouldUseServerYoutubeResearchWorkflow(text)) return null;
   const patterns = [
+    /\b(?:open|launch|start)(?:\s+up)?\s+(?:the\s+)?(?:you\s*tube|youtube|yt)(?:\s+app)?\s+(?:and|then)?\s*(?:search|find|look\s+up|look\s+for)\s+(?:for\s+)?(.+)$/i,
     /\b(?:search|find|look\s+up|look\s+for)\s+(?:for\s+)?(.+?)\s+(?:on|in)\s+(?:you\s*tube|youtube|yt)\b/i,
     /\b(?:search|find|look\s+up|look\s+for)\s+(?:on\s+)?youtube\s+(?:for\s+)?(.+)$/i,
     /\byoutube\s+(?:search|find|look\s+up|look\s+for)\s+(?:for\s+)?(.+)$/i,
@@ -1116,17 +1161,114 @@ function shouldUseServerYoutubeResearchWorkflow(text: string): boolean {
   return /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|compare|rank|recommend|recommendation|best videos?|top videos?|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
 }
 
-function recoverRequiredAndroidRuntimeToolFromRequest(
+function looksLikeDeviceInstructionRequest(text: string): boolean {
+  if (
+    !(
+      /\b(?:how\s+(?:do|can|would|should)\s+i|how\s+i\s+(?:can|could|would|should)|how\s+to)\b/i.test(text) ||
+      /\b(?:show|tell|teach|explain|describe)\s+(?:me\s+)?how\b/i.test(text) ||
+      /\bhelp\s+me\s+(?:learn\s+)?how\b/i.test(text) ||
+      /\b(?:what(?:'s| is)\s+(?:the\s+)?(?:best\s+|easiest\s+|right\s+)?way\s+to|(?:best|easiest|right)\s+way\s+to)\b/i.test(text)
+    )
+  ) {
+    return false;
+  }
+  return /\b(?:screenshot|screen shot|capture|open|launch|start|tap|click|press|swipe|scroll|type|read|show|notification|notifications|screen|display|phone|device|app|youtube|chrome|browser|back|home|recents|enter)\b/i.test(text);
+}
+
+function looksLikeOpenSourceQuestion(text: string): boolean {
+  return /^\s*(?:hey\s+jarvis[, ]*)?(?:please\s+)?(?:can|could|would|will)?\s*(?:you\s+)?open\s+source\b/i.test(text);
+}
+
+function looksLikeMultiAppOpenRequest(text: string): boolean {
+  const match = text.match(/\b(?:open|launch|start)\s+(?:the\s+)?(.+?)\s+and\s+(.+?)(?:[.!?]|$)/i);
+  if (!match) return false;
+  const rightSide = match[2]?.trim() || "";
+  if (!rightSide) return false;
+  return !/^(?:then\s+)?(?:search|find|look\s+up|look\s+for|go\s+to|browse|navigate|take|capture|read|show|tap|click|press|swipe|scroll|type|enter|ask|tell|explain|describe|answer|say|what|why|how|when|where|which)\b/i.test(rightSide);
+}
+
+function looksLikeNotificationAdviceRequest(text: string): boolean {
+  if (!/\bnotifications?\b/i.test(text)) return false;
+  return (
+    /\b(?:ways?|tips?|advice|recommendations?|steps?|guide|guidance)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
+    /\b(?:reduce|manage|control|quiet|limit|avoid|get\s+fewer|make\s+fewer)\b[\s\S]{0,64}\b(?:android\s+)?notifications?\b/i.test(text) ||
+    /\bnotifications?\b[\s\S]{0,64}\b(?:ways?|tips?|advice|recommendations?|steps?|guide|guidance|reduce|manage|control|quiet|limit|avoid|get\s+fewer|make\s+fewer)\b/i.test(text)
+  );
+}
+
+function wantsNotificationReadRequest(text: string): boolean {
+  if (!/\bnotifications?\b/i.test(text)) return false;
+  if (
+    /\b(?:settings?|enabled|disabled|turn(?:ed)?\s+on|turn(?:ed)?\s+off|permission|permissions|access|allowed|blocked|muted|silenced|configure|configured|configuration)\b/i.test(text) ||
+    /\bnotifications?\s+(?:on|off)\s*\??$/i.test(text)
+  ) {
+    return false;
+  }
+  if (
+    /\bnotifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept)\b/i.test(text) ||
+    /\b(?:explain|describe|define|summari[sz]e)\b[\s\S]{0,64}\b(?:how\s+)?(?:android\s+)?notifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept)\b/i.test(text)
+  ) {
+    return false;
+  }
+  if (looksLikeNotificationAdviceRequest(text)) {
+    return false;
+  }
+  return (
+    /\b(?:open|pull\s+down|swipe\s+down|expand)\b[\s\S]{0,64}\b(?:my\s+|the\s+)?(?:notifications?|notification\s+shade)\b/i.test(text) ||
+    /\b(?:notifications?|notification\s+shade)\b[\s\S]{0,64}\b(?:open|pull(?:ed)?\s+down|swipe(?:d)?\s+down|expand(?:ed)?)\b/i.test(text) ||
+    /\b(?:read|show|list|check|view|see|summari[sz]e)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
+    /\bwhat(?:'s| is| are)?\b[\s\S]{0,64}\b(?:my|current|new|unread|recent|pending)\s+notifications?\b/i.test(text) ||
+    /\bwhat\s+notifications?\s+(?:do|did)\s+i\s+have\b/i.test(text) ||
+    /\b(?:do i have|are there|any)\b[\s\S]{0,24}\b(?:any\s+|new\s+|unread\s+|recent\s+)?notifications?\b/i.test(text) ||
+    /\bnotifications?\b[\s\S]{0,64}\b(?:do i have|are there|show|list|read|check|view|see)\b/i.test(text)
+  );
+}
+
+function looksLikeNotificationNonActionQuestion(text: string): boolean {
+  if (!/\bnotifications?\b/i.test(text) || wantsNotificationReadRequest(text)) return false;
+  if (
+    /\b(?:open|launch|start|pull\s+down|swipe\s+down|expand|clear|dismiss|reply|tap|click|press)\b[\s\S]{0,64}\b(?:notifications?|notification\s+shade)\b/i.test(text) ||
+    /\b(?:notifications?|notification\s+shade)\b[\s\S]{0,64}\b(?:open|launch|start|pull(?:ed)?\s+down|swipe(?:d)?\s+down|expand(?:ed)?|clear|dismiss|reply|tap|click|press)\b/i.test(text)
+  ) {
+    return false;
+  }
+  return (
+    looksLikeNotificationAdviceRequest(text) ||
+    /\b(?:what|why|how)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
+    /\bnotifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept|settings?|enabled|disabled|on|off|noisy|muted|silenced|allowed|blocked)\b/i.test(text) ||
+    /\b(?:explain|describe|define|summari[sz]e)\b[\s\S]{0,64}\b(?:how\s+)?(?:android\s+)?notifications?\b/i.test(text)
+  );
+}
+
+function wantsScreenReadContextRequest(text: string): boolean {
+  if (/\b(?:settings?|enabled|disabled|permission|permissions|access|allowed|blocked|configure|configured|configuration|best|wrong|problem|issue)\b[\s\S]{0,48}\b(?:phone|device)\b/i.test(text)) {
+    return false;
+  }
+  return (
+    /\b(?:what(?:'s| is)|what can you see|what do you see|read|show|inspect|look at|describe|check)\b[\s\S]{0,48}\b(?:screen|display)\b/i.test(text) ||
+    /\b(?:screen|display)\b[\s\S]{0,48}\b(?:says|shows|visible|displaying|on it|currently)\b/i.test(text) ||
+    /\b(?:what(?:'s| is)|what can you see|what do you see|read|show|inspect|look at|describe|check)\b[\s\S]{0,48}\b(?:on|visible on|showing on|displayed on)\b[\s\S]{0,24}\b(?:my\s+|the\s+)?(?:phone|device)\b/i.test(text) ||
+    /\bwhat\s+(?:does|do|can)\s+(?:my\s+|the\s+)?(?:phone|device)\s+(?:show|display|say)\b/i.test(text)
+  );
+}
+
+function recoverAndroidRuntimeToolFromRequest(
   params: ProviderQueryParams,
+  options: { requireRequiredToolChoice?: boolean } = {},
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
-  if (params.toolChoice !== "required") return null;
+  const requireRequiredToolChoice = options.requireRequiredToolChoice ?? true;
+  if (requireRequiredToolChoice && params.toolChoice !== "required") return null;
+  if (params.toolChoice === "none") return null;
   const requestText = latestUserText(params.messages).trim();
   if (!requestText) return null;
   if (hasProhibitedDeviceActionRequest(requestText)) return null;
   if (looksLikeMemorySaveRequest(requestText) || looksLikeMemoryLookupRequest(requestText)) return null;
+  const recoveryText = correctiveDeviceCommandText(requestText);
+  if (looksLikeDeviceInstructionRequest(recoveryText)) return null;
+  if (looksLikeOpenSourceQuestion(recoveryText)) return null;
 
-  if (hasFunctionTool(params.tools, "android_youtube_search") && !shouldUseServerYoutubeResearchWorkflow(requestText)) {
-    const query = youtubeSearchQueryFromRequest(requestText);
+  if (hasFunctionTool(params.tools, "android_youtube_search") && !shouldUseServerYoutubeResearchWorkflow(recoveryText)) {
+    const query = youtubeSearchQueryFromRequest(recoveryText);
     if (query) {
       return {
         id: generatedToolCallId(0),
@@ -1139,10 +1281,10 @@ function recoverRequiredAndroidRuntimeToolFromRequest(
     }
   }
 
-  const url = urlFromText(requestText);
+  const url = urlFromText(recoveryText);
   if (
     url &&
-    !(isYouTubeUrl(url) && shouldUseServerYoutubeResearchWorkflow(requestText)) &&
+    !(isYouTubeUrl(url) && shouldUseServerYoutubeResearchWorkflow(recoveryText)) &&
     hasFunctionTool(params.tools, "android_open_phone_url")
   ) {
     return {
@@ -1155,11 +1297,12 @@ function recoverRequiredAndroidRuntimeToolFromRequest(
     };
   }
 
-  if (hasFunctionTool(params.tools, "android_open_app_by_name") && /\b(?:open|launch|start)\b/i.test(requestText)) {
-    const packageName = inferPackageNameFromText(requestText);
+  if (hasFunctionTool(params.tools, "android_open_app_by_name") && /\b(?:open|launch|start)\b/i.test(recoveryText)) {
+    if (inferPackageNamesFromText(recoveryText).length > 1 || looksLikeMultiAppOpenRequest(recoveryText)) return null;
+    const packageName = inferPackageNameFromText(recoveryText);
     const appName = packageName
-      ? packageAliases(packageName)[0]?.replace(/_/g, " ") || requestText
-      : openAppNameFromRequest(requestText);
+      ? packageAliases(packageName)[0]?.replace(/_/g, " ") || recoveryText
+      : openAppNameFromRequest(recoveryText);
     if (appName) {
       return {
         id: generatedToolCallId(0),
@@ -1172,7 +1315,7 @@ function recoverRequiredAndroidRuntimeToolFromRequest(
     }
   }
 
-  if (wantsScreenshotRequest(requestText) && hasFunctionTool(params.tools, "android_capture_screen")) {
+  if (wantsScreenshotRequest(recoveryText) && hasFunctionTool(params.tools, "android_capture_screen")) {
     return {
       id: generatedToolCallId(0),
       type: "function",
@@ -1185,10 +1328,7 @@ function recoverRequiredAndroidRuntimeToolFromRequest(
 
   if (
     hasFunctionTool(params.tools, "android_read_screen_context") &&
-    (
-      /\b(?:what(?:'s| is)|read|show|inspect|look at)\b[\s\S]{0,48}\b(?:screen|display|phone|device)\b/i.test(requestText) ||
-      /\b(?:screen|phone|device)\b[\s\S]{0,32}\b(?:says|shows|visible)\b/i.test(requestText)
-    )
+    wantsScreenReadContextRequest(recoveryText)
   ) {
     return {
       id: generatedToolCallId(0),
@@ -1200,7 +1340,7 @@ function recoverRequiredAndroidRuntimeToolFromRequest(
     };
   }
 
-  if (hasFunctionTool(params.tools, "android_read_notifications") && /\bnotifications?\b/i.test(requestText)) {
+  if (hasFunctionTool(params.tools, "android_read_notifications") && wantsNotificationReadRequest(recoveryText)) {
     return {
       id: generatedToolCallId(0),
       type: "function",
@@ -1224,6 +1364,53 @@ function recoverRequiredAndroidRuntimeToolFromRequest(
   }
 
   return null;
+}
+
+function recoverRequiredAndroidRuntimeToolFromRequest(
+  params: ProviderQueryParams,
+): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
+  return recoverAndroidRuntimeToolFromRequest(params, { requireRequiredToolChoice: true });
+}
+
+function recoverExplicitAndroidRuntimeToolFromRequest(
+  params: ProviderQueryParams,
+): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
+  if (params.toolChoice === "required") return null;
+  if (hasActiveToolContinuation(params.messages)) return null;
+  if (!isExplicitAndroidRuntimeActionRequest(latestUserText(params.messages))) return null;
+  return recoverAndroidRuntimeToolFromRequest(params, { requireRequiredToolChoice: false });
+}
+
+function shouldPreserveRequiredFinalAnswer(requestText: string): boolean {
+  const recoveryText = correctiveDeviceCommandText(requestText).trim();
+  if (!recoveryText) return false;
+  const notificationConceptQuestion = looksLikeNotificationNonActionQuestion(recoveryText);
+  const genericPhoneQuestion = /\b(?:phone|device|screen|display)\b/i.test(recoveryText) &&
+    !wantsScreenReadContextRequest(recoveryText) &&
+    !wantsScreenshotRequest(recoveryText) &&
+    !/\b(?:open|launch|start|take|capture|tap|click|press|swipe|scroll|type|read|show|list|check|view|search|find|look\s+up|go\s+to|home|back|recents)\b/i.test(recoveryText);
+  return (
+    looksLikeDeviceInstructionRequest(recoveryText) ||
+    looksLikeOpenSourceQuestion(recoveryText) ||
+    looksLikeMultiAppOpenRequest(recoveryText) ||
+    notificationConceptQuestion ||
+    genericPhoneQuestion
+  );
+}
+
+function isExplicitAndroidRuntimeActionRequest(text: string): boolean {
+  const requestText = correctiveDeviceCommandText(text).trim();
+  if (!requestText) return false;
+  if (looksLikeDeviceInstructionRequest(requestText)) return false;
+  if (looksLikeOpenSourceQuestion(requestText)) return false;
+  if (/^(?:how|why|where|when|what(?:'s| is)?(?:\s+the)?\s+(?:best\s+)?way)\b/i.test(requestText)) {
+    return wantsNotificationReadRequest(requestText);
+  }
+  return (
+    wantsNotificationReadRequest(requestText) ||
+    wantsScreenReadContextRequest(requestText) ||
+    /^(?:hey\s+jarvis[, ]*)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:open|launch|start|take|capture|screenshot|read|show|list|check|view|search|find|look\s+up|tap|click|press|swipe|scroll|type|go\s+to)\b/i.test(requestText)
+  );
 }
 
 function recoverRequiredToolCallFromRequest(
@@ -1324,6 +1511,10 @@ function parseLocalGemmaStructuredOutput(
       ? data.toolCalls
       : [];
   if (type === "tool_calls" || rawToolCalls.length > 0) {
+    if (rawToolCalls.length === 0) {
+      const content = jsonEnvelopeText(data);
+      if (content) return { type: "final", content };
+    }
     const toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] = rawToolCalls
       .map((toolCall, index) => {
         if (!toolCall || typeof toolCall !== "object") return null;
@@ -1354,7 +1545,9 @@ function localGemmaFinalText(raw: string, options: { preserveWholeJson?: boolean
     return raw.trim();
   }
 
-  if (data.type === "tool_calls" || Array.isArray(data.tool_calls) || Array.isArray(data.toolCalls)) {
+  const toolCalls = Array.isArray(data.tool_calls) ? data.tool_calls : [];
+  const camelToolCalls = Array.isArray(data.toolCalls) ? data.toolCalls : [];
+  if (toolCalls.length > 0 || camelToolCalls.length > 0 || (data.type === "tool_calls" && !jsonEnvelopeText(data))) {
     return raw.trim();
   }
 
@@ -1366,7 +1559,7 @@ function localGemmaFinalText(raw: string, options: { preserveWholeJson?: boolean
 }
 
 function jsonEnvelopeText(data: Record<string, unknown>): string | null {
-  for (const key of ["content", "response", "reply", "text", "message", "error"]) {
+  for (const key of ["content", "response", "reply", "text", "message", "output", "error"]) {
     const value = data[key];
     if (typeof value === "string" && value.trim()) {
       return value.trim();
@@ -1788,7 +1981,8 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
           ),
         );
         if (toolCalls.length === 0) {
-          const recoveredToolCall = recoverRequiredToolCallFromRequest(params);
+          const recoveredToolCall = recoverRequiredToolCallFromRequest(params) ||
+            recoverExplicitAndroidRuntimeToolFromRequest(params);
           if (recoveredToolCall) {
             yield {
               type: "tool_call_start",
@@ -1860,7 +2054,34 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
           yield { type: "finish", reason: "stop" };
           return;
         }
+        if (hasProhibitedDeviceActionRequest(requestText)) {
+          yield { type: "text", delta: parsed.content.trim() || "No device action was run." };
+          yield { type: "finish", reason: "stop" };
+          return;
+        }
+        if (shouldPreserveRequiredFinalAnswer(requestText)) {
+          yield { type: "text", delta: parsed.content.trim() || "No device action was run." };
+          yield { type: "finish", reason: "stop" };
+          return;
+        }
         throw new Error("Phone Gemma returned a final answer when the local harness required a tool call. No cloud model was used.");
+      }
+
+      const recoveredToolCall = recoverExplicitAndroidRuntimeToolFromRequest(params);
+      if (recoveredToolCall) {
+        yield {
+          type: "tool_call_start",
+          index: 0,
+          id: recoveredToolCall.id,
+          name: recoveredToolCall.function.name,
+        };
+        yield {
+          type: "tool_call_args",
+          index: 0,
+          args: recoveredToolCall.function.arguments,
+        };
+        yield { type: "finish", reason: "tool_calls" };
+        return;
       }
 
       if (parsed.content.trim()) {
