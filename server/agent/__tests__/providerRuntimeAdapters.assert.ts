@@ -2876,6 +2876,8 @@ async function testAndroidLocalGemmaDoesNotReadNotificationsForMetaQuestions() {
       "Do I have notifications on?",
       "Do I have notifications off?",
       "Any notification settings I should change?",
+      "List ways to reduce Android notifications.",
+      "Show me tips for managing notifications.",
       "What are notifications?",
       "Summarize how Android notifications work.",
     ]) {
@@ -3066,6 +3068,13 @@ async function testAndroidLocalGemmaPreservesRequiredInformationalPhoneFinalAnsw
         description: "Read visible Android notifications.",
         parameters: { type: "object", properties: { limit: { type: "number" } } },
         expected: "Check notification settings to see whether they are on.",
+      },
+      {
+        request: "List ways to reduce Android notifications.",
+        toolName: "android_read_notifications",
+        description: "Read visible Android notifications.",
+        parameters: { type: "object", properties: { limit: { type: "number" } } },
+        expected: "Try disabling low-value app alerts or using notification categories.",
       },
       {
         request: "Can you show me how to take a screenshot?",

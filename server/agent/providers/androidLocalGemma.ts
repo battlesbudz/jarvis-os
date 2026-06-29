@@ -1183,6 +1183,15 @@ function looksLikeMultiAppOpenRequest(text: string): boolean {
   return !/^(?:then\s+)?(?:search|find|look\s+up|look\s+for|go\s+to|browse|navigate|take|capture|read|show|tap|click|press|swipe|scroll|type|enter|ask|tell|explain|describe|answer|say|what|why|how|when|where|which)\b/i.test(rightSide);
 }
 
+function looksLikeNotificationAdviceRequest(text: string): boolean {
+  if (!/\bnotifications?\b/i.test(text)) return false;
+  return (
+    /\b(?:ways?|tips?|advice|recommendations?|steps?|guide|guidance)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
+    /\b(?:reduce|manage|control|quiet|limit|avoid|get\s+fewer|make\s+fewer)\b[\s\S]{0,64}\b(?:android\s+)?notifications?\b/i.test(text) ||
+    /\bnotifications?\b[\s\S]{0,64}\b(?:ways?|tips?|advice|recommendations?|steps?|guide|guidance|reduce|manage|control|quiet|limit|avoid|get\s+fewer|make\s+fewer)\b/i.test(text)
+  );
+}
+
 function wantsNotificationReadRequest(text: string): boolean {
   if (!/\bnotifications?\b/i.test(text)) return false;
   if (
@@ -1195,6 +1204,9 @@ function wantsNotificationReadRequest(text: string): boolean {
     /\bnotifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept)\b/i.test(text) ||
     /\b(?:explain|describe|define|summari[sz]e)\b[\s\S]{0,64}\b(?:how\s+)?(?:android\s+)?notifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept)\b/i.test(text)
   ) {
+    return false;
+  }
+  if (looksLikeNotificationAdviceRequest(text)) {
     return false;
   }
   return (
@@ -1217,6 +1229,7 @@ function looksLikeNotificationNonActionQuestion(text: string): boolean {
     return false;
   }
   return (
+    looksLikeNotificationAdviceRequest(text) ||
     /\b(?:what|why|how)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
     /\bnotifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept|settings?|enabled|disabled|on|off|noisy|muted|silenced|allowed|blocked)\b/i.test(text) ||
     /\b(?:explain|describe|define|summari[sz]e)\b[\s\S]{0,64}\b(?:how\s+)?(?:android\s+)?notifications?\b/i.test(text)
