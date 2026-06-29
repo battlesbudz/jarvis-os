@@ -609,6 +609,7 @@ function openAppNameFromRequest(text: string): string | null {
   const match = text.match(/\b(?:open|launch|start)\s+(?:the\s+)?(.+?)\s*(?:app)?[.!?]*$/i);
   const appName = match?.[1]
     ?.replace(/\b(?:please|for me|on my phone|on the phone)\b/gi, "")
+    .replace(/\b(?:instead|rather|now)\b\s*$/i, "")
     .replace(/\s+/g, " ")
     .trim();
   if (!appName) return null;
@@ -695,7 +696,7 @@ function hasLaterCorrectiveDeviceCommand(normalizedText: string): boolean {
 }
 
 function correctiveDeviceCommandText(text: string): string {
-  const commandPattern = "(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?(?:open|launch|start|take|capture|read|show|tap|click|press|swipe|scroll|type|go to|search)\\b[\\s\\S]*";
+  const commandPattern = "(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?(?:open|launch|start|take|capture|read|show|list|check|view|see|tap|click|press|swipe|scroll|type|go to|search)\\b[\\s\\S]*";
   const punctuationMatch = text.match(new RegExp(`[.;!?]\\s*(${commandPattern})$`, "i"));
   if (punctuationMatch?.[1]?.trim()) return punctuationMatch[1].trim();
 

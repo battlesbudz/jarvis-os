@@ -2651,9 +2651,10 @@ async function testAndroidLocalGemmaDoesNotScreenshotWhenUserSaysTheyDidNotAsk()
 
 async function testAndroidLocalGemmaAllowsCorrectiveCommandsAfterProtest() {
   try {
-    for (const request of [
-      "I didn't ask you to open YouTube; open Chrome instead.",
-      "I didn't ask you to open YouTube; can you open Chrome instead?",
+    for (const testCase of [
+      { request: "I didn't ask you to open YouTube; open Chrome instead.", expectedArgs: '{"appName":"chrome"}' },
+      { request: "I didn't ask you to open YouTube; can you open Chrome instead?", expectedArgs: '{"appName":"chrome"}' },
+      { request: "I didn't ask you to open YouTube; open Signal instead.", expectedArgs: '{"appName":"Signal"}' },
     ]) {
       _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
         ok: true,
@@ -2665,7 +2666,7 @@ async function testAndroidLocalGemmaAllowsCorrectiveCommandsAfterProtest() {
 
       const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
         model: "android-local-gemma/gemma-4-e4b-it",
-        messages: [{ role: "user", content: request }],
+        messages: [{ role: "user", content: testCase.request }],
         tools: [{
           type: "function",
           function: {
@@ -2684,9 +2685,47 @@ async function testAndroidLocalGemmaAllowsCorrectiveCommandsAfterProtest() {
       assert.equal(result.textContent, "");
       assert.equal(result.toolCallList.length, 1);
       assert.equal(result.toolCallList[0].function.name, "android_open_app_by_name");
-      assert.equal(result.toolCallList[0].function.arguments, '{"appName":"chrome"}');
+      assert.equal(result.toolCallList[0].function.arguments, testCase.expectedArgs);
     }
     console.log("OK: Android Local Gemma allows corrective commands after protest wording");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaAllowsCorrectiveNotificationRequestsAfterProtest() {
+  try {
+    _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+      ok: true,
+      data: {
+        text: JSON.stringify({ type: "final", content: "I can check your notifications instead." }),
+        finishReason: "stop",
+      },
+    }));
+
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "I didn't ask you to open YouTube; check my notifications instead." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_read_notifications",
+          description: "Read visible Android notifications.",
+          parameters: { type: "object", properties: { limit: { type: "number" } } },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_read_notifications");
+    assert.equal(result.toolCallList[0].function.arguments, "{}");
+    console.log("OK: Android Local Gemma allows corrective notification requests after protest wording");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -5327,6 +5366,7 @@ async function main() {
   await testAndroidLocalGemmaDoesNotRecoverNegatedRequiredActions();
   await testAndroidLocalGemmaDoesNotScreenshotWhenUserSaysTheyDidNotAsk();
   await testAndroidLocalGemmaAllowsCorrectiveCommandsAfterProtest();
+  await testAndroidLocalGemmaAllowsCorrectiveNotificationRequestsAfterProtest();
   await testAndroidLocalGemmaBlocksNegatedCorrectiveCommandsAfterProtest();
   await testAndroidLocalGemmaRecoversCompoundOpenYoutubeSearchToPhoneRuntime();
   await testAndroidLocalGemmaRecoversNotificationRequestsFromFinalDenials();
