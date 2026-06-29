@@ -696,7 +696,9 @@ function hasLaterCorrectiveDeviceCommand(normalizedText: string): boolean {
 }
 
 function correctiveDeviceCommandText(text: string): string {
-  const commandPattern = "(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?(?:open|launch|start|take|capture|read|show|list|check|view|see|tap|click|press|swipe|scroll|type|go to|search)\\b[\\s\\S]*";
+  const imperativePattern = "(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?(?:open|launch|start|take|capture|read|show|list|check|view|see|tap|click|press|swipe|scroll|type|go to|search)\\b[\\s\\S]*";
+  const notificationQuestionPattern = "(?:(?:what(?:'s|\\s+is|\\s+are)?|how\\s+many|do\\s+i\\s+have|are\\s+there|any)\\b[\\s\\S]{0,64}\\bnotifications?\\b[\\s\\S]*)";
+  const commandPattern = `(?:${imperativePattern}|${notificationQuestionPattern})`;
   const punctuationMatch = text.match(new RegExp(`[.;!?]\\s*(${commandPattern})$`, "i"));
   if (punctuationMatch?.[1]?.trim()) return punctuationMatch[1].trim();
 
