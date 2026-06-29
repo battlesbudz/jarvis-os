@@ -1186,7 +1186,8 @@ function looksLikeMultiAppOpenRequest(text: string): boolean {
 function wantsNotificationReadRequest(text: string): boolean {
   if (!/\bnotifications?\b/i.test(text)) return false;
   if (
-    /\b(?:settings?|enabled|disabled|turn(?:ed)?\s+on|turn(?:ed)?\s+off|permission|permissions|access|allowed|blocked|muted|silenced|configure|configured|configuration)\b/i.test(text)
+    /\b(?:settings?|enabled|disabled|turn(?:ed)?\s+on|turn(?:ed)?\s+off|permission|permissions|access|allowed|blocked|muted|silenced|configure|configured|configuration)\b/i.test(text) ||
+    /\bnotifications?\s+(?:on|off)\s*\??$/i.test(text)
   ) {
     return false;
   }
@@ -1217,7 +1218,7 @@ function looksLikeNotificationNonActionQuestion(text: string): boolean {
   }
   return (
     /\b(?:what|why|how)\b[\s\S]{0,64}\bnotifications?\b/i.test(text) ||
-    /\bnotifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept|settings?|enabled|disabled|noisy|muted|silenced|allowed|blocked)\b/i.test(text) ||
+    /\bnotifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept|settings?|enabled|disabled|on|off|noisy|muted|silenced|allowed|blocked)\b/i.test(text) ||
     /\b(?:explain|describe|define|summari[sz]e)\b[\s\S]{0,64}\b(?:how\s+)?(?:android\s+)?notifications?\b/i.test(text)
   );
 }

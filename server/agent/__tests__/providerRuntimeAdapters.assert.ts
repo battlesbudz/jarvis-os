@@ -2873,6 +2873,8 @@ async function testAndroidLocalGemmaDoesNotReadNotificationsForMetaQuestions() {
       "Why are my notifications noisy?",
       "Are notifications enabled?",
       "Do I have notifications enabled?",
+      "Do I have notifications on?",
+      "Do I have notifications off?",
       "Any notification settings I should change?",
       "What are notifications?",
       "Summarize how Android notifications work.",
@@ -3057,6 +3059,13 @@ async function testAndroidLocalGemmaPreservesRequiredInformationalPhoneFinalAnsw
         description: "Read visible Android notifications.",
         parameters: { type: "object", properties: { limit: { type: "number" } } },
         expected: "Notifications are alerts from apps or the system.",
+      },
+      {
+        request: "Do I have notifications on?",
+        toolName: "android_read_notifications",
+        description: "Read visible Android notifications.",
+        parameters: { type: "object", properties: { limit: { type: "number" } } },
+        expected: "Check notification settings to see whether they are on.",
       },
       {
         request: "Can you show me how to take a screenshot?",
