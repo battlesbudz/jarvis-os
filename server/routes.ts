@@ -2554,7 +2554,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               ...linkData,
               ...(plainMcpServerName ? { mcpServerName: plainMcpServerName } : {}),
             });
-            const deterministicSummary = deterministicAndroidToolSummary(tc.function.name, execResult);
+            const deterministicSummary = deterministicAndroidToolSummary(tc.function.name, execResult, {
+              deterministicToolCall: deterministicToolCall?.id === tc.id,
+            });
             if (deterministicSummary) {
               deterministicPhoneRuntimeFinalText = deterministicSummary;
             }

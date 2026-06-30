@@ -113,9 +113,19 @@ export function isPhoneNotificationReadRequest(text: string): boolean {
 
 function hasAdditionalPhoneActionAfterNotificationRead(text: string): boolean {
   const normalized = normalizePhoneRuntimeRequestText(text);
-  const continuation = normalized.split(/\b(?:and then|then|after(?:wards| that)?|also)\b/i).slice(1).join(" ");
+  const continuation = normalized.split(/\b(?:and then|then|after(?:wards| that)?|also|and)\b/i).slice(1).join(" ");
   if (!continuation.trim()) return false;
   return /\b(?:open|launch|start|search|find|look\s+up|look\s+for|tap|click|press|swipe|scroll|type|enter|back|home|recents|screenshot|screen shot|screen capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+to)\b/i.test(continuation);
+}
+
+function hasNotificationReadQualifier(text: string): boolean {
+  const normalized = normalizePhoneRuntimeRequestText(text);
+  if (/\b(?:only|just)\b[\s\S]{0,32}\b(?:count|number|total|how many)\b/i.test(normalized)) return true;
+  if (/\b(?:count|number|total|how many)\b[\s\S]{0,48}\bnotifications?\b/i.test(normalized)) return true;
+  if (/\bnotifications?\b[\s\S]{0,48}\b(?:count|number|total|how many)\b/i.test(normalized)) return true;
+  if (/\b(?:gmail|google|facebook|instagram|slack|discord|telegram|youtube|codex|life360|maps|calendar|messages?|mail|email|outlook|chrome|linkedin|twitter|replit)\s+notifications?\b/i.test(normalized)) return true;
+  if (/\bnotifications?\s+(?:from|for|about)\s+[a-z0-9][a-z0-9._-]*/i.test(normalized)) return true;
+  return false;
 }
 
 export function deterministicPhoneRuntimeToolCallFromRequest(
@@ -124,6 +134,7 @@ export function deterministicPhoneRuntimeToolCallFromRequest(
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
   if (!isPhoneNotificationReadRequest(requestText)) return null;
   if (hasAdditionalPhoneActionAfterNotificationRead(requestText)) return null;
+  if (hasNotificationReadQualifier(requestText)) return null;
   const hasNotificationTool = tools.some((tool) => phoneRuntimeChatToolName(tool) === "android_read_notifications");
   if (!hasNotificationTool) return null;
   return {
@@ -139,8 +150,10 @@ export function deterministicPhoneRuntimeToolCallFromRequest(
 export function deterministicAndroidToolSummary(
   toolName: string,
   execResult: { result: "success" | "error" | "pending"; label: string; detail: string },
+  options: { deterministicToolCall?: boolean } = {},
 ): string | null {
   if (toolName !== "android_read_notifications") return null;
+  if (options.deterministicToolCall !== true) return null;
   if (execResult.result === "error") {
     return summarizeAndroidNotificationDetail({ error: execResult.detail || execResult.label });
   }

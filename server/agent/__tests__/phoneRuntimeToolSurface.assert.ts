@@ -34,7 +34,7 @@ assert.match(routingSource, /function buildPhoneRuntimeRequiredToolNames/);
 assert.match(routingSource, /function deterministicPhoneRuntimeToolCallFromRequest/);
 assert.match(routingSource, /android_read_notifications/);
 assert.match(routesSource, /Routing notification request to Android Device Control/);
-assert.match(routesSource, /deterministicAndroidToolSummary\(tc\.function\.name, execResult\)/);
+assert.match(routesSource, /deterministicAndroidToolSummary\(tc\.function\.name, execResult,[\s\S]*deterministicToolCall:\s*deterministicToolCall\?\.id === tc\.id/);
 assert.match(routingSource, /function isYoutubeServerResearchRequest/);
 assert.match(routingSource, /function isYoutubePhoneActionRequest/);
 assert.match(routingSource, /function isMemoryPhoneBypassRequest/);
