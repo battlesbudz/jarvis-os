@@ -81,7 +81,22 @@ import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
 import { filterToolsByGroups, getTool, type ToolGroup } from "./agent/tools/index";
-import { ANDROID_PHONE_RUNTIME_TOOL_NAMES, explainUnsupportedPhoneRuntimeAction } from "./agent/tools/androidAppRuntime";
+import {
+  ANDROID_PHONE_RUNTIME_TOOL_NAMES,
+  explainUnsupportedPhoneRuntimeAction,
+} from "./agent/tools/androidAppRuntime";
+import {
+  buildPhoneRuntimeRequiredToolNames,
+  deterministicAndroidToolSummary,
+  deterministicPhoneRuntimeToolCallFromRequest,
+  filterPhoneRuntimeModelTools,
+  isAndroidPhoneRuntimeToolName,
+  isMemoryPhoneBypassRequest,
+  isPhoneRuntimeCoveredRequest,
+  isYoutubePhoneActionRequest,
+  isYoutubePhoneRequest,
+  isYoutubeServerResearchRequest,
+} from "./agent/phoneRuntimeRouting";
 import { parseNaturalTime, parseRecurringExpr } from "./agent/tools/cronTools";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 import { getPromptData, setPromptData } from "./coachSessionPromptCache";
@@ -131,111 +146,9 @@ function operatorActionPermKey(operatorAction: Record<string, unknown>): Android
 }
 
 const openai = new OpenAI(getOpenAIClientConfig());
-const ANDROID_PHONE_RUNTIME_TOOL_NAME_SET = new Set<string>(ANDROID_PHONE_RUNTIME_TOOL_NAMES);
-const SERVER_YOUTUBE_TOOL_NAMES = new Set([
-  "search_youtube",
-  "fetch_youtube_transcript",
-  "youtube_search",
-  "get_youtube_transcript",
-]);
-
-function isAndroidPhoneRuntimeToolName(name: string): boolean {
-  return ANDROID_PHONE_RUNTIME_TOOL_NAME_SET.has(name);
-}
-
-function phoneRuntimeChatToolName(tool: OpenAI.Chat.Completions.ChatCompletionTool): string | null {
-  return tool.type === "function" ? tool.function.name : null;
-}
-
-function filterPhoneRuntimeModelTools(
-  tools: OpenAI.Chat.Completions.ChatCompletionTool[],
-  options: { allowDaemonActionFallback?: boolean; allowServerYoutubeTools?: boolean } = {},
-): OpenAI.Chat.Completions.ChatCompletionTool[] {
-  return tools.filter((tool) => {
-    const name = phoneRuntimeChatToolName(tool);
-    if (!name) return false;
-    if (isAndroidPhoneRuntimeToolName(name)) return true;
-    if (name === "daemon_action") return options.allowDaemonActionFallback === true;
-    if (SERVER_YOUTUBE_TOOL_NAMES.has(name)) return options.allowServerYoutubeTools === true;
-    return false;
-  });
-}
 
 function uniqueToolNames(names: string[]): string[] {
   return Array.from(new Set(names));
-}
-
-function isYoutubePhoneRequest(text: string): boolean {
-  return /\b(you\s*tube|youtube|yt)\b/i.test(text);
-}
-
-function isYoutubePhoneActionRequest(text: string): boolean {
-  return /\b(?:open|launch|start)\s+(?:the\s+)?(?:you\s*tube|youtube|yt)\b/i.test(text) ||
-    /\b(?:search|find|look\s+up|look\s+for)\s+(?:on\s+)?(?:you\s*tube|youtube|yt)\b/i.test(text) ||
-    /\b(?:you\s*tube|youtube|yt)\s+(?:search|find|look\s+up|look\s+for)\b/i.test(text) ||
-    /\b(?:search|find|look\s+up|look\s+for)\s+(?:for\s+)?[\s\S]{1,120}?\s+(?:on|in)\s+(?:you\s*tube|youtube|yt)\b/i.test(text) ||
-    /\b(?:find|show|get)\s+(?:me\s+)?(?:a\s+few\s+|some\s+)?(?:you\s*tube|youtube|yt)\s*videos?\s+(?:about|on|for)\b/i.test(text) ||
-    /\b(?:show|get)\s+(?:me\s+)?(?:a\s+few\s+|some\s+)?videos?\s+(?:about|on|for)\s+[\s\S]{1,120}?\s+(?:on|in)\s+(?:you\s*tube|youtube|yt)\b/i.test(text) ||
-    /\b(?:watch|play)\b[\s\S]{0,120}\b(?:on\s+)?(?:you\s*tube|youtube|yt)\b/i.test(text);
-}
-
-function isYoutubeServerResearchRequest(text: string): boolean {
-  return isYoutubePhoneRequest(text) &&
-    /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|compare|rank|recommend|recommendation|best videos?|top videos?|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
-}
-
-function isMemoryPhoneBypassRequest(text: string): boolean {
-  return /\b(?:memory|memories|remember|recall|what do you know about me|what have i told you|about me|living context)\b/i.test(text);
-}
-
-function isPhoneOpenActionRequest(text: string): boolean {
-  if (!/\b(?:open|launch|start)\b/i.test(text)) return false;
-  if (/\b(?:project|build|create|make|generate|scaffold|code|website|web\s+app)\b/i.test(text)) return false;
-  if (/\b(?:youtube|you\s*tube|yt|facebook|fb|linkedin|linked\s+in|instagram|ig|insta|spotify|chrome|browser|camera|settings|messages|texts|gmail|google\s+mail|maps|messenger|whatsapp|snapchat|tiktok|tik\s+tok|x|twitter|reddit|discord|telegram|slack|zoom|teams|calculator|calendar|clock|contacts|notes)\b/i.test(text)) return true;
-  return /\b(?:app|application|phone|device)\b/i.test(text);
-}
-
-function hasPhoneRuntimeContext(text: string): boolean {
-  return /\b(?:android|phone|screen|display|device|app|application|button|keyboard|field|input|notification|notifications)\b/i.test(text) ||
-    isYoutubePhoneRequest(text) ||
-    isPhoneOpenActionRequest(text);
-}
-
-function isPhoneRuntimeCoveredRequest(text: string): boolean {
-  if (isYoutubePhoneRequest(text)) return isYoutubePhoneActionRequest(text) && !isYoutubeServerResearchRequest(text);
-  return isPhoneOpenActionRequest(text) ||
-    /\b(?:browse to|navigate to|open (?:a )?(?:url|link|website|site))\b/i.test(text) ||
-    /\b(?:screenshot|screen shot|screen capture)\b/i.test(text) ||
-    /\b(?:read|inspect|look at|what(?:'s| is))\b.{0,48}\b(?:screen|display|phone)\b/i.test(text) ||
-    /\bnotifications?\b/i.test(text) ||
-    (hasPhoneRuntimeContext(text) && /\b(?:tap|swipe|scroll|type|press|back|home|recents|enter)\b/i.test(text));
-}
-
-function buildPhoneRuntimeRequiredToolNames(
-  lastUserContent: string,
-  isDeviceControlRequest: boolean,
-  phoneRuntimeCoveredRequest: boolean,
-): string[] {
-  const youtubePhoneActionRequest = isYoutubePhoneRequest(lastUserContent) && isYoutubePhoneActionRequest(lastUserContent);
-  const youtubeResearchRequest = isYoutubeServerResearchRequest(lastUserContent);
-  if (!isDeviceControlRequest && !phoneRuntimeCoveredRequest && !youtubePhoneActionRequest && !youtubeResearchRequest) return [];
-  const requiredToolNames = new Set<string>();
-
-  if (phoneRuntimeCoveredRequest) {
-    ANDROID_PHONE_RUNTIME_TOOL_NAMES.forEach((name) => requiredToolNames.add(name));
-  }
-
-  if (youtubePhoneActionRequest || youtubeResearchRequest) {
-    if (!youtubeResearchRequest) {
-      requiredToolNames.add("android_youtube_search");
-      requiredToolNames.add("android_open_phone_url");
-    } else {
-      requiredToolNames.add("search_youtube");
-      requiredToolNames.add("fetch_youtube_transcript");
-    }
-  }
-
-  return [...requiredToolNames];
 }
 
 export { buildPlanForUser, buildPlanFromInputs } from './services/planGenerationService';
@@ -1958,6 +1871,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         // for the actual action it needed to perform.
         const MAX_TOOL_TURNS = 20;
         let loopFinalText: string | null = null; // text returned by model mid-loop
+        let deterministicPhoneRuntimeFinalText: string | null = null;
 
         // Build per-request tool list including MCP tools for this user
         let requestTools: OpenAI.Chat.Completions.ChatCompletionTool[] = [...coachTools];
@@ -2106,19 +2020,39 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             detail: useToolFocusedLoop ? "Tool-focused route selected" : "Full coach context route selected",
           });
           const phase1StartedAt = Date.now();
-          const phase1 = await runCoachModelTurn({
-            messages: currentMessages,
-            tools: modelRequestTools,
-            // Router-selected tool routes are enforced outside the model:
-            // turn 0 must call one of the narrowed tools, later turns may stop.
-            toolChoice: turn === 0 ? firstTurnToolPolicy.toolChoice : "auto",
-            maxCompletionTokens: 2048,
-            requestedModel: coachChatSelectedModel,
-            preferRequestedModel: Boolean(coachChatSelectedModel),
-            signal,
-            userId: userId ?? undefined,
-            logPrefix: "[CoachChat]",
-          });
+          const deterministicToolCall = turn === 0
+            ? deterministicPhoneRuntimeToolCallFromRequest(lastUserOrigText, modelRequestTools)
+            : null;
+          if (deterministicToolCall) {
+            emitMeaningfulProgress({
+              source: "runtime",
+              stage: "tool_selection",
+              message: "Routing notification request to Android Device Control",
+              detail: deterministicToolCall.function.name,
+            });
+          }
+          const phase1 = deterministicToolCall
+            ? {
+                textContent: "",
+                textChunks: [],
+                toolCallList: [deterministicToolCall],
+                finishReason: "tool_calls",
+                providerName: "jarvis-runtime",
+                model: "deterministic-phone-runtime",
+              }
+            : await runCoachModelTurn({
+                messages: currentMessages,
+                tools: modelRequestTools,
+                // Router-selected tool routes are enforced outside the model:
+                // turn 0 must call one of the narrowed tools, later turns may stop.
+                toolChoice: turn === 0 ? firstTurnToolPolicy.toolChoice : "auto",
+                maxCompletionTokens: 2048,
+                requestedModel: coachChatSelectedModel,
+                preferRequestedModel: Boolean(coachChatSelectedModel),
+                signal,
+                userId: userId ?? undefined,
+                logPrefix: "[CoachChat]",
+              });
 
           const choice = {
             finish_reason: phase1.finishReason,
@@ -2620,6 +2554,10 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               ...linkData,
               ...(plainMcpServerName ? { mcpServerName: plainMcpServerName } : {}),
             });
+            const deterministicSummary = deterministicAndroidToolSummary(tc.function.name, execResult);
+            if (deterministicSummary) {
+              deterministicPhoneRuntimeFinalText = deterministicSummary;
+            }
             let toolResultContent: string;
             const isAndroidRuntimeTool = tc.function.name === 'daemon_action' ||
               isAndroidPhoneRuntimeToolName(tc.function.name);
@@ -2636,6 +2574,10 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               tool_call_id: tc.id,
               content: toolResultContent,
             });
+          }
+          if (deterministicPhoneRuntimeFinalText) {
+            loopFinalText = deterministicPhoneRuntimeFinalText;
+            break;
           }
           // Continue to next turn — model will see tool results and decide what to do next
         }

@@ -2824,8 +2824,10 @@ async function testAndroidLocalGemmaRecoversCompoundOpenYoutubeSearchToPhoneRunt
 async function testAndroidLocalGemmaRecoversNotificationRequestsFromFinalDenials() {
   try {
     for (const request of [
+      "Read my notifications",
       "What are my notifications?",
       "How many notifications do I have?",
+      "android_read _notifications and tell me what they are",
     ]) {
       _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
         ok: true,

@@ -14,9 +14,12 @@ async function main() {
     ANDROID_PHONE_RUNTIME_TOOL_NAMES,
     androidPhoneRuntimeTools,
     buildAndroidYoutubeSearchUrl,
+    _setAndroidAppRuntimeDepsForTesting,
     explainUnsupportedPhoneRuntimeAction,
     runAndroidOpenAppByName,
+    runAndroidReadNotifications,
     resolveAndroidAppName,
+    summarizeAndroidNotificationDetail,
   } = await import("../tools/androidAppRuntime");
   const { _setRuntimeCapabilityDepsForTesting } = await import("../../state/runtimeCapability");
 
@@ -121,6 +124,104 @@ async function main() {
     _setRuntimeCapabilityDepsForTesting(null);
   }
   console.log("OK: Android app actions use runtime capability preflight before daemon work");
+
+  _setRuntimeCapabilityDepsForTesting({
+    now: () => new Date("2026-06-25T12:00:00.000Z"),
+    loadConnectedAccounts: async () => [],
+    loadDeviceControlState: async () => ({
+      desktop: { connected: false, hostname: null, lastSeenAt: null, permissions: [] },
+      android: {
+        connected: true,
+        hostname: "Galaxy Fold6",
+        lastSeenAt: "2026-06-25T11:59:00.000Z",
+        activeDevice: null,
+        permissions: {
+          openApp: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          browse: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          screenCapture: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          readScreen: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          tapType: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          accessibility: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          notificationAccess: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+          microphone: { status: "ready", lastCheckedAt: "2026-06-25T12:00:00.000Z" },
+        },
+      },
+    }),
+  });
+  try {
+    const listenerOps: string[] = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      sendDaemonOp: async (_userId, op) => {
+        listenerOps.push(op.type);
+        assert.equal(op.type, "android_notifications_list");
+        return {
+          ok: true,
+          data: {
+            listenerEnabled: true,
+            notifications: [
+              {
+                app: "Gmail",
+                title: "Budget alert",
+                text: "Railway spend is nearing the limit",
+                ts: Date.parse("2026-06-25T11:55:00.000Z"),
+              },
+            ],
+          },
+        };
+      },
+    });
+    const listenerResult = await runAndroidReadNotifications({}, "user-phone");
+    assert.equal(listenerResult.ok, true);
+    assert.deepEqual(listenerOps, ["android_notifications_list"]);
+    assert.match(summarizeAndroidNotificationDetail(listenerResult.detail), /Gmail/);
+    assert.match(summarizeAndroidNotificationDetail(listenerResult.detail), /Budget alert/);
+
+    const accessibilityOps: string[] = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      sendDaemonOp: async (_userId, op) => {
+        accessibilityOps.push(op.type);
+        if (op.type === "android_notifications_list") {
+          return { ok: true, data: { listenerEnabled: false, notifications: [] } };
+        }
+        if (op.type === "android_swipe") return { ok: true, data: { swiped: true } };
+        if (op.type === "android_read_screen") {
+          return {
+            ok: true,
+            data: {
+              visibleText: [
+                "Notifications",
+                "Life360 - Justin arrived Home",
+                "Codex - PR review finished",
+              ],
+            },
+          };
+        }
+        if (op.type === "android_press_key") return { ok: true, data: { pressed: "back" } };
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const accessibilityResult = await runAndroidReadNotifications({}, "user-phone");
+    assert.equal(accessibilityResult.ok, true);
+    assert.equal(accessibilityResult.detail.source, "notification_shade_accessibility_tree");
+    assert.deepEqual(accessibilityOps.slice(0, 4), [
+      "android_notifications_list",
+      "android_swipe",
+      "android_read_screen",
+      "android_press_key",
+    ]);
+    const accessibilitySummary = summarizeAndroidNotificationDetail(accessibilityResult.detail);
+    assert.match(accessibilitySummary, /notification shade/i);
+    assert.match(accessibilitySummary, /Life360/);
+    assert.match(accessibilitySummary, /Codex/);
+  } finally {
+    _setAndroidAppRuntimeDepsForTesting(null);
+    _setRuntimeCapabilityDepsForTesting(null);
+  }
+  console.log("OK: Android notification reads use listener first and accessibility fallback deterministically");
 
   console.log("All Android app runtime assertions passed.");
 }
