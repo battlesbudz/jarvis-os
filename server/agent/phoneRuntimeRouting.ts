@@ -131,7 +131,9 @@ function hasNotificationReadQualifier(text: string): boolean {
 export function deterministicPhoneRuntimeToolCallFromRequest(
   requestText: string,
   tools: OpenAI.Chat.Completions.ChatCompletionTool[],
+  options: { androidActive: boolean; phoneRuntimeCoveredRequest: boolean },
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
+  if (!options.androidActive || !options.phoneRuntimeCoveredRequest) return null;
   if (!isPhoneNotificationReadRequest(requestText)) return null;
   if (hasAdditionalPhoneActionAfterNotificationRead(requestText)) return null;
   if (hasNotificationReadQualifier(requestText)) return null;

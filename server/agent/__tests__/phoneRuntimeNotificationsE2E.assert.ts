@@ -26,6 +26,7 @@ async function main() {
     chatTool("android_capture_screen"),
     chatTool("android_read_notifications"),
   ];
+  const connectedPhoneRuntime = { androidActive: true, phoneRuntimeCoveredRequest: true };
 
   for (const requestText of [
     "Read my notifications",
@@ -37,9 +38,18 @@ async function main() {
       true,
       `${requestText} should enter the deterministic Phone Runtime route`,
     );
-    const toolCall = deterministicPhoneRuntimeToolCallFromRequest(requestText, phoneTools);
+    const toolCall = deterministicPhoneRuntimeToolCallFromRequest(requestText, phoneTools, connectedPhoneRuntime);
     assert.equal(toolCall?.function.name, "android_read_notifications");
   }
+
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest("Read my notifications", phoneTools, {
+      androidActive: false,
+      phoneRuntimeCoveredRequest: false,
+    }),
+    null,
+    "offline Android Device Control must not use the deterministic notification shortcut",
+  );
 
   assert.equal(
     isPhoneRuntimeCoveredRequest("Summarize how Android notifications work."),
@@ -47,27 +57,27 @@ async function main() {
     "informational notification questions should not force phone-control routing",
   );
   assert.equal(
-    deterministicPhoneRuntimeToolCallFromRequest("Do not read my notifications.", phoneTools),
+    deterministicPhoneRuntimeToolCallFromRequest("Do not read my notifications.", phoneTools, connectedPhoneRuntime),
     null,
     "negated notification requests must not run phone control",
   );
   assert.equal(
-    deterministicPhoneRuntimeToolCallFromRequest("Read my notifications and then open Gmail.", phoneTools),
+    deterministicPhoneRuntimeToolCallFromRequest("Read my notifications and then open Gmail.", phoneTools, connectedPhoneRuntime),
     null,
     "compound phone requests must stay in the multi-tool loop",
   );
   assert.equal(
-    deterministicPhoneRuntimeToolCallFromRequest("Read my notifications and open Gmail.", phoneTools),
+    deterministicPhoneRuntimeToolCallFromRequest("Read my notifications and open Gmail.", phoneTools, connectedPhoneRuntime),
     null,
     "plain-and compound phone requests must stay in the multi-tool loop",
   );
   assert.equal(
-    deterministicPhoneRuntimeToolCallFromRequest("Do I have any Gmail notifications?", phoneTools),
+    deterministicPhoneRuntimeToolCallFromRequest("Do I have any Gmail notifications?", phoneTools, connectedPhoneRuntime),
     null,
     "filtered notification requests must let the normal loop apply the filter",
   );
   assert.equal(
-    deterministicPhoneRuntimeToolCallFromRequest("Read my notifications but only give me the count.", phoneTools),
+    deterministicPhoneRuntimeToolCallFromRequest("Read my notifications but only give me the count.", phoneTools, connectedPhoneRuntime),
     null,
     "count-only notification requests must not stream the broad notification list",
   );

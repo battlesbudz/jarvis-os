@@ -2021,7 +2021,10 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           });
           const phase1StartedAt = Date.now();
           const deterministicToolCall = turn === 0
-            ? deterministicPhoneRuntimeToolCallFromRequest(lastUserOrigText, modelRequestTools)
+            ? deterministicPhoneRuntimeToolCallFromRequest(lastUserOrigText, modelRequestTools, {
+                androidActive,
+                phoneRuntimeCoveredRequest,
+              })
             : null;
           if (deterministicToolCall) {
             emitMeaningfulProgress({
