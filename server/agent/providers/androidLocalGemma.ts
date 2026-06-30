@@ -329,6 +329,13 @@ function latestUserText(messages: OpenAI.Chat.Completions.ChatCompletionMessageP
   return "";
 }
 
+function normalizeAndroidRuntimeRequestText(text: string): string {
+  return text
+    .replace(/android\s*[_-]?\s*read\s*[_-]?\s*notifications?/gi, "read notifications")
+    .replace(/android\s*[_-]?\s*notifications?\s*[_-]?\s*list/gi, "read notifications")
+    .replace(/[_]+/g, " ");
+}
+
 function shouldOmitLocalRuntimeErrorMessage(message: OpenAI.Chat.Completions.ChatCompletionMessageParam): boolean {
   if (message.role !== "assistant" || message.tool_calls?.length) return false;
   const text = textFromContent(message.content).trim();
@@ -342,6 +349,7 @@ function hasActiveToolContinuation(messages: OpenAI.Chat.Completions.ChatComplet
 }
 
 function looksLikeLocalToolRequest(text: string): boolean {
+  text = normalizeAndroidRuntimeRequestText(text);
   return /\b(screenshot|screen shot|photo|picture|camera|microphone|mic|record|open|launch|tap|click|press|swipe|scroll|type|enter|back|home|settings|permission|bluetooth|wifi|wi-fi|call|text|sms|message|notification|notifications|notification shade|location|map|maps|navigate|alarm|timer|reminder|calendar|volume|brightness|flashlight|read|show|look at|what'?s on|what is on|phone|device|app|apps|control|enable|disable|turn on|turn off)\b/i.test(text);
 }
 
@@ -1197,6 +1205,7 @@ function looksLikeNotificationAdviceRequest(text: string): boolean {
 }
 
 function wantsNotificationReadRequest(text: string): boolean {
+  text = normalizeAndroidRuntimeRequestText(text);
   if (!/\bnotifications?\b/i.test(text)) return false;
   if (
     /\b(?:settings?|enabled|disabled|turn(?:ed)?\s+on|turn(?:ed)?\s+off|permission|permissions|access|allowed|blocked|muted|silenced|configure|configured|configuration)\b/i.test(text) ||

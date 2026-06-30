@@ -3,20 +3,23 @@ import fs from "node:fs";
 import path from "node:path";
 
 const routesSource = fs.readFileSync(path.resolve("server/routes.ts"), "utf8");
+const routingSource = fs.readFileSync(path.resolve("server/agent/phoneRuntimeRouting.ts"), "utf8");
+const runtimeToolNamesSource = fs.readFileSync(path.resolve("server/agent/androidPhoneRuntimeToolNames.ts"), "utf8");
 const runtimeSource = fs.readFileSync(path.resolve("server/agent/tools/androidAppRuntime.ts"), "utf8");
 const bridgeSource = fs.readFileSync(path.resolve("server/daemon/bridge.ts"), "utf8");
 const androidOpHandlerSource = fs.readFileSync(path.resolve("android-daemon/app/src/main/java/com/jarvis/daemon/OpHandler.kt"), "utf8");
 
 assert.match(routesSource, /ANDROID_PHONE_RUNTIME_TOOL_NAMES/);
-assert.match(routesSource, /function filterPhoneRuntimeModelTools/);
-assert.match(routesSource, /allowDaemonActionFallback/);
-assert.match(routesSource, /SERVER_YOUTUBE_TOOL_NAMES/);
-assert.match(routesSource, /allowServerYoutubeTools/);
-assert.match(routesSource, /if \(!name\) return false/);
-assert.match(routesSource, /isAndroidPhoneRuntimeToolName\(name\)\) return true/);
-assert.match(routesSource, /name === ["']daemon_action["']\)\s+return options\.allowDaemonActionFallback === true/);
-assert.match(routesSource, /SERVER_YOUTUBE_TOOL_NAMES\.has\(name\)\) return options\.allowServerYoutubeTools === true/);
-assert.match(routesSource, /return false;\s*\}\);/);
+assert.match(routesSource, /filterPhoneRuntimeModelTools/);
+assert.match(routingSource, /function filterPhoneRuntimeModelTools/);
+assert.match(routingSource, /allowDaemonActionFallback/);
+assert.match(routingSource, /SERVER_YOUTUBE_TOOL_NAMES/);
+assert.match(routingSource, /allowServerYoutubeTools/);
+assert.match(routingSource, /if \(!name\) return false/);
+assert.match(routingSource, /isAndroidPhoneRuntimeToolName\(name\)\) return true/);
+assert.match(routingSource, /name === ["']daemon_action["']\)\s+return options\.allowDaemonActionFallback === true/);
+assert.match(routingSource, /SERVER_YOUTUBE_TOOL_NAMES\.has\(name\)\) return options\.allowServerYoutubeTools === true/);
+assert.match(routingSource, /return false;\s*\}\);/);
 assert.match(routesSource, /keepDaemonActionFallback[\s\S]*focusedToolNames\.add\(["']daemon_action["']\)/);
 assert.match(routesSource, /routeRequiredToolNames[\s\S]*keepDaemonActionFallback[\s\S]*\["daemon_action"\]/);
 assert.match(routesSource, /const youtubeServerResearchRequest = androidActive && isYoutubeServerResearchRequest\(lastUserContent\)/);
@@ -27,33 +30,40 @@ assert.match(routesSource, /allowServerYoutubeTools:\s*youtubeServerResearchRequ
 assert.match(routesSource, /usePhoneRuntimeToolSurfaceOnly\s*=\s*androidActive && phoneRuntimeCoveredRequest/);
 assert.doesNotMatch(routesSource, /isAndroidLocalGemmaModelName/);
 assert.match(routesSource, /\.\.\.ANDROID_PHONE_RUNTIME_TOOL_NAMES/);
-assert.match(routesSource, /function buildPhoneRuntimeRequiredToolNames/);
-assert.match(routesSource, /function isYoutubeServerResearchRequest/);
-assert.match(routesSource, /function isYoutubePhoneActionRequest/);
-assert.match(routesSource, /function isMemoryPhoneBypassRequest/);
-assert.match(routesSource, /function isPhoneOpenActionRequest/);
-assert.match(routesSource, /project\|build\|create\|make\|generate\|scaffold\|code\|website\|web\\s\+app/);
-assert.match(routesSource, /function isPhoneOpenActionRequest[\s\S]*project\|build\|create[\s\S]*youtube\|you\\s\*tube/);
-assert.match(routesSource, /function hasPhoneRuntimeContext/);
-assert.match(routesSource, /function isPhoneRuntimeCoveredRequest/);
-assert.match(routesSource, /isYoutubePhoneActionRequest\(text\) && !isYoutubeServerResearchRequest\(text\)/);
-assert.match(routesSource, /const youtubePhoneActionRequest = isYoutubePhoneRequest\(lastUserContent\) && isYoutubePhoneActionRequest\(lastUserContent\)/);
-assert.doesNotMatch(routesSource, /\(\?:you\\s\*tube\|youtube\|yt\)\?\\s\*videos/);
-assert.match(routesSource, /\(\?:you\\s\*tube\|youtube\|yt\)\\s\*videos/);
-assert.match(routesSource, /return isPhoneOpenActionRequest\(text\) \|\|/);
+assert.match(routingSource, /function buildPhoneRuntimeRequiredToolNames/);
+assert.match(routingSource, /function deterministicPhoneRuntimeToolCallFromRequest/);
+assert.match(routingSource, /android_read_notifications/);
+assert.match(routingSource, /!options\.androidActive \|\| !options\.phoneRuntimeCoveredRequest/);
+assert.match(routesSource, /Routing notification request to Android Device Control/);
+assert.match(routesSource, /deterministicPhoneRuntimeToolCallFromRequest\(lastUserOrigText, modelRequestTools,[\s\S]*androidActive,[\s\S]*phoneRuntimeCoveredRequest/);
+assert.match(routesSource, /deterministicAndroidToolSummary\(tc\.function\.name, execResult,[\s\S]*deterministicToolCall:\s*deterministicToolCall\?\.id === tc\.id/);
+assert.match(routingSource, /function isYoutubeServerResearchRequest/);
+assert.match(routingSource, /function isYoutubePhoneActionRequest/);
+assert.match(routingSource, /function isMemoryPhoneBypassRequest/);
+assert.match(routingSource, /function isPhoneOpenActionRequest/);
+assert.match(routingSource, /project\|build\|create\|make\|generate\|scaffold\|code\|website\|web\\s\+app/);
+assert.match(routingSource, /function isPhoneOpenActionRequest[\s\S]*project\|build\|create[\s\S]*youtube\|you\\s\*tube/);
+assert.match(routingSource, /function hasPhoneRuntimeContext/);
+assert.match(routingSource, /function isPhoneRuntimeCoveredRequest/);
+assert.match(routingSource, /isPhoneNotificationReadRequest\(normalized\)/);
+assert.match(routingSource, /isYoutubePhoneActionRequest\(normalized\) && !isYoutubeServerResearchRequest\(normalized\)/);
+assert.match(routingSource, /const youtubePhoneActionRequest = isYoutubePhoneRequest\(lastUserContent\) && isYoutubePhoneActionRequest\(lastUserContent\)/);
+assert.doesNotMatch(routingSource, /\(\?:you\\s\*tube\|youtube\|yt\)\?\\s\*videos/);
+assert.match(routingSource, /\(\?:you\\s\*tube\|youtube\|yt\)\\s\*videos/);
+assert.match(routingSource, /return isPhoneOpenActionRequest\(normalized\) \|\|/);
 assert.match(
-  routesSource,
-  new RegExp("hasPhoneRuntimeContext\\(text\\) && /\\\\b\\(\\?:tap\\|swipe\\|scroll\\|type\\|press\\|back\\|home\\|recents\\|enter\\)"),
+  routingSource,
+  new RegExp("hasPhoneRuntimeContext\\(normalized\\) && /\\\\b\\(\\?:tap\\|swipe\\|scroll\\|type\\|press\\|back\\|home\\|recents\\|enter\\)"),
 );
 assert.match(routesSource, /memoryPhoneBypassRequest[\s\S]*isPhoneRuntimeCoveredRequest\(lastUserContent\)/);
 assert.match(routesSource, /phoneRuntimeCoveredRequest \|\|[\s\S]*deviceControlKeywords\.some/);
 assert.doesNotMatch(routesSource, /'launch',/);
 assert.doesNotMatch(routesSource, /'look it up'/);
 assert.doesNotMatch(routesSource, /'find me a video'/);
-assert.match(routesSource, /const youtubeResearchRequest = isYoutubeServerResearchRequest\(lastUserContent\)/);
-assert.match(routesSource, /if \(!youtubeResearchRequest\)[\s\S]*requiredToolNames\.add\(["']android_youtube_search["']\)[\s\S]*\} else \{[\s\S]*requiredToolNames\.add\(["']search_youtube["']\)/);
-assert.match(routesSource, /requiredToolNames\.add\(["']search_youtube["']\)/);
-assert.match(routesSource, /requiredToolNames\.add\(["']fetch_youtube_transcript["']\)/);
+assert.match(routingSource, /const youtubeResearchRequest = isYoutubeServerResearchRequest\(lastUserContent\)/);
+assert.match(routingSource, /if \(!youtubeResearchRequest\)[\s\S]*requiredToolNames\.add\(["']android_youtube_search["']\)[\s\S]*\} else \{[\s\S]*requiredToolNames\.add\(["']search_youtube["']\)/);
+assert.match(routingSource, /requiredToolNames\.add\(["']search_youtube["']\)/);
+assert.match(routingSource, /requiredToolNames\.add\(["']fetch_youtube_transcript["']\)/);
 assert.match(routesSource, /effectiveToolAwareRoute[\s\S]*priorityToolNames:\s*uniqueToolNames/);
 assert.match(routesSource, /buildToolExecutionPolicy\(\{[\s\S]*route:\s*effectiveToolAwareRoute/);
 assert.match(routesSource, /forceRequired:\s*isDeviceControlRequest \|\| isDiagnosticsRequest \|\| isResearchRequest \|\| routeRequiredToolNames\.length > 0/);
@@ -63,7 +73,8 @@ assert.match(routesSource, /daemon_action fallback exposed for this unsupported 
 assert.match(routesSource, /treat it as a valid phone action/);
 assert.match(routesSource, /Use android_notify_user, then android_return_to_jarvis_chat at the end of multi-step phone tasks/);
 
-assert.match(runtimeSource, /export const ANDROID_PHONE_RUNTIME_TOOL_NAMES/);
+assert.match(runtimeToolNamesSource, /export const ANDROID_PHONE_RUNTIME_TOOL_NAMES/);
+assert.match(runtimeSource, /export \{ ANDROID_PHONE_RUNTIME_TOOL_NAMES \}/);
 assert.match(runtimeSource, /export const androidPhoneRuntimeTools/);
 assert.match(runtimeSource, /androidOpenAppByNameTool/);
 assert.match(runtimeSource, /androidCaptureScreenTool/);

@@ -4,19 +4,58 @@ import {
   isAndroidDaemonActive,
   sendDaemonOp,
 } from "../../daemon/bridge";
+import type { DaemonOp } from "../../daemon/bridge";
 import { storeDaemonScreenshot } from "../../services/coachRuntimeState";
 import {
   explainRuntimeCapabilityPreflight,
   preflightAndroidRuntimeCapabilityAction,
   type RuntimeCapabilityAndroidAction,
 } from "../../state/runtimeCapability";
+import {
+  ANDROID_PHONE_RUNTIME_TOOL_NAMES,
+} from "../androidPhoneRuntimeToolNames";
+import { summarizeAndroidNotificationDetail } from "../androidNotificationSummary";
 import { checkAndIncrementScreenshotBudget } from "./androidDaemonToolHelpers";
+
+export { ANDROID_PHONE_RUNTIME_TOOL_NAMES } from "../androidPhoneRuntimeToolNames";
+export { summarizeAndroidNotificationDetail } from "../androidNotificationSummary";
 
 type RuntimeOutcome = {
   ok: boolean;
   label: string;
   detail: Record<string, unknown>;
 };
+
+type AndroidRuntimeDeps = {
+  isAndroidDaemonActionAllowed: typeof isAndroidDaemonActionAllowed;
+  isAndroidDaemonActive: typeof isAndroidDaemonActive;
+  sendDaemonOp: typeof sendDaemonOp;
+};
+
+let androidRuntimeDepsForTesting: Partial<AndroidRuntimeDeps> | null = null;
+
+export function _setAndroidAppRuntimeDepsForTesting(deps: Partial<AndroidRuntimeDeps> | null): void {
+  androidRuntimeDepsForTesting = deps;
+}
+
+function androidDaemonActive(userId: string): boolean {
+  return (androidRuntimeDepsForTesting?.isAndroidDaemonActive ?? isAndroidDaemonActive)(userId);
+}
+
+function androidActionAllowed(
+  userId: string,
+  permission: Parameters<typeof isAndroidDaemonActionAllowed>[1],
+): Promise<boolean> {
+  return (androidRuntimeDepsForTesting?.isAndroidDaemonActionAllowed ?? isAndroidDaemonActionAllowed)(userId, permission);
+}
+
+function sendAndroidDaemonOp(
+  userId: string,
+  op: DaemonOp,
+  timeoutMs?: number,
+): ReturnType<typeof sendDaemonOp> {
+  return (androidRuntimeDepsForTesting?.sendDaemonOp ?? sendDaemonOp)(userId, op, timeoutMs);
+}
 
 export type AndroidAppCatalogEntry = {
   label: string;
@@ -28,24 +67,6 @@ export type ResolvedAndroidApp = AndroidAppCatalogEntry & {
   source: "live_inventory" | "static_catalog";
   matchedAlias?: string;
 };
-
-export const ANDROID_PHONE_RUNTIME_TOOL_NAMES = [
-  "android_open_app_by_name",
-  "android_youtube_search",
-  "android_open_phone_url",
-  "android_capture_screen",
-  "android_read_screen_context",
-  "android_tap_screen",
-  "android_type_text",
-  "android_swipe_screen",
-  "android_press_phone_key",
-  "android_wait_for_ui",
-  "android_read_notifications",
-  "android_notify_user",
-  "android_return_to_jarvis_chat",
-] as const;
-
-export type AndroidPhoneRuntimeToolName = typeof ANDROID_PHONE_RUNTIME_TOOL_NAMES[number];
 
 export const STATIC_ANDROID_APP_CATALOG: AndroidAppCatalogEntry[] = [
   { label: "YouTube", packageName: "com.google.android.youtube", aliases: ["youtube", "yt", "you tube"] },
@@ -201,9 +222,9 @@ export async function resolveAndroidAppName(
   let liveInventoryError: string | undefined;
   const liveApps: AndroidAppCatalogEntry[] = [];
 
-  if (includeLiveInventory && isAndroidDaemonActive(userId)) {
+  if (includeLiveInventory && androidDaemonActive(userId)) {
     try {
-      const listResult = await sendDaemonOp(userId, { type: "android_list_apps" }, 10000);
+      const listResult = await sendAndroidDaemonOp(userId, { type: "android_list_apps" }, 10000);
       if (listResult.ok) {
         liveInventoryAvailable = true;
         liveApps.push(...appEntriesFromDaemonData(listResult.data));
@@ -299,7 +320,7 @@ async function runtimeCapabilityUnavailable(
 }
 
 async function permissionDenied(userId: string, permission: Parameters<typeof isAndroidDaemonActionAllowed>[1]): Promise<RuntimeOutcome | null> {
-  if (await isAndroidDaemonActionAllowed(userId, permission)) return null;
+  if (await androidActionAllowed(userId, permission)) return null;
   return {
     ok: false,
     label: "Permission denied",
@@ -313,10 +334,10 @@ function numberArg(args: ToolArgs, key: string): number | null {
 }
 
 async function readScreenIfAllowed(userId: string): Promise<Record<string, unknown>> {
-  if (!(await isAndroidDaemonActionAllowed(userId, "android_read_screen"))) {
+  if (!(await androidActionAllowed(userId, "android_read_screen"))) {
     return { screenContextAvailable: false, screenContextError: "android_read_screen permission is not enabled" };
   }
-  const readResult = await sendDaemonOp(userId, { type: "android_read_screen" }, 10000);
+  const readResult = await sendAndroidDaemonOp(userId, { type: "android_read_screen" }, 10000);
   if (!readResult.ok) {
     return { screenContextAvailable: false, screenContextError: readResult.error || "android_read_screen failed" };
   }
@@ -330,7 +351,7 @@ async function readScreenIfAllowed(userId: string): Promise<Record<string, unkno
 export async function runAndroidCaptureScreen(args: ToolArgs, userId: string, budgetCtx?: object): Promise<RuntimeOutcome> {
   const capabilityError = await runtimeCapabilityUnavailable(userId, "android_capture_screen");
   if (capabilityError) return capabilityError;
-  if (!isAndroidDaemonActive(userId)) return daemonDisconnected();
+  if (!androidDaemonActive(userId)) return daemonDisconnected();
   const permissionError = await permissionDenied(userId, "android_screenshot");
   if (permissionError) return permissionError;
   if (!checkAndIncrementScreenshotBudget(budgetCtx)) {
@@ -343,7 +364,7 @@ export async function runAndroidCaptureScreen(args: ToolArgs, userId: string, bu
     };
   }
 
-  const screenshotResult = await sendDaemonOp(userId, { type: "android_screenshot" }, 20000);
+  const screenshotResult = await sendAndroidDaemonOp(userId, { type: "android_screenshot" }, 20000);
   if (!screenshotResult.ok) {
     return {
       ok: false,
@@ -385,10 +406,10 @@ export async function runAndroidCaptureScreen(args: ToolArgs, userId: string, bu
 export async function runAndroidReadScreenContext(_args: ToolArgs, userId: string): Promise<RuntimeOutcome> {
   const capabilityError = await runtimeCapabilityUnavailable(userId, "android_read_screen");
   if (capabilityError) return capabilityError;
-  if (!isAndroidDaemonActive(userId)) return daemonDisconnected();
+  if (!androidDaemonActive(userId)) return daemonDisconnected();
   const permissionError = await permissionDenied(userId, "android_read_screen");
   if (permissionError) return permissionError;
-  const readResult = await sendDaemonOp(userId, { type: "android_read_screen" }, 10000);
+  const readResult = await sendAndroidDaemonOp(userId, { type: "android_read_screen" }, 10000);
   if (!readResult.ok) {
     return { ok: false, label: "Screen read failed", detail: { error: readResult.error || "android_read_screen failed" } };
   }
@@ -406,13 +427,13 @@ export async function runAndroidReadScreenContext(_args: ToolArgs, userId: strin
 export async function runAndroidTapScreen(args: ToolArgs, userId: string): Promise<RuntimeOutcome> {
   const capabilityError = await runtimeCapabilityUnavailable(userId, "android_tap_type");
   if (capabilityError) return capabilityError;
-  if (!isAndroidDaemonActive(userId)) return daemonDisconnected();
+  if (!androidDaemonActive(userId)) return daemonDisconnected();
   const permissionError = await permissionDenied(userId, "android_tap_type");
   if (permissionError) return permissionError;
   const x = numberArg(args, "x");
   const y = numberArg(args, "y");
   if (x === null || y === null) return { ok: false, label: "x/y required", detail: { error: "Provide numeric x and y screen coordinates." } };
-  const tapResult = await sendDaemonOp(userId, { type: "android_tap", x, y }, 6000);
+  const tapResult = await sendAndroidDaemonOp(userId, { type: "android_tap", x, y }, 6000);
   if (!tapResult.ok) return { ok: false, label: "Tap failed", detail: { x, y, error: tapResult.error || "android_tap failed" } };
   const screenContext = args.readAfter === false ? {} : await readScreenIfAllowed(userId);
   return { ok: true, label: `Tapped ${x},${y}`, detail: { x, y, daemonResult: tapResult.data ?? {}, ...screenContext } };
@@ -421,13 +442,13 @@ export async function runAndroidTapScreen(args: ToolArgs, userId: string): Promi
 export async function runAndroidTypeText(args: ToolArgs, userId: string): Promise<RuntimeOutcome> {
   const capabilityError = await runtimeCapabilityUnavailable(userId, "android_tap_type");
   if (capabilityError) return capabilityError;
-  if (!isAndroidDaemonActive(userId)) return daemonDisconnected();
+  if (!androidDaemonActive(userId)) return daemonDisconnected();
   const permissionError = await permissionDenied(userId, "android_tap_type");
   if (permissionError) return permissionError;
   const text = String(args.text || "").trim();
   if (!text) return { ok: false, label: "text required", detail: { error: "Provide text to type." } };
   const submit = Boolean(args.submit);
-  const typeResult = await sendDaemonOp(userId, { type: "android_type", text, submit }, 10000);
+  const typeResult = await sendAndroidDaemonOp(userId, { type: "android_type", text, submit }, 10000);
   if (!typeResult.ok) return { ok: false, label: "Type failed", detail: { submit, error: typeResult.error || "android_type failed" } };
   const screenContext = args.readAfter === false ? {} : await readScreenIfAllowed(userId);
   return { ok: true, label: submit ? "Typed text and submitted" : "Typed text", detail: { submit, daemonResult: typeResult.data ?? {}, ...screenContext } };
@@ -436,7 +457,7 @@ export async function runAndroidTypeText(args: ToolArgs, userId: string): Promis
 export async function runAndroidSwipeScreen(args: ToolArgs, userId: string): Promise<RuntimeOutcome> {
   const capabilityError = await runtimeCapabilityUnavailable(userId, "android_tap_type");
   if (capabilityError) return capabilityError;
-  if (!isAndroidDaemonActive(userId)) return daemonDisconnected();
+  if (!androidDaemonActive(userId)) return daemonDisconnected();
   const permissionError = await permissionDenied(userId, "android_tap_type");
   if (permissionError) return permissionError;
   const x1 = numberArg(args, "x1");
@@ -447,7 +468,7 @@ export async function runAndroidSwipeScreen(args: ToolArgs, userId: string): Pro
     return { ok: false, label: "swipe coordinates required", detail: { error: "Provide numeric x1, y1, x2, and y2." } };
   }
   const durationMs = Math.min(Math.max(numberArg(args, "durationMs") ?? 300, 100), 3000);
-  const swipeResult = await sendDaemonOp(userId, { type: "android_swipe", x1: x1!, y1: y1!, x2: x2!, y2: y2!, durationMs }, 6000);
+  const swipeResult = await sendAndroidDaemonOp(userId, { type: "android_swipe", x1: x1!, y1: y1!, x2: x2!, y2: y2!, durationMs }, 6000);
   if (!swipeResult.ok) return { ok: false, label: "Swipe failed", detail: { error: swipeResult.error || "android_swipe failed" } };
   const screenContext = args.readAfter === false ? {} : await readScreenIfAllowed(userId);
   return { ok: true, label: "Swiped screen", detail: { x1, y1, x2, y2, durationMs, daemonResult: swipeResult.data ?? {}, ...screenContext } };
@@ -456,7 +477,7 @@ export async function runAndroidSwipeScreen(args: ToolArgs, userId: string): Pro
 export async function runAndroidPressPhoneKey(args: ToolArgs, userId: string): Promise<RuntimeOutcome> {
   const capabilityError = await runtimeCapabilityUnavailable(userId, "android_tap_type");
   if (capabilityError) return capabilityError;
-  if (!isAndroidDaemonActive(userId)) return daemonDisconnected();
+  if (!androidDaemonActive(userId)) return daemonDisconnected();
   const permissionError = await permissionDenied(userId, "android_tap_type");
   if (permissionError) return permissionError;
   const allowedKeys = ["back", "home", "recents", "volume_up", "volume_down", "enter"] as const;
@@ -464,7 +485,7 @@ export async function runAndroidPressPhoneKey(args: ToolArgs, userId: string): P
   if (!allowedKeys.includes(key)) {
     return { ok: false, label: "invalid key", detail: { error: `key must be one of: ${allowedKeys.join(", ")}` } };
   }
-  const keyResult = await sendDaemonOp(userId, { type: "android_press_key", key }, 5000);
+  const keyResult = await sendAndroidDaemonOp(userId, { type: "android_press_key", key }, 5000);
   if (!keyResult.ok) return { ok: false, label: "Key press failed", detail: { key, error: keyResult.error || "android_press_key failed" } };
   const screenContext = args.readAfter === false ? {} : await readScreenIfAllowed(userId);
   return { ok: true, label: `Pressed ${key}`, detail: { key, daemonResult: keyResult.data ?? {}, ...screenContext } };
@@ -479,17 +500,33 @@ export async function runAndroidWaitForUi(args: ToolArgs, _userId: string): Prom
 export async function runAndroidReadNotifications(args: ToolArgs, userId: string): Promise<RuntimeOutcome> {
   const capabilityError = await runtimeCapabilityUnavailable(userId, "android_read_notifications");
   if (capabilityError) return capabilityError;
-  if (!isAndroidDaemonActive(userId)) return daemonDisconnected();
+  if (!androidDaemonActive(userId)) return daemonDisconnected();
   const limit = Math.min(Math.max(numberArg(args, "limit") ?? 20, 1), 60);
-  const notificationResult = await sendDaemonOp(userId, { type: "android_notifications_list", limit }, 10000);
+  const notificationResult = await sendAndroidDaemonOp(userId, { type: "android_notifications_list", limit }, 10000);
   if (notificationResult.ok) {
     const data = jsonObject(notificationResult.data);
     const notifications = Array.isArray(data.notifications) ? data.notifications : [];
     if (data.listenerEnabled && notifications.length === 0) {
-      return { ok: true, label: "No notifications", detail: { notifications: [], source: "notification_listener" } };
+      return {
+        ok: true,
+        label: "No notifications",
+        detail: {
+          notifications: [],
+          source: "notification_listener",
+          userFacingSummary: "I checked your Android notifications. The notification listener is active and reports zero current notifications.",
+        },
+      };
     }
     if (notifications.length > 0) {
-      return { ok: true, label: `${notifications.length} notifications`, detail: { notifications, source: "notification_listener" } };
+      const detail = { notifications, source: "notification_listener" };
+      return {
+        ok: true,
+        label: `${notifications.length} notifications`,
+        detail: {
+          ...detail,
+          userFacingSummary: summarizeAndroidNotificationDetail(detail),
+        },
+      };
     }
   }
 
@@ -497,39 +534,43 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
   if (readPermissionError) return readPermissionError;
   const tapPermissionError = await permissionDenied(userId, "android_tap_type");
   if (tapPermissionError) return tapPermissionError;
-  const swipeResult = await sendDaemonOp(userId, { type: "android_swipe", x1: 540, y1: 10, x2: 540, y2: 1200, durationMs: 400 }, 8000);
+  const swipeResult = await sendAndroidDaemonOp(userId, { type: "android_swipe", x1: 540, y1: 10, x2: 540, y2: 1200, durationMs: 400 }, 8000);
   if (!swipeResult.ok) {
     return { ok: false, label: "Cannot open notification shade", detail: { error: swipeResult.error || "android_swipe failed" } };
   }
   await new Promise((resolve) => setTimeout(resolve, 700));
-  const shadeReadResult = await sendDaemonOp(userId, { type: "android_read_screen" }, 10000);
-  sendDaemonOp(userId, { type: "android_press_key", key: "back" }, 5000).catch(() => {});
+  const shadeReadResult = await sendAndroidDaemonOp(userId, { type: "android_read_screen" }, 10000);
+  sendAndroidDaemonOp(userId, { type: "android_press_key", key: "back" }, 5000).catch(() => {});
   if (!shadeReadResult.ok) {
     return { ok: false, label: "Could not read notification shade", detail: { error: shadeReadResult.error || "android_read_screen failed" } };
   }
+  const shadeDetail = {
+    source: "notification_shade_accessibility_tree",
+    screenContext: compactScreenContext(shadeReadResult.data, 5000),
+  };
   return {
     ok: true,
     label: "Notification shade read",
     detail: {
-      source: "notification_shade_accessibility_tree",
-      screenContext: compactScreenContext(shadeReadResult.data, 5000),
+      ...shadeDetail,
+      userFacingSummary: summarizeAndroidNotificationDetail(shadeDetail),
     },
   };
 }
 
 export async function runAndroidNotifyUser(args: ToolArgs, userId: string): Promise<RuntimeOutcome> {
-  if (!isAndroidDaemonActive(userId)) return daemonDisconnected();
+  if (!androidDaemonActive(userId)) return daemonDisconnected();
   const title = String(args.title || "Jarvis").trim() || "Jarvis";
   const body = String(args.body || "").trim();
   if (!body) return { ok: false, label: "body required", detail: { error: "Provide notification body text." } };
-  const notifyResult = await sendDaemonOp(userId, { type: "android_notify", title, body }, 5000);
+  const notifyResult = await sendAndroidDaemonOp(userId, { type: "android_notify", title, body }, 5000);
   if (!notifyResult.ok) return { ok: false, label: "Notification failed", detail: { title, body, error: notifyResult.error || "notify failed" } };
   return { ok: true, label: "Notification sent", detail: { title, body, daemonResult: notifyResult.data ?? {} } };
 }
 
 export async function runAndroidReturnToJarvisChat(_args: ToolArgs, userId: string): Promise<RuntimeOutcome> {
-  if (!isAndroidDaemonActive(userId)) return daemonDisconnected();
-  const returnResult = await sendDaemonOp(userId, { type: "android_return_to_jarvis" }, 10000);
+  if (!androidDaemonActive(userId)) return daemonDisconnected();
+  const returnResult = await sendAndroidDaemonOp(userId, { type: "android_return_to_jarvis" }, 10000);
   if (!returnResult.ok) return { ok: false, label: "Return to Jarvis failed", detail: { error: returnResult.error || "android_return_to_jarvis failed" } };
   return { ok: true, label: "Returned to Jarvis", detail: { daemonResult: returnResult.data ?? {} } };
 }
@@ -541,10 +582,10 @@ export async function runAndroidOpenAppByName(args: ToolArgs, userId: string): P
   }
   const capabilityError = await runtimeCapabilityUnavailable(userId, "android_open_app");
   if (capabilityError) return capabilityError;
-  if (!isAndroidDaemonActive(userId)) {
+  if (!androidDaemonActive(userId)) {
     return { ok: false, label: "Android daemon not connected", detail: { error: "Android device control is not connected." } };
   }
-  if (!(await isAndroidDaemonActionAllowed(userId, "android_open_app"))) {
+  if (!(await androidActionAllowed(userId, "android_open_app"))) {
     return { ok: false, label: "Permission denied", detail: { error: "android_open_app permission is not enabled." } };
   }
 
@@ -562,7 +603,7 @@ export async function runAndroidOpenAppByName(args: ToolArgs, userId: string): P
     };
   }
 
-  const openResult = await sendDaemonOp(userId, {
+  const openResult = await sendAndroidDaemonOp(userId, {
     type: "android_open_app",
     packageName: resolved.app.packageName,
   }, 20000);
@@ -602,11 +643,11 @@ export async function runAndroidYoutubeSearch(args: ToolArgs, userId: string): P
   }
   const capabilityError = await runtimeCapabilityUnavailable(userId, "android_browse");
   if (capabilityError) return capabilityError;
-  if (!isAndroidDaemonActive(userId)) {
+  if (!androidDaemonActive(userId)) {
     return { ok: false, label: "Android daemon not connected", detail: { error: "Android device control is not connected." } };
   }
 
-  if (!(await isAndroidDaemonActionAllowed(userId, "android_browse"))) {
+  if (!(await androidActionAllowed(userId, "android_browse"))) {
     return {
       ok: false,
       label: "Permission denied",
@@ -616,7 +657,7 @@ export async function runAndroidYoutubeSearch(args: ToolArgs, userId: string): P
 
   const resolved = await resolveAndroidAppName(userId, "YouTube");
   const url = buildAndroidYoutubeSearchUrl(query);
-  const browseResult = await sendDaemonOp(userId, { type: "android_browse", url }, 20000);
+  const browseResult = await sendAndroidDaemonOp(userId, { type: "android_browse", url }, 20000);
   if (!browseResult.ok) {
     return {
       ok: false,
@@ -653,11 +694,11 @@ export async function runAndroidOpenPhoneUrl(args: ToolArgs, userId: string): Pr
   }
   const capabilityError = await runtimeCapabilityUnavailable(userId, "android_browse");
   if (capabilityError) return capabilityError;
-  if (!isAndroidDaemonActive(userId)) return daemonDisconnected();
+  if (!androidDaemonActive(userId)) return daemonDisconnected();
   const permissionError = await permissionDenied(userId, "android_browse");
   if (permissionError) return permissionError;
 
-  const browseResult = await sendDaemonOp(userId, { type: "android_browse", url }, 20000);
+  const browseResult = await sendAndroidDaemonOp(userId, { type: "android_browse", url }, 20000);
   if (!browseResult.ok) {
     return { ok: false, label: "Open URL failed", detail: { url, error: browseResult.error || "android_browse failed" } };
   }
