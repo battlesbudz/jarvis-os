@@ -111,11 +111,19 @@ export function isPhoneNotificationReadRequest(text: string): boolean {
   );
 }
 
+function hasAdditionalPhoneActionAfterNotificationRead(text: string): boolean {
+  const normalized = normalizePhoneRuntimeRequestText(text);
+  const continuation = normalized.split(/\b(?:and then|then|after(?:wards| that)?|also)\b/i).slice(1).join(" ");
+  if (!continuation.trim()) return false;
+  return /\b(?:open|launch|start|search|find|look\s+up|look\s+for|tap|click|press|swipe|scroll|type|enter|back|home|recents|screenshot|screen shot|screen capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+to)\b/i.test(continuation);
+}
+
 export function deterministicPhoneRuntimeToolCallFromRequest(
   requestText: string,
   tools: OpenAI.Chat.Completions.ChatCompletionTool[],
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
   if (!isPhoneNotificationReadRequest(requestText)) return null;
+  if (hasAdditionalPhoneActionAfterNotificationRead(requestText)) return null;
   const hasNotificationTool = tools.some((tool) => phoneRuntimeChatToolName(tool) === "android_read_notifications");
   if (!hasNotificationTool) return null;
   return {

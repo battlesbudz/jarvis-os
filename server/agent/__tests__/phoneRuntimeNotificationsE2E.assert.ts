@@ -51,6 +51,11 @@ async function main() {
     null,
     "negated notification requests must not run phone control",
   );
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest("Read my notifications and then open Gmail.", phoneTools),
+    null,
+    "compound phone requests must stay in the multi-tool loop",
+  );
 
   const finalText = deterministicAndroidToolSummary("android_read_notifications", {
     result: "success",

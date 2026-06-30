@@ -2595,6 +2595,35 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           }
           touchVisibleProgress("Returning response");
           res.write(`data: ${JSON.stringify({ content: loopFinalText })}\n\n`);
+          if (userId && loopFinalText && !clientDisconnected) {
+            try {
+              const { initSession, appendToSession } = await import("./agent/providers/sessionStore");
+              const COACH_APP_AGENT_ID = getCoachAppAgentId(userId);
+              const lastUserMsgForSession = [...messages].reverse().find((m: any) => m.role === 'user');
+              let appSessionId: string | undefined;
+              if (incomingAppSessionId) {
+                const exchangeMsgs = [
+                  { role: "user" as const, content: typeof lastUserMsgForSession?.content === "string" ? lastUserMsgForSession.content : "" },
+                  { role: "assistant" as const, content: loopFinalText },
+                ];
+                await appendToSession(incomingAppSessionId, COACH_APP_AGENT_ID, userId, exchangeMsgs).catch(() => {});
+                appSessionId = incomingAppSessionId;
+              } else {
+                appSessionId = await initSession(COACH_APP_AGENT_ID, userId, [...chatMessages, { role: "assistant" as const, content: loopFinalText }]);
+                if (appSessionId && !cachedPromptData) {
+                  setPromptData(userId, appSessionId, {
+                    resolvedGmailConnected, resolvedGmailItems, calendarEvents: resolvedCalendarEvents,
+                    userCommitments, memories, morningNoteSummary, documentsContext,
+                    proactiveQuestionContext, crossChannelContext,
+                    soulBlock, emotionalStateBlock, websiteContext,
+                  });
+                }
+              }
+              if (appSessionId) {
+                try { res.write(`data: ${JSON.stringify({ type: "session_init", sdkSessionId: appSessionId })}\n\n`); } catch {}
+              }
+            } catch { /* non-blocking - never break the response */ }
+          }
           res.write('data: [DONE]\n\n');
           res.end();
           runCoachChatSideEffects(userId, messages, openai);
