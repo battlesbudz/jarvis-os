@@ -200,7 +200,7 @@ export class FakeAndroidVoiceRuntime {
         const notifications = event?.notifications ?? [];
         execution = {
           toolName,
-          ok: notifications.length > 0,
+          ok: !!event,
           label: notifications.length ? `${notifications.length} notification${notifications.length === 1 ? "" : "s"}` : "No notifications available",
           detail: notifications
             .map((notification) => `${notification.app}: ${notification.title}${notification.text ? ` - ${notification.text}` : ""}`)
@@ -222,7 +222,7 @@ export class FakeAndroidVoiceRuntime {
       case "android_open_app_by_name": {
         const requestedApp = compactText(args.appName) || compactText(args.app) || "requested app";
         const event = latestEvent(this.events, "app_control");
-        const ok = event ? event.success !== false : true;
+        const ok = !!event && event.success !== false;
         execution = {
           toolName,
           ok,

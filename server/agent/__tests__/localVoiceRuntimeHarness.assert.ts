@@ -43,6 +43,38 @@ async function testCompleteLocalVoiceNotificationTurn() {
   console.log("OK: local voice harness runs transcript to one canonical chat/TTS response");
 }
 
+async function testEmptyNotificationReadSucceeds() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: [{ type: "notification", notifications: [] }],
+  });
+
+  assert.equal(result.androidExecutions[0].ok, true);
+  assert.match(result.canonicalResponse, /do not have visible notifications/i);
+  assert.equal(result.chatOutput, result.ttsOutput);
+  console.log("OK: empty notification shade is a successful local voice read");
+}
+
+async function testMissingAppControlFixtureFails() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open YouTube",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_open_app_by_name", arguments: { appName: "YouTube" } },
+    ]),
+    androidEvents: [],
+  });
+
+  assert.equal(result.androidExecutions[0].ok, false);
+  assert.match(result.canonicalResponse, /could not complete that phone action/i);
+  assert.equal(result.chatOutput, result.ttsOutput);
+  console.log("OK: app-control harness turns require an app-control fixture");
+}
+
 async function testScriptedFakeLocalGemmaVariants() {
   const cases: Array<{
     name: string;
@@ -199,6 +231,8 @@ async function testCanonicalFinalResponseContract() {
 
 async function main() {
   await testCompleteLocalVoiceNotificationTurn();
+  await testEmptyNotificationReadSucceeds();
+  await testMissingAppControlFixtureFails();
   await testScriptedFakeLocalGemmaVariants();
   testFakeAndroidRuntimeEventCoverage();
   await testLocalVoiceBlocksCloudAndSecondaryModels();
