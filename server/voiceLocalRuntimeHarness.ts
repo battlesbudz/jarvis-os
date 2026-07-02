@@ -173,6 +173,23 @@ function capabilityToolName(capability: LocalVoiceCapability): LocalVoiceToolNam
   }
 }
 
+function argsForRecoveredCapability(
+  capability: LocalVoiceCapability,
+  transcript: string,
+  events: LocalVoiceAndroidEvent[],
+): Record<string, unknown> {
+  if (capability !== "app_control") return {};
+
+  const appControlEvent = latestEvent(events, "app_control");
+  if (appControlEvent && transcript.toLowerCase().includes(appControlEvent.appName.toLowerCase())) {
+    return { appName: appControlEvent.appName };
+  }
+
+  const match = transcript.match(/\b(?:open|launch|start)\s+(?:the\s+)?([a-z0-9][a-z0-9 ._-]{0,48}?)(?:\s+app)?(?:\s+for me)?[.!?]?$/i);
+  const appName = compactText(match?.[1]).replace(/\s+(?:for me|please)$/i, "");
+  return appName ? { appName } : {};
+}
+
 function contextPacketFromEvents(events: LocalVoiceAndroidEvent[]): string {
   const eventTypes = [...new Set(events.map((event) => event.type))].join(", ") || "none";
   return [
@@ -412,7 +429,10 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
     }
   } else if (modelOutput.type === "false_denial") {
     const recoveredToolName = capabilityToolName(modelOutput.capability);
-    const execution = androidRuntime.execute(recoveredToolName);
+    const execution = androidRuntime.execute(
+      recoveredToolName,
+      argsForRecoveredCapability(modelOutput.capability, transcript, input.androidEvents ?? []),
+    );
     canonicalResponse = summarizeExecution(execution);
     diagnostics = {
       outcome: "tool_executed_after_false_denial",
