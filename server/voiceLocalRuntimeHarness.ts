@@ -173,20 +173,26 @@ function capabilityToolName(capability: LocalVoiceCapability): LocalVoiceToolNam
   }
 }
 
+function inferRequestedAppName(transcript: string): string {
+  const matches = [
+    ...transcript.matchAll(
+      /\b(?:open|launch|start)\s+(?:the\s+)?([a-z0-9][a-z0-9 ._-]*?)(?=(?:\s+instead|\s+please|\s+for me|[.!?;,]|$))/gi,
+    ),
+  ];
+  const latestMatch = matches.at(-1);
+  return compactText(latestMatch?.[1])
+    .replace(/\s+app$/i, "")
+    .trim();
+}
+
 function argsForRecoveredCapability(
   capability: LocalVoiceCapability,
   transcript: string,
-  events: LocalVoiceAndroidEvent[],
+  _events: LocalVoiceAndroidEvent[],
 ): Record<string, unknown> {
   if (capability !== "app_control") return {};
 
-  const appControlEvent = latestEvent(events, "app_control");
-  if (appControlEvent && transcript.toLowerCase().includes(appControlEvent.appName.toLowerCase())) {
-    return { appName: appControlEvent.appName };
-  }
-
-  const match = transcript.match(/\b(?:open|launch|start)\s+(?:the\s+)?([a-z0-9][a-z0-9 ._-]{0,48}?)(?:\s+app)?(?:\s+for me)?[.!?]?$/i);
-  const appName = compactText(match?.[1]).replace(/\s+(?:for me|please)$/i, "");
+  const appName = inferRequestedAppName(transcript);
   return appName ? { appName } : {};
 }
 

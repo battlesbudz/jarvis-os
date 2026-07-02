@@ -109,6 +109,23 @@ async function testAppControlFalseDenialRecoveryKeepsRequestedApp() {
   console.log("OK: app-control false-denial recovery preserves the requested app");
 }
 
+async function testAppControlFalseDenialUsesActiveOpenRequest() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "I didn't ask you to open YouTube; open Chrome instead",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot open apps." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "YouTube", action: "open", success: true }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.androidExecutions[0].ok, false);
+  assert.match(result.androidExecutions[0].label, /Could not open Chrome/);
+  assert.equal(result.chatOutput, result.ttsOutput);
+  console.log("OK: app-control false-denial recovery uses the active open request");
+}
+
 async function testScriptedFakeLocalGemmaVariants() {
   const cases: Array<{
     name: string;
@@ -269,6 +286,7 @@ async function main() {
   await testMissingAppControlFixtureFails();
   await testMismatchedAppControlFixtureFails();
   await testAppControlFalseDenialRecoveryKeepsRequestedApp();
+  await testAppControlFalseDenialUsesActiveOpenRequest();
   await testScriptedFakeLocalGemmaVariants();
   testFakeAndroidRuntimeEventCoverage();
   await testLocalVoiceBlocksCloudAndSecondaryModels();
