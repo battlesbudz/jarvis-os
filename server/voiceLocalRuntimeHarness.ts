@@ -222,11 +222,13 @@ export class FakeAndroidVoiceRuntime {
       case "android_open_app_by_name": {
         const requestedApp = compactText(args.appName) || compactText(args.app) || "requested app";
         const event = latestEvent(this.events, "app_control");
-        const ok = !!event && event.success !== false;
+        const requestedAppKey = requestedApp.toLowerCase();
+        const eventAppKey = compactText(event?.appName).toLowerCase();
+        const ok = !!event && event.action === "open" && eventAppKey === requestedAppKey && event.success !== false;
         execution = {
           toolName,
           ok,
-          label: ok ? `Opened ${event?.appName ?? requestedApp}` : `Could not open ${event?.appName ?? requestedApp}`,
+          label: ok ? `Opened ${event.appName}` : `Could not open ${requestedApp}`,
           detail: event?.detail ?? "",
         };
         break;

@@ -75,6 +75,23 @@ async function testMissingAppControlFixtureFails() {
   console.log("OK: app-control harness turns require an app-control fixture");
 }
 
+async function testMismatchedAppControlFixtureFails() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open Spotify",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_open_app_by_name", arguments: { appName: "Spotify" } },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "YouTube", action: "open", success: true }],
+  });
+
+  assert.equal(result.androidExecutions[0].ok, false);
+  assert.match(result.canonicalResponse, /could not complete that phone action/i);
+  assert.match(result.canonicalResponse, /Could not open Spotify/);
+  assert.equal(result.chatOutput, result.ttsOutput);
+  console.log("OK: app-control harness fixtures must match the requested app");
+}
+
 async function testScriptedFakeLocalGemmaVariants() {
   const cases: Array<{
     name: string;
@@ -233,6 +250,7 @@ async function main() {
   await testCompleteLocalVoiceNotificationTurn();
   await testEmptyNotificationReadSucceeds();
   await testMissingAppControlFixtureFails();
+  await testMismatchedAppControlFixtureFails();
   await testScriptedFakeLocalGemmaVariants();
   testFakeAndroidRuntimeEventCoverage();
   await testLocalVoiceBlocksCloudAndSecondaryModels();
