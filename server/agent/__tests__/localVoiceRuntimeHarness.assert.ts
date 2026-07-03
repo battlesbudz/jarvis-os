@@ -126,6 +126,23 @@ async function testAppControlFalseDenialUsesActiveOpenRequest() {
   console.log("OK: app-control false-denial recovery uses the active open request");
 }
 
+async function testAppControlFalseDenialBlocksNegatedOpenRequest() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Don't open YouTube",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot open apps." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "YouTube", action: "open", success: true }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_recovery_blocked");
+  assert.equal(result.androidExecutions.length, 0);
+  assert.match(result.canonicalResponse, /not completed/i);
+  assert.equal(result.chatOutput, result.ttsOutput);
+  console.log("OK: app-control false-denial recovery blocks negated open requests");
+}
+
 async function testScriptedFakeLocalGemmaVariants() {
   const cases: Array<{
     name: string;
@@ -287,6 +304,7 @@ async function main() {
   await testMismatchedAppControlFixtureFails();
   await testAppControlFalseDenialRecoveryKeepsRequestedApp();
   await testAppControlFalseDenialUsesActiveOpenRequest();
+  await testAppControlFalseDenialBlocksNegatedOpenRequest();
   await testScriptedFakeLocalGemmaVariants();
   testFakeAndroidRuntimeEventCoverage();
   await testLocalVoiceBlocksCloudAndSecondaryModels();

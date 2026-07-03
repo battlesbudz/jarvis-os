@@ -179,10 +179,23 @@ function inferRequestedAppName(transcript: string): string {
       /\b(?:open|launch|start)\s+(?:the\s+)?([a-z0-9][a-z0-9 ._-]*?)(?=(?:\s+instead|\s+please|\s+for me|[.!?;,]|$))/gi,
     ),
   ];
-  const latestMatch = matches.at(-1);
-  return compactText(latestMatch?.[1])
-    .replace(/\s+app$/i, "")
-    .trim();
+
+  for (let index = matches.length - 1; index >= 0; index -= 1) {
+    const match = matches[index];
+    const matchIndex = match.index ?? 0;
+    const prefix = transcript.slice(Math.max(0, matchIndex - 48), matchIndex);
+    const clausePrefix = prefix.split(/[.!?;,]/).at(-1) ?? prefix;
+    if (/\b(?:don't|dont|do not|never|stop|didn't|did not|no)\b/i.test(clausePrefix)) {
+      continue;
+    }
+
+    const appName = compactText(match[1])
+      .replace(/\s+app$/i, "")
+      .trim();
+    if (appName) return appName;
+  }
+
+  return "";
 }
 
 function argsForRecoveredCapability(
@@ -350,6 +363,8 @@ function finalResponseForModelProblem(outcome: string): string {
       return "I could not match that phone action to an available local tool.";
     case "false_completion_blocked":
       return "I have not completed that phone action yet.";
+    case "tool_recovery_blocked":
+      return "I have not completed that phone action yet.";
     default:
       return "I could not complete that local voice turn.";
   }
@@ -435,16 +450,23 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
     }
   } else if (modelOutput.type === "false_denial") {
     const recoveredToolName = capabilityToolName(modelOutput.capability);
-    const execution = androidRuntime.execute(
-      recoveredToolName,
-      argsForRecoveredCapability(modelOutput.capability, transcript, input.androidEvents ?? []),
-    );
-    canonicalResponse = summarizeExecution(execution);
-    diagnostics = {
-      outcome: "tool_executed_after_false_denial",
-      executedToolName: recoveredToolName,
-      modelOutputType: modelOutput.type,
-    };
+    const recoveredArgs = argsForRecoveredCapability(modelOutput.capability, transcript, input.androidEvents ?? []);
+    if (recoveredToolName === "android_open_app_by_name" && !compactText(recoveredArgs.appName)) {
+      canonicalResponse = finalResponseForModelProblem("tool_recovery_blocked");
+      diagnostics = {
+        outcome: "tool_recovery_blocked",
+        executedToolName: recoveredToolName,
+        modelOutputType: modelOutput.type,
+      };
+    } else {
+      const execution = androidRuntime.execute(recoveredToolName, recoveredArgs);
+      canonicalResponse = summarizeExecution(execution);
+      diagnostics = {
+        outcome: "tool_executed_after_false_denial",
+        executedToolName: recoveredToolName,
+        modelOutputType: modelOutput.type,
+      };
+    }
   } else if (modelOutput.type === "false_completion") {
     canonicalResponse = finalResponseForModelProblem("false_completion_blocked");
     diagnostics = {
