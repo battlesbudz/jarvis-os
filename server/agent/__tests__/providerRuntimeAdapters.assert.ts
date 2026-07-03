@@ -665,6 +665,44 @@ async function testAndroidLocalGemmaDoesNotAuditUnavailableNotificationDenials()
   }
 }
 
+async function testAndroidLocalGemmaAuditHonorsToolChoiceNone() {
+  const checkedAt = "2026-07-03T02:06:00.000Z";
+  _setRuntimeCapabilityDepsForTesting({
+    now: () => new Date(checkedAt),
+    loadConnectedAccounts: async () => [],
+    loadDeviceControlState: async () => androidDeviceCapabilityState(checkedAt),
+  });
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: { text: "I cannot read notifications on this device.", finishReason: "stop" },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Do you have notification access?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_read_notifications",
+          description: "Read current Android notifications.",
+          parameters: { type: "object", properties: {} },
+        },
+      }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "I cannot read notifications on this device.");
+    console.log("OK: Android Local Gemma truth audit honors disabled tool choice");
+  } finally {
+    _setRuntimeCapabilityDepsForTesting(null);
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaChecksYoutubeSearchAgainstBrowseCapability() {
   const checkedAt = "2026-07-03T01:58:00.000Z";
   const disabled = runtimeCapabilityCheck("disabled", checkedAt);
@@ -702,6 +740,56 @@ async function testAndroidLocalGemmaChecksYoutubeSearchAgainstBrowseCapability()
     console.log("OK: Android Local Gemma audits YouTube search availability against browse capability");
   } finally {
     _setRuntimeCapabilityDepsForTesting(null);
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaConfirmsLegacyDaemonBrowseCompletion() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: { text: "I opened example.com.", finishReason: "stop" },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Open example.com." },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "daemon-call-1",
+            type: "function",
+            function: {
+              name: "daemon_action",
+              arguments: JSON.stringify({ action: "android_browse", url: "https://example.com" }),
+            },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "daemon-call-1",
+          content: JSON.stringify({ ok: true, action: "android_browse", url: "https://example.com" }),
+        },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "I opened example.com.");
+    console.log("OK: Android Local Gemma confirms legacy daemon browse completions");
+  } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
 }
@@ -5662,7 +5750,9 @@ async function main() {
   await testAndroidLocalGemmaStateCardOmitsDisabledTools();
   await testAndroidLocalGemmaAuditsFalseNotificationDenials();
   await testAndroidLocalGemmaDoesNotAuditUnavailableNotificationDenials();
+  await testAndroidLocalGemmaAuditHonorsToolChoiceNone();
   await testAndroidLocalGemmaChecksYoutubeSearchAgainstBrowseCapability();
+  await testAndroidLocalGemmaConfirmsLegacyDaemonBrowseCompletion();
   await testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit();
   await testAndroidLocalGemmaSkipsCapabilityProbeWithoutAndroidTools();
   await testAndroidLocalGemmaAllowsConfirmedCompletionClaims();

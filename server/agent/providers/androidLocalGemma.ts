@@ -1042,7 +1042,7 @@ function hasFunctionTool(tools: ProviderQueryParams["tools"], name: string): boo
 async function localRuntimeCapabilityState(
   params: ProviderQueryParams,
 ): Promise<Partial<Record<LocalRuntimeCapabilityName, LocalRuntimeCapabilityAvailability>>> {
-  const tools = params.tools;
+  const tools = params.toolChoice === "none" ? [] : params.tools;
   const state: Partial<Record<LocalRuntimeCapabilityName, LocalRuntimeCapabilityAvailability>> = {
     notifications: "unknown",
     screen: "unknown",
@@ -1092,6 +1092,8 @@ function auditToolNameFromCall(name: string, args: Record<string, unknown> | nul
   switch (action) {
     case "android_open_app":
       return "android_open_app_by_name";
+    case "android_browse":
+      return "android_open_phone_url";
     case "android_screenshot":
       return "android_capture_screen";
     case "android_read_screen":
