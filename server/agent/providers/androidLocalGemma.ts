@@ -1199,8 +1199,16 @@ function looksLikeRecentActionStatusQuestion(text: string): boolean {
     /\b(?:did\s+that|did\s+it|was\s+that|is\s+that|what\s+happened|status|done|completed|complete)\b/i.test(value);
 }
 
+function canonicalLocalRuntimeActionTarget(target: string | null | undefined): string {
+  const normalized = normalizeAndroidRuntimeRequestText(target ?? "").trim();
+  if (!normalized) return "";
+  const packageName = packageNameFromAlias(normalized);
+  if (packageName) return `package:${packageName.toLowerCase()}`;
+  return normalized.toLowerCase();
+}
+
 function localRuntimeActionResultKey(result: LocalRuntimeActionResult): string {
-  return `${result.toolName}:${normalizeAndroidRuntimeRequestText(result.target ?? "").toLowerCase()}`;
+  return `${result.toolName}:${canonicalLocalRuntimeActionTarget(result.target)}`;
 }
 
 function localRuntimeActionResults(

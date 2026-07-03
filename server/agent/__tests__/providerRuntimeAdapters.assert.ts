@@ -1162,8 +1162,8 @@ async function testAndroidLocalGemmaBlocksStaleConfirmedCompletionFollowups() {
             id: "call_open_youtube_success",
             type: "function",
             function: {
-              name: "android_open_app_by_name",
-              arguments: "{\"appName\":\"YouTube\"}",
+              name: "daemon_action",
+              arguments: "{\"action\":\"android_open_app\",\"packageName\":\"com.google.android.youtube\"}",
             },
           }],
         },
