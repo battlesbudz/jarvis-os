@@ -369,8 +369,7 @@ function looksLikeUrlToolRequest(text: string): boolean {
 }
 
 function looksLikePhoneUrlOpenIntent(text: string): boolean {
-  return /\b(?:https?:\/\/|[a-z][a-z0-9+.-]*:\/\/|www\.|youtu\.be\/|youtube\.com\/)/i.test(text) ||
-    /\b(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):[^\s<>"']+/i.test(text);
+  return urlFromText(text) !== null;
 }
 
 function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
@@ -685,10 +684,11 @@ function packageTargetNegatedInText(text: string, packageName: string): boolean 
 }
 
 function urlFromText(text: string): string | null {
-  const match = text.match(/\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+|\byoutu\.be\/[^\s<>"']+|\byoutube\.com\/[^\s<>"']+/i);
+  const match = text.match(/\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+|\byoutu\.be\/[^\s<>"']+|\byoutube\.com\/[^\s<>"']+|\b(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):[^\s<>"']+/i);
   if (!match) return null;
   const raw = match[0].replace(/[),.;]+$/g, "");
   if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):/i.test(raw)) return raw;
   return `https://${raw}`;
 }
 
@@ -1054,7 +1054,9 @@ async function localRuntimeCapabilityState(
     screenshot: "unknown",
     app_control: "unknown",
     clipboard: "unknown",
-    memory: hasFunctionTool(tools, "memory_search") || hasFunctionTool(tools, "memory_get") ? "available" : "unknown",
+    memory: hasFunctionTool(tools, "memory_search") || hasFunctionTool(tools, "memory_get") || hasFunctionTool(tools, "memory_save")
+      ? "available"
+      : "unknown",
   };
   const hasOpenAppTool = hasFunctionTool(tools, "android_open_app_by_name");
   const hasYoutubeSearchTool = hasFunctionTool(tools, "android_youtube_search");
