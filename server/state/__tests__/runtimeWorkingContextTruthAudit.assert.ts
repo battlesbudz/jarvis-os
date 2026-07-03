@@ -13,6 +13,7 @@ import {
   repairLocalRuntimeToolCall,
 } from "../localRuntimeTruthAudit";
 import {
+  buildRuntimeStateCard,
   buildRuntimeStateCardPrompt,
   type RuntimeStateCardDeps,
 } from "../stateCard";
@@ -138,6 +139,80 @@ async function testStateCardInjectsOnlyRelevantWorkingContext() {
   console.log("OK: runtime state card includes working context only when the turn needs it");
 }
 
+async function testStateCardCombinesWorkingContextAndMemoryContext() {
+  const deps: RuntimeStateCardDeps = {
+    now: () => new Date("2026-07-03T00:00:00.000Z"),
+    async loadProfileState(userId) {
+      return { userId, preferredName: "Justin", source: "profile_store" };
+    },
+    async loadTaskState() {
+      return [];
+    },
+    async loadWorkingContext() {
+      return [{
+        source: "working_context",
+        label: "Recent notifications",
+        content: "Codex: Review finished",
+        provenance: ["working_context:notifications:evt_notifications_1"],
+      }];
+    },
+    async retrieveMemoryContext(input) {
+      return {
+        userId: input.userId,
+        query: input.query,
+        caller: "runtime_working_context_truth_audit_test",
+        items: [{
+          memory: {
+            id: "memory-1",
+            content: "User wants JARVIS to prioritize phone control reliability.",
+            category: "preferences",
+            tier: "long_term",
+            memoryType: "semantic",
+            relevanceScore: 90,
+            confidence: 95,
+            accessCount: 1,
+            score: 0.91,
+            source: "canonical",
+            sourceId: "memory-1",
+            sourceRefs: [],
+          },
+          provenance: [{
+            kind: "user_memory",
+            id: "memory-1",
+            source: "canonical",
+            label: "preferences",
+          }],
+        }],
+        sources: { memories: ["memory-1"], brainChunks: [], hotState: [] },
+        provenance: [{
+          kind: "user_memory",
+          id: "memory-1",
+          source: "canonical",
+          label: "preferences",
+        }],
+        uncertainty: [],
+      };
+    },
+  };
+
+  const card = await buildRuntimeStateCard({
+    userId: "user-local-runtime",
+    activeDevice: "android",
+    activeModel: "local-gemma",
+    seedQuery: "Which of those notifications matter to me?",
+    includeMemoryContext: true,
+  }, deps);
+
+  assert.equal(card.relevantContext.length, 2);
+  assert.equal(card.relevantContext[0]?.source, "working_context");
+  assert.equal(card.relevantContext[1]?.source, "memory_os");
+  assert.match(card.relevantContext.map((item) => item.content).join("\n"), /Codex: Review finished/);
+  assert.match(card.relevantContext.map((item) => item.content).join("\n"), /phone control reliability/);
+  assert.ok(card.provenance.includes("working_context"));
+  assert.ok(card.provenance.includes("memory_os"));
+  console.log("OK: runtime state card combines working context with MemoryOS context");
+}
+
 function testTruthAuditBlocksFalseDenialsAndCompletions() {
   const falseDenial = auditLocalRuntimeResponse({
     userMessage: "Read my notifications.",
@@ -218,6 +293,7 @@ async function main() {
   await testWorkingContextUsesFiveMinuteRuntimeTtl();
   await testWorkingContextIsSharedAndOnlyRetrievedWhenRelevant();
   await testStateCardInjectsOnlyRelevantWorkingContext();
+  await testStateCardCombinesWorkingContextAndMemoryContext();
   testTruthAuditBlocksFalseDenialsAndCompletions();
   testTruthAuditBlocksUnsupportedMemoryClaims();
   testTruthAuditRepairsOneSafeToolCallAttempt();

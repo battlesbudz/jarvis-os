@@ -476,7 +476,7 @@ export async function buildRuntimeStateCard(
         limit: memoryLimit,
         modelTarget: memoryModelTargetFromActiveModel(input.activeModel),
       });
-      relevantContext = memoryItemsFromContext(memoryContext);
+      relevantContext.push(...memoryItemsFromContext(memoryContext));
       provenance.add("memory_os");
       uncertainty.push(...memoryContext.uncertainty);
     } catch (error) {
