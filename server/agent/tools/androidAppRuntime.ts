@@ -16,6 +16,11 @@ import {
 } from "../androidPhoneRuntimeToolNames";
 import { summarizeAndroidNotificationDetail } from "../androidNotificationSummary";
 import { checkAndIncrementScreenshotBudget } from "./androidDaemonToolHelpers";
+import {
+  recordLocalRuntimeObservation,
+  type LocalRuntimeObservationInput,
+  type LocalRuntimeObservationKind,
+} from "../../state/runtimeWorkingContext";
 
 export { ANDROID_PHONE_RUNTIME_TOOL_NAMES } from "../androidPhoneRuntimeToolNames";
 export { summarizeAndroidNotificationDetail } from "../androidNotificationSummary";
@@ -30,6 +35,7 @@ type AndroidRuntimeDeps = {
   isAndroidDaemonActionAllowed: typeof isAndroidDaemonActionAllowed;
   isAndroidDaemonActive: typeof isAndroidDaemonActive;
   sendDaemonOp: typeof sendDaemonOp;
+  recordLocalRuntimeObservation: typeof recordLocalRuntimeObservation;
 };
 
 let androidRuntimeDepsForTesting: Partial<AndroidRuntimeDeps> | null = null;
@@ -55,6 +61,50 @@ function sendAndroidDaemonOp(
   timeoutMs?: number,
 ): ReturnType<typeof sendDaemonOp> {
   return (androidRuntimeDepsForTesting?.sendDaemonOp ?? sendDaemonOp)(userId, op, timeoutMs);
+}
+
+async function recordAndroidRuntimeObservation(input: LocalRuntimeObservationInput): Promise<void> {
+  try {
+    await (androidRuntimeDepsForTesting?.recordLocalRuntimeObservation ?? recordLocalRuntimeObservation)(input);
+  } catch {
+    // Working context should never make the Android action itself fail.
+  }
+}
+
+function compactRuntimeObservationText(value: unknown, maxChars = 5_000): string {
+  if (typeof value === "string") return value.replace(/\s+/g, " ").trim().slice(0, maxChars);
+  if (value === null || value === undefined) return "";
+  try {
+    return JSON.stringify(value).replace(/\s+/g, " ").trim().slice(0, maxChars);
+  } catch {
+    return String(value).replace(/\s+/g, " ").trim().slice(0, maxChars);
+  }
+}
+
+function observationDetailFromOutcome(outcome: RuntimeOutcome): string {
+  const userSummary = compactRuntimeObservationText(outcome.detail.userFacingSummary, 1_500);
+  const screenContext = compactRuntimeObservationText(outcome.detail.screenContext, 3_500);
+  const notifications = Array.isArray(outcome.detail.notifications)
+    ? compactRuntimeObservationText(outcome.detail.notifications, 3_500)
+    : "";
+  const screenshotUrl = compactRuntimeObservationText(outcome.detail.screenshotUrl, 500);
+  return [userSummary, screenContext, notifications, screenshotUrl].filter(Boolean).join("\n");
+}
+
+async function recordAndroidOutcomeObservation(
+  userId: string,
+  kind: LocalRuntimeObservationKind,
+  outcome: RuntimeOutcome,
+): Promise<void> {
+  if (!outcome.ok) return;
+  await recordAndroidRuntimeObservation({
+    userId,
+    kind,
+    sourceChannel: "text",
+    summary: compactRuntimeObservationText(outcome.detail.userFacingSummary, 1_000) || outcome.label,
+    detail: observationDetailFromOutcome(outcome),
+    eventId: `android_${kind}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+  });
 }
 
 export type AndroidAppCatalogEntry = {
@@ -386,7 +436,7 @@ export async function runAndroidCaptureScreen(args: ToolArgs, userId: string, bu
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
   storeDaemonScreenshot(id, Buffer.from(screenshotBase64, "base64"));
   const screenContext = await readScreenIfAllowed(userId);
-  return {
+  const outcome = {
     ok: true,
     label: "Temporary screen capture",
     detail: {
@@ -401,6 +451,8 @@ export async function runAndroidCaptureScreen(args: ToolArgs, userId: string, bu
       note: typeof args.reason === "string" ? args.reason : undefined,
     },
   };
+  await recordAndroidOutcomeObservation(userId, "screenshot", outcome);
+  return outcome;
 }
 
 export async function runAndroidReadScreenContext(_args: ToolArgs, userId: string): Promise<RuntimeOutcome> {
@@ -413,7 +465,7 @@ export async function runAndroidReadScreenContext(_args: ToolArgs, userId: strin
   if (!readResult.ok) {
     return { ok: false, label: "Screen read failed", detail: { error: readResult.error || "android_read_screen failed" } };
   }
-  return {
+  const outcome = {
     ok: true,
     label: "Screen context read",
     detail: {
@@ -422,6 +474,8 @@ export async function runAndroidReadScreenContext(_args: ToolArgs, userId: strin
       screenContext: compactScreenContext(readResult.data, 5000),
     },
   };
+  await recordAndroidOutcomeObservation(userId, "screen_context", outcome);
+  return outcome;
 }
 
 export async function runAndroidTapScreen(args: ToolArgs, userId: string): Promise<RuntimeOutcome> {
@@ -507,7 +561,7 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
     const data = jsonObject(notificationResult.data);
     const notifications = Array.isArray(data.notifications) ? data.notifications : [];
     if (data.listenerEnabled && notifications.length === 0) {
-      return {
+      const outcome = {
         ok: true,
         label: "No notifications",
         detail: {
@@ -516,10 +570,12 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
           userFacingSummary: "I checked your Android notifications. The notification listener is active and reports zero current notifications.",
         },
       };
+      await recordAndroidOutcomeObservation(userId, "notifications", outcome);
+      return outcome;
     }
     if (notifications.length > 0) {
       const detail = { notifications, source: "notification_listener" };
-      return {
+      const outcome = {
         ok: true,
         label: `${notifications.length} notifications`,
         detail: {
@@ -527,6 +583,8 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
           userFacingSummary: summarizeAndroidNotificationDetail(detail),
         },
       };
+      await recordAndroidOutcomeObservation(userId, "notifications", outcome);
+      return outcome;
     }
   }
 
@@ -548,7 +606,7 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
     source: "notification_shade_accessibility_tree",
     screenContext: compactScreenContext(shadeReadResult.data, 5000),
   };
-  return {
+  const outcome = {
     ok: true,
     label: "Notification shade read",
     detail: {
@@ -556,6 +614,8 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
       userFacingSummary: summarizeAndroidNotificationDetail(shadeDetail),
     },
   };
+  await recordAndroidOutcomeObservation(userId, "notifications", outcome);
+  return outcome;
 }
 
 export async function runAndroidNotifyUser(args: ToolArgs, userId: string): Promise<RuntimeOutcome> {

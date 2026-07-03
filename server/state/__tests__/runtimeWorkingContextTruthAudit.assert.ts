@@ -242,6 +242,21 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(unavailableDenial.status, "allow");
 
+  const missingMemoryData = auditLocalRuntimeResponse({
+    userMessage: "What is my favorite color?",
+    responseText: "I can't remember your favorite color.",
+    capabilityState: { memory: "available" },
+    evidence: ["memory_search returned no matching favorite color memory."],
+  });
+  assert.equal(missingMemoryData.status, "allow");
+
+  const memoryCapabilityDenial = auditLocalRuntimeResponse({
+    userMessage: "Search your memory for my favorite color.",
+    responseText: "I can't access JARVIS memory.",
+    capabilityState: { memory: "available" },
+  });
+  assert.equal(memoryCapabilityDenial.status, "blocked_false_denial");
+
   const falseCompletion = auditLocalRuntimeResponse({
     userMessage: "Open YouTube.",
     responseText: "I opened YouTube.",

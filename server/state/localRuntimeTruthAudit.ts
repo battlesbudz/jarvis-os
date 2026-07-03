@@ -81,6 +81,11 @@ function capabilityAvailable(
   return state?.[capability] === "available";
 }
 
+function isMemoryDataAbsenceAnswer(text: string): boolean {
+  return /\b(?:i\s+)?(?:can(?:not|'t)|do\s+not|don't|unable\s+to|not\s+able\s+to)\s+(?:remember|find|see|know|recall|have)\b/i.test(text) &&
+    !/\b(?:access|search|query|use|check)\b[\s\S]{0,32}\b(?:memory|memories|profile|memoryos)\b/i.test(text);
+}
+
 function deniedAvailableCapability(
   text: string,
   capabilities: LocalRuntimeTruthAuditInput["capabilityState"],
@@ -98,6 +103,7 @@ function deniedAvailableCapability(
   ];
 
   for (const [capability, pattern] of checks) {
+    if (capability === "memory" && isMemoryDataAbsenceAnswer(text)) continue;
     if (capabilityAvailable(capabilities, capability) && pattern.test(text)) return capability;
   }
   return null;

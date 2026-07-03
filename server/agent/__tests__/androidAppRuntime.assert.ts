@@ -150,9 +150,14 @@ async function main() {
   });
   try {
     const listenerOps: string[] = [];
+    const listenerObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];
     _setAndroidAppRuntimeDepsForTesting({
       isAndroidDaemonActive: () => true,
       isAndroidDaemonActionAllowed: async () => true,
+      recordLocalRuntimeObservation: async (input) => {
+        listenerObservations.push(input);
+        return {} as never;
+      },
       sendDaemonOp: async (_userId, op) => {
         listenerOps.push(op.type);
         assert.equal(op.type, "android_notifications_list");
@@ -177,11 +182,19 @@ async function main() {
     assert.deepEqual(listenerOps, ["android_notifications_list"]);
     assert.match(summarizeAndroidNotificationDetail(listenerResult.detail), /Gmail/);
     assert.match(summarizeAndroidNotificationDetail(listenerResult.detail), /Budget alert/);
+    assert.equal(listenerObservations.length, 1);
+    assert.equal(listenerObservations[0]?.kind, "notifications");
+    assert.match(listenerObservations[0]?.summary ?? "", /Gmail/);
 
     const accessibilityOps: string[] = [];
+    const accessibilityObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];
     _setAndroidAppRuntimeDepsForTesting({
       isAndroidDaemonActive: () => true,
       isAndroidDaemonActionAllowed: async () => true,
+      recordLocalRuntimeObservation: async (input) => {
+        accessibilityObservations.push(input);
+        return {} as never;
+      },
       sendDaemonOp: async (_userId, op) => {
         accessibilityOps.push(op.type);
         if (op.type === "android_notifications_list") {
@@ -217,6 +230,9 @@ async function main() {
     assert.match(accessibilitySummary, /notification shade/i);
     assert.match(accessibilitySummary, /Life360/);
     assert.match(accessibilitySummary, /Codex/);
+    assert.equal(accessibilityObservations.length, 1);
+    assert.equal(accessibilityObservations[0]?.kind, "notifications");
+    assert.match(accessibilityObservations[0]?.detail ?? "", /Codex/);
   } finally {
     _setAndroidAppRuntimeDepsForTesting(null);
     _setRuntimeCapabilityDepsForTesting(null);
