@@ -106,7 +106,7 @@ function deniedAvailableCapability(
     ["notifications", /\bnotifications?\b/i],
     ["screen", /\b(?:screen|display)\b/i],
     ["screenshot", /\b(?:screenshot|screen\s+shot|screen\s+grab|capture)\b/i],
-    ["app_control", /\b(?:open|launch|start)\b[\s\S]{0,32}\b(?:app|youtube|chrome|facebook|linkedin)\b/i],
+    ["app_control", /\b(?:open|launch|start)\b(?!\s+source\b)(?:\s+(?:the\s+)?[a-z0-9][a-z0-9 ._'-]{1,60})?/i],
     ["clipboard", /\bclipboard\b/i],
     ["memory", /\b(?:memory|remember|know about you|who you are|who i am)\b/i],
   ];
@@ -119,6 +119,10 @@ function deniedAvailableCapability(
 }
 
 function completionClaimTarget(text: string): { toolName: string; target?: string } | null {
+  const openedUrl = text.match(/\b(?:i\s+)?opened\s+((?:https?:\/\/|[a-z][a-z0-9+.-]*:\/\/|www\.)\S{2,160})(?:\s+for\s+you|\s+on\s+your\s+phone|\s+on\s+the\s+device|$)/i);
+  if (openedUrl?.[1]) {
+    return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(openedUrl[1]) };
+  }
   const opened = text.match(/\b(?:i\s+)?opened\s+([a-z0-9 ._-]{2,80}?)(?:\s+for\s+you|\s+on\s+your\s+phone|\s+on\s+the\s+device|[.!?]|$)/i);
   if (opened?.[1]) {
     return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(opened[1]) };

@@ -235,6 +235,13 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   assert.equal(falseDenial.status, "blocked_false_denial");
   assert.doesNotMatch(falseDenial.text, /android_|{|}/);
 
+  const genericAppDenial = auditLocalRuntimeResponse({
+    userMessage: "Open Gmail.",
+    responseText: "I can't open Gmail.",
+    capabilityState: { app_control: "available" },
+  });
+  assert.equal(genericAppDenial.status, "blocked_false_denial");
+
   const unavailableDenial = auditLocalRuntimeResponse({
     userMessage: "Read my notifications.",
     responseText: "I cannot read notifications on this device.",
@@ -265,6 +272,14 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(falseCompletion.status, "blocked_false_completion");
   assert.equal(falseCompletion.text, "I have not completed that yet.");
+
+  const falseUrlCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open https://example.com.",
+    responseText: "I opened https://example.com.",
+    capabilityState: { app_control: "available" },
+    actionResults: [],
+  });
+  assert.equal(falseUrlCompletion.status, "blocked_false_completion");
 
   const confirmedCompletion = auditLocalRuntimeResponse({
     userMessage: "Open YouTube.",
@@ -314,6 +329,18 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     }],
   });
   assert.equal(confirmedUrlOpen.status, "allow");
+
+  const confirmedSchemeUrlOpen = auditLocalRuntimeResponse({
+    userMessage: "Open https://example.com.",
+    responseText: "I opened https://example.com.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "https://example.com",
+    }],
+  });
+  assert.equal(confirmedSchemeUrlOpen.status, "allow");
   console.log("OK: truth audit blocks false denials and unconfirmed completions");
 }
 
