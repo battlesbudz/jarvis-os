@@ -245,6 +245,31 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "YouTube" }],
   });
   assert.equal(confirmedCompletion.status, "allow");
+
+  const confirmedYoutubeSearch = auditLocalRuntimeResponse({
+    userMessage: "Search YouTube for AI videos.",
+    responseText: "I opened YouTube.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_youtube_search",
+      ok: true,
+      target: "AI videos",
+      summary: "Opened YouTube search for AI videos.",
+    }],
+  });
+  assert.equal(confirmedYoutubeSearch.status, "allow");
+
+  const confirmedUrlOpen = auditLocalRuntimeResponse({
+    userMessage: "Open example.com.",
+    responseText: "I opened example.com.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "https://example.com",
+    }],
+  });
+  assert.equal(confirmedUrlOpen.status, "allow");
   console.log("OK: truth audit blocks false denials and unconfirmed completions");
 }
 

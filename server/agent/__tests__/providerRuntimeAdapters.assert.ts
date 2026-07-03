@@ -665,6 +665,47 @@ async function testAndroidLocalGemmaDoesNotAuditUnavailableNotificationDenials()
   }
 }
 
+async function testAndroidLocalGemmaChecksYoutubeSearchAgainstBrowseCapability() {
+  const checkedAt = "2026-07-03T01:58:00.000Z";
+  const disabled = runtimeCapabilityCheck("disabled", checkedAt);
+  _setRuntimeCapabilityDepsForTesting({
+    now: () => new Date(checkedAt),
+    loadConnectedAccounts: async () => [],
+    loadDeviceControlState: async () => androidDeviceCapabilityState(checkedAt, {
+      browse: disabled,
+    }),
+  });
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: { text: "I cannot open YouTube on this device.", finishReason: "stop" },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Search YouTube for AI videos." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_youtube_search",
+          description: "Open YouTube search.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "I cannot open YouTube on this device.");
+    console.log("OK: Android Local Gemma audits YouTube search availability against browse capability");
+  } finally {
+    _setRuntimeCapabilityDepsForTesting(null);
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -5621,6 +5662,7 @@ async function main() {
   await testAndroidLocalGemmaStateCardOmitsDisabledTools();
   await testAndroidLocalGemmaAuditsFalseNotificationDenials();
   await testAndroidLocalGemmaDoesNotAuditUnavailableNotificationDenials();
+  await testAndroidLocalGemmaChecksYoutubeSearchAgainstBrowseCapability();
   await testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit();
   await testAndroidLocalGemmaSkipsCapabilityProbeWithoutAndroidTools();
   await testAndroidLocalGemmaAllowsConfirmedCompletionClaims();

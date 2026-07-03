@@ -122,10 +122,14 @@ function hasConfirmingActionResult(
   results: LocalRuntimeActionResult[],
 ): boolean {
   const target = compactText(claim.target).toLowerCase();
+  const confirmingToolNames = claim.toolName === "android_open_app_by_name"
+    ? new Set(["android_open_app_by_name", "android_youtube_search", "android_open_phone_url"])
+    : new Set([claim.toolName]);
   return results.some((result) => {
-    if (!result.ok || result.toolName !== claim.toolName) return false;
+    if (!result.ok || !confirmingToolNames.has(result.toolName)) return false;
     if (!target) return true;
-    const resultTarget = compactText(result.target || result.summary).toLowerCase();
+    if (result.toolName === "android_youtube_search" && target === "youtube") return true;
+    const resultTarget = compactText(`${result.target ?? ""} ${result.summary ?? ""}`).toLowerCase();
     return resultTarget.includes(target);
   });
 }
