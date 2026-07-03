@@ -231,7 +231,7 @@ function capabilityRequestPattern(capability: LocalVoiceCapability): RegExp {
 function hasNegatedCapabilityRequest(capability: LocalVoiceCapability, transcript: string): boolean {
   const requestPattern = capabilityRequestPattern(capability);
   const clauses = compactText(transcript)
-    .split(/[.!?;,]|\b(?:but|and|then)\b/i)
+    .split(/[.!?;,]|\b(?:but|then)\b|\band\s+(?=(?:open|launch|start|read|show|check|copy|approve|confirm|request|take|capture)\b)/i)
     .map((clause) => clause.trim())
     .filter(Boolean);
 

@@ -201,8 +201,20 @@ async function testFalseDenialRecoveryBlocksNegatedNonAppCapabilities() {
       androidEvents: [{ type: "scheduler", activeJobs: ["voice call"] }],
     },
     {
+      name: "scheduler coordinated nouns",
+      transcript: "Don't check scheduler jobs and tasks",
+      capability: "scheduler",
+      androidEvents: [{ type: "scheduler", activeJobs: ["voice call"] }],
+    },
+    {
       name: "service",
       transcript: "Don't check daemon status",
+      capability: "service",
+      androidEvents: [{ type: "crash", service: "android-daemon", message: "service restarted" }],
+    },
+    {
+      name: "service coordinated nouns",
+      transcript: "Don't check daemon status and service",
       capability: "service",
       androidEvents: [{ type: "crash", service: "android-daemon", message: "service restarted" }],
     },
