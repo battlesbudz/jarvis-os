@@ -389,7 +389,10 @@ function looksLikePhoneUrlActionRequest(text: string): boolean {
     !/^\s*(?:what|why|how|explain|describe|define|summari[sz]e|tell\s+me)\b/i.test(text);
 }
 
-function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
+function isToolConfirmationTurn(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  tools: ProviderQueryParams["tools"],
+): boolean {
   const latest = latestUserText(messages).trim();
   if (!looksLikeApprovalConfirmation(latest)) return false;
   let assistantIndex = -1;
@@ -399,7 +402,11 @@ function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletion
     assistantIndex = index;
     const text = textFromContent(message.content);
     if (!/\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead|proceed)\b/i.test(text)) return false;
-    if (looksLikeLocalToolRequest(text) || looksLikePhoneUrlActionRequest(text)) return true;
+    if (
+      looksLikeLocalToolRequest(text) ||
+      looksLikePhoneUrlActionRequest(text) ||
+      (looksLikeUrlToolRequest(text) && hasUrlBackedNonPhoneTool(tools))
+    ) return true;
     break;
   }
 
@@ -411,7 +418,11 @@ function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletion
     if (message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return true;
     if (message.role === "user") {
       const text = textFromContent(message.content);
-      if (looksLikeLocalToolRequest(text) || looksLikePhoneUrlActionRequest(text)) return true;
+      if (
+        looksLikeLocalToolRequest(text) ||
+        looksLikePhoneUrlActionRequest(text) ||
+        (looksLikeUrlToolRequest(text) && hasUrlBackedNonPhoneTool(tools))
+      ) return true;
     }
   }
   return false;
@@ -444,7 +455,7 @@ function shouldUseLocalToolProtocol(params: ProviderQueryParams): boolean {
     looksLikePhoneUrlActionRequest(latest) ||
     (hasFunctionTool(params.tools, "memory_save") && looksLikeMemorySaveRequest(latest)) ||
     (hasFunctionTool(params.tools, "memory_search") && looksLikeMemoryLookupRequest(latest)) ||
-    isToolConfirmationTurn(params.messages);
+    isToolConfirmationTurn(params.messages, params.tools);
 }
 
 function formatPromptSections(
