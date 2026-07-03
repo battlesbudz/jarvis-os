@@ -184,6 +184,7 @@ export interface MemoryWritePipelineDeps {
 
 export interface WorkingContextDeps {
   upsertWorkingContext(record: WorkingContextRecord): Promise<WorkingContextRecord>;
+  expireNonCompactingWorkingContext?(now: Date, scopeTypes: string[]): Promise<number>;
   listExpiredWorkingContext(now: Date, limit: number): Promise<ExpiredWorkingContextRow[]>;
   insertRecentContextMemory(record: PlannedMemoryRecord): Promise<{ id: string }>;
   markWorkingContextStale(id: string, memoryId: string, claimUpdatedAt: Date | string): Promise<void>;
@@ -629,6 +630,10 @@ export async function compactExpiredWorkingContext(
   deps: WorkingContextDeps = defaultWorkingContextDeps,
 ): Promise<CompactedWorkingContextResult> {
   const now = input.now ?? new Date();
+  const nonCompactingScopeTypes = Array.from(NON_COMPACTING_WORKING_CONTEXT_SCOPE_TYPES);
+  if (nonCompactingScopeTypes.length > 0) {
+    await deps.expireNonCompactingWorkingContext?.(now, nonCompactingScopeTypes);
+  }
   const rows = await deps.listExpiredWorkingContext(now, Math.max(1, Math.min(input.limit ?? 100, 500)));
   const memoryIds: string[] = [];
 
@@ -872,6 +877,19 @@ export const defaultWorkingContextDeps: WorkingContextDeps = {
       updatedAt: row.updatedAt.toISOString(),
       expiresAt: row.expiresAt.toISOString(),
     };
+  },
+  async expireNonCompactingWorkingContext(now, scopeTypes) {
+    if (scopeTypes.length === 0) return 0;
+    const result = await db.execute<{ id: string }>(sql`
+      UPDATE memory_working_context
+      SET state = 'stale',
+          updated_at = ${now}
+      WHERE expires_at <= ${now}
+        AND scope_type = ANY(${scopeTypes}::varchar[])
+        AND state IN ('active', 'compacting')
+      RETURNING id
+    `);
+    return (result.rows ?? []).length;
   },
   async listExpiredWorkingContext(now, limit) {
     const result = await db.execute<ExpiredWorkingContextDbRow>(sql`

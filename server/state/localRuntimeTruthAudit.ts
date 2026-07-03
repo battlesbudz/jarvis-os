@@ -86,6 +86,15 @@ function isMemoryDataAbsenceAnswer(text: string): boolean {
     !/\b(?:access|search|query|use|check)\b[\s\S]{0,32}\b(?:memory|memories|profile|memoryos)\b/i.test(text);
 }
 
+function normalizeOpenedTarget(value: string): string {
+  return value
+    .trim()
+    .replace(/[.!?]+$/g, "")
+    .replace(/^(?:the\s+)/i, "")
+    .replace(/\s+(?:app|application)$/i, "")
+    .trim();
+}
+
 function deniedAvailableCapability(
   text: string,
   capabilities: LocalRuntimeTruthAuditInput["capabilityState"],
@@ -112,7 +121,7 @@ function deniedAvailableCapability(
 function completionClaimTarget(text: string): { toolName: string; target?: string } | null {
   const opened = text.match(/\b(?:i\s+)?opened\s+([a-z0-9 ._-]{2,80}?)(?:\s+for\s+you|\s+on\s+your\s+phone|\s+on\s+the\s+device|[.!?]|$)/i);
   if (opened?.[1]) {
-    return { toolName: "android_open_app_by_name", target: opened[1].trim().replace(/[.!?]+$/g, "").trim() };
+    return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(opened[1]) };
   }
   if (/\b(?:i\s+)?(?:captured|took)\s+(?:a\s+)?screenshot\b/i.test(text)) {
     return { toolName: "android_capture_screen" };

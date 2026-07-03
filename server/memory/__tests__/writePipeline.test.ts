@@ -129,9 +129,14 @@ async function testLocalRuntimeWorkingContextDoesNotCompact(): Promise<void> {
   };
   let inserted = 0;
   let stale = 0;
+  const expiredScopes: string[][] = [];
   const deps: WorkingContextDeps = {
     async upsertWorkingContext(record) {
       return record;
+    },
+    async expireNonCompactingWorkingContext(_now, scopeTypes) {
+      expiredScopes.push(scopeTypes);
+      return 1;
     },
     async listExpiredWorkingContext() {
       return [expired];
@@ -148,6 +153,7 @@ async function testLocalRuntimeWorkingContextDoesNotCompact(): Promise<void> {
   const result = await compactExpiredWorkingContext({ now }, deps);
 
   assert.deepEqual(result, { scanned: 1, compacted: 0, memoryIds: [] });
+  assert.deepEqual(expiredScopes, [["local_runtime_observation"]]);
   assert.equal(inserted, 0);
   assert.equal(stale, 0);
   console.log("OK: local runtime working context stays ephemeral and does not compact into memory");
@@ -174,6 +180,11 @@ async function testDefaultCompactionClaimsExpiredContextBeforeInsert(): Promise<
     source,
     /scope_type <> \$\{LOCAL_RUNTIME_WORKING_CONTEXT_SCOPE_TYPE\}/,
     "default working context compaction should not claim local runtime observations",
+  );
+  assert.match(
+    source,
+    /expireNonCompactingWorkingContext[\s\S]*SET state = 'stale'[\s\S]*scope_type = ANY\(\$\{scopeTypes\}::varchar\[\]\)/,
+    "default working context compaction should expire local runtime observations instead of preserving raw active rows",
   );
   assert.match(
     source,
