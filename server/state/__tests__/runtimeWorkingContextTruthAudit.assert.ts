@@ -365,6 +365,14 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(falseUrlCompletion.status, "blocked_false_completion");
 
+  const falseDeepLinkCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open geo:0,0?q=coffee.",
+    responseText: "I opened geo:0,0?q=coffee.",
+    capabilityState: { app_control: "available" },
+    actionResults: [],
+  });
+  assert.equal(falseDeepLinkCompletion.status, "blocked_false_completion");
+
   const confirmedCompletion = auditLocalRuntimeResponse({
     userMessage: "Open YouTube.",
     responseText: "I opened YouTube.",
@@ -425,6 +433,18 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     }],
   });
   assert.equal(confirmedSchemeUrlOpen.status, "allow");
+
+  const confirmedDeepLinkOpen = auditLocalRuntimeResponse({
+    userMessage: "Open geo:0,0?q=coffee.",
+    responseText: "I opened geo:0,0?q=coffee.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "geo:0,0?q=coffee",
+    }],
+  });
+  assert.equal(confirmedDeepLinkOpen.status, "allow");
   console.log("OK: truth audit blocks false denials and unconfirmed completions");
 }
 
