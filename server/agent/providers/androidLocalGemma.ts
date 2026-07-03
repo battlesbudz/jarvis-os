@@ -5,6 +5,12 @@ import { BaseProvider, isJsonObjectResponseFormat } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { buildRuntimeStateCardPrompt } from "../../state/stateCard";
 import {
+  auditLocalRuntimeResponse,
+  type LocalRuntimeActionResult,
+  type LocalRuntimeCapabilityAvailability,
+  type LocalRuntimeCapabilityName,
+} from "../../state/localRuntimeTruthAudit";
+import {
   markPhoneGemmaGenerationFinished,
   markPhoneGemmaGenerationStarted,
 } from "../../state/phoneGemmaDiagnostics";
@@ -1028,6 +1034,102 @@ function hasFunctionTool(tools: ProviderQueryParams["tools"], name: string): boo
   return !!tools?.some((tool) => isFunctionTool(tool) && tool.function.name === name);
 }
 
+function localRuntimeCapabilityState(
+  tools: ProviderQueryParams["tools"],
+): Partial<Record<LocalRuntimeCapabilityName, LocalRuntimeCapabilityAvailability>> {
+  return {
+    notifications: hasFunctionTool(tools, "android_read_notifications") ? "available" : "unknown",
+    screen: hasFunctionTool(tools, "android_read_screen_context") ? "available" : "unknown",
+    screenshot: hasFunctionTool(tools, "android_capture_screen") ? "available" : "unknown",
+    app_control: hasFunctionTool(tools, "android_open_app_by_name") || hasFunctionTool(tools, "android_youtube_search")
+      ? "available"
+      : "unknown",
+    clipboard: hasFunctionTool(tools, "android_copy_to_clipboard") ? "available" : "unknown",
+    memory: hasFunctionTool(tools, "memory_search") || hasFunctionTool(tools, "memory_get") ? "available" : "unknown",
+  };
+}
+
+function auditToolNameFromCall(name: string, args: Record<string, unknown> | null): string {
+  if (name !== "daemon_action") return name;
+  const action = typeof args?.action === "string" ? args.action : "";
+  switch (action) {
+    case "android_open_app":
+      return "android_open_app_by_name";
+    case "android_screenshot":
+      return "android_capture_screen";
+    case "android_read_screen":
+    case "android_screen_context":
+      return "android_read_screen_context";
+    case "android_notifications_list":
+      return "android_read_notifications";
+    default:
+      return action || name;
+  }
+}
+
+function auditTargetFromArgs(args: Record<string, unknown> | null): string | null {
+  for (const key of ["appName", "packageName", "url", "query", "text", "title"]) {
+    const value = args?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function localRuntimeActionResults(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): LocalRuntimeActionResult[] {
+  const pending = new Map<string, { toolName: string; target: string | null }>();
+  const results: LocalRuntimeActionResult[] = [];
+  let currentTurnStart = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      currentTurnStart = index + 1;
+      break;
+    }
+  }
+
+  for (const message of messages.slice(currentTurnStart)) {
+    if (message.role === "assistant" && Array.isArray(message.tool_calls)) {
+      for (const toolCall of message.tool_calls) {
+        if (!isFunctionToolCall(toolCall) || !toolCall.id) continue;
+        const args = toolArgumentsObject(toolCall.function.arguments);
+        pending.set(toolCall.id, {
+          toolName: auditToolNameFromCall(toolCall.function.name, args),
+          target: auditTargetFromArgs(args),
+        });
+      }
+      continue;
+    }
+    if (message.role === "tool") {
+      const pendingTool = pending.get(message.tool_call_id);
+      if (!pendingTool) continue;
+      const summary = toolMessageTextContent(message.content);
+      results.push({
+        toolName: pendingTool.toolName,
+        ok: daemonToolResultSucceeded(message.content),
+        target: pendingTool.target,
+        summary,
+      });
+    }
+  }
+  return results;
+}
+
+function auditedLocalRuntimeFinalText(
+  params: ProviderQueryParams,
+  text: string,
+  options: { preserveRequestedJson: boolean },
+): string {
+  if (options.preserveRequestedJson) return text;
+  const audit = auditLocalRuntimeResponse({
+    userMessage: latestUserText(params.messages),
+    responseText: text,
+    capabilityState: localRuntimeCapabilityState(params.tools),
+    actionResults: localRuntimeActionResults(params.messages),
+  });
+  return audit.text;
+}
+
 function hasDaemonActionTool(tools: ProviderQueryParams["tools"]): boolean {
   return hasFunctionTool(tools, "daemon_action");
 }
@@ -1920,6 +2022,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
     if (!params.userId) {
       throw new Error("Android Local Gemma requires an authenticated user and the Jarvis Android app device control connection.");
     }
+    const userId = params.userId;
 
     const useToolProtocol = shouldUseLocalToolProtocol(params);
     const runtimeStateCardPrompt = await runtimeStateCardPromptFromParams(params, useToolProtocol);
@@ -1934,14 +2037,14 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
     const requestId = `phone-gemma-${randomUUID()}`;
     const normalizedModel = normalizeAndroidLocalGemmaModel(params.model);
     markPhoneGemmaGenerationStarted({
-      userId: params.userId,
+      userId,
       requestId,
       model: normalizedModel,
     });
     const result = await (async () => {
       try {
         return await sendAbortableAndroidLocalGemmaGenerateOp(
-          params.userId,
+          userId,
           {
             type: "android_local_model_generate",
             requestId,
@@ -1955,13 +2058,13 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
           params.signal,
         );
       } finally {
-        markPhoneGemmaGenerationFinished({ userId: params.userId!, requestId });
+        markPhoneGemmaGenerationFinished({ userId, requestId });
       }
     })();
 
     if (shouldCancelTimedOutGeneration(result)) {
       sendAndroidLocalGemmaOp(
-        params.userId,
+        userId,
         { type: "android_local_model_cancel", requestId },
         5_000,
       ).catch(() => {});
@@ -2094,15 +2197,19 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       }
 
       if (parsed.content.trim()) {
-        yield { type: "text", delta: parsed.content };
+        yield {
+          type: "text",
+          delta: auditedLocalRuntimeFinalText(params, parsed.content, { preserveRequestedJson }),
+        };
         yield { type: "finish", reason: finishReasonFromDaemonData(result.data) };
         return;
       }
     }
 
+    const finalText = localGemmaFinalText(text, { preserveWholeJson: preserveRequestedJson });
     yield {
       type: "text",
-      delta: localGemmaFinalText(text, { preserveWholeJson: preserveRequestedJson }),
+      delta: auditedLocalRuntimeFinalText(params, finalText, { preserveRequestedJson }),
     };
     yield { type: "finish", reason: finishReasonFromDaemonData(result.data) };
   }

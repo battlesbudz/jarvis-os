@@ -538,6 +538,91 @@ async function testAndroidLocalGemmaStateCardOmitsDisabledTools() {
   }
 }
 
+async function testAndroidLocalGemmaAuditsFalseNotificationDenials() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: { text: "I cannot read notifications on this device.", finishReason: "stop" },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Do you have notification access?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_read_notifications",
+          description: "Read current Android notifications.",
+          parameters: { type: "object", properties: {} },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "I can do that locally. Let me try again.");
+    assert.doesNotMatch(result.textContent, /android_read_notifications|{|}/);
+    console.log("OK: Android Local Gemma audits false notification denials before final output");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaAllowsConfirmedCompletionClaims() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I opened YouTube." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Open YouTube." },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_open_youtube",
+            type: "function",
+            function: {
+              name: "android_open_app_by_name",
+              arguments: "{\"appName\":\"YouTube\"}",
+            },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_open_youtube",
+          content: "{\"ok\":true,\"label\":\"Opened YouTube\"}",
+        },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_app_by_name",
+          description: "Open an Android app by name.",
+          parameters: { type: "object", properties: { appName: { type: "string" } } },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "I opened YouTube.");
+    console.log("OK: Android Local Gemma truth audit allows confirmed action-completion claims");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaEmitsLocalHarnessToolCalls() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -5349,6 +5434,8 @@ async function main() {
   await testOpenAICompatibleUsesLocalUserCredential();
   await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
   await testAndroidLocalGemmaStateCardOmitsDisabledTools();
+  await testAndroidLocalGemmaAuditsFalseNotificationDenials();
+  await testAndroidLocalGemmaAllowsConfirmedCompletionClaims();
   await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
   await testAndroidLocalGemmaNormalizesDaemonAppAliases();
   await testAndroidLocalGemmaNormalizesDirectDaemonActionToolNames();

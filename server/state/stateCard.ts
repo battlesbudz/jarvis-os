@@ -1,12 +1,17 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import type { MemoryContext, MemoryModelTarget } from "../memory/memoryOs";
+import {
+  retrieveRelevantRuntimeWorkingContext,
+  type RuntimeWorkingContextItem,
+} from "./runtimeWorkingContext";
 
 export type RuntimeStateSource =
   | "state_kernel"
   | "profile_store"
   | "task_state_store"
   | "memory_os"
+  | "working_context"
   | "provider_runtime"
   | "fallback";
 
@@ -45,7 +50,7 @@ export interface RuntimeTaskStateSummary {
 }
 
 export interface RuntimeRelevantContext {
-  source: "memory_os";
+  source: "memory_os" | "working_context";
   label: string;
   content: string;
   provenance?: string[];
@@ -72,8 +77,10 @@ export interface BuildRuntimeStateCardInput {
   seedQuery?: string;
   availableTools?: string[];
   includeMemoryContext?: boolean;
+  includeWorkingContext?: boolean;
   taskLimit?: number;
   memoryLimit?: number;
+  workingContextLimit?: number;
   renderMaxChars?: number;
 }
 
@@ -91,11 +98,18 @@ export interface RuntimeStateCardDeps {
     modelTarget?: MemoryModelTarget;
     allowRestrictedMemory?: boolean;
   }) => Promise<MemoryContext>;
+  loadWorkingContext?: (input: {
+    userId: string;
+    query: string;
+    limit: number;
+    now: Date;
+  }) => Promise<RuntimeRelevantContext[]>;
   now?: () => Date;
 }
 
 const DEFAULT_TASK_LIMIT = 5;
 const DEFAULT_MEMORY_LIMIT = 4;
+const DEFAULT_WORKING_CONTEXT_LIMIT = 3;
 const DEFAULT_RENDER_MAX_CHARS = 2_400;
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -375,6 +389,15 @@ function memoryItemsFromContext(context: MemoryContext): RuntimeRelevantContext[
   }));
 }
 
+function workingContextItemsFromRuntime(items: RuntimeWorkingContextItem[]): RuntimeRelevantContext[] {
+  return items.map((item) => ({
+    source: "working_context",
+    label: item.label,
+    content: item.content,
+    provenance: item.provenance,
+  }));
+}
+
 function appendUncertainty(
   uncertainty: string[],
   message: string,
@@ -391,12 +414,15 @@ export async function buildRuntimeStateCard(
   const now = deps.now ?? (() => new Date());
   const taskLimit = Math.max(0, input.taskLimit ?? DEFAULT_TASK_LIMIT);
   const memoryLimit = Math.max(0, input.memoryLimit ?? DEFAULT_MEMORY_LIMIT);
+  const workingContextLimit = Math.max(0, input.workingContextLimit ?? DEFAULT_WORKING_CONTEXT_LIMIT);
   const uncertainty: string[] = [];
   const provenance = new Set<RuntimeStateSource>(["state_kernel", "provider_runtime"]);
 
   const loadProfileState = deps.loadProfileState ?? loadRuntimeProfileStateFromDb;
   const loadTaskState = deps.loadTaskState ?? loadTaskStateFromDb;
   const retrieveMemoryContext = deps.retrieveMemoryContext ?? retrieveMemoryContextFromMemoryOs;
+  const loadWorkingContext = deps.loadWorkingContext ?? (async (args) =>
+    workingContextItemsFromRuntime(await retrieveRelevantRuntimeWorkingContext(args)));
 
   let user = fallbackProfile(input.userId);
   try {
@@ -425,6 +451,23 @@ export async function buildRuntimeStateCard(
 
   let relevantContext: RuntimeRelevantContext[] = [];
   const query = input.seedQuery?.trim();
+  if (input.includeWorkingContext !== false && query && workingContextLimit > 0) {
+    try {
+      const workingContext = await loadWorkingContext({
+        userId: input.userId,
+        query,
+        limit: workingContextLimit,
+        now: now(),
+      });
+      if (workingContext.length > 0) {
+        relevantContext.push(...workingContext);
+        provenance.add("working_context");
+      }
+    } catch (error) {
+      appendUncertainty(uncertainty, "Working context retrieval was unavailable.", error);
+    }
+  }
+
   if (input.includeMemoryContext && query && memoryLimit > 0) {
     try {
       const memoryContext = await retrieveMemoryContext({
