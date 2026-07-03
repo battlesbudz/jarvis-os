@@ -123,9 +123,13 @@ function completionClaimTarget(text: string): { toolName: string; target?: strin
   if (openedUrl?.[1]) {
     return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(openedUrl[1]) };
   }
-  const opened = text.match(/\b(?:i\s+)?(?:opened|launched|started)\s+([a-z0-9 ._-]{2,80}?)(?:\s+for\s+you|\s+on\s+your\s+phone|\s+on\s+the\s+device|[.!?]|$)/i);
+  const opened = text.match(/\b(?:i\s+)?(?:opened|launched)\s+([a-z0-9 ._-]{2,80}?)(?:\s+for\s+you|\s+on\s+your\s+phone|\s+on\s+the\s+device|[.!?]|$)/i);
   if (opened?.[1]) {
     return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(opened[1]) };
+  }
+  const startedApp = text.match(/\b(?:i\s+)?started\s+(?:the\s+)?([a-z0-9 ._-]{2,80}?)(?:\s+(?:app|application)|\s+on\s+(?:your\s+phone|your\s+device|my\s+phone|the\s+device))(?:[.!?]|$)/i);
+  if (startedApp?.[1]) {
+    return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(startedApp[1]) };
   }
   if (/\b(?:i\s+)?(?:captured|took)\s+(?:a\s+)?screenshot\b/i.test(text)) {
     return { toolName: "android_capture_screen" };
