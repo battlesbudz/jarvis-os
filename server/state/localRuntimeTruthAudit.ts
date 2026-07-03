@@ -104,7 +104,7 @@ function deniedAvailableCapability(
 }
 
 function completionClaimTarget(text: string): { toolName: string; target?: string } | null {
-  const opened = text.match(/\b(?:i\s+)?opened\s+([a-z0-9 ._-]{2,40})(?:\.|$)/i);
+  const opened = text.match(/\b(?:i\s+)?opened\s+([a-z0-9 ._-]{2,80}?)(?:\s+for\s+you|\s+on\s+your\s+phone|\s+on\s+the\s+device|[.!?]|$)/i);
   if (opened?.[1]) {
     return { toolName: "android_open_app_by_name", target: opened[1].trim().replace(/[.!?]+$/g, "").trim() };
   }

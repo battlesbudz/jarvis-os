@@ -451,7 +451,7 @@ export async function buildRuntimeStateCard(
 
   let relevantContext: RuntimeRelevantContext[] = [];
   const query = input.seedQuery?.trim();
-  if (input.includeWorkingContext !== false && query && workingContextLimit > 0) {
+  if (input.includeWorkingContext === true && query && workingContextLimit > 0) {
     try {
       const workingContext = await loadWorkingContext({
         userId: input.userId,

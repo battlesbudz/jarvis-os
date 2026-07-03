@@ -1078,12 +1078,18 @@ async function localRuntimeCapabilityState(
     }
     if (appControlActions.length > 0) {
       const preflights = appControlActions.map((action) => preflightRuntimeCapabilityAction(capabilityState, action));
-      state.app_control = preflights.every((preflight) => preflight.ok) ? "available" : "unavailable";
+      state.app_control = preflights.some((preflight) => preflight.ok) ? "available" : "unavailable";
     }
   } catch {
     return state;
   }
   return state;
+}
+
+export async function _localRuntimeCapabilityStateForTesting(
+  params: ProviderQueryParams,
+): Promise<Partial<Record<LocalRuntimeCapabilityName, LocalRuntimeCapabilityAvailability>>> {
+  return localRuntimeCapabilityState(params);
 }
 
 function auditToolNameFromCall(name: string, args: Record<string, unknown> | null): string {
@@ -1907,6 +1913,7 @@ async function runtimeStateCardPromptFromParams(
       seedQuery: latestUserText(params.messages),
       availableTools: params.toolChoice === "none" ? [] : Array.from(availableFunctionToolNames(params.tools)),
       includeMemoryContext: false,
+      includeWorkingContext: true,
       taskLimit: 3,
       renderMaxChars: cardBudget,
     });

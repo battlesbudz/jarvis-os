@@ -10,6 +10,7 @@ import {
 import {
   AndroidLocalGemmaProvider,
   _setAndroidLocalGemmaDaemonOpForTesting,
+  _localRuntimeCapabilityStateForTesting,
 } from "../providers/androidLocalGemma";
 import {
   _setRuntimeCapabilityDepsForTesting,
@@ -700,6 +701,49 @@ async function testAndroidLocalGemmaAuditHonorsToolChoiceNone() {
   } finally {
     _setRuntimeCapabilityDepsForTesting(null);
     _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaAuditsOpenAppWhenBrowseIsUnavailable() {
+  const checkedAt = "2026-07-03T02:23:00.000Z";
+  const disabled = runtimeCapabilityCheck("disabled", checkedAt);
+  _setRuntimeCapabilityDepsForTesting({
+    now: () => new Date(checkedAt),
+    loadConnectedAccounts: async () => [],
+    loadDeviceControlState: async () => androidDeviceCapabilityState(checkedAt, {
+      browse: disabled,
+    }),
+  });
+
+  try {
+    const capabilityState = await _localRuntimeCapabilityStateForTesting({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open YouTube." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_app_by_name",
+          description: "Open a phone app by name.",
+          parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "android_youtube_search",
+          description: "Open YouTube search.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    });
+
+    assert.equal(capabilityState.app_control, "available");
+    console.log("OK: Android Local Gemma audits plain app opens independently from unavailable browse");
+  } finally {
+    _setRuntimeCapabilityDepsForTesting(null);
   }
 }
 
@@ -5751,6 +5795,7 @@ async function main() {
   await testAndroidLocalGemmaAuditsFalseNotificationDenials();
   await testAndroidLocalGemmaDoesNotAuditUnavailableNotificationDenials();
   await testAndroidLocalGemmaAuditHonorsToolChoiceNone();
+  await testAndroidLocalGemmaAuditsOpenAppWhenBrowseIsUnavailable();
   await testAndroidLocalGemmaChecksYoutubeSearchAgainstBrowseCapability();
   await testAndroidLocalGemmaConfirmsLegacyDaemonBrowseCompletion();
   await testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit();

@@ -121,6 +121,7 @@ async function testStateCardInjectsOnlyRelevantWorkingContext() {
     activeModel: "local-gemma",
     seedQuery: "Which of those notifications matter?",
     includeMemoryContext: false,
+    includeWorkingContext: true,
     renderMaxChars: 5_000,
   }, deps);
   assert.match(withContext, /Recent notifications/);
@@ -133,10 +134,21 @@ async function testStateCardInjectsOnlyRelevantWorkingContext() {
     activeModel: "local-gemma",
     seedQuery: "Tell me a joke.",
     includeMemoryContext: false,
+    includeWorkingContext: true,
     renderMaxChars: 5_000,
   }, deps);
   assert.doesNotMatch(withoutContext, /Codex: Review finished/);
-  console.log("OK: runtime state card includes working context only when the turn needs it");
+
+  const defaultCloudContext = await buildRuntimeStateCardPrompt({
+    userId: "user-local-runtime",
+    activeDevice: "web",
+    activeModel: "claude",
+    seedQuery: "Which of those notifications matter?",
+    includeMemoryContext: false,
+    renderMaxChars: 5_000,
+  }, deps);
+  assert.doesNotMatch(defaultCloudContext, /Codex: Review finished/);
+  console.log("OK: runtime state card includes working context only when explicitly enabled and relevant");
 }
 
 async function testStateCardCombinesWorkingContextAndMemoryContext() {
@@ -201,6 +213,7 @@ async function testStateCardCombinesWorkingContextAndMemoryContext() {
     activeModel: "local-gemma",
     seedQuery: "Which of those notifications matter to me?",
     includeMemoryContext: true,
+    includeWorkingContext: true,
   }, deps);
 
   assert.equal(card.relevantContext.length, 2);
@@ -245,6 +258,14 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "YouTube" }],
   });
   assert.equal(confirmedCompletion.status, "allow");
+
+  const confirmedPoliteCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open YouTube.",
+    responseText: "I opened YouTube for you.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "YouTube" }],
+  });
+  assert.equal(confirmedPoliteCompletion.status, "allow");
 
   const confirmedYoutubeSearch = auditLocalRuntimeResponse({
     userMessage: "Search YouTube for AI videos.",
