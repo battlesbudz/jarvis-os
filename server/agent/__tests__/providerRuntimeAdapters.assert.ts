@@ -1070,6 +1070,64 @@ async function testAndroidLocalGemmaAllowsConfirmedCompletionClaims() {
   }
 }
 
+async function testAndroidLocalGemmaAllowsRecentConfirmedCompletionFollowups() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "Yes, I opened YouTube." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Open YouTube." },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_open_youtube",
+            type: "function",
+            function: {
+              name: "android_open_app_by_name",
+              arguments: "{\"appName\":\"YouTube\"}",
+            },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_open_youtube",
+          content: "{\"ok\":true,\"label\":\"Opened YouTube\"}",
+        },
+        { role: "user", content: "Did you open YouTube?" },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_app_by_name",
+          description: "Open an Android app by name.",
+          parameters: {
+            type: "object",
+            properties: { appName: { type: "string" } },
+            required: ["appName"],
+          },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "Yes, I opened YouTube.");
+    console.log("OK: Android Local Gemma allows recent confirmed completion follow-ups");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaEmitsLocalHarnessToolCalls() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -6117,6 +6175,7 @@ async function main() {
   await testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit();
   await testAndroidLocalGemmaSkipsCapabilityProbeWithoutAndroidTools();
   await testAndroidLocalGemmaAllowsConfirmedCompletionClaims();
+  await testAndroidLocalGemmaAllowsRecentConfirmedCompletionFollowups();
   await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
   await testAndroidLocalGemmaNormalizesDaemonAppAliases();
   await testAndroidLocalGemmaNormalizesDirectDaemonActionToolNames();

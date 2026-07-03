@@ -1192,6 +1192,13 @@ function auditTargetFromArgs(args: Record<string, unknown> | null): string | nul
   return null;
 }
 
+function looksLikeRecentActionStatusQuestion(text: string): boolean {
+  const value = normalizeAndroidRuntimeRequestText(text).trim();
+  if (!value) return false;
+  return /\b(?:did|have|has|was|is|are)\b[\s\S]{0,64}\b(?:open|opened|launch|launched|start|started|screenshot|captur|copy|copied|read|show|done|complete|completed|work|worked)\b/i.test(value) ||
+    /\b(?:did\s+that|did\s+it|was\s+that|is\s+that|what\s+happened|status|done|completed|complete)\b/i.test(value);
+}
+
 function localRuntimeActionResults(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
 ): LocalRuntimeActionResult[] {
@@ -1205,7 +1212,12 @@ function localRuntimeActionResults(
     }
   }
 
-  for (const message of messages.slice(currentTurnStart)) {
+  const latest = latestUserText(messages);
+  const scanStart = looksLikeRecentActionStatusQuestion(latest)
+    ? Math.max(0, currentTurnStart - 8)
+    : currentTurnStart;
+
+  for (const message of messages.slice(scanStart)) {
     if (message.role === "assistant" && Array.isArray(message.tool_calls)) {
       for (const toolCall of message.tool_calls) {
         if (!isFunctionToolCall(toolCall) || !toolCall.id) continue;
