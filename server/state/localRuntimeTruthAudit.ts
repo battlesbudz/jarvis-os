@@ -86,6 +86,23 @@ function isMemoryDataAbsenceAnswer(text: string): boolean {
     !/\b(?:access|search|query|use|check)\b[\s\S]{0,32}\b(?:memory|memories|profile|memoryos)\b/i.test(text);
 }
 
+function bareStartTarget(text: string): string | null {
+  const match = text.match(/\bstart\b(?![-\s]+source\b)\s+(?:the\s+)?([a-z0-9][a-z0-9 ._'-]{1,60}?)(?:[.!?]|$)/i);
+  const target = match?.[1] ? normalizeOpenedTarget(match[1]) : "";
+  if (!target) return null;
+  if (/^(?:until|unless|if|when|by|with|without|after|before)\b/i.test(target)) return null;
+  if (/^(?:task|work|process|draft|outline|plan|summary|response|analysis|review|conversation|chat|setup|account)\b/i.test(target)) return null;
+  return target;
+}
+
+function userAskedToStartTarget(userMessage: string, target: string): boolean {
+  const text = compactText(userMessage).toLowerCase();
+  const normalizedTarget = normalizeOpenedTarget(target).toLowerCase();
+  return !!normalizedTarget &&
+    /\bstart\b(?![-\s]+source\b)/i.test(text) &&
+    text.includes(normalizedTarget);
+}
+
 function normalizeOpenedTarget(value: string): string {
   return value
     .trim()
@@ -97,14 +114,17 @@ function normalizeOpenedTarget(value: string): string {
 
 function deniedAvailableCapability(
   text: string,
+  userMessage: string,
   capabilities: LocalRuntimeTruthAuditInput["capabilityState"],
 ): LocalRuntimeCapabilityName | null {
   const denial = /\b(?:i\s+)?(?:can(?:not|'t)|do\s+not\s+have\s+access|unable\s+to|not\s+able\s+to)\b/i;
   if (!denial.test(text)) return null;
 
+  const bareStart = bareStartTarget(text);
   if (
     capabilityAvailable(capabilities, "app_control") &&
-    /\bstart\b(?![-\s]+source\b)\s+(?:the\s+)?[a-z0-9][a-z0-9 ._'-]{1,60}?(?:\s+(?:app|application)|\s+on\s+(?:your\s+phone|your\s+device|my\s+phone|the\s+device))\b/i.test(text)
+    (/\bstart\b(?![-\s]+source\b)\s+(?:the\s+)?[a-z0-9][a-z0-9 ._'-]{1,60}?(?:\s+(?:app|application)|\s+on\s+(?:your\s+phone|your\s+device|my\s+phone|the\s+device))\b/i.test(text) ||
+      (bareStart !== null && userAskedToStartTarget(userMessage, bareStart)))
   ) {
     return "app_control";
   }
@@ -196,7 +216,7 @@ export function auditLocalRuntimeResponse(input: LocalRuntimeTruthAuditInput): L
     };
   }
 
-  const deniedCapability = deniedAvailableCapability(text, input.capabilityState);
+  const deniedCapability = deniedAvailableCapability(text, input.userMessage, input.capabilityState);
   if (deniedCapability) {
     return {
       status: "blocked_false_denial",
