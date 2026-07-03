@@ -1199,6 +1199,10 @@ function looksLikeRecentActionStatusQuestion(text: string): boolean {
     /\b(?:did\s+that|did\s+it|was\s+that|is\s+that|what\s+happened|status|done|completed|complete)\b/i.test(value);
 }
 
+function localRuntimeActionResultKey(result: LocalRuntimeActionResult): string {
+  return `${result.toolName}:${normalizeAndroidRuntimeRequestText(result.target ?? "").toLowerCase()}`;
+}
+
 function localRuntimeActionResults(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
 ): LocalRuntimeActionResult[] {
@@ -1241,7 +1245,13 @@ function localRuntimeActionResults(
       });
     }
   }
-  return results;
+  const latestByAction = new Map<string, LocalRuntimeActionResult>();
+  for (const result of results) {
+    const key = localRuntimeActionResultKey(result);
+    latestByAction.delete(key);
+    latestByAction.set(key, result);
+  }
+  return Array.from(latestByAction.values());
 }
 
 function currentTurnToolEvidence(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): string[] {

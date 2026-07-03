@@ -1128,6 +1128,84 @@ async function testAndroidLocalGemmaAllowsRecentConfirmedCompletionFollowups() {
   }
 }
 
+async function testAndroidLocalGemmaBlocksStaleConfirmedCompletionFollowups() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "Yes, I opened YouTube." }),
+      finishReason: "stop",
+    },
+  }));
+
+  const openAppTool = {
+    type: "function" as const,
+    function: {
+      name: "android_open_app_by_name",
+      description: "Open an Android app by name.",
+      parameters: {
+        type: "object" as const,
+        properties: { appName: { type: "string" } },
+        required: ["appName"],
+      },
+    },
+  };
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Open YouTube." },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_open_youtube_success",
+            type: "function",
+            function: {
+              name: "android_open_app_by_name",
+              arguments: "{\"appName\":\"YouTube\"}",
+            },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_open_youtube_success",
+          content: "{\"ok\":true,\"label\":\"Opened YouTube\"}",
+        },
+        { role: "user", content: "Open YouTube again." },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_open_youtube_failure",
+            type: "function",
+            function: {
+              name: "android_open_app_by_name",
+              arguments: "{\"appName\":\"YouTube\"}",
+            },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_open_youtube_failure",
+          content: "{\"ok\":false,\"error\":\"Failed to open YouTube\"}",
+        },
+        { role: "user", content: "Did you open YouTube?" },
+      ],
+      tools: [openAppTool],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "I have not completed that yet.");
+    console.log("OK: Android Local Gemma blocks stale confirmed completion follow-ups");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaEmitsLocalHarnessToolCalls() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -6176,6 +6254,7 @@ async function main() {
   await testAndroidLocalGemmaSkipsCapabilityProbeWithoutAndroidTools();
   await testAndroidLocalGemmaAllowsConfirmedCompletionClaims();
   await testAndroidLocalGemmaAllowsRecentConfirmedCompletionFollowups();
+  await testAndroidLocalGemmaBlocksStaleConfirmedCompletionFollowups();
   await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
   await testAndroidLocalGemmaNormalizesDaemonAppAliases();
   await testAndroidLocalGemmaNormalizesDirectDaemonActionToolNames();
