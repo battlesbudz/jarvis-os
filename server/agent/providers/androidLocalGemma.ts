@@ -1053,14 +1053,21 @@ async function localRuntimeCapabilityState(
   };
   const hasOpenAppTool = hasFunctionTool(tools, "android_open_app_by_name");
   const hasYoutubeSearchTool = hasFunctionTool(tools, "android_youtube_search");
+  const requestText = latestUserText(params.messages);
+  const hasYoutubeSearchIntent = hasYoutubeSearchTool && !!youtubeSearchQueryFromRequest(requestText);
   const androidChecks: Array<[LocalRuntimeCapabilityName, RuntimeCapabilityAndroidAction, boolean]> = [
     ["notifications", "android_read_notifications", hasFunctionTool(tools, "android_read_notifications")],
     ["screen", "android_read_screen", hasFunctionTool(tools, "android_read_screen_context")],
     ["screenshot", "android_capture_screen", hasFunctionTool(tools, "android_capture_screen")],
   ];
   const appControlActions: RuntimeCapabilityAndroidAction[] = [];
-  if (hasOpenAppTool) appControlActions.push("android_open_app");
-  if (hasYoutubeSearchTool) appControlActions.push("android_browse");
+  if (hasYoutubeSearchIntent) {
+    appControlActions.push("android_browse");
+  } else if (hasOpenAppTool) {
+    appControlActions.push("android_open_app");
+  } else if (hasYoutubeSearchTool) {
+    appControlActions.push("android_browse");
+  }
   if (!androidChecks.some(([, , toolPresent]) => toolPresent) && appControlActions.length === 0) return state;
 
   const userId = params.userId?.trim();
@@ -1078,7 +1085,7 @@ async function localRuntimeCapabilityState(
     }
     if (appControlActions.length > 0) {
       const preflights = appControlActions.map((action) => preflightRuntimeCapabilityAction(capabilityState, action));
-      state.app_control = preflights.some((preflight) => preflight.ok) ? "available" : "unavailable";
+      state.app_control = preflights.every((preflight) => preflight.ok) ? "available" : "unavailable";
     }
   } catch {
     return state;
