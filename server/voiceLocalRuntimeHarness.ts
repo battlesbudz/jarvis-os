@@ -176,7 +176,7 @@ function capabilityToolName(capability: LocalVoiceCapability): LocalVoiceToolNam
 function inferRequestedAppName(transcript: string): string {
   const matches = [
     ...transcript.matchAll(
-      /\b(?:open|launch|start)\s+(?:the\s+)?([a-z0-9][a-z0-9 ._-]*?)(?=(?:\s+instead|\s+please|\s+for me|[.!?;,]|$))/gi,
+      /\b(?:open|launch|start)\s+(?:the\s+)?([a-z0-9][a-z0-9 ._-]*?)(?=(?:\s+(?:but|and|then)\s+(?:open|launch|start)\b|\s+instead|\s+please|\s+for me|[.!?;,]|$))/gi,
     ),
   ];
 
@@ -184,7 +184,7 @@ function inferRequestedAppName(transcript: string): string {
     const match = matches[index];
     const matchIndex = match.index ?? 0;
     const prefix = transcript.slice(Math.max(0, matchIndex - 48), matchIndex);
-    const clausePrefix = prefix.split(/[.!?;,]/).at(-1) ?? prefix;
+    const clausePrefix = prefix.split(/[.!?;,]|\b(?:but|and|then)\b/i).at(-1) ?? prefix;
     if (/\b(?:don't|dont|do not|never|stop|didn't|did not|not|no)\b/i.test(clausePrefix)) {
       continue;
     }

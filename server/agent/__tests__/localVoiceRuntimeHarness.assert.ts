@@ -126,6 +126,23 @@ async function testAppControlFalseDenialUsesActiveOpenRequest() {
   console.log("OK: app-control false-denial recovery uses the active open request");
 }
 
+async function testAppControlFalseDenialUsesPunctuationFreeCorrection() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Don't open YouTube but open Chrome",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot open apps." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "Chrome", action: "open", success: true }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.androidExecutions[0].ok, true);
+  assert.equal(result.androidExecutions[0].label, "Opened Chrome");
+  assert.equal(result.chatOutput, result.ttsOutput);
+  console.log("OK: app-control false-denial recovery handles punctuation-free corrections");
+}
+
 async function testAppControlFalseDenialBlocksNegatedOpenRequest() {
   for (const transcript of ["Don't open YouTube", "Could you not open YouTube?"]) {
     const result = await runLocalVoiceRuntimeHarnessTurn({
@@ -306,6 +323,7 @@ async function main() {
   await testMismatchedAppControlFixtureFails();
   await testAppControlFalseDenialRecoveryKeepsRequestedApp();
   await testAppControlFalseDenialUsesActiveOpenRequest();
+  await testAppControlFalseDenialUsesPunctuationFreeCorrection();
   await testAppControlFalseDenialBlocksNegatedOpenRequest();
   await testScriptedFakeLocalGemmaVariants();
   testFakeAndroidRuntimeEventCoverage();
