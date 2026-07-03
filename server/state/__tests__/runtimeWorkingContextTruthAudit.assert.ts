@@ -242,6 +242,13 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(genericAppDenial.status, "blocked_false_denial");
 
+  const openSourceDenial = auditLocalRuntimeResponse({
+    userMessage: "Can you open-source this repo?",
+    responseText: "I can't open-source this repo.",
+    capabilityState: { app_control: "available" },
+  });
+  assert.equal(openSourceDenial.status, "allow");
+
   const unavailableDenial = auditLocalRuntimeResponse({
     userMessage: "Read my notifications.",
     responseText: "I cannot read notifications on this device.",
@@ -272,6 +279,14 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(falseCompletion.status, "blocked_false_completion");
   assert.equal(falseCompletion.text, "I have not completed that yet.");
+
+  const falseLaunchCompletion = auditLocalRuntimeResponse({
+    userMessage: "Launch Gmail.",
+    responseText: "I launched Gmail.",
+    capabilityState: { app_control: "available" },
+    actionResults: [],
+  });
+  assert.equal(falseLaunchCompletion.status, "blocked_false_completion");
 
   const falseUrlCompletion = auditLocalRuntimeResponse({
     userMessage: "Open https://example.com.",

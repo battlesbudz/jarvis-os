@@ -11,6 +11,11 @@ assert.match(
 );
 assert.match(
   source,
+  /ne\(schema\.memoryWorkingContext\.scopeType, "local_runtime_observation"\)/,
+  "dream corpus should exclude ephemeral local runtime observations",
+);
+assert.match(
+  source,
   /Active working context \(temporary, not durable memory\)/,
   "working context should be explicitly labeled temporary in the dream corpus",
 );
