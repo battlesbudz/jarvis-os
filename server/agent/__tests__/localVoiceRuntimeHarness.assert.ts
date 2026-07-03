@@ -5,6 +5,7 @@ import {
   ScriptedFakeLocalGemmaProvider,
   normalizeLocalVoiceToolName,
   runLocalVoiceRuntimeHarnessTurn,
+  type LocalVoiceCapability,
   type LocalVoiceAndroidEvent,
   type LocalVoiceToolName,
   type ScriptedLocalGemmaStep,
@@ -160,6 +161,68 @@ async function testAppControlFalseDenialBlocksNegatedOpenRequest() {
     assert.equal(result.chatOutput, result.ttsOutput, transcript);
   }
   console.log("OK: app-control false-denial recovery blocks negated open requests");
+}
+
+async function testFalseDenialRecoveryBlocksNegatedNonAppCapabilities() {
+  const cases: Array<{
+    name: string;
+    transcript: string;
+    capability: LocalVoiceCapability;
+    androidEvents: LocalVoiceAndroidEvent[];
+  }> = [
+    {
+      name: "notifications",
+      transcript: "Don't read my notifications",
+      capability: "notifications",
+      androidEvents: notificationEvents,
+    },
+    {
+      name: "screen",
+      transcript: "Do not read my screen",
+      capability: "screen",
+      androidEvents: [{ type: "screen", activeApp: "Settings", title: "Settings", text: "Device control" }],
+    },
+    {
+      name: "clipboard",
+      transcript: "Please don't copy that to my clipboard",
+      capability: "clipboard",
+      androidEvents: [{ type: "clipboard", text: "diagnostic details" }],
+    },
+    {
+      name: "approval",
+      transcript: "Don't request approval for deleting anything",
+      capability: "approval",
+      androidEvents: [{ type: "approval", action: "delete file", approved: true }],
+    },
+    {
+      name: "scheduler",
+      transcript: "Don't check scheduler jobs",
+      capability: "scheduler",
+      androidEvents: [{ type: "scheduler", activeJobs: ["voice call"] }],
+    },
+    {
+      name: "service",
+      transcript: "Don't check daemon status",
+      capability: "service",
+      androidEvents: [{ type: "crash", service: "android-daemon", message: "service restarted" }],
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript: testCase.transcript,
+      gemma: new ScriptedFakeLocalGemmaProvider([
+        { type: "false_denial", capability: testCase.capability, text: "I cannot do that." },
+      ]),
+      androidEvents: testCase.androidEvents,
+    });
+
+    assert.equal(result.diagnostics.outcome, "tool_recovery_blocked", testCase.name);
+    assert.equal(result.androidExecutions.length, 0, testCase.name);
+    assert.equal(result.chatOutput, result.ttsOutput, testCase.name);
+  }
+  console.log("OK: false-denial recovery blocks negated non-app capabilities");
 }
 
 async function testScriptedFakeLocalGemmaVariants() {
@@ -325,6 +388,7 @@ async function main() {
   await testAppControlFalseDenialUsesActiveOpenRequest();
   await testAppControlFalseDenialUsesPunctuationFreeCorrection();
   await testAppControlFalseDenialBlocksNegatedOpenRequest();
+  await testFalseDenialRecoveryBlocksNegatedNonAppCapabilities();
   await testScriptedFakeLocalGemmaVariants();
   testFakeAndroidRuntimeEventCoverage();
   await testLocalVoiceBlocksCloudAndSecondaryModels();

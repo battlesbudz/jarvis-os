@@ -209,6 +209,41 @@ function argsForRecoveredCapability(
   return appName ? { appName } : {};
 }
 
+function capabilityRequestPattern(capability: LocalVoiceCapability): RegExp {
+  switch (capability) {
+    case "notifications":
+      return /\bnotifications?\b/i;
+    case "screen":
+      return /\b(?:screen|screenshot|screen grab|display)\b/i;
+    case "app_control":
+      return /\b(?:open|launch|start)\b/i;
+    case "clipboard":
+      return /\b(?:clipboard|copy)\b/i;
+    case "approval":
+      return /\b(?:approve|approval|confirm|confirmation)\b/i;
+    case "scheduler":
+      return /\b(?:scheduler|jobs?|tasks?)\b/i;
+    case "service":
+      return /\b(?:service|daemon|runtime|crash|status)\b/i;
+  }
+}
+
+function hasNegatedCapabilityRequest(capability: LocalVoiceCapability, transcript: string): boolean {
+  const requestPattern = capabilityRequestPattern(capability);
+  const clauses = compactText(transcript)
+    .split(/[.!?;,]|\b(?:but|and|then)\b/i)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+
+  for (let index = clauses.length - 1; index >= 0; index -= 1) {
+    const clause = clauses[index];
+    if (!requestPattern.test(clause)) continue;
+    return /\b(?:don't|dont|do not|never|stop|didn't|did not|not|no)\b/i.test(clause);
+  }
+
+  return false;
+}
+
 function contextPacketFromEvents(events: LocalVoiceAndroidEvent[]): string {
   const eventTypes = [...new Set(events.map((event) => event.type))].join(", ") || "none";
   return [
@@ -451,7 +486,10 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
   } else if (modelOutput.type === "false_denial") {
     const recoveredToolName = capabilityToolName(modelOutput.capability);
     const recoveredArgs = argsForRecoveredCapability(modelOutput.capability, transcript, input.androidEvents ?? []);
-    if (recoveredToolName === "android_open_app_by_name" && !compactText(recoveredArgs.appName)) {
+    const recoveryBlocked = recoveredToolName === "android_open_app_by_name"
+      ? !compactText(recoveredArgs.appName)
+      : hasNegatedCapabilityRequest(modelOutput.capability, transcript);
+    if (recoveryBlocked) {
       canonicalResponse = finalResponseForModelProblem("tool_recovery_blocked");
       diagnostics = {
         outcome: "tool_recovery_blocked",
