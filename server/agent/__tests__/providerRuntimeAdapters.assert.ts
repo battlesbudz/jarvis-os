@@ -1936,6 +1936,45 @@ async function testAndroidLocalGemmaRejectsPhoneUrlToolForUrlToolConfirmationTur
   }
 }
 
+async function testAndroidLocalGemmaDoesNotThrowPhoneUrlToolForInformationalDeepLinks() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "android_open_phone_url", arguments: { url: "geo:0,0?q=coffee" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "What is geo:0,0?q=coffee?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_phone_url",
+          description: "Open a URL on the Android phone.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.equal(result.textContent, "Phone Gemma did not return a usable local answer for that request.");
+    console.log("OK: Android Local Gemma does not throw phone URL tools for informational deep links");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaCompactsLocalToolPrompt() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   const largeSchema = {
@@ -6270,6 +6309,7 @@ async function main() {
   await testAndroidLocalGemmaKeepsToolProtocolForConfirmationTurns();
   await testAndroidLocalGemmaKeepsToolProtocolForUrlToolConfirmationTurns();
   await testAndroidLocalGemmaRejectsPhoneUrlToolForUrlToolConfirmationTurns();
+  await testAndroidLocalGemmaDoesNotThrowPhoneUrlToolForInformationalDeepLinks();
   await testAndroidLocalGemmaCompactsLocalToolPrompt();
   await testAndroidLocalGemmaHonorsReducedToolPromptBudget();
   await testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming();

@@ -2308,7 +2308,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
             yield { type: "finish", reason: "stop" };
             return;
           }
-          if (!looksLikeLocalToolRequest(requestText) && !looksLikePhoneUrlOpenIntent(requestText)) {
+          if (!looksLikeLocalToolRequest(requestText) && !looksLikePhoneUrlActionRequest(requestText)) {
             yield { type: "text", delta: "Phone Gemma did not return a usable local answer for that request." };
             yield { type: "finish", reason: "stop" };
             return;
