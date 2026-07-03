@@ -102,11 +102,18 @@ function deniedAvailableCapability(
   const denial = /\b(?:i\s+)?(?:can(?:not|'t)|do\s+not\s+have\s+access|unable\s+to|not\s+able\s+to)\b/i;
   if (!denial.test(text)) return null;
 
+  if (
+    capabilityAvailable(capabilities, "app_control") &&
+    /\bstart\b(?![-\s]+source\b)\s+(?:the\s+)?[a-z0-9][a-z0-9 ._'-]{1,60}?(?:\s+(?:app|application)|\s+on\s+(?:your\s+phone|your\s+device|my\s+phone|the\s+device))\b/i.test(text)
+  ) {
+    return "app_control";
+  }
+
   const checks: Array<[LocalRuntimeCapabilityName, RegExp]> = [
     ["notifications", /\bnotifications?\b/i],
     ["screen", /\b(?:screen|display)\b/i],
     ["screenshot", /\b(?:screenshot|screen\s+shot|screen\s+grab|capture)\b/i],
-    ["app_control", /\b(?:open|launch|start)\b(?![-\s]+source\b)(?:\s+(?:the\s+)?[a-z0-9][a-z0-9 ._'-]{1,60})?/i],
+    ["app_control", /\b(?:open|launch)\b(?![-\s]+source\b)(?:\s+(?:the\s+)?[a-z0-9][a-z0-9 ._'-]{1,60})?/i],
     ["clipboard", /\bclipboard\b/i],
     ["memory", /\b(?:memory|remember|know about you|who you are|who i am)\b/i],
   ];

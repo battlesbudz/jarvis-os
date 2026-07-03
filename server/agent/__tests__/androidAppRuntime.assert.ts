@@ -18,6 +18,7 @@ async function main() {
     explainUnsupportedPhoneRuntimeAction,
     runAndroidOpenAppByName,
     runAndroidReadNotifications,
+    runAndroidYoutubeSearch,
     resolveAndroidAppName,
     summarizeAndroidNotificationDetail,
   } = await import("../tools/androidAppRuntime");
@@ -233,6 +234,50 @@ async function main() {
     assert.equal(accessibilityObservations.length, 1);
     assert.equal(accessibilityObservations[0]?.kind, "notifications");
     assert.match(accessibilityObservations[0]?.detail ?? "", /Codex/);
+
+    const youtubeOps: string[] = [];
+    const youtubeObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      recordLocalRuntimeObservation: async (input) => {
+        youtubeObservations.push(input);
+        return {} as never;
+      },
+      sendDaemonOp: async (_userId, op) => {
+        youtubeOps.push(op.type);
+        if (op.type === "android_list_apps") {
+          return {
+            ok: true,
+            data: { apps: [{ label: "YouTube", packageName: "com.google.android.youtube" }] },
+          };
+        }
+        if (op.type === "android_browse") {
+          assert.match(op.url, /^vnd\.youtube:\/\/results\?search_query=/);
+          return { ok: true, data: { opened: op.url } };
+        }
+        if (op.type === "android_read_screen") {
+          return {
+            ok: true,
+            data: {
+              visibleText: [
+                "YouTube",
+                "AI videos",
+                "Alex Hormozi interview",
+              ],
+            },
+          };
+        }
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const youtubeResult = await runAndroidYoutubeSearch({ query: "AI videos" }, "user-phone");
+    assert.equal(youtubeResult.ok, true);
+    assert.deepEqual(youtubeOps, ["android_list_apps", "android_browse", "android_read_screen"]);
+    assert.equal(youtubeObservations.length, 1);
+    assert.equal(youtubeObservations[0]?.kind, "search_result");
+    assert.match(youtubeObservations[0]?.summary ?? "", /YouTube search: AI videos/);
+    assert.match(youtubeObservations[0]?.detail ?? "", /Alex Hormozi/);
   } finally {
     _setAndroidAppRuntimeDepsForTesting(null);
     _setRuntimeCapabilityDepsForTesting(null);

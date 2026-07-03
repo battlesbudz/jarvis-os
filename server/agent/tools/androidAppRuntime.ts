@@ -733,7 +733,7 @@ export async function runAndroidYoutubeSearch(args: ToolArgs, userId: string): P
 
   await new Promise((resolve) => setTimeout(resolve, 2200));
   const screenContext = await readScreenIfAllowed(userId);
-  return {
+  const outcome = {
     ok: true,
     label: `YouTube search: ${query.slice(0, 48)}`,
     detail: {
@@ -745,6 +745,8 @@ export async function runAndroidYoutubeSearch(args: ToolArgs, userId: string): P
       ...screenContext,
     },
   };
+  await recordAndroidOutcomeObservation(userId, "search_result", outcome);
+  return outcome;
 }
 
 export async function runAndroidOpenPhoneUrl(args: ToolArgs, userId: string): Promise<RuntimeOutcome> {

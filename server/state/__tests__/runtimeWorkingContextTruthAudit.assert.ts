@@ -242,6 +242,20 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(genericAppDenial.status, "blocked_false_denial");
 
+  const startAppDenial = auditLocalRuntimeResponse({
+    userMessage: "Start Gmail.",
+    responseText: "I can't start Gmail app.",
+    capabilityState: { app_control: "available" },
+  });
+  assert.equal(startAppDenial.status, "blocked_false_denial");
+
+  const startClarificationDenial = auditLocalRuntimeResponse({
+    userMessage: "Can you continue?",
+    responseText: "I can't start until you pick an account.",
+    capabilityState: { app_control: "available" },
+  });
+  assert.equal(startClarificationDenial.status, "allow");
+
   const openSourceDenial = auditLocalRuntimeResponse({
     userMessage: "Can you open-source this repo?",
     responseText: "I can't open-source this repo.",
