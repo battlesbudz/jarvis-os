@@ -368,6 +368,10 @@ function looksLikeUrlToolRequest(text: string): boolean {
   return /\b(?:https?:\/\/|www\.|youtu\.be\/|youtube\.com\/)/i.test(text);
 }
 
+function looksLikePhoneUrlOpenIntent(text: string): boolean {
+  return /\b(?:[a-z][a-z0-9+.-]*:\/\/|www\.|youtu\.be\/|youtube\.com\/)/i.test(text);
+}
+
 function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
   const latest = latestUserText(messages).trim();
   if (!looksLikeApprovalConfirmation(latest)) return false;
@@ -1053,18 +1057,22 @@ async function localRuntimeCapabilityState(
   };
   const hasOpenAppTool = hasFunctionTool(tools, "android_open_app_by_name");
   const hasYoutubeSearchTool = hasFunctionTool(tools, "android_youtube_search");
+  const hasOpenPhoneUrlTool = hasFunctionTool(tools, "android_open_phone_url");
   const requestText = latestUserText(params.messages);
   const hasYoutubeSearchIntent = hasYoutubeSearchTool && !!youtubeSearchQueryFromRequest(requestText);
+  const hasUrlOpenIntent = hasOpenPhoneUrlTool && looksLikePhoneUrlOpenIntent(requestText);
   const androidChecks: Array<[LocalRuntimeCapabilityName, RuntimeCapabilityAndroidAction, boolean]> = [
     ["notifications", "android_read_notifications", hasFunctionTool(tools, "android_read_notifications")],
     ["screen", "android_read_screen", hasFunctionTool(tools, "android_read_screen_context")],
     ["screenshot", "android_capture_screen", hasFunctionTool(tools, "android_capture_screen")],
   ];
   const appControlActions: RuntimeCapabilityAndroidAction[] = [];
-  if (hasYoutubeSearchIntent) {
+  if (hasYoutubeSearchIntent || hasUrlOpenIntent) {
     appControlActions.push("android_browse");
   } else if (hasOpenAppTool) {
     appControlActions.push("android_open_app");
+  } else if (hasOpenPhoneUrlTool) {
+    appControlActions.push("android_browse");
   } else if (hasYoutubeSearchTool) {
     appControlActions.push("android_browse");
   }

@@ -788,6 +788,49 @@ async function testAndroidLocalGemmaChecksYoutubeSearchAgainstBrowseCapability()
   }
 }
 
+async function testAndroidLocalGemmaChecksPhoneUrlAgainstBrowseCapability() {
+  const checkedAt = "2026-07-03T05:26:00.000Z";
+  const disabled = runtimeCapabilityCheck("disabled", checkedAt);
+  _setRuntimeCapabilityDepsForTesting({
+    now: () => new Date(checkedAt),
+    loadConnectedAccounts: async () => [],
+    loadDeviceControlState: async () => androidDeviceCapabilityState(checkedAt, {
+      browse: disabled,
+    }),
+  });
+
+  try {
+    const capabilityState = await _localRuntimeCapabilityStateForTesting({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open https://example.com." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_app_by_name",
+          description: "Open a phone app by name.",
+          parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "android_open_phone_url",
+          description: "Open a URL on the Android phone.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    });
+
+    assert.equal(capabilityState.app_control, "unavailable");
+    console.log("OK: Android Local Gemma audits URL opens against browse capability");
+  } finally {
+    _setRuntimeCapabilityDepsForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaConfirmsLegacyDaemonBrowseCompletion() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -5797,6 +5840,7 @@ async function main() {
   await testAndroidLocalGemmaAuditHonorsToolChoiceNone();
   await testAndroidLocalGemmaAuditsOpenAppWhenBrowseIsUnavailable();
   await testAndroidLocalGemmaChecksYoutubeSearchAgainstBrowseCapability();
+  await testAndroidLocalGemmaChecksPhoneUrlAgainstBrowseCapability();
   await testAndroidLocalGemmaConfirmsLegacyDaemonBrowseCompletion();
   await testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit();
   await testAndroidLocalGemmaSkipsCapabilityProbeWithoutAndroidTools();
