@@ -382,7 +382,7 @@ function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletion
     assistantIndex = index;
     const text = textFromContent(message.content);
     if (!/\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead|proceed)\b/i.test(text)) return false;
-    if (looksLikeLocalToolRequest(text) || looksLikeUrlToolRequest(text)) return true;
+    if (looksLikeLocalToolRequest(text) || looksLikePhoneUrlOpenIntent(text)) return true;
     break;
   }
 
@@ -394,7 +394,7 @@ function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletion
     if (message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return true;
     if (message.role === "user") {
       const text = textFromContent(message.content);
-      if (looksLikeLocalToolRequest(text) || looksLikeUrlToolRequest(text)) return true;
+      if (looksLikeLocalToolRequest(text) || looksLikePhoneUrlOpenIntent(text)) return true;
     }
   }
   return false;
@@ -416,7 +416,7 @@ function shouldUseLocalToolProtocol(params: ProviderQueryParams): boolean {
   const latest = latestUserText(params.messages);
   return hasActiveToolContinuation(params.messages) ||
     looksLikeLocalToolRequest(latest) ||
-    looksLikeUrlToolRequest(latest) ||
+    looksLikePhoneUrlOpenIntent(latest) ||
     (hasFunctionTool(params.tools, "memory_save") && looksLikeMemorySaveRequest(latest)) ||
     (hasFunctionTool(params.tools, "memory_search") && looksLikeMemoryLookupRequest(latest)) ||
     isToolConfirmationTurn(params.messages);
@@ -1609,6 +1609,7 @@ function isExplicitAndroidRuntimeActionRequest(text: string): boolean {
     return wantsNotificationReadRequest(requestText);
   }
   return (
+    looksLikePhoneUrlOpenIntent(requestText) ||
     wantsNotificationReadRequest(requestText) ||
     wantsScreenReadContextRequest(requestText) ||
     /^(?:hey\s+jarvis[, ]*)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:open|launch|start|take|capture|screenshot|read|show|list|check|view|search|find|look\s+up|tap|click|press|swipe|scroll|type|go\s+to)\b/i.test(requestText)
@@ -2212,7 +2213,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
             yield { type: "finish", reason: "stop" };
             return;
           }
-          if (!looksLikeLocalToolRequest(requestText) && !looksLikeUrlToolRequest(requestText)) {
+          if (!looksLikeLocalToolRequest(requestText) && !looksLikePhoneUrlOpenIntent(requestText)) {
             yield { type: "text", delta: "Phone Gemma did not return a usable local answer for that request." };
             yield { type: "finish", reason: "stop" };
             return;
