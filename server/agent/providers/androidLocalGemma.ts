@@ -1051,15 +1051,16 @@ async function localRuntimeCapabilityState(
     clipboard: "unknown",
     memory: hasFunctionTool(tools, "memory_search") || hasFunctionTool(tools, "memory_get") ? "available" : "unknown",
   };
-  const userId = params.userId?.trim();
-  if (!userId) return state;
-
   const androidChecks: Array<[LocalRuntimeCapabilityName, RuntimeCapabilityAndroidAction, boolean]> = [
     ["notifications", "android_read_notifications", hasFunctionTool(tools, "android_read_notifications")],
     ["screen", "android_read_screen", hasFunctionTool(tools, "android_read_screen_context")],
     ["screenshot", "android_capture_screen", hasFunctionTool(tools, "android_capture_screen")],
     ["app_control", "android_open_app", hasFunctionTool(tools, "android_open_app_by_name") || hasFunctionTool(tools, "android_youtube_search")],
   ];
+  if (!androidChecks.some(([, , toolPresent]) => toolPresent)) return state;
+
+  const userId = params.userId?.trim();
+  if (!userId) return state;
 
   try {
     const capabilityState = await buildRuntimeCapabilityState({
@@ -1143,11 +1144,31 @@ function localRuntimeActionResults(
   return results;
 }
 
-function localRuntimeAuditEvidence(runtimeStateCardPrompt: string): string[] {
-  return runtimeStateCardPrompt
+function currentTurnToolEvidence(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): string[] {
+  let currentTurnStart = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      currentTurnStart = index + 1;
+      break;
+    }
+  }
+
+  return messages.slice(currentTurnStart)
+    .filter((message) => message.role === "tool")
+    .map((message) => toolMessageTextContent(message.content))
+    .map((content) => content.trim())
+    .filter(Boolean);
+}
+
+function localRuntimeAuditEvidence(
+  runtimeStateCardPrompt: string,
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): string[] {
+  const stateCardEvidence = runtimeStateCardPrompt
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+  return [...stateCardEvidence, ...currentTurnToolEvidence(messages)];
 }
 
 async function auditedLocalRuntimeFinalText(
@@ -1161,7 +1182,7 @@ async function auditedLocalRuntimeFinalText(
     responseText: text,
     capabilityState: await localRuntimeCapabilityState(params),
     actionResults: localRuntimeActionResults(params.messages),
-    evidence: localRuntimeAuditEvidence(options.runtimeStateCardPrompt),
+    evidence: localRuntimeAuditEvidence(options.runtimeStateCardPrompt, params.messages),
   });
   return audit.text;
 }

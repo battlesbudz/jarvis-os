@@ -665,6 +665,96 @@ async function testAndroidLocalGemmaDoesNotAuditUnavailableNotificationDenials()
   }
 }
 
+async function testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: { text: "Your name is Justin.", finishReason: "stop" },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Who am I?" },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "memory-call-1",
+            type: "function",
+            function: {
+              name: "memory_search",
+              arguments: JSON.stringify({ query: "user identity preferred name" }),
+            },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "memory-call-1",
+          content: "Profile result: Preferred name: Justin.",
+        },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "memory_search",
+          description: "Search MemoryOS.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "Your name is Justin.");
+    console.log("OK: Android Local Gemma uses current-turn tool results as identity audit evidence");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaSkipsCapabilityProbeWithoutAndroidTools() {
+  _setRuntimeCapabilityDepsForTesting({
+    loadConnectedAccounts: async () => {
+      throw new Error("Capability state should not load accounts without Android audit tools.");
+    },
+    loadDeviceControlState: async () => {
+      throw new Error("Capability state should not probe Android without Android audit tools.");
+    },
+  });
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: { text: "Plain local answer.", finishReason: "stop" },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Say hi." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "memory_search",
+          description: "Search MemoryOS.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "Plain local answer.");
+    console.log("OK: Android Local Gemma skips Android capability probing when no Android audit tool is present");
+  } finally {
+    _setRuntimeCapabilityDepsForTesting(null);
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaAllowsConfirmedCompletionClaims() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -5531,6 +5621,8 @@ async function main() {
   await testAndroidLocalGemmaStateCardOmitsDisabledTools();
   await testAndroidLocalGemmaAuditsFalseNotificationDenials();
   await testAndroidLocalGemmaDoesNotAuditUnavailableNotificationDenials();
+  await testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit();
+  await testAndroidLocalGemmaSkipsCapabilityProbeWithoutAndroidTools();
   await testAndroidLocalGemmaAllowsConfirmedCompletionClaims();
   await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
   await testAndroidLocalGemmaNormalizesDaemonAppAliases();
