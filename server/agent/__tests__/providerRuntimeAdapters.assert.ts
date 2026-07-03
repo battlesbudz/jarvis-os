@@ -1725,6 +1725,13 @@ async function testAndroidLocalGemmaKeepsToolProtocolForUrlToolConfirmationTurns
           description: "Fetch a transcript for a YouTube URL.",
           parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
         },
+      }, {
+        type: "function",
+        function: {
+          name: "android_open_phone_url",
+          description: "Open a URL on the Android phone.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
       }],
       toolChoice: "auto",
       maxCompletionTokens: 128,
@@ -1736,7 +1743,58 @@ async function testAndroidLocalGemmaKeepsToolProtocolForUrlToolConfirmationTurns
     assert.equal(result.toolCallList[0].function.name, "get_youtube_transcript");
     assert.match(requests[0].op.prompt, /Available tools/);
     assert.match(requests[0].op.prompt, /get_youtube_transcript/);
+    assert.doesNotMatch(requests[0].op.prompt, /android_open_phone_url/);
     console.log("OK: Android Local Gemma keeps tool protocol for URL-tool confirmations");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaRejectsPhoneUrlToolForUrlToolConfirmationTurns() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "android_open_phone_url", arguments: { url: "https://youtu.be/example" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Can you summarize this video https://youtu.be/example?" },
+        { role: "assistant", content: "Should I fetch the transcript from https://youtu.be/example?" },
+        { role: "user", content: "yes" },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "get_youtube_transcript",
+          description: "Fetch a transcript for a YouTube URL.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "android_open_phone_url",
+          description: "Open a URL on the Android phone.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.match(result.textContent, /did not return a usable local answer/);
+    console.log("OK: Android Local Gemma rejects phone URL tools for URL-tool confirmations");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -6073,6 +6131,7 @@ async function main() {
   await testAndroidLocalGemmaUsesToolProtocolForUrlTools();
   await testAndroidLocalGemmaKeepsToolProtocolForConfirmationTurns();
   await testAndroidLocalGemmaKeepsToolProtocolForUrlToolConfirmationTurns();
+  await testAndroidLocalGemmaRejectsPhoneUrlToolForUrlToolConfirmationTurns();
   await testAndroidLocalGemmaCompactsLocalToolPrompt();
   await testAndroidLocalGemmaHonorsReducedToolPromptBudget();
   await testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming();
