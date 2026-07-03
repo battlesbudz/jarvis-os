@@ -825,6 +825,30 @@ async function testAndroidLocalGemmaChecksPhoneUrlAgainstBrowseCapability() {
     });
 
     assert.equal(capabilityState.app_control, "unavailable");
+    const deepLinkCapabilityState = await _localRuntimeCapabilityStateForTesting({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open geo:0,0?q=coffee." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_app_by_name",
+          description: "Open a phone app by name.",
+          parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "android_open_phone_url",
+          description: "Open a URL on the Android phone.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    });
+    assert.equal(deepLinkCapabilityState.app_control, "unavailable");
     console.log("OK: Android Local Gemma audits URL opens against browse capability");
   } finally {
     _setRuntimeCapabilityDepsForTesting(null);

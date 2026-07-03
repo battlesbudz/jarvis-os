@@ -183,8 +183,8 @@ async function testDefaultCompactionClaimsExpiredContextBeforeInsert(): Promise<
   );
   assert.match(
     source,
-    /expireNonCompactingWorkingContext[\s\S]*SET state = 'stale'[\s\S]*scope_type = ANY\(\$\{scopeTypes\}::varchar\[\]\)/,
-    "default working context compaction should expire local runtime observations instead of preserving raw active rows",
+    /expireNonCompactingWorkingContext[\s\S]*SET state = 'stale',[\s\S]*content = ''[\s\S]*scope_type = ANY\(\$\{scopeTypes\}::varchar\[\]\)/,
+    "default working context compaction should scrub expired local runtime observations instead of preserving raw active rows",
   );
   assert.match(
     source,

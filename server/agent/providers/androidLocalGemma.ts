@@ -369,7 +369,8 @@ function looksLikeUrlToolRequest(text: string): boolean {
 }
 
 function looksLikePhoneUrlOpenIntent(text: string): boolean {
-  return /\b(?:[a-z][a-z0-9+.-]*:\/\/|www\.|youtu\.be\/|youtube\.com\/)/i.test(text);
+  return /\b(?:https?:\/\/|[a-z][a-z0-9+.-]*:\/\/|www\.|youtu\.be\/|youtube\.com\/)/i.test(text) ||
+    /\b(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):[^\s<>"']+/i.test(text);
 }
 
 function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {

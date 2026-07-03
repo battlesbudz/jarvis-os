@@ -883,6 +883,7 @@ export const defaultWorkingContextDeps: WorkingContextDeps = {
     const result = await db.execute<{ id: string }>(sql`
       UPDATE memory_working_context
       SET state = 'stale',
+          content = '',
           updated_at = ${now}
       WHERE expires_at <= ${now}
         AND scope_type = ANY(${scopeTypes}::varchar[])
