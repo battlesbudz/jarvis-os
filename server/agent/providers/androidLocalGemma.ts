@@ -372,6 +372,23 @@ function looksLikePhoneUrlOpenIntent(text: string): boolean {
   return urlFromText(text) !== null;
 }
 
+function isBarePhoneUrlRequest(text: string): boolean {
+  const rawUrl = rawUrlFromText(text);
+  if (!rawUrl) return false;
+  const remaining = text
+    .replace(rawUrl, "")
+    .replace(/^[\s"'`([{<,.;:!?-]+|[\s"'`\])}>,.;:!?-]+$/g, "")
+    .trim();
+  return remaining.length === 0;
+}
+
+function looksLikePhoneUrlActionRequest(text: string): boolean {
+  if (!looksLikePhoneUrlOpenIntent(text)) return false;
+  if (isBarePhoneUrlRequest(text)) return true;
+  return /\b(?:open|browse|visit|go\s+to|navigate(?:\s+to)?|launch|start|pull\s+up)\b/i.test(text) &&
+    !/^\s*(?:what|why|how|explain|describe|define|summari[sz]e|tell\s+me)\b/i.test(text);
+}
+
 function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
   const latest = latestUserText(messages).trim();
   if (!looksLikeApprovalConfirmation(latest)) return false;
@@ -382,7 +399,7 @@ function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletion
     assistantIndex = index;
     const text = textFromContent(message.content);
     if (!/\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead|proceed)\b/i.test(text)) return false;
-    if (looksLikeLocalToolRequest(text) || looksLikePhoneUrlOpenIntent(text)) return true;
+    if (looksLikeLocalToolRequest(text) || looksLikePhoneUrlActionRequest(text)) return true;
     break;
   }
 
@@ -394,7 +411,7 @@ function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletion
     if (message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return true;
     if (message.role === "user") {
       const text = textFromContent(message.content);
-      if (looksLikeLocalToolRequest(text) || looksLikePhoneUrlOpenIntent(text)) return true;
+      if (looksLikeLocalToolRequest(text) || looksLikePhoneUrlActionRequest(text)) return true;
     }
   }
   return false;
@@ -410,13 +427,21 @@ function looksLikeApprovalConfirmation(text: string): boolean {
     /^(?:go ahead|do it|please do|please do it|please proceed|proceed|continue)$/.test(normalized);
 }
 
+function hasUrlBackedNonPhoneTool(tools: ProviderQueryParams["tools"]): boolean {
+  return !!tools?.some((tool) => {
+    if (!isFunctionTool(tool) || tool.function.name === "android_open_phone_url") return false;
+    return /\b(?:url|youtube|transcript|browse|web|fetch)\b/i.test(`${tool.function.name} ${tool.function.description ?? ""}`);
+  });
+}
+
 function shouldUseLocalToolProtocol(params: ProviderQueryParams): boolean {
   if (!params.tools?.length || params.toolChoice === "none") return false;
   if (params.toolChoice === "required") return true;
   const latest = latestUserText(params.messages);
   return hasActiveToolContinuation(params.messages) ||
     looksLikeLocalToolRequest(latest) ||
-    looksLikePhoneUrlOpenIntent(latest) ||
+    (looksLikeUrlToolRequest(latest) && hasUrlBackedNonPhoneTool(params.tools)) ||
+    looksLikePhoneUrlActionRequest(latest) ||
     (hasFunctionTool(params.tools, "memory_save") && looksLikeMemorySaveRequest(latest)) ||
     (hasFunctionTool(params.tools, "memory_search") && looksLikeMemoryLookupRequest(latest)) ||
     isToolConfirmationTurn(params.messages);
@@ -683,10 +708,15 @@ function packageTargetNegatedInText(text: string, packageName: string): boolean 
   return false;
 }
 
-function urlFromText(text: string): string | null {
+function rawUrlFromText(text: string): string | null {
   const match = text.match(/\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+|\byoutu\.be\/[^\s<>"']+|\byoutube\.com\/[^\s<>"']+|\b(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):[^\s<>"']+/i);
   if (!match) return null;
-  const raw = match[0].replace(/[),.;]+$/g, "");
+  return match[0].replace(/[),.;]+$/g, "");
+}
+
+function urlFromText(text: string): string | null {
+  const raw = rawUrlFromText(text);
+  if (!raw) return null;
   if (/^https?:\/\//i.test(raw)) return raw;
   if (/^(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):/i.test(raw)) return raw;
   return `https://${raw}`;
@@ -1063,7 +1093,7 @@ async function localRuntimeCapabilityState(
   const hasOpenPhoneUrlTool = hasFunctionTool(tools, "android_open_phone_url");
   const requestText = latestUserText(params.messages);
   const hasYoutubeSearchIntent = hasYoutubeSearchTool && !!youtubeSearchQueryFromRequest(requestText);
-  const hasUrlOpenIntent = hasOpenPhoneUrlTool && looksLikePhoneUrlOpenIntent(requestText);
+  const hasUrlOpenIntent = hasOpenPhoneUrlTool && looksLikePhoneUrlActionRequest(requestText);
   const androidChecks: Array<[LocalRuntimeCapabilityName, RuntimeCapabilityAndroidAction, boolean]> = [
     ["notifications", "android_read_notifications", hasFunctionTool(tools, "android_read_notifications")],
     ["screen", "android_read_screen", hasFunctionTool(tools, "android_read_screen_context")],
@@ -1486,6 +1516,7 @@ function recoverAndroidRuntimeToolFromRequest(
   const url = urlFromText(recoveryText);
   if (
     url &&
+    looksLikePhoneUrlActionRequest(recoveryText) &&
     !(isYouTubeUrl(url) && shouldUseServerYoutubeResearchWorkflow(recoveryText)) &&
     hasFunctionTool(params.tools, "android_open_phone_url")
   ) {
@@ -1609,7 +1640,7 @@ function isExplicitAndroidRuntimeActionRequest(text: string): boolean {
     return wantsNotificationReadRequest(requestText);
   }
   return (
-    looksLikePhoneUrlOpenIntent(requestText) ||
+    looksLikePhoneUrlActionRequest(requestText) ||
     wantsNotificationReadRequest(requestText) ||
     wantsScreenReadContextRequest(requestText) ||
     /^(?:hey\s+jarvis[, ]*)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:open|launch|start|take|capture|screenshot|read|show|list|check|view|search|find|look\s+up|tap|click|press|swipe|scroll|type|go\s+to)\b/i.test(requestText)
@@ -1662,7 +1693,7 @@ function recoverRequiredDaemonActionFromRequest(
     args = { action: "android_read_screen" };
   } else if (wantsScreenshot && completedNavigation) {
     args = { action: "android_screenshot" };
-  } else if (url) {
+  } else if (url && looksLikePhoneUrlActionRequest(requestText)) {
     args = { action: "android_browse", url };
   } else if (/\b(?:open|launch|start)\b/i.test(requestText) && packageName) {
     args = { action: "android_open_app", packageName };
