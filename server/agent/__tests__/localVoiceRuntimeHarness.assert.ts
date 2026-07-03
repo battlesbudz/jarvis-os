@@ -127,19 +127,21 @@ async function testAppControlFalseDenialUsesActiveOpenRequest() {
 }
 
 async function testAppControlFalseDenialBlocksNegatedOpenRequest() {
-  const result = await runLocalVoiceRuntimeHarnessTurn({
-    userId: "user-local-voice",
-    transcript: "Don't open YouTube",
-    gemma: new ScriptedFakeLocalGemmaProvider([
-      { type: "false_denial", capability: "app_control", text: "I cannot open apps." },
-    ]),
-    androidEvents: [{ type: "app_control", appName: "YouTube", action: "open", success: true }],
-  });
+  for (const transcript of ["Don't open YouTube", "Could you not open YouTube?"]) {
+    const result = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript,
+      gemma: new ScriptedFakeLocalGemmaProvider([
+        { type: "false_denial", capability: "app_control", text: "I cannot open apps." },
+      ]),
+      androidEvents: [{ type: "app_control", appName: "YouTube", action: "open", success: true }],
+    });
 
-  assert.equal(result.diagnostics.outcome, "tool_recovery_blocked");
-  assert.equal(result.androidExecutions.length, 0);
-  assert.match(result.canonicalResponse, /not completed/i);
-  assert.equal(result.chatOutput, result.ttsOutput);
+    assert.equal(result.diagnostics.outcome, "tool_recovery_blocked", transcript);
+    assert.equal(result.androidExecutions.length, 0, transcript);
+    assert.match(result.canonicalResponse, /not completed/i, transcript);
+    assert.equal(result.chatOutput, result.ttsOutput, transcript);
+  }
   console.log("OK: app-control false-denial recovery blocks negated open requests");
 }
 

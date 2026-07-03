@@ -185,7 +185,7 @@ function inferRequestedAppName(transcript: string): string {
     const matchIndex = match.index ?? 0;
     const prefix = transcript.slice(Math.max(0, matchIndex - 48), matchIndex);
     const clausePrefix = prefix.split(/[.!?;,]/).at(-1) ?? prefix;
-    if (/\b(?:don't|dont|do not|never|stop|didn't|did not|no)\b/i.test(clausePrefix)) {
+    if (/\b(?:don't|dont|do not|never|stop|didn't|did not|not|no)\b/i.test(clausePrefix)) {
       continue;
     }
 
