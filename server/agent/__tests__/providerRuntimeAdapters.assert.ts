@@ -11,6 +11,51 @@ import {
   AndroidLocalGemmaProvider,
   _setAndroidLocalGemmaDaemonOpForTesting,
 } from "../providers/androidLocalGemma";
+import {
+  _setRuntimeCapabilityDepsForTesting,
+  type RuntimeCapabilityCheck,
+  type RuntimeCapabilityDeviceState,
+} from "../../state/runtimeCapability";
+
+function runtimeCapabilityCheck(status: RuntimeCapabilityCheck["status"], lastCheckedAt: string): RuntimeCapabilityCheck {
+  return {
+    status,
+    reason: status === "ready" ? "Ready for test." : "Disabled for test.",
+    lastCheckedAt,
+  };
+}
+
+function androidDeviceCapabilityState(
+  checkedAt: string,
+  overrides: Partial<RuntimeCapabilityDeviceState["android"]["permissions"]> = {},
+): RuntimeCapabilityDeviceState {
+  const ready = runtimeCapabilityCheck("ready", checkedAt);
+  return {
+    desktop: {
+      connected: false,
+      hostname: null,
+      lastSeenAt: null,
+      permissions: [],
+    },
+    android: {
+      connected: true,
+      hostname: "test-phone",
+      lastSeenAt: checkedAt,
+      activeDevice: "test-phone",
+      permissions: {
+        openApp: ready,
+        browse: ready,
+        screenCapture: ready,
+        readScreen: ready,
+        tapType: ready,
+        accessibility: ready,
+        notificationAccess: ready,
+        microphone: ready,
+        ...overrides,
+      },
+    },
+  };
+}
 
 async function testAnthropicUsesUserCredential() {
   const requests: Array<{ url: string; init: RequestInit }> = [];
@@ -539,6 +584,12 @@ async function testAndroidLocalGemmaStateCardOmitsDisabledTools() {
 }
 
 async function testAndroidLocalGemmaAuditsFalseNotificationDenials() {
+  const checkedAt = "2026-07-03T01:30:00.000Z";
+  _setRuntimeCapabilityDepsForTesting({
+    now: () => new Date(checkedAt),
+    loadConnectedAccounts: async () => [],
+    loadDeviceControlState: async () => androidDeviceCapabilityState(checkedAt),
+  });
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
     data: { text: "I cannot read notifications on this device.", finishReason: "stop" },
@@ -566,6 +617,50 @@ async function testAndroidLocalGemmaAuditsFalseNotificationDenials() {
     assert.doesNotMatch(result.textContent, /android_read_notifications|{|}/);
     console.log("OK: Android Local Gemma audits false notification denials before final output");
   } finally {
+    _setRuntimeCapabilityDepsForTesting(null);
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotAuditUnavailableNotificationDenials() {
+  const checkedAt = "2026-07-03T01:31:00.000Z";
+  const disabled = runtimeCapabilityCheck("disabled", checkedAt);
+  _setRuntimeCapabilityDepsForTesting({
+    now: () => new Date(checkedAt),
+    loadConnectedAccounts: async () => [],
+    loadDeviceControlState: async () => androidDeviceCapabilityState(checkedAt, {
+      notificationAccess: disabled,
+      readScreen: disabled,
+      tapType: disabled,
+    }),
+  });
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: { text: "I cannot read notifications on this device.", finishReason: "stop" },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Do you have notification access?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_read_notifications",
+          description: "Read current Android notifications.",
+          parameters: { type: "object", properties: {} },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "I cannot read notifications on this device.");
+    console.log("OK: Android Local Gemma does not rewrite accurate unavailable-capability denials");
+  } finally {
+    _setRuntimeCapabilityDepsForTesting(null);
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
 }
@@ -5435,6 +5530,7 @@ async function main() {
   await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
   await testAndroidLocalGemmaStateCardOmitsDisabledTools();
   await testAndroidLocalGemmaAuditsFalseNotificationDenials();
+  await testAndroidLocalGemmaDoesNotAuditUnavailableNotificationDenials();
   await testAndroidLocalGemmaAllowsConfirmedCompletionClaims();
   await testAndroidLocalGemmaEmitsLocalHarnessToolCalls();
   await testAndroidLocalGemmaNormalizesDaemonAppAliases();

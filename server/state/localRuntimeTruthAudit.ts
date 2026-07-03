@@ -137,7 +137,14 @@ function strongPersonalClaim(text: string): string | null {
 
 function evidenceSupportsClaim(claim: string, evidence: string[]): boolean {
   const normalizedClaim = claim.toLowerCase();
-  return evidence.some((item) => item.toLowerCase().includes(normalizedClaim));
+  const claimedName = claim.match(/\b(?:your\s+name\s+is|you\s+are|you're)\s+(.+)$/i)?.[1]?.trim().toLowerCase() ?? "";
+  return evidence.some((item) => {
+    const normalizedItem = item.toLowerCase();
+    if (normalizedItem.includes(normalizedClaim)) return true;
+    return !!claimedName &&
+      /\b(?:preferred\s+name|name|identity|profile|soul|user)\b/i.test(item) &&
+      normalizedItem.includes(claimedName);
+  });
 }
 
 export function localRuntimeFriendlyFailure(): string {
@@ -145,7 +152,8 @@ export function localRuntimeFriendlyFailure(): string {
 }
 
 export function auditLocalRuntimeResponse(input: LocalRuntimeTruthAuditInput): LocalRuntimeTruthAuditDecision {
-  const text = compactText(input.responseText);
+  const rawText = typeof input.responseText === "string" ? input.responseText.trim() : "";
+  const text = compactText(rawText);
   if (!text) {
     return {
       status: "blocked_unsupported_claim",
@@ -181,7 +189,7 @@ export function auditLocalRuntimeResponse(input: LocalRuntimeTruthAuditInput): L
     };
   }
 
-  return { status: "allow", text };
+  return { status: "allow", text: rawText };
 }
 
 export function repairLocalRuntimeToolCall(input: LocalRuntimeToolRepairInput): LocalRuntimeToolRepairDecision {

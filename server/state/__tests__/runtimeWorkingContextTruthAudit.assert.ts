@@ -222,6 +222,13 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   assert.equal(falseDenial.status, "blocked_false_denial");
   assert.doesNotMatch(falseDenial.text, /android_|{|}/);
 
+  const unavailableDenial = auditLocalRuntimeResponse({
+    userMessage: "Read my notifications.",
+    responseText: "I cannot read notifications on this device.",
+    capabilityState: { notifications: "unavailable" },
+  });
+  assert.equal(unavailableDenial.status, "allow");
+
   const falseCompletion = auditLocalRuntimeResponse({
     userMessage: "Open YouTube.",
     responseText: "I opened YouTube.",
@@ -255,7 +262,7 @@ function testTruthAuditBlocksUnsupportedMemoryClaims() {
     userMessage: "Who am I?",
     responseText: "Your name is Justin.",
     capabilityState: { memory: "available" },
-    evidence: ["Profile store says: your name is Justin."],
+    evidence: ["- Preferred name: Justin"],
   });
   assert.equal(supportedClaim.status, "allow");
 
@@ -267,6 +274,18 @@ function testTruthAuditBlocksUnsupportedMemoryClaims() {
   });
   assert.equal(ordinarySecondPerson.status, "allow");
   console.log("OK: truth audit checks strong personal claims against supplied evidence");
+}
+
+function testTruthAuditPreservesAllowedFormatting() {
+  const formatted = "Here are the important ones:\n- Codex review finished\n- Life360 arrived home";
+  const allowed = auditLocalRuntimeResponse({
+    userMessage: "Summarize my notifications.",
+    responseText: formatted,
+    capabilityState: { notifications: "available" },
+  });
+  assert.equal(allowed.status, "allow");
+  assert.equal(allowed.text, formatted);
+  console.log("OK: truth audit preserves allowed response formatting");
 }
 
 function testTruthAuditRepairsOneSafeToolCallAttempt() {
@@ -296,6 +315,7 @@ async function main() {
   await testStateCardCombinesWorkingContextAndMemoryContext();
   testTruthAuditBlocksFalseDenialsAndCompletions();
   testTruthAuditBlocksUnsupportedMemoryClaims();
+  testTruthAuditPreservesAllowedFormatting();
   testTruthAuditRepairsOneSafeToolCallAttempt();
   console.log("\nAll runtime working context and truth audit assertions passed.");
 }

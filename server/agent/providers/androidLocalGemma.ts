@@ -11,6 +11,11 @@ import {
   type LocalRuntimeCapabilityName,
 } from "../../state/localRuntimeTruthAudit";
 import {
+  buildRuntimeCapabilityState,
+  preflightRuntimeCapabilityAction,
+  type RuntimeCapabilityAndroidAction,
+} from "../../state/runtimeCapability";
+import {
   markPhoneGemmaGenerationFinished,
   markPhoneGemmaGenerationStarted,
 } from "../../state/phoneGemmaDiagnostics";
@@ -1034,19 +1039,42 @@ function hasFunctionTool(tools: ProviderQueryParams["tools"], name: string): boo
   return !!tools?.some((tool) => isFunctionTool(tool) && tool.function.name === name);
 }
 
-function localRuntimeCapabilityState(
-  tools: ProviderQueryParams["tools"],
-): Partial<Record<LocalRuntimeCapabilityName, LocalRuntimeCapabilityAvailability>> {
-  return {
-    notifications: hasFunctionTool(tools, "android_read_notifications") ? "available" : "unknown",
-    screen: hasFunctionTool(tools, "android_read_screen_context") ? "available" : "unknown",
-    screenshot: hasFunctionTool(tools, "android_capture_screen") ? "available" : "unknown",
-    app_control: hasFunctionTool(tools, "android_open_app_by_name") || hasFunctionTool(tools, "android_youtube_search")
-      ? "available"
-      : "unknown",
-    clipboard: hasFunctionTool(tools, "android_copy_to_clipboard") ? "available" : "unknown",
+async function localRuntimeCapabilityState(
+  params: ProviderQueryParams,
+): Promise<Partial<Record<LocalRuntimeCapabilityName, LocalRuntimeCapabilityAvailability>>> {
+  const tools = params.tools;
+  const state: Partial<Record<LocalRuntimeCapabilityName, LocalRuntimeCapabilityAvailability>> = {
+    notifications: "unknown",
+    screen: "unknown",
+    screenshot: "unknown",
+    app_control: "unknown",
+    clipboard: "unknown",
     memory: hasFunctionTool(tools, "memory_search") || hasFunctionTool(tools, "memory_get") ? "available" : "unknown",
   };
+  const userId = params.userId?.trim();
+  if (!userId) return state;
+
+  const androidChecks: Array<[LocalRuntimeCapabilityName, RuntimeCapabilityAndroidAction, boolean]> = [
+    ["notifications", "android_read_notifications", hasFunctionTool(tools, "android_read_notifications")],
+    ["screen", "android_read_screen", hasFunctionTool(tools, "android_read_screen_context")],
+    ["screenshot", "android_capture_screen", hasFunctionTool(tools, "android_capture_screen")],
+    ["app_control", "android_open_app", hasFunctionTool(tools, "android_open_app_by_name") || hasFunctionTool(tools, "android_youtube_search")],
+  ];
+
+  try {
+    const capabilityState = await buildRuntimeCapabilityState({
+      userId,
+      routeToolNames: Array.from(availableFunctionToolNames(tools)),
+    });
+    for (const [capability, action, toolPresent] of androidChecks) {
+      if (!toolPresent) continue;
+      const preflight = preflightRuntimeCapabilityAction(capabilityState, action);
+      state[capability] = preflight.ok ? "available" : "unavailable";
+    }
+  } catch {
+    return state;
+  }
+  return state;
 }
 
 function auditToolNameFromCall(name: string, args: Record<string, unknown> | null): string {
@@ -1115,17 +1143,25 @@ function localRuntimeActionResults(
   return results;
 }
 
-function auditedLocalRuntimeFinalText(
+function localRuntimeAuditEvidence(runtimeStateCardPrompt: string): string[] {
+  return runtimeStateCardPrompt
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+async function auditedLocalRuntimeFinalText(
   params: ProviderQueryParams,
   text: string,
-  options: { preserveRequestedJson: boolean },
-): string {
+  options: { preserveRequestedJson: boolean; runtimeStateCardPrompt: string },
+): Promise<string> {
   if (options.preserveRequestedJson) return text;
   const audit = auditLocalRuntimeResponse({
     userMessage: latestUserText(params.messages),
     responseText: text,
-    capabilityState: localRuntimeCapabilityState(params.tools),
+    capabilityState: await localRuntimeCapabilityState(params),
     actionResults: localRuntimeActionResults(params.messages),
+    evidence: localRuntimeAuditEvidence(options.runtimeStateCardPrompt),
   });
   return audit.text;
 }
@@ -2199,7 +2235,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       if (parsed.content.trim()) {
         yield {
           type: "text",
-          delta: auditedLocalRuntimeFinalText(params, parsed.content, { preserveRequestedJson }),
+          delta: await auditedLocalRuntimeFinalText(params, parsed.content, { preserveRequestedJson, runtimeStateCardPrompt }),
         };
         yield { type: "finish", reason: finishReasonFromDaemonData(result.data) };
         return;
@@ -2207,10 +2243,10 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
     }
 
     const finalText = localGemmaFinalText(text, { preserveWholeJson: preserveRequestedJson });
-    yield {
-      type: "text",
-      delta: auditedLocalRuntimeFinalText(params, finalText, { preserveRequestedJson }),
-    };
+      yield {
+        type: "text",
+        delta: await auditedLocalRuntimeFinalText(params, finalText, { preserveRequestedJson, runtimeStateCardPrompt }),
+      };
     yield { type: "finish", reason: finishReasonFromDaemonData(result.data) };
   }
 }
