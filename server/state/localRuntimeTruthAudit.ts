@@ -81,6 +81,31 @@ function capabilityAvailable(
   return state?.[capability] === "available";
 }
 
+function actionToolsForCapability(capability: LocalRuntimeCapabilityName): Set<string> {
+  switch (capability) {
+    case "notifications":
+      return new Set(["android_read_notifications"]);
+    case "screen":
+      return new Set(["android_read_screen_context"]);
+    case "screenshot":
+      return new Set(["android_capture_screen"]);
+    case "app_control":
+      return new Set(["android_open_app_by_name", "android_youtube_search", "android_open_phone_url"]);
+    case "clipboard":
+      return new Set(["android_copy_to_clipboard"]);
+    case "memory":
+      return new Set(["memory_search", "memory_get", "memory_save"]);
+  }
+}
+
+function hasFailedActionForCapability(
+  capability: LocalRuntimeCapabilityName,
+  results: LocalRuntimeActionResult[],
+): boolean {
+  const toolNames = actionToolsForCapability(capability);
+  return results.some((result) => !result.ok && toolNames.has(result.toolName));
+}
+
 function isMemoryDataAbsenceAnswer(text: string): boolean {
   return /\b(?:i\s+)?(?:can(?:not|'t)|do\s+not|don't|unable\s+to|not\s+able\s+to)\s+(?:remember|find|see|know|recall|have)\b/i.test(text) &&
     !/\b(?:access|search|query|use|check)\b[\s\S]{0,32}\b(?:memory|memories|profile|memoryos)\b/i.test(text);
@@ -217,7 +242,7 @@ export function auditLocalRuntimeResponse(input: LocalRuntimeTruthAuditInput): L
   }
 
   const deniedCapability = deniedAvailableCapability(text, input.userMessage, input.capabilityState);
-  if (deniedCapability) {
+  if (deniedCapability && !hasFailedActionForCapability(deniedCapability, input.actionResults ?? [])) {
     return {
       status: "blocked_false_denial",
       text: "I can do that locally. Let me try again.",

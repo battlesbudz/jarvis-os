@@ -235,12 +235,37 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   assert.equal(falseDenial.status, "blocked_false_denial");
   assert.doesNotMatch(falseDenial.text, /android_|{|}/);
 
+  const failedNotificationActionDenial = auditLocalRuntimeResponse({
+    userMessage: "Read my notifications.",
+    responseText: "I cannot read notifications on this device.",
+    capabilityState: { notifications: "available" },
+    actionResults: [{
+      toolName: "android_read_notifications",
+      ok: false,
+      summary: "Notification access is disabled.",
+    }],
+  });
+  assert.equal(failedNotificationActionDenial.status, "allow");
+
   const genericAppDenial = auditLocalRuntimeResponse({
     userMessage: "Open Gmail.",
     responseText: "I can't open Gmail.",
     capabilityState: { app_control: "available" },
   });
   assert.equal(genericAppDenial.status, "blocked_false_denial");
+
+  const failedAppActionDenial = auditLocalRuntimeResponse({
+    userMessage: "Open Gmail.",
+    responseText: "I can't open Gmail.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_app_by_name",
+      ok: false,
+      target: "Gmail",
+      summary: "Could not resolve an installed Android app named Gmail.",
+    }],
+  });
+  assert.equal(failedAppActionDenial.status, "allow");
 
   const startAppDenial = auditLocalRuntimeResponse({
     userMessage: "Start Gmail.",
