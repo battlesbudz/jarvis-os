@@ -317,6 +317,13 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(missingMemoryData.status, "allow");
 
+  const memoryWriteDenial = auditLocalRuntimeResponse({
+    userMessage: "Remember that my favorite color is green.",
+    responseText: "I can't remember that.",
+    capabilityState: { memory: "available" },
+  });
+  assert.equal(memoryWriteDenial.status, "blocked_false_denial");
+
   const memoryCapabilityDenial = auditLocalRuntimeResponse({
     userMessage: "Search your memory for my favorite color.",
     responseText: "I can't access JARVIS memory.",
@@ -372,6 +379,22 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     actionResults: [],
   });
   assert.equal(falseDeepLinkCompletion.status, "blocked_false_completion");
+
+  const falseTrailingUrlCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open https://example.com.",
+    responseText: "I opened https://example.com in Chrome.",
+    capabilityState: { app_control: "available" },
+    actionResults: [],
+  });
+  assert.equal(falseTrailingUrlCompletion.status, "blocked_false_completion");
+
+  const falseTrailingDeepLinkCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open spotify:search:foo.",
+    responseText: "I opened spotify:search:foo in Spotify.",
+    capabilityState: { app_control: "available" },
+    actionResults: [],
+  });
+  assert.equal(falseTrailingDeepLinkCompletion.status, "blocked_false_completion");
 
   const confirmedCompletion = auditLocalRuntimeResponse({
     userMessage: "Open YouTube.",
@@ -445,6 +468,18 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     }],
   });
   assert.equal(confirmedDeepLinkOpen.status, "allow");
+
+  const confirmedTrailingDeepLinkOpen = auditLocalRuntimeResponse({
+    userMessage: "Open spotify:search:foo.",
+    responseText: "I opened spotify:search:foo in Spotify.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "spotify:search:foo",
+    }],
+  });
+  assert.equal(confirmedTrailingDeepLinkOpen.status, "allow");
   console.log("OK: truth audit blocks false denials and unconfirmed completions");
 }
 

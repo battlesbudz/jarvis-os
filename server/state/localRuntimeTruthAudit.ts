@@ -111,6 +111,12 @@ function isMemoryDataAbsenceAnswer(text: string): boolean {
     !/\b(?:access|search|query|use|check)\b[\s\S]{0,32}\b(?:memory|memories|profile|memoryos)\b/i.test(text);
 }
 
+function isExplicitMemoryWriteRequest(text: string): boolean {
+  const value = compactText(text);
+  if (/^\s*(?:do|did)\s+you\s+remember\b/i.test(value)) return false;
+  return /\b(?:remember|save|store|record|note)\b[\s\S]{0,80}\b(?:this|that|my|to memory|in memory|as memory)\b/i.test(value);
+}
+
 function bareStartTarget(text: string): string | null {
   const match = text.match(/\bstart\b(?![-\s]+source\b)\s+(?:the\s+)?([a-z0-9][a-z0-9 ._'-]{1,60}?)(?:[.!?]|$)/i);
   const target = match?.[1] ? normalizeOpenedTarget(match[1]) : "";
@@ -164,14 +170,18 @@ function deniedAvailableCapability(
   ];
 
   for (const [capability, pattern] of checks) {
-    if (capability === "memory" && isMemoryDataAbsenceAnswer(text)) continue;
+    if (
+      capability === "memory" &&
+      isMemoryDataAbsenceAnswer(text) &&
+      !isExplicitMemoryWriteRequest(userMessage)
+    ) continue;
     if (capabilityAvailable(capabilities, capability) && pattern.test(text)) return capability;
   }
   return null;
 }
 
 function completionClaimTarget(text: string): { toolName: string; target?: string } | null {
-  const openedUrl = text.match(/\b(?:i\s+)?(?:opened|launched|started)\s+((?:https?:\/\/|[a-z][a-z0-9+.-]*:\/\/|www\.|(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):)\S{2,160})(?:\s+for\s+you|\s+on\s+your\s+phone|\s+on\s+the\s+device|$)/i);
+  const openedUrl = text.match(/\b(?:i\s+)?(?:opened|launched|started)\s+((?:https?:\/\/|[a-z][a-z0-9+.-]*:\/\/|www\.|(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):)[^\s<>"']{2,160})/i);
   if (openedUrl?.[1]) {
     return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(openedUrl[1]) };
   }
