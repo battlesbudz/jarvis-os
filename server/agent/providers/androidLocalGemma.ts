@@ -1192,7 +1192,7 @@ async function localRuntimeCapabilityState(
   const hasOpenAppTool = hasFunctionTool(tools, "android_open_app_by_name");
   const hasYoutubeSearchTool = hasFunctionTool(tools, "android_youtube_search");
   const hasOpenPhoneUrlTool = hasFunctionTool(tools, "android_open_phone_url");
-  const requestText = latestUserText(params.messages);
+  const requestText = localRuntimeEffectiveRequestText(params.messages);
   const hasYoutubeSearchIntent = hasYoutubeSearchTool && !!youtubeSearchQueryFromRequest(requestText);
   const hasUrlOpenIntent = hasOpenPhoneUrlTool && looksLikePhoneUrlActionRequest(requestText);
   const hasOpenAppIntent = hasOpenAppTool &&
@@ -1383,7 +1383,25 @@ function localRuntimeConfirmedRequestText(
     if (!/\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead|proceed)\b/i.test(assistantText)) {
       return null;
     }
-    return assistantText || null;
+    const previousUserText = previousUserTextBefore(messages, index);
+    return [previousUserText, assistantText].filter(Boolean).join("\n") || null;
+  }
+  return null;
+}
+
+function localRuntimeEffectiveRequestText(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): string {
+  return localRuntimeConfirmedRequestText(messages) ?? latestUserText(messages);
+}
+
+function previousUserTextBefore(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  beforeIndex: number,
+): string | null {
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user") return textFromContent(message.content).trim() || null;
   }
   return null;
 }

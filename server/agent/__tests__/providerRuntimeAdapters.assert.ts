@@ -967,6 +967,41 @@ async function testAndroidLocalGemmaConfirmsLegacyDaemonBrowseCompletion() {
   }
 }
 
+async function testAndroidLocalGemmaAuditsPronounConfirmationCompletions() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: { text: "I opened example.com.", finishReason: "stop" },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Open example.com." },
+        { role: "assistant", content: "Should I open it?" },
+        { role: "user", content: "yes" },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_phone_url",
+          description: "Open a URL on the Android phone.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.textContent, "I have not completed that yet.");
+    console.log("OK: Android Local Gemma audits pronoun confirmation completions");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -6997,6 +7032,7 @@ async function main() {
   await testAndroidLocalGemmaScopesPhoneUrlCapabilityToExposedTools();
   await testAndroidLocalGemmaTreatsMemorySaveAsMemoryCapability();
   await testAndroidLocalGemmaConfirmsLegacyDaemonBrowseCompletion();
+  await testAndroidLocalGemmaAuditsPronounConfirmationCompletions();
   await testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit();
   await testAndroidLocalGemmaSkipsCapabilityProbeWithoutAndroidTools();
   await testAndroidLocalGemmaAllowsConfirmedCompletionClaims();
