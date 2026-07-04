@@ -268,6 +268,20 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(accountAuthAppExplanation.status, "allow");
 
+  const bankAccountExplanation = auditLocalRuntimeResponse({
+    userMessage: "Can you open a bank account for me?",
+    responseText: "I can't open a bank account for you.",
+    capabilityState: { app_control: "available" },
+  });
+  assert.equal(bankAccountExplanation.status, "allow");
+
+  const authAccountExplanation = auditLocalRuntimeResponse({
+    userMessage: "Can you open that account?",
+    responseText: "I can't open that account.",
+    capabilityState: { app_control: "available" },
+  });
+  assert.equal(authAccountExplanation.status, "allow");
+
   const mixedUserAndJarvisAppDenial = auditLocalRuntimeResponse({
     userMessage: "Why can't I open Gmail?",
     responseText: "You can't open Gmail because I can't open apps on this device.",
@@ -578,6 +592,24 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "YouTube" }],
   });
   assert.equal(confirmedPronounCompletion.status, "allow");
+
+  const confirmedRequestPronounCompletion = auditLocalRuntimeResponse({
+    userMessage: "Yes.",
+    confirmedRequestText: "Open Spotify.",
+    responseText: "I opened it.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "Spotify" }],
+  });
+  assert.equal(confirmedRequestPronounCompletion.status, "allow");
+
+  const mismatchedPronounCompletion = auditLocalRuntimeResponse({
+    userMessage: "Yes.",
+    confirmedRequestText: "Open Spotify.",
+    responseText: "I opened it.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "Chrome" }],
+  });
+  assert.equal(mismatchedPronounCompletion.status, "blocked_false_completion");
 
   const unconfirmedPronounCompletion = auditLocalRuntimeResponse({
     userMessage: "Open YouTube.",

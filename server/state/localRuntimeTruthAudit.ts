@@ -52,6 +52,12 @@ export type LocalRuntimeToolRepairDecision =
     reason: string;
   };
 
+type LocalRuntimeCompletionClaim = {
+  toolName: string;
+  target?: string;
+  targetIsPronoun?: boolean;
+};
+
 const FRIENDLY_LOCAL_RUNTIME_FAILURE = "I could not complete that cleanly yet. I stopped before doing anything unreliable.";
 
 const TOOL_ALIASES: Record<string, string> = {
@@ -221,19 +227,44 @@ function normalizeOpenedTarget(value: string): string {
     .trim();
 }
 
-function completionTarget(value: string | undefined): string | undefined {
+function normalizedCompletionTarget(value: string | undefined): { target?: string; targetIsPronoun: boolean } {
   const target = normalizeOpenedTarget(value ?? "");
-  if (!target || /^(?:it|that|this|that one|this one)$/i.test(target)) return undefined;
-  return target;
+  const targetIsPronoun = /^(?:it|that|this|that one|this one)$/i.test(target);
+  return { target: !target || targetIsPronoun ? undefined : target, targetIsPronoun };
+}
+
+function isNonAppOpenTarget(target: string): boolean {
+  return /\b(?:account|bank|door|file|document|doc|folder|business|shop|case|ticket|conversation|chat|thread|email|message)\b/i.test(target);
 }
 
 function deniesLocalAppControl(text: string): boolean {
-  const appTarget = "[a-z0-9][a-z0-9 ._'-]{1,60}";
   const denial = "i\\s+(?:can(?:not|'t)|(?:do\\s+not|don.?t)\\s+have\\s+access|am\\s+unable\\s+to|am\\s+not\\s+able\\s+to|cannot|can't|unable\\s+to|not\\s+able\\s+to)";
   const localAppTarget = "(?:apps?|applications?|app\\s+control|device\\s+control)";
-  return new RegExp(`\\b${denial}\\s+(?:open|launch)\\b(?![-\\s]+source\\b)(?:\\s+(?:the\\s+)?${appTarget})?`, "i").test(text) ||
-    new RegExp(`\\b${denial}\\s+(?:open|launch|start)\\s+(?:the\\s+)?${localAppTarget}\\b`, "i").test(text) ||
+  const directTarget = new RegExp(`\\b${denial}\\s+(?:open|launch)\\b(?![-\\s]+source\\b)\\s+(?:the\\s+)?([a-z0-9][a-z0-9 ._'-]{1,60}?)(?:[.!?]|\\s+because\\b|\\s+on\\s+(?:your\\s+phone|your\\s+device|my\\s+phone|the\\s+device)|$)`, "i").exec(text)?.[1];
+  if (directTarget && !isNonAppOpenTarget(normalizeOpenedTarget(directTarget))) return true;
+  return new RegExp(`\\b${denial}\\s+(?:open|launch|start)\\s+(?:the\\s+)?${localAppTarget}\\b`, "i").test(text) ||
     new RegExp(`\\b${denial}\\s+(?:to\\s+)?${localAppTarget}\\b`, "i").test(text);
+}
+
+function requestedOpenTarget(text: string): string | undefined {
+  const match = text.match(/\b(?:open|launch|start|browse|visit|go\s+to|navigate(?:\s+to)?|pull\s+up)\s+(?:the\s+)?(.+?)(?:\s+for\s+me|\s+on\s+(?:my\s+phone|the\s+phone|your\s+phone|the\s+device)|[.!?]|$)/i);
+  return completionTargetFromMatch(match?.[1]);
+}
+
+function completionTargetFromMatch(value: string | undefined): string | undefined {
+  return normalizedCompletionTarget(value).target;
+}
+
+function resolvePronounCompletionTarget(
+  claim: LocalRuntimeCompletionClaim | null,
+  requestTexts: string[],
+): LocalRuntimeCompletionClaim | null {
+  if (!claim?.targetIsPronoun || claim.target) return claim;
+  for (const requestText of requestTexts) {
+    const target = requestedOpenTarget(requestText);
+    if (target) return { ...claim, target };
+  }
+  return claim;
 }
 
 function deniedAvailableCapability(
@@ -287,28 +318,28 @@ function deniedAvailableCapability(
   return null;
 }
 
-function completionClaimTarget(text: string): { toolName: string; target?: string } | null {
+function completionClaimTarget(text: string): LocalRuntimeCompletionClaim | null {
   const openedUrl = text.match(/\b(?:i\s+)?(?:opened|launched|started)\s+((?:https?:\/\/|[a-z][a-z0-9+.-]*:\/\/|www\.|(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):)[^\s<>"']{2,160})/i);
   if (openedUrl?.[1]) {
-    return { toolName: "android_open_app_by_name", target: completionTarget(openedUrl[1]) };
+    return { toolName: "android_open_app_by_name", ...normalizedCompletionTarget(openedUrl[1]) };
   }
   const openedBareDomain = text.match(/\b(?:i\s+)?(?:opened|launched|started)\s+((?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d{1,5})?(?:[/?#][^\s<>"']*)?)/i);
   if (openedBareDomain?.[1]) {
-    return { toolName: "android_open_app_by_name", target: completionTarget(openedBareDomain[1]) };
+    return { toolName: "android_open_app_by_name", ...normalizedCompletionTarget(openedBareDomain[1]) };
   }
   const opened = text.match(/\b(?:i\s+)?(?:opened|launched)\s+([a-z0-9 ._-]{2,80}?)(?:\s+for\s+you|\s+successfully|\s+and\s+(?:(?:it\s+is|it's)\s+(?:ready|open)|it\s+loaded)|\s+on\s+your\s+phone|\s+on\s+the\s+device|[.!?]|$)/i);
   if (opened?.[1]) {
-    return { toolName: "android_open_app_by_name", target: completionTarget(opened[1]) };
+    return { toolName: "android_open_app_by_name", ...normalizedCompletionTarget(opened[1]) };
   }
   const startedApp = text.match(/\b(?:i\s+)?started\s+(?:the\s+)?([a-z0-9 ._-]{2,80}?)(?:\s+(?:app|application)|\s+for\s+you|\s+on\s+(?:your\s+phone|your\s+device|my\s+phone|the\s+device))(?:[.!?]|$)/i);
   if (startedApp?.[1]) {
-    return { toolName: "android_open_app_by_name", target: completionTarget(startedApp[1]) };
+    return { toolName: "android_open_app_by_name", ...normalizedCompletionTarget(startedApp[1]) };
   }
   const bareStartedApp = text.match(/\b(?:i\s+)?started\s+(?!by\b)([a-z0-9 ._-]{2,80}?)(?:[.!?]|$)/i);
   if (bareStartedApp?.[1]) {
-    const target = completionTarget(bareStartedApp[1]);
+    const { target, targetIsPronoun } = normalizedCompletionTarget(bareStartedApp[1]);
     if (!target || !/^(?:(?:a|an|the)\s+)?(?:task|work|process|draft|outline|plan|summary|response|analysis|review|conversation|chat|setup|account)\b/i.test(target)) {
-      return { toolName: "android_open_app_by_name", target };
+      return { toolName: "android_open_app_by_name", target, targetIsPronoun };
     }
   }
   if (/\b(?:i\s+)?(?:captured|took)\s+(?:a\s+)?screenshot\b/i.test(text)) {
@@ -591,7 +622,10 @@ export function auditLocalRuntimeResponse(input: LocalRuntimeTruthAuditInput): L
   }
 
   const actionResults = input.actionResults ?? [];
-  const completionClaim = completionClaimTarget(text);
+  const completionClaim = resolvePronounCompletionTarget(
+    completionClaimTarget(text),
+    [input.confirmedRequestText ?? "", input.userMessage],
+  );
   const askedForAuditedAction = !!completionClaim && [
     input.userMessage,
     input.confirmedRequestText ?? "",
