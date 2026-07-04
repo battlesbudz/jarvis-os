@@ -54,6 +54,7 @@ import { sendDaemonOp } from "./daemon/bridge";
 import {
   buildTurnDiagnosticBundle,
   formatDiagnosticBundleForClipboard,
+  getDiagnosticRecordsForUser,
   inferRuntimeIntent,
   isDiagnosticCopyRequest,
   resolveDiagnosticTarget,
@@ -86,7 +87,10 @@ async function copyTelegramDiagnosticDetails(input: {
   chatId: string;
   replyToMessageId?: number;
 }): Promise<void> {
-  const records = telegramDiagnosticTurnsByChat.get(input.chatId) ?? [];
+  const records = getDiagnosticRecordsForUser(
+    telegramDiagnosticTurnsByChat.get(input.chatId) ?? [],
+    input.userId,
+  );
   const resolution = resolveDiagnosticTarget(
     records,
     input.replyToMessageId

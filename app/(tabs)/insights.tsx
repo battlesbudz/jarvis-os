@@ -2215,66 +2215,66 @@ export default function InsightsScreen() {
     chatAbortControllerRef.current = fetchAbort;
     chatRunIdRef.current = null;
 
-    try {
-      const contextMessages = [userMsg, ...messagesRef.current].slice(0, CONTEXT_WINDOW);
-      const apiMessages = contextMessages.map(m => ({ role: m.role, content: m.content })).reverse();
-      const buildDiagnostics = (params: {
-        responseText?: string;
-        executedActions?: ExecutedAction[];
-        modelErrors?: unknown[];
-        androidState?: unknown;
-      }): TurnDiagnosticBundle => {
-        const finishedAt = new Date();
-        return buildTurnDiagnosticBundle({
-          turnId: assistantId,
-          source: origin.source === 'voice' ? 'voice' : 'in_app',
-          channel: origin.source === 'voice' ? 'voice' : 'appchat',
-          requestText: userMsg.content,
-          responseText: params.responseText,
-          selected: {
-            mode: coachingModeRef.current,
-            model: 'server-selected',
-            profile: 'server-selected',
-          },
-          runtimeIntent: inferRuntimeIntent(userMsg.content),
-          contextPacket: {
-            messages: apiMessages,
-            sdkSessionId: sdkSessionIdRef.current,
-            goals: goalsRef.current,
-            stats: statsRef.current,
-            commitments: commitmentsRef.current,
-            coachingMode: coachingModeRef.current,
-            streamEvents: diagnosticStreamEvents.slice(),
-          },
-          offeredTools: Array.from(new Set((params.executedActions ?? []).map((action) => action.tool))),
-          rawToolCalls: diagnosticRawToolCalls.slice(),
-          normalizedToolCalls: (params.executedActions ?? []).map((action) => ({
-            tool: action.tool,
-            result: action.result,
-            label: action.label,
-            detail: action.detail,
-          })),
-          toolResults: params.executedActions ?? [],
-          modelErrors: params.modelErrors ?? diagnosticModelErrors.slice(),
-          timing: {
-            startedAt: diagnosticStartedAt.toISOString(),
-            finishedAt: finishedAt.toISOString(),
-            durationMs: finishedAt.getTime() - diagnosticStartedAt.getTime(),
-          },
-          androidState: params.androidState ?? {
-            workingEvents: diagnosticWorkingEvents.slice(),
-            lastWorkingMessage: diagnosticWorkingEvents.length > 0
-              ? diagnosticWorkingEvents[diagnosticWorkingEvents.length - 1].message
-              : null,
-          },
-          recentTurnHistory: contextMessages.slice(0, 8).map((message) => ({
-            role: message.role,
-            content: message.content,
-          })),
-          voiceTrace: origin.source === 'voice' ? origin.voiceTrace : undefined,
-        });
-      };
+    const contextMessages = [userMsg, ...messagesRef.current].slice(0, CONTEXT_WINDOW);
+    const apiMessages = contextMessages.map(m => ({ role: m.role, content: m.content })).reverse();
+    const buildDiagnostics = (params: {
+      responseText?: string;
+      executedActions?: ExecutedAction[];
+      modelErrors?: unknown[];
+      androidState?: unknown;
+    }): TurnDiagnosticBundle => {
+      const finishedAt = new Date();
+      return buildTurnDiagnosticBundle({
+        turnId: assistantId,
+        source: origin.source === 'voice' ? 'voice' : 'in_app',
+        channel: origin.source === 'voice' ? 'voice' : 'appchat',
+        requestText: userMsg.content,
+        responseText: params.responseText,
+        selected: {
+          mode: coachingModeRef.current,
+          model: 'server-selected',
+          profile: 'server-selected',
+        },
+        runtimeIntent: inferRuntimeIntent(userMsg.content),
+        contextPacket: {
+          messages: apiMessages,
+          sdkSessionId: sdkSessionIdRef.current,
+          goals: goalsRef.current,
+          stats: statsRef.current,
+          commitments: commitmentsRef.current,
+          coachingMode: coachingModeRef.current,
+          streamEvents: diagnosticStreamEvents.slice(),
+        },
+        offeredTools: Array.from(new Set((params.executedActions ?? []).map((action) => action.tool))),
+        rawToolCalls: diagnosticRawToolCalls.slice(),
+        normalizedToolCalls: (params.executedActions ?? []).map((action) => ({
+          tool: action.tool,
+          result: action.result,
+          label: action.label,
+          detail: action.detail,
+        })),
+        toolResults: params.executedActions ?? [],
+        modelErrors: params.modelErrors ?? diagnosticModelErrors.slice(),
+        timing: {
+          startedAt: diagnosticStartedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+          durationMs: finishedAt.getTime() - diagnosticStartedAt.getTime(),
+        },
+        androidState: params.androidState ?? {
+          workingEvents: diagnosticWorkingEvents.slice(),
+          lastWorkingMessage: diagnosticWorkingEvents.length > 0
+            ? diagnosticWorkingEvents[diagnosticWorkingEvents.length - 1].message
+            : null,
+        },
+        recentTurnHistory: contextMessages.slice(0, 8).map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+        voiceTrace: origin.source === 'voice' ? origin.voiceTrace : undefined,
+      });
+    };
 
+    try {
       const url = new URL('/api/coach/chat', getApiUrl());
       const token = await getAuthToken();
       const streamHeaders: Record<string, string> = { 'Content-Type': 'application/json' };

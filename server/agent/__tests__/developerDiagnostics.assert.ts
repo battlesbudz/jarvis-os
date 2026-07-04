@@ -5,6 +5,7 @@ import {
   buildTurnDiagnosticBundle,
   formatDiagnosticBundleForClipboard,
   getActionableDiagnosticRecords,
+  getDiagnosticRecordsForUser,
   isDiagnosticCopyRequest,
   resolveDiagnosticTarget,
   resolveDiagnosticTargetFromText,
@@ -19,10 +20,12 @@ function makeRecord(input: {
   createdAt: string;
   result?: "success" | "error";
   runtimeIntent?: string;
+  userId?: string;
 }): DiagnosticTurnRecord {
   const bundle = buildTurnDiagnosticBundle({
     turnId: input.turnId,
     source: "telegram",
+    userId: input.userId ?? "user_current",
     channel: "telegram",
     channelTurnId: input.messageId,
     requestText: "Open YouTube",
@@ -134,6 +137,12 @@ function testTelegramTargetResolution() {
   const lastAfterClarification = resolveDiagnosticTargetFromText(withClarification, "copy last turn details");
   assert.equal(lastAfterClarification.ok, true);
   if (lastAfterClarification.ok) assert.equal(lastAfterClarification.record.turnId, "newer");
+
+  const userScoped = getDiagnosticRecordsForUser([
+    makeRecord({ turnId: "other-user", messageId: 104, createdAt: "2026-07-04T00:03:00.000Z", userId: "user_other" }),
+    makeRecord({ turnId: "current-user", messageId: 105, createdAt: "2026-07-04T00:04:00.000Z", userId: "user_current" }),
+  ], "user_current");
+  assert.deepEqual(userScoped.map((record) => record.turnId), ["current-user"]);
   console.log("OK: Telegram diagnostics resolve reply targets and plain last-turn targets");
 }
 

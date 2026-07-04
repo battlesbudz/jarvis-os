@@ -170,6 +170,10 @@ export function getActionableDiagnosticRecords(records: DiagnosticTurnRecord[]):
   return records.filter((record) => !isDiagnosticCopyRecord(record));
 }
 
+export function getDiagnosticRecordsForUser(records: DiagnosticTurnRecord[], userId: string): DiagnosticTurnRecord[] {
+  return records.filter((record) => record.bundle.userId === userId);
+}
+
 export function resolveDiagnosticTarget(
   records: DiagnosticTurnRecord[],
   request: DiagnosticTargetRequest,
