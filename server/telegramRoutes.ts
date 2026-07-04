@@ -64,8 +64,15 @@ import {
 } from "@shared/turnDiagnostics";
 
 const openai = new OpenAI(getOpenAIClientConfig());
-const telegramDiagnosticTurnsByChat = new Map<string, DiagnosticTurnRecord[]>();
+type TelegramDiagnosticCacheEntry = {
+  records: DiagnosticTurnRecord[];
+  lastAccessAt: number;
+};
+
+const telegramDiagnosticTurnsByChat = new Map<string, TelegramDiagnosticCacheEntry>();
 const MAX_TELEGRAM_DIAGNOSTIC_TURNS = 20;
+const MAX_TELEGRAM_DIAGNOSTIC_CHATS = 100;
+const TELEGRAM_DIAGNOSTIC_TTL_MS = 60 * 60 * 1000;
 
 function serializeDiagnosticError(error: unknown): unknown {
   if (error instanceof Error) {
@@ -88,11 +95,61 @@ function generateLinkCode(): string {
   return code;
 }
 
+function isFreshTelegramDiagnosticRecord(record: DiagnosticTurnRecord, now: number): boolean {
+  const createdAt = Date.parse(record.createdAt);
+  return !Number.isFinite(createdAt) || now - createdAt <= TELEGRAM_DIAGNOSTIC_TTL_MS;
+}
+
+function pruneTelegramDiagnosticCache(now = Date.now()): void {
+  for (const [chatId, entry] of telegramDiagnosticTurnsByChat) {
+    const records = entry.records.filter((record) => isFreshTelegramDiagnosticRecord(record, now));
+    if (records.length === 0 || now - entry.lastAccessAt > TELEGRAM_DIAGNOSTIC_TTL_MS) {
+      telegramDiagnosticTurnsByChat.delete(chatId);
+      continue;
+    }
+    entry.records = records;
+  }
+
+  if (telegramDiagnosticTurnsByChat.size <= MAX_TELEGRAM_DIAGNOSTIC_CHATS) return;
+
+  const excess = telegramDiagnosticTurnsByChat.size - MAX_TELEGRAM_DIAGNOSTIC_CHATS;
+  const oldestChats = [...telegramDiagnosticTurnsByChat.entries()]
+    .sort((a, b) => a[1].lastAccessAt - b[1].lastAccessAt)
+    .slice(0, excess);
+  for (const [chatId] of oldestChats) {
+    telegramDiagnosticTurnsByChat.delete(chatId);
+  }
+}
+
+function getTelegramDiagnosticTurnsForChat(chatId: string): DiagnosticTurnRecord[] {
+  const now = Date.now();
+  pruneTelegramDiagnosticCache(now);
+  const entry = telegramDiagnosticTurnsByChat.get(chatId);
+  if (!entry) return [];
+
+  const records = entry.records.filter((record) => isFreshTelegramDiagnosticRecord(record, now));
+  if (records.length === 0) {
+    telegramDiagnosticTurnsByChat.delete(chatId);
+    return [];
+  }
+
+  entry.records = records;
+  entry.lastAccessAt = now;
+  return records;
+}
+
 function rememberTelegramDiagnosticTurn(chatId: string, record: DiagnosticTurnRecord): void {
-  const records = telegramDiagnosticTurnsByChat.get(chatId) ?? [];
+  const now = Date.now();
+  pruneTelegramDiagnosticCache(now);
+  const records = telegramDiagnosticTurnsByChat.get(chatId)?.records ?? [];
   const next = [record, ...records.filter((candidate) => candidate.turnId !== record.turnId)]
+    .filter((candidate) => isFreshTelegramDiagnosticRecord(candidate, now))
     .slice(0, MAX_TELEGRAM_DIAGNOSTIC_TURNS);
-  telegramDiagnosticTurnsByChat.set(chatId, next);
+  if (next.length === 0) {
+    telegramDiagnosticTurnsByChat.delete(chatId);
+    return;
+  }
+  telegramDiagnosticTurnsByChat.set(chatId, { records: next, lastAccessAt: now });
 }
 
 async function copyTelegramDiagnosticDetails(input: {
@@ -102,7 +159,7 @@ async function copyTelegramDiagnosticDetails(input: {
   replyToMessageId?: number;
 }): Promise<void> {
   const records = getDiagnosticRecordsForUser(
-    telegramDiagnosticTurnsByChat.get(input.chatId) ?? [],
+    getTelegramDiagnosticTurnsForChat(input.chatId),
     input.userId,
   );
   const resolution = input.replyToMessageId

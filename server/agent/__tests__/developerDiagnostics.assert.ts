@@ -249,8 +249,21 @@ function testAndroidPlainTextClipboardContract() {
   console.log("OK: Android plain-text clipboard op is registered in bridge and daemon handlers");
 }
 
+function testTelegramDiagnosticCacheBoundsContract() {
+  const projectRoot = process.cwd();
+  const telegramRoutes = fs.readFileSync(path.join(projectRoot, "server/telegramRoutes.ts"), "utf8");
+
+  assert.match(telegramRoutes, /MAX_TELEGRAM_DIAGNOSTIC_TURNS\s*=\s*20/);
+  assert.match(telegramRoutes, /MAX_TELEGRAM_DIAGNOSTIC_CHATS\s*=\s*100/);
+  assert.match(telegramRoutes, /TELEGRAM_DIAGNOSTIC_TTL_MS\s*=\s*60\s*\*\s*60\s*\*\s*1000/);
+  assert.match(telegramRoutes, /pruneTelegramDiagnosticCache/);
+  assert.match(telegramRoutes, /getTelegramDiagnosticTurnsForChat/);
+  console.log("OK: Telegram diagnostic cache is bounded by per-chat, total-chat, and TTL limits");
+}
+
 testFailedActionCopyBundle();
 testSuccessfulTurnCopyBundle();
 testTelegramTargetResolution();
 testVoiceClarificationAndNoAudioBytes();
 testAndroidPlainTextClipboardContract();
+testTelegramDiagnosticCacheBoundsContract();
