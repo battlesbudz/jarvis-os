@@ -84,9 +84,9 @@ export function formatAndroidNotificationsInOrder(notifications: unknown[]): str
 }
 
 function ordinalReference(query: string): number | null {
-  if (/\bfirst\b|\b1st\b|\bone\b/i.test(query)) return 0;
-  if (/\bsecond\b|\b2nd\b|\btwo\b/i.test(query)) return 1;
-  if (/\bthird\b|\b3rd\b|\bthree\b/i.test(query)) return 2;
+  if (/\bfirst\b|\b1st\b/i.test(query)) return 0;
+  if (/\bsecond\b|\b2nd\b/i.test(query)) return 1;
+  if (/\bthird\b|\b3rd\b/i.test(query)) return 2;
   if (/\blast\b/i.test(query)) return -1;
   return null;
 }

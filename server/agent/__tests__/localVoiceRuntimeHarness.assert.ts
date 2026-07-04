@@ -153,6 +153,41 @@ async function testNotificationReferenceOpensMatchingApp() {
   console.log("OK: notification references resolve to the matching app action");
 }
 
+async function testNotificationReferenceUsesStoredAppNames() {
+  const teamsEvents: LocalVoiceAndroidEvent[] = [{
+    type: "notification",
+    notifications: [
+      { app: "Microsoft Teams", title: "Alex sent a message", text: "Standup moved to 3 PM" },
+      { app: "Instagram", title: "New follower", text: "Jordan followed you" },
+    ],
+  }];
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: teamsEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const open = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open the Teams one",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "I cannot open that." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "Microsoft Teams", action: "open", success: true }],
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:01:00.000Z"),
+  });
+
+  assert.equal(open.diagnostics.outcome, "notification_reference_opened");
+  assert.equal(open.androidExecutions[0]?.ok, true);
+  assert.match(open.canonicalResponse, /opened Microsoft Teams/i);
+  console.log("OK: notification references use stored app names instead of a fixed whitelist");
+}
+
 async function testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns() {
   const first = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
@@ -247,6 +282,35 @@ async function testNegatedNotificationFollowUpsDoNotUseWorkingContext() {
   assert.equal(dontRead.androidExecutions.length, 0);
   assert.equal(dontRead.canonicalResponse, "I will not read them.");
   console.log("OK: negated notification follow-ups do not use working context");
+}
+
+async function testLaterPositiveNotificationClauseAfterNegationRuns() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const mixed = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Don't open the Reddit one, open the Life360 one",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "I cannot open that." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "Life360", action: "open", success: true }],
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:03:00.000Z"),
+  });
+
+  assert.equal(mixed.diagnostics.outcome, "notification_reference_opened");
+  assert.equal(mixed.androidExecutions[0]?.toolName, "android_open_app_by_name");
+  assert.equal(mixed.androidExecutions[0]?.ok, true);
+  assert.match(mixed.canonicalResponse, /opened Life360/i);
+  console.log("OK: later positive notification clauses still run after an earlier negation");
 }
 
 async function testMissingAppControlFixtureFails() {
@@ -586,9 +650,11 @@ async function main() {
   await testNotificationFollowUpSummaryUsesWorkingContext();
   await testNotificationFollowUpReadAllUsesWorkingContextInOrder();
   await testNotificationReferenceOpensMatchingApp();
+  await testNotificationReferenceUsesStoredAppNames();
   await testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns();
   await testGenericOneAppRequestDoesNotUseNotificationContext();
   await testNegatedNotificationFollowUpsDoNotUseWorkingContext();
+  await testLaterPositiveNotificationClauseAfterNegationRuns();
   await testMissingAppControlFixtureFails();
   await testMismatchedAppControlFixtureFails();
   await testAppControlFalseDenialRecoveryKeepsRequestedApp();
