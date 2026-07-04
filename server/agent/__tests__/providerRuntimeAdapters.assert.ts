@@ -5647,6 +5647,47 @@ async function testAndroidLocalGemmaGracefullyRejectsAdvisoryPhoneUrlToolCalls()
   }
 }
 
+async function testAndroidLocalGemmaRejectsUrlSafetyQuestionToolCalls() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "android_open_phone_url", arguments: { url: "https://example.com" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Is https://example.com safe to open?" }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "android_open_phone_url",
+            description: "Open a URL on the Android phone.",
+            parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+          },
+        },
+      ],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.equal(result.textContent, "Phone Gemma did not return a usable local answer for that request.");
+    console.log("OK: Android Local Gemma rejects URL safety question tool calls");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaRejectsAdvisoryLegacyBrowseToolCalls() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -7249,6 +7290,7 @@ async function main() {
   await testAndroidLocalGemmaDoesNotOpenInformationalDeepLinkMentions();
   await testAndroidLocalGemmaDoesNotOpenAdvisoryUrlQuestions();
   await testAndroidLocalGemmaGracefullyRejectsAdvisoryPhoneUrlToolCalls();
+  await testAndroidLocalGemmaRejectsUrlSafetyQuestionToolCalls();
   await testAndroidLocalGemmaRejectsAdvisoryLegacyBrowseToolCalls();
   await testAndroidLocalGemmaDoesNotRepeatCompletedRecoveredActions();
   await testAndroidLocalGemmaDoesNotAdvanceAfterFailedDaemonAction();

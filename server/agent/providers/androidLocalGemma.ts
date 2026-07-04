@@ -392,7 +392,8 @@ function phoneUrlIntentText(text: string): string {
 
 function looksLikeAdvisoryPhoneUrlQuestion(text: string): boolean {
   const requestText = phoneUrlIntentText(text);
-  return /^\s*(?:should\s+(?:i|we)|can\s+i|could\s+i|would\s+it|is\s+it|do\s+you\s+think|would\s+you\s+recommend)\b/i.test(requestText);
+  return /^\s*(?:should\s+(?:i|we)|can\s+i|could\s+i|would\s+it|is\s+it|do\s+you\s+think|would\s+you\s+recommend)\b/i.test(requestText) ||
+    /^\s*is\b[\s\S]{0,160}\b(?:safe|okay|ok|dangerous|risky|legit|trustworthy|malicious|scam)\b[\s\S]{0,80}\b(?:open|visit|click|tap)\b/i.test(requestText);
 }
 
 function looksLikePhoneUrlActionRequest(text: string): boolean {
