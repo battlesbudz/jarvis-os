@@ -324,6 +324,41 @@ async function testGenericOneAppRequestDoesNotUseNotificationContext() {
   console.log("OK: generic one-app requests do not hijack recent notification context");
 }
 
+async function testPlainAppOpenDoesNotUseNotificationTitleReference() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: [{
+      type: "notification",
+      notifications: [
+        { app: "Gmail", title: "Reddit digest", text: "Trending posts from Reddit" },
+        { app: "Calendar", title: "Standup", text: "Starts in 10 minutes" },
+      ],
+    }],
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const open = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open Reddit",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot open apps." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "Reddit", action: "open", success: true }],
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:01:00.000Z"),
+  });
+
+  assert.equal(open.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(open.androidExecutions[0]?.toolName, "android_open_app_by_name");
+  assert.equal(open.androidExecutions[0]?.label, "Opened Reddit");
+  assert.doesNotMatch(open.canonicalResponse, /Gmail/i);
+  console.log("OK: plain app opens do not use notification title references");
+}
+
 async function testNegatedNotificationFollowUpsDoNotUseWorkingContext() {
   const first = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
@@ -853,6 +888,7 @@ async function main() {
   testShortAppNameReferencesRequireWholeTokenMatches();
   await testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns();
   await testGenericOneAppRequestDoesNotUseNotificationContext();
+  await testPlainAppOpenDoesNotUseNotificationTitleReference();
   await testNegatedNotificationFollowUpsDoNotUseWorkingContext();
   await testLaterPositiveNotificationClauseAfterNegationRuns();
   await testEarlierPositiveNotificationClauseSurvivesLaterNegation();

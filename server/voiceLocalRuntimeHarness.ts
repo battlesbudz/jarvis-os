@@ -462,8 +462,10 @@ function clauseIsNegated(clause: string): boolean {
 }
 
 function wantsNotificationReferenceOpen(transcript: string, notifications: LocalVoiceNotification[]): boolean {
-  return /\b(?:open|launch|show|tap|go to)\b/i.test(transcript) &&
-    resolveAndroidNotificationReference(notifications, transcript) !== null;
+  if (!/\b(?:open|launch|show|tap|go to)\b/i.test(transcript)) return false;
+  const match = resolveAndroidNotificationReference(notifications, transcript);
+  if (!match) return false;
+  return hasNotificationReferent(transcript) || notificationReferenceNamesApp(transcript, match.notification);
 }
 
 function wantsNotificationReferenceRead(transcript: string, notifications: LocalVoiceNotification[]): boolean {
@@ -502,6 +504,33 @@ function negatedReferenceCancelsEarlierClause(
 function notificationReferenceText(notification: LocalVoiceNotification): string {
   const message = [notification.title, notification.text].filter(Boolean).join(": ") || "(no notification text)";
   return `${notification.app}: ${message}`;
+}
+
+function notificationReferenceTerms(value: string): Set<string> {
+  return new Set(value.toLowerCase().split(/[^a-z0-9]+/i).filter(Boolean));
+}
+
+function escapedNotificationReference(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function notificationReferenceHasPhrase(value: string, phrase: string): boolean {
+  if (!phrase) return false;
+  return new RegExp(`(?:^|[^a-z0-9])${escapedNotificationReference(phrase)}(?:$|[^a-z0-9])`, "i").test(value);
+}
+
+function notificationReferenceNamesApp(transcript: string, notification: LocalVoiceNotification): boolean {
+  const appName = compactText(notification.app).toLowerCase();
+  if (!appName) return false;
+  const normalizedTranscript = transcript.toLowerCase();
+  if (notificationReferenceHasPhrase(normalizedTranscript, appName)) return true;
+  const transcriptTerms = notificationReferenceTerms(transcript);
+  return Array.from(notificationReferenceTerms(appName)).some((term) => transcriptTerms.has(term));
+}
+
+function hasNotificationReferent(transcript: string): boolean {
+  return /\b(?:one|ones|notification|notifications|alert|alerts|message|messages)\b/i.test(transcript) ||
+    /\b(?:first|1st|second|2nd|third|3rd|last)\b/i.test(transcript);
 }
 
 function activeNotificationWorkingContextRequest(
