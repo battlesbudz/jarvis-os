@@ -117,9 +117,11 @@ const REFERENCE_STOPWORDS = new Set([
 function scoreNotificationReference(entry: AndroidNotificationSummaryEntry, query: string): number {
   const normalizedQuery = query.toLowerCase();
   const haystack = `${entry.app} ${entry.title} ${entry.text}`.toLowerCase();
+  const haystackTerms = new Set(haystack.split(/[^a-z0-9]+/i).filter(Boolean));
   const tokens = normalizedQuery
     .split(/[^a-z0-9]+/i)
-    .filter((token) => token.length >= 3 && !REFERENCE_STOPWORDS.has(token));
+    .filter((token) => token.length > 0 && !REFERENCE_STOPWORDS.has(token))
+    .filter((token) => token.length >= 3 || haystackTerms.has(token));
   let score = 0;
   for (const token of tokens) {
     if (entry.app.toLowerCase() === token) score += 5;

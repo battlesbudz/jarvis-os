@@ -202,6 +202,17 @@ function testOrdinalNotificationReferencesSelectWithinMatches() {
   console.log("OK: ordinal notification references select within matched notifications");
 }
 
+function testShortAppNameNotificationReferencesResolve() {
+  const match = resolveAndroidNotificationReference([
+    { app: "X", title: "Direct message", text: "Alex sent a message" },
+    { app: "Reddit", title: "Thread reply", text: "New reply in r/localmodels" },
+  ], "Open the X one");
+
+  assert.equal(match?.index, 0);
+  assert.equal(match?.notification.app, "X");
+  console.log("OK: short app-name notification references resolve exactly");
+}
+
 async function testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns() {
   const first = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
@@ -708,6 +719,7 @@ async function main() {
   await testNotificationReferenceOpensMatchingApp();
   await testNotificationReferenceUsesStoredAppNames();
   testOrdinalNotificationReferencesSelectWithinMatches();
+  testShortAppNameNotificationReferencesResolve();
   await testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns();
   await testGenericOneAppRequestDoesNotUseNotificationContext();
   await testNegatedNotificationFollowUpsDoNotUseWorkingContext();
