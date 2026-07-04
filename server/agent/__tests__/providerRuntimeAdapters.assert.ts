@@ -988,6 +988,13 @@ async function testAndroidLocalGemmaAuditsPronounConfirmationCompletions() {
           description: "Open a URL on the Android phone.",
           parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
         },
+      }, {
+        type: "function",
+        function: {
+          name: "memory_search",
+          description: "Search memory.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
       }],
       toolChoice: "auto",
       maxCompletionTokens: 128,

@@ -1795,10 +1795,16 @@ function recoverExplicitAndroidRuntimeToolFromRequest(
   return recoverAndroidRuntimeToolFromRequest(params, { requireRequiredToolChoice: false });
 }
 
-function shouldPreserveRequiredFinalAnswer(requestText: string): boolean {
+function shouldPreserveRequiredFinalAnswer(
+  requestText: string,
+  tools?: ProviderQueryParams["tools"],
+): boolean {
   const recoveryText = correctiveDeviceCommandText(requestText).trim();
   if (!recoveryText) return false;
   const notificationConceptQuestion = looksLikeNotificationNonActionQuestion(recoveryText);
+  const phoneUrlConceptQuestion = looksLikePhoneUrlOpenIntent(recoveryText) &&
+    !looksLikePhoneUrlActionRequest(recoveryText) &&
+    !hasUrlBackedNonPhoneTool(tools);
   const genericPhoneQuestion = /\b(?:phone|device|screen|display)\b/i.test(recoveryText) &&
     !wantsScreenReadContextRequest(recoveryText) &&
     !wantsScreenshotRequest(recoveryText) &&
@@ -1808,6 +1814,7 @@ function shouldPreserveRequiredFinalAnswer(requestText: string): boolean {
     looksLikeOpenSourceQuestion(recoveryText) ||
     looksLikeMultiAppOpenRequest(recoveryText) ||
     notificationConceptQuestion ||
+    phoneUrlConceptQuestion ||
     genericPhoneQuestion
   );
 }
@@ -2496,7 +2503,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
           yield { type: "finish", reason: "stop" };
           return;
         }
-        if (shouldPreserveRequiredFinalAnswer(requestText)) {
+        if (shouldPreserveRequiredFinalAnswer(requestText, params.tools)) {
           yield { type: "text", delta: parsed.content.trim() || "No device action was run." };
           yield { type: "finish", reason: "stop" };
           return;
