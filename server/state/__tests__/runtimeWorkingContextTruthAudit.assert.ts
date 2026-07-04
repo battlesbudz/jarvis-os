@@ -540,6 +540,22 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(confirmedPoliteCompletion.status, "allow");
 
+  const confirmedSuccessfulCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open YouTube.",
+    responseText: "I opened YouTube successfully.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "YouTube" }],
+  });
+  assert.equal(confirmedSuccessfulCompletion.status, "allow");
+
+  const confirmedReadyCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open YouTube.",
+    responseText: "I opened YouTube and it is ready.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "YouTube" }],
+  });
+  assert.equal(confirmedReadyCompletion.status, "allow");
+
   const confirmedAppPhraseCompletion = auditLocalRuntimeResponse({
     userMessage: "Open YouTube.",
     responseText: "I opened the YouTube app.",

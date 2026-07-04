@@ -226,7 +226,7 @@ function completionClaimTarget(text: string): { toolName: string; target?: strin
   if (openedBareDomain?.[1]) {
     return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(openedBareDomain[1]) };
   }
-  const opened = text.match(/\b(?:i\s+)?(?:opened|launched)\s+([a-z0-9 ._-]{2,80}?)(?:\s+for\s+you|\s+on\s+your\s+phone|\s+on\s+the\s+device|[.!?]|$)/i);
+  const opened = text.match(/\b(?:i\s+)?(?:opened|launched)\s+([a-z0-9 ._-]{2,80}?)(?:\s+for\s+you|\s+successfully|\s+and\s+(?:(?:it\s+is|it's)\s+(?:ready|open)|it\s+loaded)|\s+on\s+your\s+phone|\s+on\s+the\s+device|[.!?]|$)/i);
   if (opened?.[1]) {
     return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(opened[1]) };
   }
