@@ -258,6 +258,8 @@ function userAskedForAuditedLocalAction(
       if (/\bsearch\b[\s\S]{0,40}\byoutube\b|\byoutube\b[\s\S]{0,40}\bsearch\b/i.test(text)) return true;
       if (!/\b(?:open|launch|start|browse|visit|go\s+to|navigate(?:\s+to)?|pull\s+up)\b/i.test(text)) return false;
       const target = compactText(claim.target).toLowerCase();
+      const urlMatch = webUrlTargetsMatch(target, text);
+      if (urlMatch !== null) return urlMatch;
       return !target || text.includes(target);
     }
     default:

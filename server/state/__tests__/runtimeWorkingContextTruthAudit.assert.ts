@@ -431,6 +431,14 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(falseTrailingUrlCompletion.status, "blocked_false_completion");
 
+  const falseBareDomainClaimWithSchemeCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open example.com.",
+    responseText: "I opened https://example.com.",
+    capabilityState: { app_control: "available" },
+    actionResults: [],
+  });
+  assert.equal(falseBareDomainClaimWithSchemeCompletion.status, "blocked_false_completion");
+
   const mismatchedBareDomainCompletion = auditLocalRuntimeResponse({
     userMessage: "Open example.com.",
     responseText: "I opened example.com.",
