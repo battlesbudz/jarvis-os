@@ -5197,7 +5197,14 @@ async function testAndroidLocalGemmaDoesNotRecoverPackageIdAsPhoneUrl() {
 }
 
 async function testAndroidLocalGemmaDoesNotRecoverUnlistedPackageIdAsPhoneUrl() {
-  for (const packageName of ["com.twitter.android", "org.telegram.messenger", "com.ubercab"]) {
+  for (const packageName of [
+    "com.twitter.android",
+    "org.telegram.messenger",
+    "com.ubercab",
+    "tv.twitch.android.app",
+    "me.lyft.android",
+    "de.blinkt.openvpn",
+  ]) {
     _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
       ok: true,
       data: {

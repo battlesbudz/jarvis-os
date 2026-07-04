@@ -732,7 +732,7 @@ function inferPackageNamesFromText(text: string): string[] {
 
 function explicitPackageIdMatchesFromText(text: string): Array<{ packageName: string; start: number; end: number }> {
   const matches: Array<{ packageName: string; start: number; end: number }> = [];
-  for (const match of text.matchAll(/\b(?:com|org|net|io)(?:\.[a-z][a-z0-9_]*)+\b/gi)) {
+  for (const match of text.matchAll(/\b(?:(?:com|org|net|io)|[a-z]{2})(?:\.[a-z][a-z0-9_]*)+\b/gi)) {
     const start = match.index ?? -1;
     if (start < 0) continue;
     const packageName = match[0].replace(/[),.;]+$/g, "").toLowerCase();
@@ -828,8 +828,12 @@ function looksLikeAndroidPackageId(value: string): boolean {
   if (!normalized || /[:/?#]/.test(normalized)) return false;
   if (Object.values(ANDROID_APP_PACKAGE_ALIASES).includes(normalized)) return true;
   const labels = normalized.split(".");
-  if (labels.length < 2 || !/^(?:com|org|net|io)$/i.test(labels[0] ?? "")) return false;
-  return labels.every((label) => /^[a-z][a-z0-9_]*$/i.test(label));
+  if (labels.length < 2 || !labels.every((label) => /^[a-z][a-z0-9_]*$/i.test(label))) {
+    return false;
+  }
+  const root = labels[0] ?? "";
+  if (/^(?:com|org|net|io)$/i.test(root)) return true;
+  return labels.length >= 3 && /^[a-z]{2}$/i.test(root);
 }
 
 function urlFromText(text: string): string | null {
