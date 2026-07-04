@@ -213,6 +213,10 @@ function completionClaimTarget(text: string): { toolName: string; target?: strin
   if (openedUrl?.[1]) {
     return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(openedUrl[1]) };
   }
+  const openedBareDomain = text.match(/\b(?:i\s+)?(?:opened|launched|started)\s+((?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"']*)?)/i);
+  if (openedBareDomain?.[1]) {
+    return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(openedBareDomain[1]) };
+  }
   const opened = text.match(/\b(?:i\s+)?(?:opened|launched)\s+([a-z0-9 ._-]{2,80}?)(?:\s+for\s+you|\s+on\s+your\s+phone|\s+on\s+the\s+device|[.!?]|$)/i);
   if (opened?.[1]) {
     return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(opened[1]) };
@@ -267,6 +271,25 @@ function confirmingToolNamesForClaim(claim: { toolName: string }): Set<string> {
     : new Set([claim.toolName]);
 }
 
+function youtubeSearchClaimQuery(target: string): string {
+  const afterFor = target.match(/\bfor\s+(.+)$/i)?.[1];
+  const query = afterFor ?? target
+    .replace(/\byoutube\b/gi, " ")
+    .replace(/\bsearch(?:ed)?\b/gi, " ")
+    .replace(/\bresults?\b/gi, " ")
+    .replace(/\bvideos?\b/gi, " ");
+  return compactText(query).toLowerCase();
+}
+
+function youtubeSearchResultMatches(target: string, resultTarget: string): boolean {
+  if (!/\byoutube\b/i.test(target) || !/\byoutube\b/i.test(resultTarget)) return false;
+  const query = youtubeSearchClaimQuery(target);
+  if (!query) return true;
+  if (resultTarget.includes(query)) return true;
+  const terms = query.split(/\s+/).filter((term) => term.length > 1);
+  return terms.length > 0 && terms.every((term) => resultTarget.includes(term));
+}
+
 function hasConfirmingActionResult(
   claim: { toolName: string; target?: string },
   results: LocalRuntimeActionResult[],
@@ -278,6 +301,7 @@ function hasConfirmingActionResult(
     if (!target) return true;
     if (result.toolName === "android_youtube_search" && target === "youtube") return true;
     const resultTarget = compactText(`${result.target ?? ""} ${result.summary ?? ""}`).toLowerCase();
+    if (result.toolName === "android_youtube_search" && youtubeSearchResultMatches(target, resultTarget)) return true;
     return actionTargetsMatch(target, resultTarget);
   });
 }

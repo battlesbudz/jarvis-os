@@ -431,6 +431,18 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(falseTrailingUrlCompletion.status, "blocked_false_completion");
 
+  const mismatchedBareDomainCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open example.com.",
+    responseText: "I opened example.com.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "https://example.org",
+    }],
+  });
+  assert.equal(mismatchedBareDomainCompletion.status, "blocked_false_completion");
+
   const falseTrailingDeepLinkCompletion = auditLocalRuntimeResponse({
     userMessage: "Open spotify:search:foo.",
     responseText: "I opened spotify:search:foo in Spotify.",
@@ -483,6 +495,19 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     }],
   });
   assert.equal(confirmedYoutubeSearch.status, "allow");
+
+  const confirmedYoutubeSearchResults = auditLocalRuntimeResponse({
+    userMessage: "Search YouTube for AI videos.",
+    responseText: "I opened YouTube search results for AI videos.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_youtube_search",
+      ok: true,
+      target: "AI videos",
+      summary: "YouTube search: AI videos.",
+    }],
+  });
+  assert.equal(confirmedYoutubeSearchResults.status, "allow");
 
   const confirmedUrlOpen = auditLocalRuntimeResponse({
     userMessage: "Open example.com.",
