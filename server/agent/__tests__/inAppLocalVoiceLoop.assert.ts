@@ -51,6 +51,12 @@ assert.match(
 
 assert.match(
   insights,
+  /if\s*\(shouldResumeTalkMode\)\s*\{\s*markAssistantSpeechStopped\(speakingAssistantIdRef\.current\);/,
+  "Only Talk Mode interruptions should mark the assistant message as stopped",
+);
+
+assert.match(
+  insights,
   /markAssistantSpeechStopped[\s\S]*?stopped:\s*true/,
   "Interrupting speech should mark the assistant message as stopped",
 );

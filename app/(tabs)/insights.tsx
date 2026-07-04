@@ -1340,10 +1340,12 @@ export default function InsightsScreen() {
   }, []);
 
   const interruptSpeakingAndListen = useCallback(() => {
-    const interruptedAssistantId = speakingAssistantIdRef.current;
-    markAssistantSpeechStopped(interruptedAssistantId);
+    const shouldResumeTalkMode = talkModeRef.current;
+    if (shouldResumeTalkMode) {
+      markAssistantSpeechStopped(speakingAssistantIdRef.current);
+    }
     stopSpeaking();
-    if (talkModeRef.current) {
+    if (shouldResumeTalkMode) {
       setTimeout(() => startRecordingRef.current(), 0);
     }
   }, [markAssistantSpeechStopped, stopSpeaking]);
