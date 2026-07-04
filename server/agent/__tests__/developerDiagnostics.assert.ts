@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   buildTurnDiagnosticBundle,
   formatDiagnosticBundleForClipboard,
+  getActionableDiagnosticRecords,
   isDiagnosticCopyRequest,
   resolveDiagnosticTarget,
   resolveDiagnosticTargetFromText,
@@ -16,6 +17,7 @@ function makeRecord(input: {
   messageId: number;
   createdAt: string;
   result?: "success" | "error";
+  runtimeIntent?: string;
 }): DiagnosticTurnRecord {
   const bundle = buildTurnDiagnosticBundle({
     turnId: input.turnId,
@@ -25,6 +27,7 @@ function makeRecord(input: {
     requestText: "Open YouTube",
     responseText: input.result === "error" ? "I could not open YouTube." : "Opened YouTube.",
     selected: { mode: "telegram", model: "server-selected", profile: "server-selected" },
+    runtimeIntent: input.runtimeIntent,
     contextPacket: { messages: [{ role: "user", content: "Open YouTube" }] },
     normalizedToolCalls: [{ tool: "android_open_app_by_name", appName: "YouTube" }],
     toolResults: [{ tool: "android_open_app_by_name", result: input.result ?? "success", label: "Open YouTube" }],
@@ -115,6 +118,21 @@ function testTelegramTargetResolution() {
   const failedFromText = resolveDiagnosticTargetFromText(records, "copy last failed details");
   assert.equal(failedFromText.ok, true);
   if (failedFromText.ok) assert.equal(failedFromText.record.turnId, "newer");
+
+  const withClarification = [
+    makeRecord({
+      turnId: "clarification",
+      messageId: 103,
+      createdAt: "2026-07-04T00:02:00.000Z",
+      runtimeIntent: "diagnostic_copy",
+    }),
+    ...records,
+  ];
+  const actionable = getActionableDiagnosticRecords(withClarification);
+  assert.equal(actionable.some((record) => record.turnId === "clarification"), false);
+  const lastAfterClarification = resolveDiagnosticTargetFromText(withClarification, "copy last turn details");
+  assert.equal(lastAfterClarification.ok, true);
+  if (lastAfterClarification.ok) assert.equal(lastAfterClarification.record.turnId, "newer");
   console.log("OK: Telegram diagnostics resolve reply targets and plain last-turn targets");
 }
 

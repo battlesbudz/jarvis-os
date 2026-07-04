@@ -155,6 +155,19 @@ export function diagnosticRecordHasFailure(record: DiagnosticTurnRecord): boolea
   });
 }
 
+export function isDiagnosticCopyRecord(record: DiagnosticTurnRecord): boolean {
+  if (record.bundle.runtimeIntent === "diagnostic_copy") return true;
+  const context = record.bundle.contextPacket;
+  return !!context
+    && typeof context === "object"
+    && "command" in context
+    && (context as { command?: unknown }).command === "voice_copy_details";
+}
+
+export function getActionableDiagnosticRecords(records: DiagnosticTurnRecord[]): DiagnosticTurnRecord[] {
+  return records.filter((record) => !isDiagnosticCopyRecord(record));
+}
+
 export function resolveDiagnosticTarget(
   records: DiagnosticTurnRecord[],
   request: DiagnosticTargetRequest,
@@ -183,9 +196,10 @@ export function resolveDiagnosticTargetFromText(
   records: DiagnosticTurnRecord[],
   text: string,
 ): DiagnosticTargetResolution {
-  if (records.length === 0) return { ok: false, reason: "empty", ambiguous: false };
+  const actionableRecords = getActionableDiagnosticRecords(records);
+  if (actionableRecords.length === 0) return { ok: false, reason: "empty", ambiguous: false };
   const normalized = text.trim().toLowerCase();
-  const newestFirst = [...records].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  const newestFirst = [...actionableRecords].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
 
   if (/\b(failed action|last failed|failed)\b/.test(normalized)) {
     const failedRecord = newestFirst.find(diagnosticRecordHasFailure);
@@ -194,14 +208,14 @@ export function resolveDiagnosticTargetFromText(
       : { ok: false, reason: "not_found", ambiguous: false };
   }
 
-  return resolveDiagnosticTarget(records, { kind: "last" });
+  return resolveDiagnosticTarget(actionableRecords, { kind: "last" });
 }
 
 export function shouldClarifyVoiceDiagnosticTarget(text: string, recentRecords: DiagnosticTurnRecord[]): boolean {
   const normalized = text.trim().toLowerCase();
   if (!isDiagnosticCopyRequest(normalized)) return false;
   if (/\b(last turn|last failed|failed action|this turn|current turn)\b/.test(normalized)) return false;
-  const recent = recentRecords.slice(0, 3);
+  const recent = getActionableDiagnosticRecords(recentRecords).slice(0, 3);
   const hasFailure = recent.some(diagnosticRecordHasFailure);
   return recent.length > 1 || hasFailure;
 }

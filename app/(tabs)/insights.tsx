@@ -69,6 +69,7 @@ import { authFetch, getAuthToken } from '@/lib/auth-context';
 import { useWakeWord } from '@/lib/wake-word-context';
 import {
   buildTurnDiagnosticBundle,
+  getActionableDiagnosticRecords,
   inferRuntimeIntent,
   isDiagnosticCopyRequest,
   resolveDiagnosticTargetFromText,
@@ -2037,7 +2038,7 @@ export default function InsightsScreen() {
   }, []);
 
   const getDiagnosticRecords = useCallback((): DiagnosticTurnRecord[] => {
-    return messagesRef.current
+    const records = messagesRef.current
       .filter((message) => message.role === 'assistant' && !!message.diagnostics)
       .map((message) => {
         const bundle = message.diagnostics!;
@@ -2050,6 +2051,7 @@ export default function InsightsScreen() {
           bundle,
         };
       });
+    return getActionableDiagnosticRecords(records);
   }, []);
 
   const copyDiagnosticBundleToClipboard = useCallback(async (
