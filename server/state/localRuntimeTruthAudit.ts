@@ -290,6 +290,24 @@ function youtubeSearchResultMatches(target: string, resultTarget: string): boole
   return terms.length > 0 && terms.every((term) => resultTarget.includes(term));
 }
 
+function webUrlTarget(value: string): { host: string; path: string } | null {
+  const match = value.match(/\b(?:https?:\/\/)?(?:www\.)?((?:[a-z0-9-]+\.)+[a-z]{2,})(\/[^\s<>"']*)?/i);
+  if (!match?.[1]) return null;
+  return {
+    host: match[1].toLowerCase(),
+    path: (match[2] ?? "").replace(/[),.;]+$/g, "").toLowerCase(),
+  };
+}
+
+function webUrlTargetsMatch(claimTarget: string, resultTarget: string): boolean | null {
+  const claimUrl = webUrlTarget(claimTarget);
+  if (!claimUrl) return null;
+  const resultUrl = webUrlTarget(resultTarget);
+  if (!resultUrl) return false;
+  if (claimUrl.host !== resultUrl.host) return false;
+  return !claimUrl.path || resultUrl.path === claimUrl.path || resultUrl.path.startsWith(`${claimUrl.path}/`);
+}
+
 function hasConfirmingActionResult(
   claim: { toolName: string; target?: string },
   results: LocalRuntimeActionResult[],
@@ -330,6 +348,8 @@ function appTargetVariants(value: string): Set<string> {
 
 function actionTargetsMatch(claimTarget: string, resultTarget: string): boolean {
   if (!claimTarget) return true;
+  const urlMatch = webUrlTargetsMatch(claimTarget, resultTarget);
+  if (urlMatch !== null) return urlMatch;
   if (resultTarget.includes(claimTarget)) return true;
   const claimVariants = appTargetVariants(claimTarget);
   const resultVariants = appTargetVariants(resultTarget);

@@ -4833,6 +4833,46 @@ async function testAndroidLocalGemmaStillRecoversNonYoutubeUrlToPhoneOpen() {
   }
 }
 
+async function testAndroidLocalGemmaRecoversBareDomainToPhoneOpen() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "I can open that site." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Open example.com." }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "android_open_phone_url",
+            description: "Open a URL on the Android phone.",
+            parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+          },
+        },
+      ],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_open_phone_url");
+    assert.equal(result.toolCallList[0].function.arguments, '{"url":"https://example.com"}');
+    console.log("OK: Android Local Gemma recovers bare domains to phone URL opens");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaRecoversDeepLinkUrlToPhoneOpen() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -6664,6 +6704,7 @@ async function main() {
   await testAndroidLocalGemmaPreservesCoachYoutubeTranscriptRouting();
   await testAndroidLocalGemmaDoesNotRecoverYoutubeTranscriptUrlToPhoneOpen();
   await testAndroidLocalGemmaStillRecoversNonYoutubeUrlToPhoneOpen();
+  await testAndroidLocalGemmaRecoversBareDomainToPhoneOpen();
   await testAndroidLocalGemmaRecoversDeepLinkUrlToPhoneOpen();
   await testAndroidLocalGemmaKeepsPhoneUrlToolForPronounConfirmations();
   await testAndroidLocalGemmaDoesNotUsePhoneUrlToolForUnrelatedConfirmations();

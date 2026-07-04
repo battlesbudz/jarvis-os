@@ -438,7 +438,7 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     actionResults: [{
       toolName: "android_open_phone_url",
       ok: true,
-      target: "https://example.org",
+      target: "https://notexample.com/path",
     }],
   });
   assert.equal(mismatchedBareDomainCompletion.status, "blocked_false_completion");
