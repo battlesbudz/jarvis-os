@@ -66,6 +66,18 @@ const openai = new OpenAI(getOpenAIClientConfig());
 const telegramDiagnosticTurnsByChat = new Map<string, DiagnosticTurnRecord[]>();
 const MAX_TELEGRAM_DIAGNOSTIC_TURNS = 20;
 
+function serializeDiagnosticError(error: unknown): unknown {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+  if (error && typeof error === "object") return error;
+  return { message: String(error) };
+}
+
 function generateLinkCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let code = "";
@@ -394,6 +406,56 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     if (ttsStillThinkingTimer !== null) clearTimeout(ttsStillThinkingTimer);
   };
 
+  const rememberFailureDiagnosticTurn = (input: {
+    responseText: string;
+    channelTurnId?: number | null;
+    modelErrors?: unknown[];
+    reason: string;
+  }) => {
+    const diagnosticBundle = buildTurnDiagnosticBundle({
+      turnId: `telegram_${chatId}_${input.channelTurnId ?? Date.now()}`,
+      source: "telegram",
+      userId,
+      channel: "telegram",
+      channelTurnId: input.channelTurnId ?? null,
+      requestText: userText,
+      responseText: input.responseText,
+      selected: {
+        mode: "telegram",
+        model: "server-selected",
+        profile: "server-selected",
+      },
+      runtimeIntent: inferRuntimeIntent(userText),
+      contextPacket: {
+        userText,
+        imageUrl,
+        ttsEnabled: ttsPrefs.enabled,
+        streamBuffer: streamBuf,
+        latestProgressPhase,
+        progressUpdateCount,
+        failureReason: input.reason,
+      },
+      modelErrors: input.modelErrors ?? [],
+      timing: {
+        startedAt: new Date(turnStartedAtMs).toISOString(),
+        finishedAt: new Date().toISOString(),
+        durationMs: Date.now() - turnStartedAtMs,
+      },
+      recentTurnHistory: [
+        { role: "user", content: userText },
+        { role: "assistant", content: input.responseText },
+      ],
+    });
+    rememberTelegramDiagnosticTurn(chatId, {
+      turnId: diagnosticBundle.turnId,
+      source: "telegram",
+      channel: "telegram",
+      channelTurnId: input.channelTurnId ?? null,
+      createdAt: diagnosticBundle.createdAt,
+      bundle: diagnosticBundle,
+    });
+  };
+
   try {
     // Check if this Telegram chatId is assigned to a named agent first.
     // Pass onToken so named-agent replies also stream into the placeholder.
@@ -607,27 +669,52 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     }
     if (isTelegramRunTimeoutError(error)) {
       const timeoutMessage = "I stopped this Telegram turn because I did not see meaningful progress for a long time. Send it again or ask me to delegate it as a background job.";
+      let timeoutMessageId: number | null = placeholderMsgId;
       console.warn(`[Telegram] coach turn inactive for ${TELEGRAM_REPLY_TIMEOUT_MS}ms; delivering timeout fallback.`);
       if (placeholderMsgId) {
         await editMessage(chatId, placeholderMsgId, timeoutMessage).catch(() => {
           sendMessage(chatId, timeoutMessage).catch(() => {});
         });
       } else {
-        await sendMessage(chatId, timeoutMessage);
+        timeoutMessageId = await sendMessageGetId(chatId, timeoutMessage).catch(async () => {
+          await sendMessage(chatId, timeoutMessage);
+          return null;
+        });
       }
       logInteraction(userId, "telegram", "outbound", timeoutMessage).catch(() => {});
+      rememberFailureDiagnosticTurn({
+        responseText: timeoutMessage,
+        channelTurnId: timeoutMessageId,
+        reason: "timeout",
+        modelErrors: [{
+          name: "TelegramRunTimeout",
+          message: timeoutMessage,
+          timeoutMs: TELEGRAM_REPLY_TIMEOUT_MS,
+        }],
+      });
       return;
     }
     console.error("Error handling Telegram coach reply:", error);
     // If we have a placeholder, update it with the error message instead of sending
     // a separate message (avoids leaving an orphaned "Working on it…" bubble).
+    const errorMessage = "Sorry, I encountered an error. Please try again.";
+    let errorMessageId: number | null = placeholderMsgId;
     if (placeholderMsgId) {
-      await editMessage(chatId, placeholderMsgId, "Sorry, I encountered an error. Please try again.").catch(() => {
-        sendMessage(chatId, "Sorry, I encountered an error. Please try again.").catch(() => {});
+      await editMessage(chatId, placeholderMsgId, errorMessage).catch(() => {
+        sendMessage(chatId, errorMessage).catch(() => {});
       });
     } else {
-      await sendMessage(chatId, "Sorry, I encountered an error. Please try again.");
+      errorMessageId = await sendMessageGetId(chatId, errorMessage).catch(async () => {
+        await sendMessage(chatId, errorMessage);
+        return null;
+      });
     }
+    rememberFailureDiagnosticTurn({
+      responseText: errorMessage,
+      channelTurnId: errorMessageId,
+      reason: "error",
+      modelErrors: [serializeDiagnosticError(error)],
+    });
     return;
   } finally {
     runGuard.finish();

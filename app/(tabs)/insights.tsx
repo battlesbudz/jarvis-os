@@ -2753,6 +2753,55 @@ export default function InsightsScreen() {
     const msg = messagesRef.current.find(m => m.id === msgId);
     if (!msg?.pendingConfirm) return;
     const { token, tool } = msg.pendingConfirm;
+    const confirmStartedAt = new Date();
+    const buildConfirmedActionDiagnostics = (input: {
+      responseText: string;
+      executedActions: ExecutedAction[];
+      modelErrors?: unknown[];
+      apiResult?: unknown;
+    }): TurnDiagnosticBundle => {
+      const finishedAt = new Date();
+      const recentMessages = messagesRef.current.slice(0, 8).map((candidate) => ({
+        role: candidate.role,
+        content: candidate.content,
+      }));
+      const requestText = messagesRef.current.find((candidate) => candidate.role === 'user')?.content ?? msg.content;
+      return buildTurnDiagnosticBundle({
+        turnId: msgId,
+        source: 'in_app',
+        channel: 'appchat',
+        requestText,
+        responseText: input.responseText,
+        selected: {
+          mode: coachingModeRef.current,
+          model: 'server-selected',
+          profile: 'confirmed-action',
+        },
+        runtimeIntent: inferRuntimeIntent(requestText),
+        contextPacket: {
+          pendingConfirm: msg.pendingConfirm,
+          apiResult: input.apiResult ?? null,
+          recentMessages,
+        },
+        offeredTools: [tool],
+        rawToolCalls: [{ token, tool, preview: msg.pendingConfirm.preview }],
+        normalizedToolCalls: input.executedActions.map((action) => ({
+          tool: action.tool,
+          result: action.result,
+          label: action.label,
+          detail: action.detail,
+        })),
+        toolResults: input.executedActions,
+        modelErrors: input.modelErrors ?? [],
+        timing: {
+          startedAt: confirmStartedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+          durationMs: finishedAt.getTime() - confirmStartedAt.getTime(),
+        },
+        androidState: null,
+        recentTurnHistory: recentMessages,
+      });
+    };
 
     if (!confirmed) {
       setMessages(prev => {
@@ -2800,6 +2849,13 @@ export default function InsightsScreen() {
       });
       const data = await res.json();
       if (!res.ok) {
+        const failureContent = data.error || 'Could not execute that action. The confirmation may have expired.';
+        const execAction: ExecutedAction = {
+          tool,
+          result: 'error',
+          label: data.label || 'Failed',
+          detail: data.detail || data.error,
+        };
         setMessages(prev => {
           const updated = [...prev];
           const idx = updated.findIndex(m => m.id === msgId);
@@ -2807,7 +2863,14 @@ export default function InsightsScreen() {
             updated[idx] = {
               ...updated[idx],
               pendingConfirm: undefined,
-              content: data.error || 'Could not execute that action. The confirmation may have expired.',
+              content: failureContent,
+              executedActions: [execAction],
+              diagnostics: buildConfirmedActionDiagnostics({
+                responseText: failureContent,
+                executedActions: [execAction],
+                modelErrors: [{ message: failureContent }],
+                apiResult: data,
+              }),
             };
           }
           persistChatHistory(updated);
@@ -2832,12 +2895,27 @@ export default function InsightsScreen() {
             pendingConfirm: undefined,
             content: successContent,
             executedActions: [execAction],
+            diagnostics: execAction.result === 'error'
+              ? buildConfirmedActionDiagnostics({
+                  responseText: successContent,
+                  executedActions: [execAction],
+                  modelErrors: [{ message: successContent }],
+                  apiResult: data,
+                })
+              : updated[idx].diagnostics,
           };
         }
         persistChatHistory(updated);
         return updated;
       });
-    } catch {
+    } catch (error) {
+      const failureContent = 'Something went wrong while executing that action.';
+      const execAction: ExecutedAction = {
+        tool,
+        result: 'error',
+        label: 'Failed',
+        detail: error instanceof Error ? error.message : String(error),
+      };
       setMessages(prev => {
         const updated = [...prev];
         const idx = updated.findIndex(m => m.id === msgId);
@@ -2845,7 +2923,13 @@ export default function InsightsScreen() {
           updated[idx] = {
             ...updated[idx],
             pendingConfirm: undefined,
-            content: 'Something went wrong while executing that action.',
+            content: failureContent,
+            executedActions: [execAction],
+            diagnostics: buildConfirmedActionDiagnostics({
+              responseText: failureContent,
+              executedActions: [execAction],
+              modelErrors: [error instanceof Error ? { message: error.message, name: error.name } : String(error)],
+            }),
           };
         }
         persistChatHistory(updated);
