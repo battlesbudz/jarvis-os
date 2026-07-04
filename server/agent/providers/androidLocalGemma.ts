@@ -1747,7 +1747,11 @@ function recoverAndroidRuntimeToolFromRequest(
     };
   }
 
-  if (hasFunctionTool(params.tools, "android_open_app_by_name") && /\b(?:open|launch|start)\b/i.test(recoveryText)) {
+  if (
+    hasFunctionTool(params.tools, "android_open_app_by_name") &&
+    !looksLikePhoneUrlOpenIntent(recoveryText) &&
+    /\b(?:open|launch|start)\b/i.test(recoveryText)
+  ) {
     const allowedPackageNames = inferPackageNamesFromText(recoveryText)
       .filter((packageName) => !packageTargetNegatedInText(recoveryText, packageName));
     if (allowedPackageNames.length > 1 || looksLikeMultiAppOpenRequest(recoveryText)) return null;

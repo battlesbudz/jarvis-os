@@ -5688,6 +5688,44 @@ async function testAndroidLocalGemmaRejectsUrlSafetyQuestionToolCalls() {
   }
 }
 
+async function testAndroidLocalGemmaDoesNotRecoverAdvisoryUrlAsAppOpen() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "tool_calls", tool_calls: [] }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Should I open https://example.com?" }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "android_open_app_by_name",
+            description: "Open an installed Android app by name.",
+            parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+          },
+        },
+      ],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.equal(result.textContent, "Phone Gemma did not return a usable local answer for that request.");
+    console.log("OK: Android Local Gemma does not recover advisory URLs as app opens");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaRejectsAdvisoryLegacyBrowseToolCalls() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -7291,6 +7329,7 @@ async function main() {
   await testAndroidLocalGemmaDoesNotOpenAdvisoryUrlQuestions();
   await testAndroidLocalGemmaGracefullyRejectsAdvisoryPhoneUrlToolCalls();
   await testAndroidLocalGemmaRejectsUrlSafetyQuestionToolCalls();
+  await testAndroidLocalGemmaDoesNotRecoverAdvisoryUrlAsAppOpen();
   await testAndroidLocalGemmaRejectsAdvisoryLegacyBrowseToolCalls();
   await testAndroidLocalGemmaDoesNotRepeatCompletedRecoveredActions();
   await testAndroidLocalGemmaDoesNotAdvanceAfterFailedDaemonAction();
