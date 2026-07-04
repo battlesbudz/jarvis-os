@@ -770,8 +770,15 @@ function rawUrlFromText(text: string): string | null {
   const match = text.match(/\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+|\byoutu\.be\/[^\s<>"']+|\byoutube\.com\/[^\s<>"']+|\b(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):[^\s<>"']+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d{1,5})?(?:[/?#][^\s<>"']*)?/i);
   if (!match) return null;
   const raw = match[0].replace(/[),.;]+$/g, "");
-  if (Object.values(ANDROID_APP_PACKAGE_ALIASES).includes(raw.toLowerCase())) return null;
+  if (looksLikeAndroidPackageId(raw)) return null;
   return raw;
+}
+
+function looksLikeAndroidPackageId(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || /[:/?#]/.test(normalized)) return false;
+  if (Object.values(ANDROID_APP_PACKAGE_ALIASES).includes(normalized)) return true;
+  return /^(?:com|org|net|io|app|dev)\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/i.test(normalized);
 }
 
 function urlFromText(text: string): string | null {

@@ -303,12 +303,19 @@ function webUrlTarget(value: string): { host: string; port: string; suffix: stri
   const match = value.match(/\b(?:https?:\/\/)?(?:www\.)?((?:[a-z0-9-]+\.)+[a-z]{2,})(:\d{1,5})?([/?#][^\s<>"']*)?/i);
   if (!match?.[1]) return null;
   const raw = match[0].replace(/[),.;]+$/g, "").toLowerCase();
-  if (Object.values(ANDROID_APP_PACKAGE_ALIASES).includes(raw)) return null;
+  if (looksLikeAndroidPackageId(raw)) return null;
   return {
     host: match[1].toLowerCase(),
     port: (match[2] ?? "").toLowerCase(),
     suffix: (match[3] ?? "").replace(/[),.;]+$/g, "").toLowerCase(),
   };
+}
+
+function looksLikeAndroidPackageId(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || /[:/?#]/.test(normalized)) return false;
+  if (Object.values(ANDROID_APP_PACKAGE_ALIASES).includes(normalized)) return true;
+  return /^(?:com|org|net|io|app|dev)\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/i.test(normalized);
 }
 
 function webUrlTargetsMatch(claimTarget: string, resultTarget: string): boolean | null {

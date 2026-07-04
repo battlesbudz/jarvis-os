@@ -511,6 +511,14 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(confirmedPackageIdCompletion.status, "allow");
 
+  const confirmedUnlistedPackageIdCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open com.twitter.android.",
+    responseText: "I opened com.twitter.android.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "com.twitter.android" }],
+  });
+  assert.equal(confirmedUnlistedPackageIdCompletion.status, "allow");
+
   const confirmedYoutubeSearch = auditLocalRuntimeResponse({
     userMessage: "Search YouTube for AI videos.",
     responseText: "I opened YouTube.",
