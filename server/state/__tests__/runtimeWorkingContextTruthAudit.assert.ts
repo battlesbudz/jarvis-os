@@ -356,6 +356,22 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(nonDeviceStartedAnswer.status, "allow");
 
+  const nonDeviceOpenedAnswer = auditLocalRuntimeResponse({
+    userMessage: "Write a sentence about entering a room.",
+    responseText: "I opened the door.",
+    capabilityState: { app_control: "available" },
+    actionResults: [],
+  });
+  assert.equal(nonDeviceOpenedAnswer.status, "allow");
+
+  const nonDeviceCopiedAnswer = auditLocalRuntimeResponse({
+    userMessage: "Explain the example.",
+    responseText: "I copied the example into the explanation.",
+    capabilityState: { clipboard: "available" },
+    actionResults: [],
+  });
+  assert.equal(nonDeviceCopiedAnswer.status, "allow");
+
   const falseStartedAppCompletion = auditLocalRuntimeResponse({
     userMessage: "Start Gmail.",
     responseText: "I started Gmail app.",

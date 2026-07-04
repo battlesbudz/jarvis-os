@@ -202,6 +202,30 @@ function completionClaimTarget(text: string): { toolName: string; target?: strin
   return null;
 }
 
+function userAskedForAuditedLocalAction(
+  userMessage: string,
+  claim: { toolName: string; target?: string },
+): boolean {
+  const text = compactText(userMessage).toLowerCase();
+  if (!text) return false;
+
+  switch (claim.toolName) {
+    case "android_capture_screen":
+      return /\b(?:screenshot|screen\s+shot|screen\s+grab|capture)\b/i.test(text);
+    case "android_copy_to_clipboard":
+      return /\b(?:copy|clipboard)\b/i.test(text);
+    case "android_open_app_by_name": {
+      if (/\bopen[-\s]+source\b/i.test(text)) return false;
+      if (/\bsearch\b[\s\S]{0,40}\byoutube\b|\byoutube\b[\s\S]{0,40}\bsearch\b/i.test(text)) return true;
+      if (!/\b(?:open|launch|start|browse|visit|go\s+to|navigate(?:\s+to)?|pull\s+up)\b/i.test(text)) return false;
+      const target = compactText(claim.target).toLowerCase();
+      return !target || text.includes(target);
+    }
+    default:
+      return false;
+  }
+}
+
 function hasConfirmingActionResult(
   claim: { toolName: string; target?: string },
   results: LocalRuntimeActionResult[],
@@ -260,8 +284,13 @@ export function auditLocalRuntimeResponse(input: LocalRuntimeTruthAuditInput): L
     };
   }
 
+  const actionResults = input.actionResults ?? [];
   const completionClaim = completionClaimTarget(text);
-  if (completionClaim && !hasConfirmingActionResult(completionClaim, input.actionResults ?? [])) {
+  if (
+    completionClaim &&
+    (actionResults.length > 0 || userAskedForAuditedLocalAction(input.userMessage, completionClaim)) &&
+    !hasConfirmingActionResult(completionClaim, actionResults)
+  ) {
     return {
       status: "blocked_false_completion",
       text: "I have not completed that yet.",
