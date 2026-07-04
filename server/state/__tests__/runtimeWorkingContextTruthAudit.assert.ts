@@ -380,6 +380,17 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(memoryBackedOpenedAnswer.status, "allow");
 
+  const unrelatedPhoneAndMemoryAnswer = auditLocalRuntimeResponse({
+    userMessage: "What do you know about my business?",
+    responseText: "You opened your shop in 2020.",
+    capabilityState: { app_control: "available", memory: "available" },
+    actionResults: [
+      { toolName: "android_open_app_by_name", ok: true, target: "YouTube" },
+      { toolName: "memory_search", ok: true, summary: "Found business timeline memory." },
+    ],
+  });
+  assert.equal(unrelatedPhoneAndMemoryAnswer.status, "allow");
+
   const falseStartedAppCompletion = auditLocalRuntimeResponse({
     userMessage: "Start Gmail.",
     responseText: "I started Gmail app.",
@@ -387,6 +398,14 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     actionResults: [],
   });
   assert.equal(falseStartedAppCompletion.status, "blocked_false_completion");
+
+  const falseBareStartedAppCompletion = auditLocalRuntimeResponse({
+    userMessage: "Start Gmail.",
+    responseText: "I started Gmail.",
+    capabilityState: { app_control: "available" },
+    actionResults: [],
+  });
+  assert.equal(falseBareStartedAppCompletion.status, "blocked_false_completion");
 
   const falseUrlCompletion = auditLocalRuntimeResponse({
     userMessage: "Open https://example.com.",

@@ -221,6 +221,13 @@ function completionClaimTarget(text: string): { toolName: string; target?: strin
   if (startedApp?.[1]) {
     return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(startedApp[1]) };
   }
+  const bareStartedApp = text.match(/\b(?:i\s+)?started\s+(?!by\b)([a-z0-9 ._-]{2,80}?)(?:[.!?]|$)/i);
+  if (bareStartedApp?.[1]) {
+    const target = normalizeOpenedTarget(bareStartedApp[1]);
+    if (target && !/^(?:(?:a|an|the)\s+)?(?:task|work|process|draft|outline|plan|summary|response|analysis|review|conversation|chat|setup|account)\b/i.test(target)) {
+      return { toolName: "android_open_app_by_name", target };
+    }
+  }
   if (/\b(?:i\s+)?(?:captured|took)\s+(?:a\s+)?screenshot\b/i.test(text)) {
     return { toolName: "android_capture_screen" };
   }
@@ -308,12 +315,18 @@ function actionTargetsMatch(claimTarget: string, resultTarget: string): boolean 
   return false;
 }
 
-function hasRelatedLocalActionResult(
+function hasMatchingLocalActionResult(
   claim: { toolName: string; target?: string },
   results: LocalRuntimeActionResult[],
 ): boolean {
   const confirmingToolNames = confirmingToolNamesForClaim(claim);
-  return results.some((result) => confirmingToolNames.has(result.toolName));
+  const target = compactText(claim.target).toLowerCase();
+  return results.some((result) => {
+    if (!confirmingToolNames.has(result.toolName)) return false;
+    if (!target) return true;
+    const resultTarget = compactText(`${result.target ?? ""} ${result.summary ?? ""}`).toLowerCase();
+    return actionTargetsMatch(target, resultTarget);
+  });
 }
 
 function strongPersonalClaim(text: string): string | null {
@@ -361,7 +374,7 @@ export function auditLocalRuntimeResponse(input: LocalRuntimeTruthAuditInput): L
   const completionClaim = completionClaimTarget(text);
   if (
     completionClaim &&
-    (hasRelatedLocalActionResult(completionClaim, actionResults) || userAskedForAuditedLocalAction(input.userMessage, completionClaim)) &&
+    (hasMatchingLocalActionResult(completionClaim, actionResults) || userAskedForAuditedLocalAction(input.userMessage, completionClaim)) &&
     !hasConfirmingActionResult(completionClaim, actionResults)
   ) {
     return {
