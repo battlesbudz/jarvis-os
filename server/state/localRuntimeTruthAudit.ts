@@ -84,6 +84,53 @@ const ANDROID_APP_PACKAGE_ALIASES: Record<string, string> = {
   discord: "com.discord",
 };
 
+const ANDROID_APP_URL_CONFIRMERS_BY_PACKAGE: Record<string, { hostSuffixes: string[]; schemes: string[] }> = {
+  "com.google.android.youtube": {
+    hostSuffixes: ["youtube.com", "youtu.be"],
+    schemes: ["youtube", "vnd.youtube"],
+  },
+  "com.spotify.music": {
+    hostSuffixes: ["spotify.com"],
+    schemes: ["spotify"],
+  },
+  "com.reddit.frontpage": {
+    hostSuffixes: ["reddit.com", "redd.it"],
+    schemes: ["reddit"],
+  },
+  "com.facebook.katana": {
+    hostSuffixes: ["facebook.com", "fb.com"],
+    schemes: ["facebook", "fb"],
+  },
+  "com.instagram.android": {
+    hostSuffixes: ["instagram.com"],
+    schemes: ["instagram"],
+  },
+  "com.facebook.orca": {
+    hostSuffixes: ["messenger.com", "m.me"],
+    schemes: ["fb-messenger"],
+  },
+  "com.whatsapp": {
+    hostSuffixes: ["whatsapp.com", "wa.me"],
+    schemes: ["whatsapp"],
+  },
+  "com.ss.android.ugc.trill": {
+    hostSuffixes: ["tiktok.com"],
+    schemes: ["tiktok"],
+  },
+  "com.discord": {
+    hostSuffixes: ["discord.com", "discord.gg"],
+    schemes: ["discord"],
+  },
+  "com.google.android.gm": {
+    hostSuffixes: ["gmail.com", "mail.google.com"],
+    schemes: ["googlegmail", "mailto"],
+  },
+  "com.google.android.apps.maps": {
+    hostSuffixes: ["maps.google.com"],
+    schemes: ["geo", "google.navigation", "waze"],
+  },
+};
+
 function compactText(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 }
@@ -287,8 +334,10 @@ function confirmingToolNamesForClaim(claim: { toolName: string; target?: string 
   if (claim.toolName !== "android_open_app_by_name") return new Set([claim.toolName]);
   const target = compactText(claim.target).toLowerCase();
   if (isUrlLikeActionTarget(target)) return new Set(["android_open_phone_url"]);
-  if (/\byoutube\b/i.test(target)) return new Set(["android_open_app_by_name", "android_youtube_search", "android_open_phone_url"]);
-  return new Set(["android_open_app_by_name", "android_open_phone_url"]);
+  const toolNames = new Set(["android_open_app_by_name"]);
+  if (/\byoutube\b/i.test(target)) toolNames.add("android_youtube_search");
+  if (appUrlConfirmersForTarget(target)) toolNames.add("android_open_phone_url");
+  return toolNames;
 }
 
 function youtubeSearchClaimQuery(target: string): string {
@@ -343,6 +392,32 @@ function webUrlTargetsMatch(claimTarget: string, resultTarget: string): boolean 
   return resultUrl.suffix === claimUrl.suffix || resultUrl.suffix.startsWith(`${claimUrl.suffix}/`);
 }
 
+function urlSchemeTarget(value: string): string | null {
+  return value.match(/^\s*([a-z][a-z0-9+.-]*):/i)?.[1]?.toLowerCase() ?? null;
+}
+
+function hostMatchesSuffix(host: string, suffix: string): boolean {
+  return host === suffix || host.endsWith(`.${suffix}`);
+}
+
+function appUrlConfirmersForTarget(appTarget: string): { hostSuffixes: string[]; schemes: string[] } | null {
+  const packageName = appPackageNameForTarget(appTarget);
+  return packageName ? (ANDROID_APP_URL_CONFIRMERS_BY_PACKAGE[packageName] ?? null) : null;
+}
+
+function phoneUrlResultMatchesAppClaim(appTarget: string, resultTarget: string): boolean {
+  const confirmers = appUrlConfirmersForTarget(appTarget);
+  if (!confirmers) return false;
+
+  const resultUrl = webUrlTarget(resultTarget);
+  if (resultUrl && confirmers.hostSuffixes.some((suffix) => hostMatchesSuffix(resultUrl.host, suffix))) {
+    return true;
+  }
+
+  const scheme = urlSchemeTarget(resultTarget);
+  return !!scheme && confirmers.schemes.includes(scheme);
+}
+
 function hasConfirmingActionResult(
   claim: { toolName: string; target?: string },
   results: LocalRuntimeActionResult[],
@@ -355,6 +430,9 @@ function hasConfirmingActionResult(
     if (result.toolName === "android_youtube_search" && target === "youtube") return true;
     const resultTarget = compactText(`${result.target ?? ""} ${result.summary ?? ""}`).toLowerCase();
     if (result.toolName === "android_youtube_search" && youtubeSearchResultMatches(target, resultTarget)) return true;
+    if (result.toolName === "android_open_phone_url" && !isUrlLikeActionTarget(target)) {
+      return phoneUrlResultMatchesAppClaim(target, resultTarget);
+    }
     return actionTargetsMatch(target, resultTarget);
   });
 }
@@ -404,6 +482,9 @@ function hasMatchingLocalActionResult(
     if (!confirmingToolNames.has(result.toolName)) return false;
     if (!target) return true;
     const resultTarget = compactText(`${result.target ?? ""} ${result.summary ?? ""}`).toLowerCase();
+    if (result.toolName === "android_open_phone_url" && !isUrlLikeActionTarget(target)) {
+      return phoneUrlResultMatchesAppClaim(target, resultTarget);
+    }
     return actionTargetsMatch(target, resultTarget);
   });
 }

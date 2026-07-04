@@ -730,6 +730,18 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(unrelatedUrlDoesNotConfirmAppCompletion.status, "blocked_false_completion");
 
+  const unrelatedUrlQueryDoesNotConfirmAppCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open https://example.com/search?q=spotify.",
+    responseText: "I opened Spotify.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "https://example.com/search?q=spotify",
+    }],
+  });
+  assert.equal(unrelatedUrlQueryDoesNotConfirmAppCompletion.status, "blocked_false_completion");
+
   const confirmedDeepLinkOpen = auditLocalRuntimeResponse({
     userMessage: "Open geo:0,0?q=coffee.",
     responseText: "I opened geo:0,0?q=coffee.",
