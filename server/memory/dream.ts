@@ -14,7 +14,7 @@
  *  4. Access reinforcement — boosts memories whose access_count rose > 3 since last cycle
  */
 import { db } from "../db";
-import { eq, desc, and, gte, gt, lt, sql, inArray } from "drizzle-orm";
+import { eq, desc, and, gte, gt, lt, ne, sql, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { extractAndStore } from "./extractor";
 import { markSoulStale } from "./soul";
@@ -32,6 +32,8 @@ import {
 } from "./dreamPolicy";
 import { evaluateMemoryAutoReviewDecision } from "./autoReview";
 import { keepPendingMemoryWrites, writeMemoryThroughPipeline } from "./writePipeline";
+
+const LOCAL_RUNTIME_OBSERVATION_SCOPE_TYPE = "local_runtime_observation";
 
 async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   try {
@@ -175,6 +177,7 @@ async function buildCorpus(userId: string): Promise<CorpusResult> {
         and(
           eq(schema.memoryWorkingContext.userId, userId),
           eq(schema.memoryWorkingContext.state, "active"),
+          ne(schema.memoryWorkingContext.scopeType, LOCAL_RUNTIME_OBSERVATION_SCOPE_TYPE),
           gt(schema.memoryWorkingContext.expiresAt, now),
         ),
       )
@@ -1077,7 +1080,7 @@ ${corpus.text.slice(0, 12000)}`;
           confidenceScore: confidence,
           sourceMemoryIds: sourceIds,
           insightKind: raw.kind,
-          reviewPayload,
+          reviewPayload: reviewPayload as unknown as Record<string, unknown>,
           shownToUser: false,
         });
       stored++;

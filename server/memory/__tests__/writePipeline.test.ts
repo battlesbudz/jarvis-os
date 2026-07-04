@@ -84,11 +84,17 @@ async function testExpiredWorkingContextCompactsIntoRecentContext(): Promise<voi
   };
   const inserted: PlannedMemoryRecord[] = [];
   const stale: Array<{ id: string; memoryId: string; claimUpdatedAt: Date | string }> = [];
+  const calls: string[] = [];
   const deps: WorkingContextDeps = {
     async upsertWorkingContext(record) {
       return record;
     },
+    async expireNonCompactingWorkingContext() {
+      calls.push("expire-non-compacting");
+      return 0;
+    },
     async listExpiredWorkingContext() {
+      calls.push("list-expired");
       return [expired];
     },
     async insertRecentContextMemory(record) {
@@ -109,7 +115,55 @@ async function testExpiredWorkingContextCompactsIntoRecentContext(): Promise<voi
   assert.equal(inserted[0]?.reviewStatus, "active");
   assert.match(inserted[0]?.content ?? "", /Recent chat context/);
   assert.deepEqual(stale, [{ id: "wc-1", memoryId: "recent-1", claimUpdatedAt: "2026-06-26T12:00:00.000Z" }]);
+  assert.deepEqual(calls, ["expire-non-compacting", "list-expired"]);
   console.log("OK: expired working context compacts into recent short-term context");
+}
+
+async function testLocalRuntimeWorkingContextDoesNotCompact(): Promise<void> {
+  const { compactExpiredWorkingContext } = await loadPipeline();
+  const expired: ExpiredWorkingContextRow = {
+    id: "wc-local-runtime",
+    userId: "user-123",
+    scopeType: "local_runtime_observation",
+    scopeId: "global:notifications",
+    activeGoal: null,
+    currentStep: null,
+    lastEventId: "evt-local-runtime",
+    content: "Raw notification payload should stay ephemeral.",
+    updatedAt: "2026-06-25T12:00:00.000Z",
+    claimUpdatedAt: "2026-06-26T12:00:00.000Z",
+    expiresAt: "2026-06-26T11:59:00.000Z",
+  };
+  let inserted = 0;
+  let stale = 0;
+  const expiredScopes: string[][] = [];
+  const deps: WorkingContextDeps = {
+    async upsertWorkingContext(record) {
+      return record;
+    },
+    async expireNonCompactingWorkingContext(_now, scopeTypes) {
+      expiredScopes.push(scopeTypes);
+      return 1;
+    },
+    async listExpiredWorkingContext() {
+      return [expired];
+    },
+    async insertRecentContextMemory() {
+      inserted += 1;
+      return { id: "should-not-insert" };
+    },
+    async markWorkingContextStale() {
+      stale += 1;
+    },
+  };
+
+  const result = await compactExpiredWorkingContext({ now }, deps);
+
+  assert.deepEqual(result, { scanned: 1, compacted: 0, memoryIds: [] });
+  assert.deepEqual(expiredScopes, [["local_runtime_observation"]]);
+  assert.equal(inserted, 0);
+  assert.equal(stale, 0);
+  console.log("OK: local runtime working context stays ephemeral and does not compact into memory");
 }
 
 async function testDefaultCompactionEmbedsRecentContext(): Promise<void> {
@@ -128,6 +182,16 @@ async function testDefaultCompactionClaimsExpiredContextBeforeInsert(): Promise<
     source,
     /FOR UPDATE SKIP LOCKED[\s\S]*SET state = 'compacting'/,
     "default working context compaction should atomically claim expired rows before inserting memories",
+  );
+  assert.match(
+    source,
+    /scope_type <> \$\{LOCAL_RUNTIME_WORKING_CONTEXT_SCOPE_TYPE\}/,
+    "default working context compaction should not claim local runtime observations",
+  );
+  assert.match(
+    source,
+    /expireNonCompactingWorkingContext[\s\S]*SET state = 'stale',[\s\S]*content = ''[\s\S]*scope_type = ANY\(\$\{scopeTypes\}::varchar\[\]\)/,
+    "default working context compaction should scrub expired local runtime observations instead of preserving raw active rows",
   );
   assert.match(
     source,
@@ -203,6 +267,7 @@ async function testRecentContextMemoryShape(): Promise<void> {
     lastEventId: "evt-2",
     content: "Jarvis paused before a sensitive action.",
     updatedAt: now,
+    claimUpdatedAt: now,
     expiresAt: now,
   }, now);
 
@@ -489,6 +554,7 @@ async function main(): Promise<void> {
   await testWorkingContextRecordShape();
   await testWorkingContextPersistsThroughDeps();
   await testExpiredWorkingContextCompactsIntoRecentContext();
+  await testLocalRuntimeWorkingContextDoesNotCompact();
   await testDefaultCompactionEmbedsRecentContext();
   await testDefaultCompactionClaimsExpiredContextBeforeInsert();
   await testWorkingContextMigrationsAddReviewColumnsBeforeIndex();

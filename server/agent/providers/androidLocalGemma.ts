@@ -5,6 +5,17 @@ import { BaseProvider, isJsonObjectResponseFormat } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { buildRuntimeStateCardPrompt } from "../../state/stateCard";
 import {
+  auditLocalRuntimeResponse,
+  type LocalRuntimeActionResult,
+  type LocalRuntimeCapabilityAvailability,
+  type LocalRuntimeCapabilityName,
+} from "../../state/localRuntimeTruthAudit";
+import {
+  buildRuntimeCapabilityState,
+  preflightRuntimeCapabilityAction,
+  type RuntimeCapabilityAndroidAction,
+} from "../../state/runtimeCapability";
+import {
   markPhoneGemmaGenerationFinished,
   markPhoneGemmaGenerationStarted,
 } from "../../state/phoneGemmaDiagnostics";
@@ -131,6 +142,8 @@ const ANDROID_APP_PACKAGE_ALIASES: Record<string, string> = {
   tiktok: "com.ss.android.ugc.trill",
   discord: "com.discord",
 };
+const ANDROID_APP_PACKAGE_STANDARD_ROOTS = new Set(["com", "org", "net", "io"]);
+const ANDROID_APP_PACKAGE_NONSTANDARD_ROOTS = new Set(["de", "me", "tv"]);
 
 function isFunctionTool(tool: OpenAI.Chat.Completions.ChatCompletionTool): tool is ChatCompletionFunctionTool {
   return tool.type === "function";
@@ -357,7 +370,46 @@ function looksLikeUrlToolRequest(text: string): boolean {
   return /\b(?:https?:\/\/|www\.|youtu\.be\/|youtube\.com\/)/i.test(text);
 }
 
-function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
+function looksLikePhoneUrlOpenIntent(text: string): boolean {
+  return urlFromText(text) !== null;
+}
+
+function isBarePhoneUrlRequest(text: string): boolean {
+  const rawUrl = rawUrlFromText(text);
+  if (!rawUrl) return false;
+  const remaining = text
+    .replace(rawUrl, "")
+    .replace(/^[\s"'`([{<,.;:!?-]+|[\s"'`\])}>,.;:!?-]+$/g, "")
+    .trim();
+  return remaining.length === 0;
+}
+
+function phoneUrlIntentText(text: string): string {
+  return text
+    .replace(/^\s*(?:hey\s+)?jarvis\b[\s,:-]*/i, "")
+    .trim();
+}
+
+function looksLikeAdvisoryPhoneUrlQuestion(text: string): boolean {
+  const requestText = phoneUrlIntentText(text);
+  return /^\s*(?:should\s+(?:i|we)|can\s+i|could\s+i|would\s+it|is\s+it|do\s+you\s+think|would\s+you\s+recommend)\b/i.test(requestText) ||
+    /\b(?:check|verify|confirm|tell\s+me|let\s+me\s+know|find\s+out|look\s+up|see)\b[\s\S]{0,80}\b(?:if|whether)\b[\s\S]{0,160}\b(?:safe|okay|ok|dangerous|risky|legit|trustworthy|malicious|scam)\b[\s\S]{0,80}\b(?:open|visit|click|tap)\b/i.test(requestText) ||
+    /^\s*is\b[\s\S]{0,160}\b(?:safe|okay|ok|dangerous|risky|legit|trustworthy|malicious|scam)\b[\s\S]{0,80}\b(?:open|visit|click|tap)\b/i.test(requestText);
+}
+
+function looksLikePhoneUrlActionRequest(text: string): boolean {
+  const requestText = phoneUrlIntentText(text);
+  if (!looksLikePhoneUrlOpenIntent(requestText)) return false;
+  if (isBarePhoneUrlRequest(requestText)) return true;
+  if (looksLikeAdvisoryPhoneUrlQuestion(requestText)) return false;
+  return /\b(?:open|browse|visit|go\s+to|navigate(?:\s+to)?|launch|start|pull\s+up)\b/i.test(requestText) &&
+    !/^\s*(?:what|why|how|explain|describe|define|summari[sz]e|tell\s+me)\b/i.test(requestText);
+}
+
+function isToolConfirmationTurn(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  tools: ProviderQueryParams["tools"],
+): boolean {
   const latest = latestUserText(messages).trim();
   if (!looksLikeApprovalConfirmation(latest)) return false;
   let assistantIndex = -1;
@@ -367,7 +419,11 @@ function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletion
     assistantIndex = index;
     const text = textFromContent(message.content);
     if (!/\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead|proceed)\b/i.test(text)) return false;
-    if (looksLikeLocalToolRequest(text) || looksLikeUrlToolRequest(text)) return true;
+    if (
+      looksLikeLocalToolRequest(text) ||
+      looksLikePhoneUrlActionRequest(text) ||
+      (looksLikeUrlToolRequest(text) && hasUrlBackedNonPhoneTool(tools))
+    ) return true;
     break;
   }
 
@@ -379,8 +435,45 @@ function isToolConfirmationTurn(messages: OpenAI.Chat.Completions.ChatCompletion
     if (message.role === "assistant" && Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return true;
     if (message.role === "user") {
       const text = textFromContent(message.content);
-      if (looksLikeLocalToolRequest(text) || looksLikeUrlToolRequest(text)) return true;
+      if (
+        looksLikeLocalToolRequest(text) ||
+        looksLikePhoneUrlActionRequest(text) ||
+        (looksLikeUrlToolRequest(text) && hasUrlBackedNonPhoneTool(tools))
+      ) return true;
     }
+  }
+  return false;
+}
+
+function isPhoneUrlToolConfirmationTurn(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): boolean {
+  const latest = latestUserText(messages).trim();
+  if (!looksLikeApprovalConfirmation(latest)) return false;
+  let assistantIndex = -1;
+  let assistantText = "";
+  for (let index = messages.length - 2; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant") continue;
+    assistantIndex = index;
+    assistantText = textFromContent(message.content);
+    if (
+      looksLikePhoneUrlActionRequest(assistantText) ||
+      (/\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead|proceed)\b[\s\S]{0,48}\b(?:open|browse|visit|go\s+to|navigate(?:\s+to)?|launch|start|pull\s+up)\b/i.test(assistantText) &&
+        urlFromText(assistantText) !== null)
+    ) return true;
+    break;
+  }
+  if (assistantIndex < 0) return false;
+  const pronounUrlConfirmation = (
+    /\b(?:open|launch|start|browse|visit|go\s+to|navigate(?:\s+to)?|pull\s+up|proceed|continue)\b[\s\S]{0,48}\b(?:it|that|link|url|page|site)\b/i.test(assistantText) ||
+    /\b(?:it|that|link|url|page|site)\b[\s\S]{0,48}\b(?:open|launch|start|browse|visit|go\s+to|navigate(?:\s+to)?|pull\s+up|proceed|continue)\b/i.test(assistantText)
+  );
+  if (!pronounUrlConfirmation) return false;
+  const scanStart = Math.max(0, assistantIndex - 4);
+  for (let index = assistantIndex - 1; index >= scanStart; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user" && looksLikePhoneUrlActionRequest(textFromContent(message.content))) return true;
   }
   return false;
 }
@@ -395,16 +488,47 @@ function looksLikeApprovalConfirmation(text: string): boolean {
     /^(?:go ahead|do it|please do|please do it|please proceed|proceed|continue)$/.test(normalized);
 }
 
+function hasUrlBackedNonPhoneTool(tools: ProviderQueryParams["tools"]): boolean {
+  return !!tools?.some((tool) => {
+    if (!isFunctionTool(tool) || tool.function.name === "android_open_phone_url") return false;
+    return /\b(?:url|youtube|transcript|browse|web|fetch)\b/i.test(`${tool.function.name} ${tool.function.description ?? ""}`);
+  });
+}
+
+function hasRelevantUrlBackedNonPhoneTool(
+  requestText: string,
+  tools: ProviderQueryParams["tools"],
+): boolean {
+  const url = urlFromText(requestText);
+  if (!url) return false;
+  if (looksLikeAdvisoryPhoneUrlQuestion(requestText)) return false;
+  const isYoutubeRequest = isYouTubeUrl(url);
+  const isWebRequest = /^https?:\/\//i.test(url);
+  return !!tools?.some((tool) => {
+    if (!isFunctionTool(tool) || tool.function.name === "android_open_phone_url") return false;
+    const toolText = `${tool.function.name} ${tool.function.description ?? ""}`;
+    if (isYoutubeRequest && /\b(?:youtube|transcript)\b/i.test(toolText)) return true;
+    return isWebRequest && /\b(?:url|browse|web|fetch)\b/i.test(toolText);
+  });
+}
+
+function shouldExposePhoneUrlTool(params: ProviderQueryParams): boolean {
+  return looksLikePhoneUrlActionRequest(latestUserText(params.messages)) ||
+    looksLikePhoneUrlActionRequest(localRuntimeConfirmedRequestText(params.messages) ?? "") ||
+    isPhoneUrlToolConfirmationTurn(params.messages);
+}
+
 function shouldUseLocalToolProtocol(params: ProviderQueryParams): boolean {
   if (!params.tools?.length || params.toolChoice === "none") return false;
   if (params.toolChoice === "required") return true;
   const latest = latestUserText(params.messages);
   return hasActiveToolContinuation(params.messages) ||
     looksLikeLocalToolRequest(latest) ||
-    looksLikeUrlToolRequest(latest) ||
+    (looksLikeUrlToolRequest(latest) && hasUrlBackedNonPhoneTool(params.tools)) ||
+    looksLikePhoneUrlActionRequest(latest) ||
     (hasFunctionTool(params.tools, "memory_save") && looksLikeMemorySaveRequest(latest)) ||
     (hasFunctionTool(params.tools, "memory_search") && looksLikeMemoryLookupRequest(latest)) ||
-    isToolConfirmationTurn(params.messages);
+    isToolConfirmationTurn(params.messages, params.tools);
 }
 
 function formatPromptSections(
@@ -596,9 +720,12 @@ function inferPackageNameForAction(actionToken: string, args: Record<string, unk
 }
 
 function inferPackageNamesFromText(text: string): string[] {
-  const requestToken = aliasToken(text);
-  if (!requestToken) return [];
-  const packages = new Set<string>();
+  const explicitPackageMatches = explicitPackageIdMatchesFromText(text);
+  const aliasScanText = textWithoutRanges(text, explicitPackageMatches);
+  const packages = new Set(explicitPackageMatches.map((match) => match.packageName));
+
+  const requestToken = aliasToken(aliasScanText);
+  if (!requestToken) return [...packages];
   for (const [alias, packageName] of Object.entries(ANDROID_APP_PACKAGE_ALIASES)) {
     const escapedAlias = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (new RegExp(`(?:^|_)${escapedAlias}(?:_|$)`).test(requestToken)) {
@@ -606,6 +733,31 @@ function inferPackageNamesFromText(text: string): string[] {
     }
   }
   return [...packages];
+}
+
+function explicitPackageIdMatchesFromText(text: string): Array<{ packageName: string; start: number; end: number }> {
+  const matches: Array<{ packageName: string; start: number; end: number }> = [];
+  for (const match of text.matchAll(/\b[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+\b/gi)) {
+    const start = match.index ?? -1;
+    if (start < 0) continue;
+    const packageName = match[0].replace(/[),.;]+$/g, "").toLowerCase();
+    if (looksLikeAndroidPackageId(packageName)) {
+      matches.push({ packageName, start, end: start + match[0].length });
+    }
+  }
+  return matches;
+}
+
+function textWithoutRanges(text: string, ranges: Array<{ start: number; end: number }>): string {
+  if (ranges.length === 0) return text;
+  let result = "";
+  let cursor = 0;
+  for (const range of ranges.sort((a, b) => a.start - b.start)) {
+    result += text.slice(cursor, range.start);
+    result += " ".repeat(Math.max(0, range.end - range.start));
+    cursor = Math.max(cursor, range.end);
+  }
+  return result + text.slice(cursor);
 }
 
 function inferPackageNameFromText(text: string): string | null {
@@ -656,7 +808,7 @@ function requestSegmentForIndex(text: string, index: number): string {
 }
 
 function packageTargetNegatedInText(text: string, packageName: string): boolean {
-  const aliases = packageAliases(packageName);
+  const aliases = new Set([...packageAliases(packageName), packageName]);
   const negationPattern = /\b(?:do not|don['’]?t|never|please don['’]?t|avoid|without|except|not)\b/i;
   for (const alias of aliases) {
     const pattern = aliasPattern(alias);
@@ -668,11 +820,32 @@ function packageTargetNegatedInText(text: string, packageName: string): boolean 
   return false;
 }
 
-function urlFromText(text: string): string | null {
-  const match = text.match(/\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+|\byoutu\.be\/[^\s<>"']+|\byoutube\.com\/[^\s<>"']+/i);
+function rawUrlFromText(text: string): string | null {
+  const match = text.match(/\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+|\byoutu\.be\/[^\s<>"']+|\byoutube\.com\/[^\s<>"']+|\b(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):[^\s<>"']+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d{1,5})?(?:[/?#][^\s<>"']*)?/i);
   if (!match) return null;
   const raw = match[0].replace(/[),.;]+$/g, "");
+  if (looksLikeAndroidPackageId(raw)) return null;
+  return raw;
+}
+
+function looksLikeAndroidPackageId(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || /[:/?#]/.test(normalized)) return false;
+  if (Object.values(ANDROID_APP_PACKAGE_ALIASES).includes(normalized)) return true;
+  const labels = normalized.split(".");
+  if (labels.length < 2 || !labels.every((label) => /^[a-z][a-z0-9_]*$/i.test(label))) {
+    return false;
+  }
+  const root = labels[0] ?? "";
+  if (ANDROID_APP_PACKAGE_STANDARD_ROOTS.has(root)) return true;
+  return labels.length >= 3 && ANDROID_APP_PACKAGE_NONSTANDARD_ROOTS.has(root);
+}
+
+function urlFromText(text: string): string | null {
+  const raw = rawUrlFromText(text);
+  if (!raw) return null;
   if (/^https?:\/\//i.test(raw)) return raw;
+  if (/^(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):/i.test(raw)) return raw;
   return `https://${raw}`;
 }
 
@@ -707,7 +880,7 @@ function correctiveDeviceCommandText(text: string): string {
   const imperativePattern = "(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?(?:open|launch|start|take|capture|read|show|list|check|view|see|tap|click|press|swipe|scroll|type|go to|search)\\b[\\s\\S]*";
   const notificationQuestionPattern = "(?:(?:what(?:'s|\\s+is|\\s+are)?|how\\s+many|do\\s+i\\s+have|are\\s+there|any)\\b[\\s\\S]{0,64}\\bnotifications?\\b[\\s\\S]*)";
   const commandPattern = `(?:${imperativePattern}|${notificationQuestionPattern})`;
-  const punctuationMatch = text.match(new RegExp(`[.;!?]\\s*(${commandPattern})$`, "i"));
+  const punctuationMatch = text.match(new RegExp(`[,.;!?]\\s*(${commandPattern})$`, "i"));
   if (punctuationMatch?.[1]?.trim()) return punctuationMatch[1].trim();
 
   const connectiveMatch = text.match(new RegExp(`\\b(?:but|instead|rather)\\b\\s*(${commandPattern})$`, "i"));
@@ -1028,6 +1201,260 @@ function hasFunctionTool(tools: ProviderQueryParams["tools"], name: string): boo
   return !!tools?.some((tool) => isFunctionTool(tool) && tool.function.name === name);
 }
 
+async function localRuntimeCapabilityState(
+  params: ProviderQueryParams,
+): Promise<Partial<Record<LocalRuntimeCapabilityName, LocalRuntimeCapabilityAvailability>>> {
+  const tools = params.toolChoice === "none" ? [] : toolsForLocalTurn(params);
+  const state: Partial<Record<LocalRuntimeCapabilityName, LocalRuntimeCapabilityAvailability>> = {
+    notifications: "unknown",
+    screen: "unknown",
+    screenshot: "unknown",
+    app_control: "unknown",
+    clipboard: "unknown",
+    memory: hasFunctionTool(tools, "memory_search") || hasFunctionTool(tools, "memory_get") || hasFunctionTool(tools, "memory_save")
+      ? "available"
+      : "unknown",
+  };
+  const hasOpenAppTool = hasFunctionTool(tools, "android_open_app_by_name");
+  const hasYoutubeSearchTool = hasFunctionTool(tools, "android_youtube_search");
+  const hasOpenPhoneUrlTool = hasFunctionTool(tools, "android_open_phone_url");
+  const requestText = localRuntimeEffectiveRequestText(params.messages);
+  const hasYoutubeSearchIntent = hasYoutubeSearchTool && !!youtubeSearchQueryFromRequest(requestText);
+  const hasUrlOpenIntent = hasOpenPhoneUrlTool && looksLikePhoneUrlActionRequest(requestText);
+  const hasOpenAppIntent = hasOpenAppTool &&
+    /\b(?:open|launch|start)\b/i.test(requestText) &&
+    !looksLikePhoneUrlOpenIntent(requestText) &&
+    !looksLikeDeviceInstructionRequest(requestText) &&
+    !looksLikeOpenSourceQuestion(requestText) &&
+    (inferPackageNamesFromText(requestText).length > 0 || openAppNameFromRequest(requestText) !== null);
+  const androidChecks: Array<[LocalRuntimeCapabilityName, RuntimeCapabilityAndroidAction, boolean]> = [
+    ["notifications", "android_read_notifications", hasFunctionTool(tools, "android_read_notifications")],
+    ["screen", "android_read_screen", hasFunctionTool(tools, "android_read_screen_context")],
+    ["screenshot", "android_capture_screen", hasFunctionTool(tools, "android_capture_screen")],
+  ];
+  const appControlActions: RuntimeCapabilityAndroidAction[] = [];
+  if (hasYoutubeSearchIntent || hasUrlOpenIntent) {
+    appControlActions.push("android_browse");
+  } else if (hasOpenAppIntent) {
+    appControlActions.push("android_open_app");
+  } else if (hasOpenPhoneUrlTool) {
+    appControlActions.push("android_browse");
+  } else if (hasYoutubeSearchTool) {
+    appControlActions.push("android_browse");
+  }
+  if (!androidChecks.some(([, , toolPresent]) => toolPresent) && appControlActions.length === 0) return state;
+
+  const userId = params.userId?.trim();
+  if (!userId) return state;
+
+  try {
+    const capabilityState = await buildRuntimeCapabilityState({
+      userId,
+      routeToolNames: Array.from(availableFunctionToolNames(tools)),
+    });
+    for (const [capability, action, toolPresent] of androidChecks) {
+      if (!toolPresent) continue;
+      const preflight = preflightRuntimeCapabilityAction(capabilityState, action);
+      state[capability] = preflight.ok ? "available" : "unavailable";
+    }
+    if (appControlActions.length > 0) {
+      const preflights = appControlActions.map((action) => preflightRuntimeCapabilityAction(capabilityState, action));
+      state.app_control = preflights.every((preflight) => preflight.ok) ? "available" : "unavailable";
+    }
+  } catch {
+    return state;
+  }
+  return state;
+}
+
+export async function _localRuntimeCapabilityStateForTesting(
+  params: ProviderQueryParams,
+): Promise<Partial<Record<LocalRuntimeCapabilityName, LocalRuntimeCapabilityAvailability>>> {
+  return localRuntimeCapabilityState(params);
+}
+
+function auditToolNameFromCall(name: string, args: Record<string, unknown> | null): string {
+  if (name !== "daemon_action") return name;
+  const action = typeof args?.action === "string" ? args.action : "";
+  switch (action) {
+    case "android_open_app":
+      return "android_open_app_by_name";
+    case "android_browse":
+      return "android_open_phone_url";
+    case "android_screenshot":
+      return "android_capture_screen";
+    case "android_read_screen":
+    case "android_screen_context":
+      return "android_read_screen_context";
+    case "android_notifications_list":
+      return "android_read_notifications";
+    default:
+      return action || name;
+  }
+}
+
+function auditTargetFromArgs(args: Record<string, unknown> | null): string | null {
+  for (const key of ["appName", "packageName", "url", "query", "text", "title"]) {
+    const value = args?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function looksLikeRecentActionStatusQuestion(text: string): boolean {
+  const value = normalizeAndroidRuntimeRequestText(text).trim();
+  if (!value) return false;
+  return /\b(?:did|have|has|was|is|are)\b[\s\S]{0,64}\b(?:open|opened|launch|launched|start|started|screenshot|captur|copy|copied|read|show|done|complete|completed|work|worked)\b/i.test(value) ||
+    /\b(?:did\s+that|did\s+it|was\s+that|is\s+that|what\s+happened|status|done|completed|complete)\b/i.test(value);
+}
+
+function canonicalLocalRuntimeActionTarget(target: string | null | undefined): string {
+  const normalized = normalizeAndroidRuntimeRequestText(target ?? "").trim();
+  if (!normalized) return "";
+  const packageName = packageNameFromAlias(normalized);
+  if (packageName) return `package:${packageName.toLowerCase()}`;
+  return normalized.toLowerCase();
+}
+
+function localRuntimeActionResultKey(result: LocalRuntimeActionResult): string {
+  return `${result.toolName}:${canonicalLocalRuntimeActionTarget(result.target)}`;
+}
+
+function localRuntimeActionResults(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): LocalRuntimeActionResult[] {
+  const pending = new Map<string, { toolName: string; target: string | null }>();
+  const results: LocalRuntimeActionResult[] = [];
+  let currentTurnStart = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      currentTurnStart = index + 1;
+      break;
+    }
+  }
+
+  const latest = latestUserText(messages);
+  const scanStart = looksLikeRecentActionStatusQuestion(latest)
+    ? Math.max(0, currentTurnStart - 8)
+    : currentTurnStart;
+
+  for (const message of messages.slice(scanStart)) {
+    if (message.role === "assistant" && Array.isArray(message.tool_calls)) {
+      for (const toolCall of message.tool_calls) {
+        if (!isFunctionToolCall(toolCall) || !toolCall.id) continue;
+        const args = toolArgumentsObject(toolCall.function.arguments);
+        pending.set(toolCall.id, {
+          toolName: auditToolNameFromCall(toolCall.function.name, args),
+          target: auditTargetFromArgs(args),
+        });
+      }
+      continue;
+    }
+    if (message.role === "tool") {
+      const pendingTool = pending.get(message.tool_call_id);
+      if (!pendingTool) continue;
+      const summary = toolMessageTextContent(message.content);
+      results.push({
+        toolName: pendingTool.toolName,
+        ok: daemonToolResultSucceeded(message.content),
+        target: pendingTool.target,
+        summary,
+      });
+    }
+  }
+  const latestByAction = new Map<string, LocalRuntimeActionResult>();
+  for (const result of results) {
+    const key = localRuntimeActionResultKey(result);
+    latestByAction.delete(key);
+    latestByAction.set(key, result);
+  }
+  return Array.from(latestByAction.values());
+}
+
+function currentTurnToolEvidence(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): string[] {
+  let currentTurnStart = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      currentTurnStart = index + 1;
+      break;
+    }
+  }
+
+  return messages.slice(currentTurnStart)
+    .filter((message) => message.role === "tool")
+    .map((message) => toolMessageTextContent(message.content))
+    .map((content) => content.trim())
+    .filter(Boolean);
+}
+
+function localRuntimeAuditEvidence(
+  runtimeStateCardPrompt: string,
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): string[] {
+  const stateCardEvidence = runtimeStateCardPrompt
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return [...stateCardEvidence, ...currentTurnToolEvidence(messages)];
+}
+
+function localRuntimeConfirmedRequestText(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): string | null {
+  if (!looksLikeApprovalConfirmation(latestUserText(messages))) return null;
+  for (let index = messages.length - 2; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant") continue;
+    const assistantText = textFromContent(message.content).trim();
+    if (!/\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead|proceed)\b/i.test(assistantText)) {
+      return null;
+    }
+    if (!looksLikeLocalActionConfirmationPrompt(assistantText)) return null;
+    const previousUserText = previousUserTextBefore(messages, index);
+    return [previousUserText, assistantText].filter(Boolean).join("\n") || null;
+  }
+  return null;
+}
+
+function looksLikeLocalActionConfirmationPrompt(text: string): boolean {
+  return /\b(?:open|launch|start|browse|visit|go\s+to|navigate(?:\s+to)?|pull\s+up|take|capture|read|show|list|check|view|tap|click|press|swipe|scroll|type)\b/i.test(text) ||
+    /\b(?:proceed|go ahead|continue|do it)\??\s*$/i.test(text);
+}
+
+function localRuntimeEffectiveRequestText(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): string {
+  return localRuntimeConfirmedRequestText(messages) ?? latestUserText(messages);
+}
+
+function previousUserTextBefore(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  beforeIndex: number,
+): string | null {
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user") return textFromContent(message.content).trim() || null;
+  }
+  return null;
+}
+
+async function auditedLocalRuntimeFinalText(
+  params: ProviderQueryParams,
+  text: string,
+  options: { preserveRequestedJson: boolean; runtimeStateCardPrompt: string },
+): Promise<string> {
+  if (options.preserveRequestedJson) return text;
+  const audit = auditLocalRuntimeResponse({
+    userMessage: latestUserText(params.messages),
+    confirmedRequestText: localRuntimeConfirmedRequestText(params.messages),
+    responseText: text,
+    capabilityState: await localRuntimeCapabilityState(params),
+    actionResults: localRuntimeActionResults(params.messages),
+    evidence: localRuntimeAuditEvidence(options.runtimeStateCardPrompt, params.messages),
+  });
+  return audit.text;
+}
+
 function hasDaemonActionTool(tools: ProviderQueryParams["tools"]): boolean {
   return hasFunctionTool(tools, "daemon_action");
 }
@@ -1048,9 +1475,24 @@ function filterToolCallsToAvailableTools(
   toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[],
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] {
   if (!params.tools?.length) return toolCalls;
-  const available = availableFunctionToolNames(params.tools);
+  const available = availableFunctionToolNames(toolsForLocalTurn(params));
   if (available.size === 0) return [];
-  return toolCalls.filter((toolCall) => available.has(toolCall.function.name));
+  return toolCalls.filter((toolCall) =>
+    !isHiddenPhoneUrlToolCall(params, toolCall) &&
+    available.has(toolCall.function.name)
+  );
+}
+
+function isHiddenPhoneUrlToolCall(
+  params: ProviderQueryParams,
+  toolCall: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall,
+): boolean {
+  if (shouldExposePhoneUrlTool(params)) return false;
+  if (toolCall.function.name === "android_open_phone_url") return true;
+  if (toolCall.function.name !== "daemon_action") return false;
+  const args = toolArgumentsObject(toolCall.function.arguments);
+  if (!args) return false;
+  return normalizeDaemonActionArguments(args).action === "android_browse";
 }
 
 function looksLikeMemorySaveRequest(text: string): boolean {
@@ -1293,6 +1735,7 @@ function recoverAndroidRuntimeToolFromRequest(
   const url = urlFromText(recoveryText);
   if (
     url &&
+    looksLikePhoneUrlActionRequest(recoveryText) &&
     !(isYouTubeUrl(url) && shouldUseServerYoutubeResearchWorkflow(recoveryText)) &&
     hasFunctionTool(params.tools, "android_open_phone_url")
   ) {
@@ -1306,11 +1749,17 @@ function recoverAndroidRuntimeToolFromRequest(
     };
   }
 
-  if (hasFunctionTool(params.tools, "android_open_app_by_name") && /\b(?:open|launch|start)\b/i.test(recoveryText)) {
-    if (inferPackageNamesFromText(recoveryText).length > 1 || looksLikeMultiAppOpenRequest(recoveryText)) return null;
-    const packageName = inferPackageNameFromText(recoveryText);
+  if (
+    hasFunctionTool(params.tools, "android_open_app_by_name") &&
+    !looksLikePhoneUrlOpenIntent(recoveryText) &&
+    /\b(?:open|launch|start)\b/i.test(recoveryText)
+  ) {
+    const allowedPackageNames = inferPackageNamesFromText(recoveryText)
+      .filter((packageName) => !packageTargetNegatedInText(recoveryText, packageName));
+    if (allowedPackageNames.length > 1 || looksLikeMultiAppOpenRequest(recoveryText)) return null;
+    const packageName = allowedPackageNames.length === 1 ? allowedPackageNames[0] : null;
     const appName = packageName
-      ? packageAliases(packageName)[0]?.replace(/_/g, " ") || recoveryText
+      ? packageAliases(packageName)[0]?.replace(/_/g, " ") || packageName
       : openAppNameFromRequest(recoveryText);
     if (appName) {
       return {
@@ -1390,10 +1839,16 @@ function recoverExplicitAndroidRuntimeToolFromRequest(
   return recoverAndroidRuntimeToolFromRequest(params, { requireRequiredToolChoice: false });
 }
 
-function shouldPreserveRequiredFinalAnswer(requestText: string): boolean {
+function shouldPreserveRequiredFinalAnswer(
+  requestText: string,
+  tools?: ProviderQueryParams["tools"],
+): boolean {
   const recoveryText = correctiveDeviceCommandText(requestText).trim();
   if (!recoveryText) return false;
   const notificationConceptQuestion = looksLikeNotificationNonActionQuestion(recoveryText);
+  const phoneUrlConceptQuestion = looksLikePhoneUrlOpenIntent(recoveryText) &&
+    !looksLikePhoneUrlActionRequest(recoveryText) &&
+    !hasRelevantUrlBackedNonPhoneTool(recoveryText, tools);
   const genericPhoneQuestion = /\b(?:phone|device|screen|display)\b/i.test(recoveryText) &&
     !wantsScreenReadContextRequest(recoveryText) &&
     !wantsScreenshotRequest(recoveryText) &&
@@ -1403,6 +1858,7 @@ function shouldPreserveRequiredFinalAnswer(requestText: string): boolean {
     looksLikeOpenSourceQuestion(recoveryText) ||
     looksLikeMultiAppOpenRequest(recoveryText) ||
     notificationConceptQuestion ||
+    phoneUrlConceptQuestion ||
     genericPhoneQuestion
   );
 }
@@ -1416,6 +1872,7 @@ function isExplicitAndroidRuntimeActionRequest(text: string): boolean {
     return wantsNotificationReadRequest(requestText);
   }
   return (
+    looksLikePhoneUrlActionRequest(requestText) ||
     wantsNotificationReadRequest(requestText) ||
     wantsScreenReadContextRequest(requestText) ||
     /^(?:hey\s+jarvis[, ]*)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+)?(?:open|launch|start|take|capture|screenshot|read|show|list|check|view|search|find|look\s+up|tap|click|press|swipe|scroll|type|go\s+to)\b/i.test(requestText)
@@ -1468,7 +1925,7 @@ function recoverRequiredDaemonActionFromRequest(
     args = { action: "android_read_screen" };
   } else if (wantsScreenshot && completedNavigation) {
     args = { action: "android_screenshot" };
-  } else if (url) {
+  } else if (url && looksLikePhoneUrlActionRequest(requestText)) {
     args = { action: "android_browse", url };
   } else if (/\b(?:open|launch|start)\b/i.test(requestText) && packageName) {
     args = { action: "android_open_app", packageName };
@@ -1692,8 +2149,22 @@ function toolSpecsForPrompt(
   return lines.join("\n");
 }
 
+function toolsForLocalTurn(params: ProviderQueryParams): OpenAI.Chat.Completions.ChatCompletionTool[] | undefined {
+  if (shouldExposePhoneUrlTool(params)) return params.tools;
+  return params.tools?.filter((tool) => !isFunctionTool(tool) || tool.function.name !== "android_open_phone_url");
+}
+
+function hasCallableLocalToolsForTurn(params: ProviderQueryParams): boolean {
+  return availableFunctionToolNames(toolsForLocalTurn(params)).size > 0;
+}
+
+function availableFunctionToolNamesForTurn(params: ProviderQueryParams): string[] {
+  if (params.toolChoice === "none") return [];
+  return Array.from(availableFunctionToolNames(toolsForLocalTurn(params)));
+}
+
 function runtimeStateCardFallback(params: ProviderQueryParams, useToolProtocol: boolean): string {
-  const tools = params.toolChoice === "none" ? [] : Array.from(availableFunctionToolNames(params.tools));
+  const tools = availableFunctionToolNamesForTurn(params);
   return [
     "## Jarvis Runtime State Card",
     "Authoritative state generated by Jarvis. Models consume this card; they do not own memory or state.",
@@ -1736,8 +2207,9 @@ async function runtimeStateCardPromptFromParams(
       activeModel: normalizeAndroidLocalGemmaModel(params.model),
       currentContext: useToolProtocol ? "phone_gemma_tool_protocol" : "phone_gemma_chat",
       seedQuery: latestUserText(params.messages),
-      availableTools: params.toolChoice === "none" ? [] : Array.from(availableFunctionToolNames(params.tools)),
+      availableTools: availableFunctionToolNamesForTurn(params),
       includeMemoryContext: false,
+      includeWorkingContext: true,
       taskLimit: 3,
       renderMaxChars: cardBudget,
     });
@@ -1750,18 +2222,19 @@ function toolPromptFromParams(params: ProviderQueryParams, runtimeStateCardPromp
   const requestText = latestUserText(params.messages);
   const promptBudget = phoneGemmaPromptCharBudget();
   const conversationReserve = hasActiveToolContinuation(params.messages) ? 240 : MIN_REQUIRED_PROMPT_SECTION_CHARS;
+  const hasCallableTools = hasCallableLocalToolsForTurn(params);
   const baseIntro = [
     "You are Jarvis running entirely through Android Local Gemma on the user's phone; Gemma is the engine, not your name.",
     "Return ONLY one JSON object. Tool results are authoritative.",
     "Call only Available tools; never invent names like identify_user, google_search, or android_view_screenshot.",
     `Tool call: {"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
     `Final: {"type":"final","content":"your reply to the user"}`,
-    params.toolChoice === "required"
+    params.toolChoice === "required" && hasCallableTools
       ? "A tool call is required for this turn. Do not return a final answer."
       : "Use tools only when they are necessary to satisfy the user's request.",
   ].join("\n");
   const toolListBudget = promptBudget - baseIntro.length - runtimeStateCardPrompt.length - conversationReserve - 128;
-  const toolSpecs = toolSpecsForPrompt(params.tools, requestText, toolListBudget);
+  const toolSpecs = toolSpecsForPrompt(toolsForLocalTurn(params), requestText, toolListBudget);
   const intro = [
     baseIntro,
     runtimeStateCardPrompt,
@@ -1920,6 +2393,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
     if (!params.userId) {
       throw new Error("Android Local Gemma requires an authenticated user and the Jarvis Android app device control connection.");
     }
+    const userId = params.userId;
 
     const useToolProtocol = shouldUseLocalToolProtocol(params);
     const runtimeStateCardPrompt = await runtimeStateCardPromptFromParams(params, useToolProtocol);
@@ -1934,14 +2408,14 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
     const requestId = `phone-gemma-${randomUUID()}`;
     const normalizedModel = normalizeAndroidLocalGemmaModel(params.model);
     markPhoneGemmaGenerationStarted({
-      userId: params.userId,
+      userId,
       requestId,
       model: normalizedModel,
     });
     const result = await (async () => {
       try {
         return await sendAbortableAndroidLocalGemmaGenerateOp(
-          params.userId,
+          userId,
           {
             type: "android_local_model_generate",
             requestId,
@@ -1955,13 +2429,13 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
           params.signal,
         );
       } finally {
-        markPhoneGemmaGenerationFinished({ userId: params.userId!, requestId });
+        markPhoneGemmaGenerationFinished({ userId, requestId });
       }
     })();
 
     if (shouldCancelTimedOutGeneration(result)) {
       sendAndroidLocalGemmaOp(
-        params.userId,
+        userId,
         { type: "android_local_model_cancel", requestId },
         5_000,
       ).catch(() => {});
@@ -2017,7 +2491,12 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
             yield { type: "finish", reason: "stop" };
             return;
           }
-          if (!looksLikeLocalToolRequest(requestText) && !looksLikeUrlToolRequest(requestText)) {
+          if (looksLikePhoneUrlOpenIntent(requestText) && !looksLikePhoneUrlActionRequest(requestText)) {
+            yield { type: "text", delta: "Phone Gemma did not return a usable local answer for that request." };
+            yield { type: "finish", reason: "stop" };
+            return;
+          }
+          if (!looksLikeLocalToolRequest(requestText) && !looksLikePhoneUrlActionRequest(requestText)) {
             yield { type: "text", delta: "Phone Gemma did not return a usable local answer for that request." };
             yield { type: "finish", reason: "stop" };
             return;
@@ -2068,8 +2547,13 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
           yield { type: "finish", reason: "stop" };
           return;
         }
-        if (shouldPreserveRequiredFinalAnswer(requestText)) {
+        if (shouldPreserveRequiredFinalAnswer(requestText, params.tools)) {
           yield { type: "text", delta: parsed.content.trim() || "No device action was run." };
+          yield { type: "finish", reason: "stop" };
+          return;
+        }
+        if (!hasCallableLocalToolsForTurn(params)) {
+          yield { type: "text", delta: parsed.content.trim() || "Phone Gemma did not return a usable local answer for that request." };
           yield { type: "finish", reason: "stop" };
           return;
         }
@@ -2094,16 +2578,20 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       }
 
       if (parsed.content.trim()) {
-        yield { type: "text", delta: parsed.content };
+        yield {
+          type: "text",
+          delta: await auditedLocalRuntimeFinalText(params, parsed.content, { preserveRequestedJson, runtimeStateCardPrompt }),
+        };
         yield { type: "finish", reason: finishReasonFromDaemonData(result.data) };
         return;
       }
     }
 
-    yield {
-      type: "text",
-      delta: localGemmaFinalText(text, { preserveWholeJson: preserveRequestedJson }),
-    };
+    const finalText = localGemmaFinalText(text, { preserveWholeJson: preserveRequestedJson });
+      yield {
+        type: "text",
+        delta: await auditedLocalRuntimeFinalText(params, finalText, { preserveRequestedJson, runtimeStateCardPrompt }),
+      };
     yield { type: "finish", reason: finishReasonFromDaemonData(result.data) };
   }
 }

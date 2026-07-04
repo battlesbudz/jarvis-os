@@ -126,7 +126,7 @@ export interface MemoryApprovalResolution {
   correctedByMemoryId: string | null;
 }
 
-export interface ApprovedPendingMemoryWriteRow {
+export interface ApprovedPendingMemoryWriteRow extends Record<string, unknown> {
   id: string;
   supersedes_memory_id: string | null;
 }
@@ -157,6 +157,20 @@ export interface ExpiredWorkingContextRow extends WorkingContextScope {
   expiresAt: Date | string;
 }
 
+interface ExpiredWorkingContextDbRow extends Record<string, unknown> {
+  id: string;
+  user_id: string;
+  scope_type: string;
+  scope_id: string;
+  active_goal: string | null;
+  current_step: string | null;
+  last_event_id: string;
+  content: string;
+  context_updated_at: Date | string;
+  claim_updated_at: Date | string;
+  expires_at: Date | string;
+}
+
 export interface CompactedWorkingContextResult {
   scanned: number;
   compacted: number;
@@ -170,11 +184,16 @@ export interface MemoryWritePipelineDeps {
 
 export interface WorkingContextDeps {
   upsertWorkingContext(record: WorkingContextRecord): Promise<WorkingContextRecord>;
+  expireNonCompactingWorkingContext(now: Date, scopeTypes: string[]): Promise<number>;
   listExpiredWorkingContext(now: Date, limit: number): Promise<ExpiredWorkingContextRow[]>;
   insertRecentContextMemory(record: PlannedMemoryRecord): Promise<{ id: string }>;
   markWorkingContextStale(id: string, memoryId: string, claimUpdatedAt: Date | string): Promise<void>;
 }
 
+const LOCAL_RUNTIME_WORKING_CONTEXT_SCOPE_TYPE = "local_runtime_observation";
+const NON_COMPACTING_WORKING_CONTEXT_SCOPE_TYPES = new Set([
+  LOCAL_RUNTIME_WORKING_CONTEXT_SCOPE_TYPE,
+]);
 const DIAGNOSTIC_SOURCE_PATTERN = /\b(diagnostic|diagnostics|self[_ -]?model|phone[_ -]?gemma[_ -]?diagnostic|test[_ -]?run)\b/i;
 const RESTRICTED_SOURCE_TOKENS = [
   "bank",
@@ -611,10 +630,15 @@ export async function compactExpiredWorkingContext(
   deps: WorkingContextDeps = defaultWorkingContextDeps,
 ): Promise<CompactedWorkingContextResult> {
   const now = input.now ?? new Date();
+  const nonCompactingScopeTypes = Array.from(NON_COMPACTING_WORKING_CONTEXT_SCOPE_TYPES);
+  if (nonCompactingScopeTypes.length > 0) {
+    await deps.expireNonCompactingWorkingContext(now, nonCompactingScopeTypes);
+  }
   const rows = await deps.listExpiredWorkingContext(now, Math.max(1, Math.min(input.limit ?? 100, 500)));
   const memoryIds: string[] = [];
 
   for (const row of rows) {
+    if (NON_COMPACTING_WORKING_CONTEXT_SCOPE_TYPES.has(row.scopeType)) continue;
     const recent = buildRecentContextMemory(row, now);
     const inserted = await deps.insertRecentContextMemory(recent);
     await deps.markWorkingContextStale(row.id, inserted.id, row.claimUpdatedAt);
@@ -726,7 +750,8 @@ export async function keepPendingMemoryWrites(input: {
         AND pending_review = TRUE
         AND review_status = 'pending'
     `);
-  const safeMemoryIds = (pendingResult.rows ?? [])
+  const pendingRows = (pendingResult.rows ?? []) as PendingMemoryApprovalCandidateRow[];
+  const safeMemoryIds = pendingRows
     .filter((row) => !hasRestrictedApprovalMetadata(row))
     .filter((row) => !containsRawRestrictedContent(row.content ?? ""))
     .map((row) => row.id);
@@ -745,7 +770,7 @@ export async function keepPendingMemoryWrites(input: {
       RETURNING id, supersedes_memory_id
     `);
 
-  const rows = result.rows ?? [];
+  const rows = (result.rows ?? []) as ApprovedPendingMemoryWriteRow[];
   const supersessions = buildApprovedMemorySupersessions(rows);
   for (const supersession of supersessions) {
     await defaultMemoryWriteDeps.markMemoriesSuperseded(
@@ -853,24 +878,27 @@ export const defaultWorkingContextDeps: WorkingContextDeps = {
       expiresAt: row.expiresAt.toISOString(),
     };
   },
+  async expireNonCompactingWorkingContext(now, scopeTypes) {
+    if (scopeTypes.length === 0) return 0;
+    const result = await db.execute<{ id: string }>(sql`
+      UPDATE memory_working_context
+      SET state = 'stale',
+          content = '',
+          updated_at = ${now}
+      WHERE expires_at <= ${now}
+        AND scope_type = ANY(${scopeTypes}::varchar[])
+        AND state IN ('active', 'compacting')
+      RETURNING id
+    `);
+    return (result.rows ?? []).length;
+  },
   async listExpiredWorkingContext(now, limit) {
-    const result = await db.execute<{
-      id: string;
-      user_id: string;
-      scope_type: string;
-      scope_id: string;
-      active_goal: string | null;
-      current_step: string | null;
-      last_event_id: string;
-      content: string;
-      context_updated_at: Date | string;
-      claim_updated_at: Date | string;
-      expires_at: Date | string;
-    }>(sql`
+    const result = await db.execute<ExpiredWorkingContextDbRow>(sql`
       WITH candidates AS (
         SELECT id, updated_at AS original_updated_at
         FROM memory_working_context
         WHERE expires_at <= ${now}
+          AND scope_type <> ${LOCAL_RUNTIME_WORKING_CONTEXT_SCOPE_TYPE}
           AND (
             state = 'active'
             OR (state = 'compacting' AND updated_at < NOW() - INTERVAL '15 minutes')
@@ -890,7 +918,8 @@ export const defaultWorkingContextDeps: WorkingContextDeps = {
                 wc.updated_at AS claim_updated_at,
                 wc.expires_at
     `);
-    return (result.rows ?? []).map((row) => ({
+    const rows = (result.rows ?? []) as ExpiredWorkingContextDbRow[];
+    return rows.map((row) => ({
       id: row.id,
       userId: row.user_id,
       scopeType: row.scope_type,
