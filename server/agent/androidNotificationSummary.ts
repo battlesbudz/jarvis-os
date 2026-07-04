@@ -116,6 +116,9 @@ const REFERENCE_STOPWORDS = new Set([
 
 function scoreNotificationReference(entry: AndroidNotificationSummaryEntry, query: string): number {
   const normalizedQuery = query.toLowerCase();
+  const normalizedApp = entry.app.toLowerCase();
+  const appTerms = new Set(normalizedApp.split(/[^a-z0-9]+/i).filter(Boolean));
+  const titleAndText = `${entry.title} ${entry.text}`.toLowerCase();
   const haystack = `${entry.app} ${entry.title} ${entry.text}`.toLowerCase();
   const haystackTerms = new Set(haystack.split(/[^a-z0-9]+/i).filter(Boolean));
   const tokens = normalizedQuery
@@ -123,9 +126,11 @@ function scoreNotificationReference(entry: AndroidNotificationSummaryEntry, quer
     .filter((token) => token.length > 0 && !REFERENCE_STOPWORDS.has(token))
     .filter((token) => token.length >= 3 || haystackTerms.has(token));
   let score = 0;
+  if (normalizedApp.length > 0 && normalizedQuery.includes(normalizedApp)) score += 8;
   for (const token of tokens) {
-    if (entry.app.toLowerCase() === token) score += 5;
-    else if (haystack.includes(token)) score += 2;
+    if (normalizedApp === token) score += 8;
+    else if (appTerms.has(token)) score += 5;
+    else if (titleAndText.includes(token)) score += 2;
   }
   return score;
 }

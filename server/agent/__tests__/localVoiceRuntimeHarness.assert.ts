@@ -214,6 +214,17 @@ function testShortAppNameNotificationReferencesResolve() {
   console.log("OK: short app-name notification references resolve exactly");
 }
 
+function testNotificationReferencePrefersAppNameTermsOverBodyMentions() {
+  const match = resolveAndroidNotificationReference([
+    { app: "Gmail", title: "Microsoft Teams digest", text: "A weekly Teams summary" },
+    { app: "Microsoft Teams", title: "Alex sent a message", text: "Standup moved to 3 PM" },
+  ], "Open the Teams one");
+
+  assert.equal(match?.index, 1);
+  assert.equal(match?.notification.app, "Microsoft Teams");
+  console.log("OK: notification references prefer app-name tokens over body mentions");
+}
+
 async function testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns() {
   const first = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
@@ -721,6 +732,7 @@ async function main() {
   await testNotificationReferenceUsesStoredAppNames();
   testOrdinalNotificationReferencesSelectWithinMatches();
   testShortAppNameNotificationReferencesResolve();
+  testNotificationReferencePrefersAppNameTermsOverBodyMentions();
   await testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns();
   await testGenericOneAppRequestDoesNotUseNotificationContext();
   await testNegatedNotificationFollowUpsDoNotUseWorkingContext();
