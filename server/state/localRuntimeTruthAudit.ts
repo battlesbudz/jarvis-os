@@ -92,7 +92,11 @@ const ANDROID_APP_PACKAGE_ALIASES: Record<string, string> = {
 const ANDROID_APP_PACKAGE_STANDARD_ROOTS = new Set(["com", "org", "net", "io"]);
 const ANDROID_APP_PACKAGE_NONSTANDARD_ROOTS = new Set(["de", "me", "tv"]);
 
-const ANDROID_APP_URL_CONFIRMERS_BY_PACKAGE: Record<string, { hostSuffixes: string[]; schemes: string[] }> = {
+const ANDROID_APP_URL_CONFIRMERS_BY_PACKAGE: Record<string, {
+  hostSuffixes: string[];
+  schemes: string[];
+  hostPathPrefixes?: Array<{ hostSuffix: string; pathPrefix: string }>;
+}> = {
   "com.google.android.youtube": {
     hostSuffixes: ["youtube.com", "youtu.be"],
     schemes: ["youtube", "vnd.youtube"],
@@ -136,6 +140,7 @@ const ANDROID_APP_URL_CONFIRMERS_BY_PACKAGE: Record<string, { hostSuffixes: stri
   "com.google.android.apps.maps": {
     hostSuffixes: ["maps.google.com"],
     schemes: ["geo", "google.navigation"],
+    hostPathPrefixes: [{ hostSuffix: "google.com", pathPrefix: "/maps" }],
   },
 };
 
@@ -245,8 +250,11 @@ function isNonAppOpenTarget(target: string): boolean {
 
 function localAppControlDenialTarget(text: string): string | null {
   const denial = "i\\s+(?:can(?:not|'t)|(?:do\\s+not|don.?t)\\s+have\\s+access|am\\s+unable\\s+to|am\\s+not\\s+able\\s+to|cannot|can't|unable\\s+to|not\\s+able\\s+to)";
+  const terseDenial = "(?:can(?:not|'t)|cannot|can't|unable\\s+to|not\\s+able\\s+to)";
   const localAppTarget = "(?:apps?|applications?|app\\s+control|device\\s+control)";
-  const directTarget = new RegExp(`\\b${denial}\\s+(?:open|launch)\\b(?![-\\s]+source\\b)\\s+(?:the\\s+)?([a-z0-9][a-z0-9 ._'-]{1,60}?)(?:[.!?]|\\s+because\\b|\\s+on\\s+(?:your\\s+phone|your\\s+device|my\\s+phone|the\\s+device)|$)`, "i").exec(text)?.[1];
+  const directTarget =
+    new RegExp(`\\b${denial}\\s+(?:open|launch)\\b(?![-\\s]+source\\b)\\s+(?:the\\s+)?([a-z0-9][a-z0-9 ._'-]{1,60}?)(?:[.!?]|\\s+because\\b|\\s+on\\s+(?:your\\s+phone|your\\s+device|my\\s+phone|the\\s+device)|$)`, "i").exec(text)?.[1] ??
+    new RegExp(`^\\s*${terseDenial}\\s+(?:open|launch)\\b(?![-\\s]+source\\b)\\s+(?:the\\s+)?([a-z0-9][a-z0-9 ._'-]{1,60}?)(?:[.!?]|\\s+because\\b|\\s+on\\s+(?:your\\s+phone|your\\s+device|my\\s+phone|the\\s+device)|$)`, "i").exec(text)?.[1];
   if (directTarget) {
     const target = normalizeOpenedTarget(directTarget);
     if (new RegExp(`^${localAppTarget}$`, "i").test(target)) return "";
@@ -521,6 +529,17 @@ function phoneUrlResultMatchesAppClaim(appTarget: string, resultTarget: string):
 
   const resultUrl = leadingWebUrlTarget(resultTarget);
   if (resultUrl && confirmers.hostSuffixes.some((suffix) => hostMatchesSuffix(resultUrl.host, suffix))) {
+    return true;
+  }
+  if (
+    resultUrl &&
+    confirmers.hostPathPrefixes?.some((rule) =>
+      hostMatchesSuffix(resultUrl.host, rule.hostSuffix) &&
+      (resultUrl.suffix === rule.pathPrefix ||
+        resultUrl.suffix.startsWith(`${rule.pathPrefix}/`) ||
+        resultUrl.suffix.startsWith(`${rule.pathPrefix}?`))
+    )
+  ) {
     return true;
   }
 

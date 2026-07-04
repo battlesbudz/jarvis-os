@@ -254,6 +254,20 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(genericAppDenial.status, "blocked_false_denial");
 
+  const terseAppDenial = auditLocalRuntimeResponse({
+    userMessage: "Open Gmail.",
+    responseText: "Can't open Gmail.",
+    capabilityState: { app_control: "available" },
+  });
+  assert.equal(terseAppDenial.status, "blocked_false_denial");
+
+  const terseUnableAppDenial = auditLocalRuntimeResponse({
+    userMessage: "Open Gmail.",
+    responseText: "Unable to open Gmail.",
+    capabilityState: { app_control: "available" },
+  });
+  assert.equal(terseUnableAppDenial.status, "blocked_false_denial");
+
   const userCentricAppExplanation = auditLocalRuntimeResponse({
     userMessage: "Why can't I open Gmail?",
     responseText: "You can't open Gmail because the account needs to be reconnected.",
@@ -525,6 +539,30 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     }],
   });
   assert.equal(confirmedMapsNavigationCompletion.status, "allow");
+
+  const confirmedMapsGoogleUrlCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open https://www.google.com/maps/place/coffee.",
+    responseText: "I opened Maps.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "https://www.google.com/maps/place/coffee",
+    }],
+  });
+  assert.equal(confirmedMapsGoogleUrlCompletion.status, "allow");
+
+  const genericGoogleUrlDoesNotConfirmMaps = auditLocalRuntimeResponse({
+    userMessage: "Open https://www.google.com/search?q=coffee.",
+    responseText: "I opened Maps.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "https://www.google.com/search?q=coffee",
+    }],
+  });
+  assert.equal(genericGoogleUrlDoesNotConfirmMaps.status, "blocked_false_completion");
 
   const falseTrailingUrlCompletion = auditLocalRuntimeResponse({
     userMessage: "Open https://example.com.",
