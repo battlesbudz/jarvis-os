@@ -250,6 +250,10 @@ function completionClaimTarget(text: string): { toolName: string; target?: strin
   return null;
 }
 
+function isInformationalLocalActionQuestion(text: string): boolean {
+  return /^(?:how\s+(?:do|can)\s+i|what(?:'s|\s+is)\s+the\s+best\s+way\s+to)\b/i.test(text);
+}
+
 function userAskedForAuditedLocalAction(
   userMessage: string,
   claim: { toolName: string; target?: string },
@@ -266,11 +270,9 @@ function userAskedForAuditedLocalAction(
   if (claim.toolName === "android_open_app_by_name") {
     if (/\bopen[-\s]+source\b/i.test(text)) return false;
     if (/\bsearch\b[\s\S]{0,40}\byoutube\b|\byoutube\b[\s\S]{0,40}\bsearch\b/i.test(text)) return true;
+    if (isInformationalLocalActionQuestion(text)) return false;
     if (!/\b(?:open|launch|start|browse|visit|go\s+to|navigate(?:\s+to)?|pull\s+up)\b/i.test(text)) return false;
-    const target = compactText(claim.target).toLowerCase();
-    const urlMatch = webUrlTargetsMatch(target, text);
-    if (urlMatch !== null) return urlMatch;
-    return !target || text.includes(target);
+    return true;
   }
 
   return false;

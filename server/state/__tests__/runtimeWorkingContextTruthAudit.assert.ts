@@ -361,6 +361,22 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   assert.equal(falseCompletion.status, "blocked_false_completion");
   assert.equal(falseCompletion.text, "I have not completed that yet.");
 
+  const falseMismatchedAppCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open Gmail.",
+    responseText: "I opened YouTube.",
+    capabilityState: { app_control: "available" },
+    actionResults: [],
+  });
+  assert.equal(falseMismatchedAppCompletion.status, "blocked_false_completion");
+
+  const informationalOpenQuestion = auditLocalRuntimeResponse({
+    userMessage: "How do I open Chrome?",
+    responseText: "I opened YouTube.",
+    capabilityState: { app_control: "available" },
+    actionResults: [],
+  });
+  assert.equal(informationalOpenQuestion.status, "allow");
+
   const falseLaunchCompletion = auditLocalRuntimeResponse({
     userMessage: "Launch Gmail.",
     responseText: "I launched Gmail.",
