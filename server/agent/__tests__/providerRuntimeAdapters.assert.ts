@@ -5066,51 +5066,54 @@ async function testAndroidLocalGemmaDoesNotRecoverPackageIdAsPhoneUrl() {
 }
 
 async function testAndroidLocalGemmaDoesNotRecoverUnlistedPackageIdAsPhoneUrl() {
-  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
-    ok: true,
-    data: {
-      text: JSON.stringify({ type: "final", content: "I can open that app." }),
-      finishReason: "stop",
-    },
-  }));
-
-  try {
-    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
-      model: "android-local-gemma/gemma-4-e4b-it",
-      messages: [{ role: "user", content: "Open com.twitter.android." }],
-      tools: [
-        {
-          type: "function",
-          function: {
-            name: "android_open_phone_url",
-            description: "Open a URL on the Android phone.",
-            parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
-          },
-        },
-        {
-          type: "function",
-          function: {
-            name: "android_open_app_by_name",
-            description: "Open an installed Android app by name.",
-            parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
-          },
-        },
-      ],
-      toolChoice: "required",
-      maxCompletionTokens: 128,
-      stream: false,
-      userId: "user-phone",
+  for (const packageName of ["com.twitter.android", "org.telegram.messenger", "com.ubercab"]) {
+    _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+      ok: true,
+      data: {
+        text: JSON.stringify({ type: "final", content: "I can open that app." }),
+        finishReason: "stop",
+      },
     }));
 
-    assert.equal(result.finishReason, "tool_calls");
-    assert.equal(result.textContent, "");
-    assert.equal(result.toolCallList.length, 1);
-    assert.equal(result.toolCallList[0].function.name, "android_open_app_by_name");
-    assert.equal(result.toolCallList[0].function.arguments, '{"appName":"com.twitter.android"}');
-    console.log("OK: Android Local Gemma does not recover unlisted package IDs as phone URLs");
-  } finally {
-    _setAndroidLocalGemmaDaemonOpForTesting(null);
+    try {
+      const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: `Open ${packageName}.` }],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: "android_open_phone_url",
+              description: "Open a URL on the Android phone.",
+              parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+            },
+          },
+          {
+            type: "function",
+            function: {
+              name: "android_open_app_by_name",
+              description: "Open an installed Android app by name.",
+              parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+            },
+          },
+        ],
+        toolChoice: "required",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      }));
+
+      assert.equal(result.finishReason, "tool_calls");
+      assert.equal(result.textContent, "");
+      assert.equal(result.toolCallList.length, 1);
+      assert.equal(result.toolCallList[0].function.name, "android_open_app_by_name");
+      assert.equal(result.toolCallList[0].function.arguments, JSON.stringify({ appName: packageName }));
+    } finally {
+      _setAndroidLocalGemmaDaemonOpForTesting(null);
+    }
   }
+
+  console.log("OK: Android Local Gemma does not recover unlisted package IDs as phone URLs");
 }
 
 async function testAndroidLocalGemmaRecoversDeepLinkUrlToPhoneOpen() {

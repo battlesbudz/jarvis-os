@@ -511,13 +511,15 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(confirmedPackageIdCompletion.status, "allow");
 
-  const confirmedUnlistedPackageIdCompletion = auditLocalRuntimeResponse({
-    userMessage: "Open com.twitter.android.",
-    responseText: "I opened com.twitter.android.",
-    capabilityState: { app_control: "available" },
-    actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "com.twitter.android" }],
-  });
-  assert.equal(confirmedUnlistedPackageIdCompletion.status, "allow");
+  for (const packageName of ["com.twitter.android", "org.telegram.messenger", "com.ubercab"]) {
+    const confirmedUnlistedPackageIdCompletion = auditLocalRuntimeResponse({
+      userMessage: `Open ${packageName}.`,
+      responseText: `I opened ${packageName}.`,
+      capabilityState: { app_control: "available" },
+      actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: packageName }],
+    });
+    assert.equal(confirmedUnlistedPackageIdCompletion.status, "allow");
+  }
 
   const confirmedYoutubeSearch = auditLocalRuntimeResponse({
     userMessage: "Search YouTube for AI videos.",

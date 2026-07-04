@@ -694,6 +694,9 @@ function inferPackageNameForAction(actionToken: string, args: Record<string, unk
 }
 
 function inferPackageNamesFromText(text: string): string[] {
+  const explicitPackageNames = explicitPackageIdsFromText(text);
+  if (explicitPackageNames.length > 0) return explicitPackageNames;
+
   const requestToken = aliasToken(text);
   if (!requestToken) return [];
   const packages = new Set<string>();
@@ -702,6 +705,15 @@ function inferPackageNamesFromText(text: string): string[] {
     if (new RegExp(`(?:^|_)${escapedAlias}(?:_|$)`).test(requestToken)) {
       packages.add(packageName);
     }
+  }
+  return [...packages];
+}
+
+function explicitPackageIdsFromText(text: string): string[] {
+  const packages = new Set<string>();
+  for (const match of text.matchAll(/\b(?:com|org|net|io)(?:\.[a-z][a-z0-9_]*)+\b/gi)) {
+    const packageName = match[0].replace(/[),.;]+$/g, "").toLowerCase();
+    if (looksLikeAndroidPackageId(packageName)) packages.add(packageName);
   }
   return [...packages];
 }
@@ -779,9 +791,8 @@ function looksLikeAndroidPackageId(value: string): boolean {
   if (!normalized || /[:/?#]/.test(normalized)) return false;
   if (Object.values(ANDROID_APP_PACKAGE_ALIASES).includes(normalized)) return true;
   const labels = normalized.split(".");
-  if (labels.length < 3 || !/^(?:com|org|net|io)$/i.test(labels[0] ?? "")) return false;
-  return labels.every((label) => /^[a-z][a-z0-9_]*$/i.test(label)) &&
-    labels.slice(1).includes("android");
+  if (labels.length < 2 || !/^(?:com|org|net|io)$/i.test(labels[0] ?? "")) return false;
+  return labels.every((label) => /^[a-z][a-z0-9_]*$/i.test(label));
 }
 
 function urlFromText(text: string): string | null {
@@ -1640,7 +1651,7 @@ function recoverAndroidRuntimeToolFromRequest(
     if (inferPackageNamesFromText(recoveryText).length > 1 || looksLikeMultiAppOpenRequest(recoveryText)) return null;
     const packageName = inferPackageNameFromText(recoveryText);
     const appName = packageName
-      ? packageAliases(packageName)[0]?.replace(/_/g, " ") || recoveryText
+      ? packageAliases(packageName)[0]?.replace(/_/g, " ") || packageName
       : openAppNameFromRequest(recoveryText);
     if (appName) {
       return {

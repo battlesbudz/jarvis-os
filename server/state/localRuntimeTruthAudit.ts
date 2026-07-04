@@ -316,9 +316,8 @@ function looksLikeAndroidPackageId(value: string): boolean {
   if (!normalized || /[:/?#]/.test(normalized)) return false;
   if (Object.values(ANDROID_APP_PACKAGE_ALIASES).includes(normalized)) return true;
   const labels = normalized.split(".");
-  if (labels.length < 3 || !/^(?:com|org|net|io)$/i.test(labels[0] ?? "")) return false;
-  return labels.every((label) => /^[a-z][a-z0-9_]*$/i.test(label)) &&
-    labels.slice(1).includes("android");
+  if (labels.length < 2 || !/^(?:com|org|net|io)$/i.test(labels[0] ?? "")) return false;
+  return labels.every((label) => /^[a-z][a-z0-9_]*$/i.test(label));
 }
 
 function webUrlTargetsMatch(claimTarget: string, resultTarget: string): boolean | null {
