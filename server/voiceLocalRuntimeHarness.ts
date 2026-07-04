@@ -466,19 +466,38 @@ function wantsNotificationReferenceOpen(transcript: string, notifications: Local
     resolveAndroidNotificationReference(notifications, transcript) !== null;
 }
 
+function wantsNotificationReferenceRead(transcript: string, notifications: LocalVoiceNotification[]): boolean {
+  return /\b(?:read|repeat)\b/i.test(transcript) &&
+    resolveAndroidNotificationReference(notifications, transcript) !== null;
+}
+
+function isNegatedNotificationCancellationClause(clause: string, notifications: LocalVoiceNotification[]): boolean {
+  if (!clauseIsNegated(clause)) return false;
+  if (!/\b(?:open|launch|show|tap|go to|read|repeat)\b/i.test(clause)) return false;
+  if (!/\b(?:it|that|this|one)\b/i.test(clause)) return false;
+  return resolveAndroidNotificationReference(notifications, clause) === null;
+}
+
+function notificationReferenceText(notification: LocalVoiceNotification): string {
+  const message = [notification.title, notification.text].filter(Boolean).join(": ") || "(no notification text)";
+  return `${notification.app}: ${message}`;
+}
+
 function activeNotificationWorkingContextRequest(
   transcript: string,
   notifications: LocalVoiceNotification[],
-): { clause: string; orderedRead: boolean; referenceOpen: boolean; summaryFollowUp: boolean } | null {
+): { clause: string; orderedRead: boolean; referenceOpen: boolean; referenceRead: boolean; summaryFollowUp: boolean } | null {
   const clauses = notificationWorkingContextClauses(transcript);
   for (let index = clauses.length - 1; index >= 0; index -= 1) {
     const clause = clauses[index];
+    if (isNegatedNotificationCancellationClause(clause, notifications)) return null;
     const orderedRead = wantsOrderedNotificationRead(clause);
     const referenceOpen = wantsNotificationReferenceOpen(clause, notifications);
+    const referenceRead = wantsNotificationReferenceRead(clause, notifications);
     const summaryFollowUp = wantsNotificationSummaryFollowUp(clause);
-    if (!orderedRead && !referenceOpen && !summaryFollowUp) continue;
+    if (!orderedRead && !referenceOpen && !referenceRead && !summaryFollowUp) continue;
     if (clauseIsNegated(clause)) continue;
-    return { clause, orderedRead, referenceOpen, summaryFollowUp };
+    return { clause, orderedRead, referenceOpen, referenceRead, summaryFollowUp };
   }
   return null;
 }
@@ -493,7 +512,7 @@ function responseFromNotificationWorkingContext(
   if (!recentNotifications) return null;
   const activeRequest = activeNotificationWorkingContextRequest(transcript, recentNotifications.notifications);
   if (!activeRequest) return null;
-  const { clause, orderedRead, referenceOpen } = activeRequest;
+  const { clause, orderedRead, referenceOpen, referenceRead } = activeRequest;
 
   if (referenceOpen) {
     const match = resolveAndroidNotificationReference(recentNotifications.notifications, clause);
@@ -510,6 +529,22 @@ function responseFromNotificationWorkingContext(
         ? `I found the ${match.notification.app} notification and opened ${match.notification.app}.`
         : `I found the ${match.notification.app} notification, but I could not open ${match.notification.app} yet.`,
       outcome: "notification_reference_opened",
+      workingContext: workingContext ?? {},
+    };
+  }
+
+  if (referenceRead) {
+    const match = resolveAndroidNotificationReference(recentNotifications.notifications, clause);
+    if (!match) {
+      return {
+        response: "I found the recent notifications, but I could not tell which one you meant.",
+        outcome: "notification_reference_unresolved",
+        workingContext: workingContext ?? {},
+      };
+    }
+    return {
+      response: notificationReferenceText(match.notification),
+      outcome: "notification_reference_read",
       workingContext: workingContext ?? {},
     };
   }

@@ -225,6 +225,17 @@ function testNotificationReferencePrefersAppNameTermsOverBodyMentions() {
   console.log("OK: notification references prefer app-name tokens over body mentions");
 }
 
+function testShortAppNameReferencesRequireWholeTokenMatches() {
+  const match = resolveAndroidNotificationReference([
+    { app: "X", title: "Direct message", text: "Alex sent a message" },
+    { app: "Gmail", title: "Tax alert", text: "Quarterly tax estimate is ready" },
+  ], "Open the tax alert");
+
+  assert.equal(match?.index, 1);
+  assert.equal(match?.notification.app, "Gmail");
+  console.log("OK: short app-name notification references require whole-token matches");
+}
+
 async function testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns() {
   const first = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
@@ -390,6 +401,62 @@ async function testEarlierPositiveNotificationClauseSurvivesLaterNegation() {
   assert.equal(open.androidExecutions[0]?.toolName, "android_open_app_by_name");
   assert.equal(open.androidExecutions[0]?.label, "Opened Reddit");
   console.log("OK: earlier positive notification clauses survive later unrelated negations");
+}
+
+async function testLaterPronounNegationCancelsNotificationAction() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const cancelled = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open the Reddit one, but don't open it",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "Okay, I won't open it." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "Reddit", action: "open", success: true }],
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:05:00.000Z"),
+  });
+
+  assert.equal(cancelled.diagnostics.outcome, "final");
+  assert.equal(cancelled.androidExecutions.length, 0);
+  assert.equal(cancelled.canonicalResponse, "Okay, I won't open it.");
+  console.log("OK: later pronoun negations cancel earlier notification actions");
+}
+
+async function testSpecificNotificationReadUsesWorkingContext() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const read = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read the Reddit one",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "I cannot access your notifications." },
+    ]),
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:04:30.000Z"),
+  });
+
+  assert.equal(read.diagnostics.outcome, "notification_reference_read");
+  assert.equal(read.androidExecutions.length, 0);
+  assert.match(read.canonicalResponse, /Reddit: vivecoding thread is trending: New replies in r\/vivecoding/);
+  assert.doesNotMatch(read.canonicalResponse, /cannot access/i);
+  console.log("OK: specific notification reads use short-lived working context");
 }
 
 async function testMissingAppControlFixtureFails() {
@@ -733,11 +800,14 @@ async function main() {
   testOrdinalNotificationReferencesSelectWithinMatches();
   testShortAppNameNotificationReferencesResolve();
   testNotificationReferencePrefersAppNameTermsOverBodyMentions();
+  testShortAppNameReferencesRequireWholeTokenMatches();
   await testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns();
   await testGenericOneAppRequestDoesNotUseNotificationContext();
   await testNegatedNotificationFollowUpsDoNotUseWorkingContext();
   await testLaterPositiveNotificationClauseAfterNegationRuns();
   await testEarlierPositiveNotificationClauseSurvivesLaterNegation();
+  await testLaterPronounNegationCancelsNotificationAction();
+  await testSpecificNotificationReadUsesWorkingContext();
   await testMissingAppControlFixtureFails();
   await testMismatchedAppControlFixtureFails();
   await testAppControlFalseDenialRecoveryKeepsRequestedApp();

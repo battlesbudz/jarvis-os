@@ -114,6 +114,15 @@ const REFERENCE_STOPWORDS = new Set([
   "last",
 ]);
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function includesPhraseToken(haystack: string, phrase: string): boolean {
+  if (!phrase) return false;
+  return new RegExp(`(?:^|[^a-z0-9])${escapeRegExp(phrase)}(?:$|[^a-z0-9])`, "i").test(haystack);
+}
+
 function scoreNotificationReference(entry: AndroidNotificationSummaryEntry, query: string): number {
   const normalizedQuery = query.toLowerCase();
   const normalizedApp = entry.app.toLowerCase();
@@ -126,7 +135,7 @@ function scoreNotificationReference(entry: AndroidNotificationSummaryEntry, quer
     .filter((token) => token.length > 0 && !REFERENCE_STOPWORDS.has(token))
     .filter((token) => token.length >= 3 || haystackTerms.has(token));
   let score = 0;
-  if (normalizedApp.length > 0 && normalizedQuery.includes(normalizedApp)) score += 8;
+  if (includesPhraseToken(normalizedQuery, normalizedApp)) score += 8;
   for (const token of tokens) {
     if (normalizedApp === token) score += 8;
     else if (appTerms.has(token)) score += 5;
