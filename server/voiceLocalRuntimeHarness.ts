@@ -478,6 +478,27 @@ function isNegatedNotificationCancellationClause(clause: string, notifications: 
   return resolveAndroidNotificationReference(notifications, clause) === null;
 }
 
+function negatedReferenceCancelsEarlierClause(
+  clauses: string[],
+  negatedClauseIndex: number,
+  negatedClause: string,
+  notifications: LocalVoiceNotification[],
+  action: "open" | "read",
+): boolean {
+  const negatedMatch = resolveAndroidNotificationReference(notifications, negatedClause);
+  if (!negatedMatch) return false;
+  const earlierClauses = clauses.slice(0, negatedClauseIndex);
+  return earlierClauses.some((clause) => {
+    if (clauseIsNegated(clause)) return false;
+    const hasSameAction = action === "open"
+      ? wantsNotificationReferenceOpen(clause, notifications)
+      : wantsNotificationReferenceRead(clause, notifications);
+    if (!hasSameAction) return false;
+    const earlierMatch = resolveAndroidNotificationReference(notifications, clause);
+    return earlierMatch?.index === negatedMatch.index;
+  });
+}
+
 function notificationReferenceText(notification: LocalVoiceNotification): string {
   const message = [notification.title, notification.text].filter(Boolean).join(": ") || "(no notification text)";
   return `${notification.app}: ${message}`;
@@ -496,7 +517,15 @@ function activeNotificationWorkingContextRequest(
     const referenceRead = wantsNotificationReferenceRead(clause, notifications);
     const summaryFollowUp = wantsNotificationSummaryFollowUp(clause);
     if (!orderedRead && !referenceOpen && !referenceRead && !summaryFollowUp) continue;
-    if (clauseIsNegated(clause)) continue;
+    if (clauseIsNegated(clause)) {
+      if (
+        (referenceOpen && negatedReferenceCancelsEarlierClause(clauses, index, clause, notifications, "open")) ||
+        (referenceRead && negatedReferenceCancelsEarlierClause(clauses, index, clause, notifications, "read"))
+      ) {
+        return null;
+      }
+      continue;
+    }
     return { clause, orderedRead, referenceOpen, referenceRead, summaryFollowUp };
   }
   return null;
@@ -533,6 +562,14 @@ function responseFromNotificationWorkingContext(
     };
   }
 
+  if (orderedRead) {
+    return {
+      response: recentNotifications.orderedDetail,
+      outcome: "notification_context_read_all",
+      workingContext: workingContext ?? {},
+    };
+  }
+
   if (referenceRead) {
     const match = resolveAndroidNotificationReference(recentNotifications.notifications, clause);
     if (!match) {
@@ -545,14 +582,6 @@ function responseFromNotificationWorkingContext(
     return {
       response: notificationReferenceText(match.notification),
       outcome: "notification_reference_read",
-      workingContext: workingContext ?? {},
-    };
-  }
-
-  if (orderedRead) {
-    return {
-      response: recentNotifications.orderedDetail,
-      outcome: "notification_context_read_all",
       workingContext: workingContext ?? {},
     };
   }

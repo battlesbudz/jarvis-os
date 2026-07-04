@@ -126,6 +126,40 @@ async function testNotificationFollowUpReadAllUsesWorkingContextInOrder() {
   console.log("OK: explicit read-all notification follow-ups preserve notification order");
 }
 
+async function testNotificationReadAllWinsOverSpecificReference() {
+  const allHandsEvents: LocalVoiceAndroidEvent[] = [{
+    type: "notification",
+    notifications: [
+      { app: "Calendar", title: "All hands", text: "Company meeting starts soon" },
+      { app: "Reddit", title: "vivecoding thread is trending", text: "New replies in r/vivecoding" },
+    ],
+  }];
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: allHandsEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const readAll = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read all of them",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "I cannot access those." },
+    ]),
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:01:00.000Z"),
+  });
+
+  assert.equal(readAll.diagnostics.outcome, "notification_context_read_all");
+  assert.match(readAll.canonicalResponse, /1\. Calendar/);
+  assert.match(readAll.canonicalResponse, /2\. Reddit/);
+  console.log("OK: read-all follow-ups win over specific notification references");
+}
+
 async function testNotificationReferenceOpensMatchingApp() {
   const first = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
@@ -428,6 +462,21 @@ async function testLaterPronounNegationCancelsNotificationAction() {
   assert.equal(cancelled.diagnostics.outcome, "final");
   assert.equal(cancelled.androidExecutions.length, 0);
   assert.equal(cancelled.canonicalResponse, "Okay, I won't open it.");
+
+  const explicitCancel = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open the Reddit one, but don't open the Reddit one",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "Okay, I won't open it." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "Reddit", action: "open", success: true }],
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:04:30.000Z"),
+  });
+
+  assert.equal(explicitCancel.diagnostics.outcome, "final");
+  assert.equal(explicitCancel.androidExecutions.length, 0);
+  assert.equal(explicitCancel.canonicalResponse, "Okay, I won't open it.");
   console.log("OK: later pronoun negations cancel earlier notification actions");
 }
 
@@ -795,6 +844,7 @@ async function main() {
   await testEmptyNotificationReadSucceeds();
   await testNotificationFollowUpSummaryUsesWorkingContext();
   await testNotificationFollowUpReadAllUsesWorkingContextInOrder();
+  await testNotificationReadAllWinsOverSpecificReference();
   await testNotificationReferenceOpensMatchingApp();
   await testNotificationReferenceUsesStoredAppNames();
   testOrdinalNotificationReferencesSelectWithinMatches();
