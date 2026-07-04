@@ -634,9 +634,9 @@ export async function sendVoice(
   chatId: string,
   audioBuffer: Buffer,
   caption?: string,
-): Promise<boolean> {
-  if (!BOT_TOKEN) return false;
-  if (devSendBlocked) return false;
+): Promise<{ ok: boolean; messageId?: number; error?: string }> {
+  if (!BOT_TOKEN) return { ok: false, error: "Telegram bot token is not configured" };
+  if (devSendBlocked) return { ok: false, error: "Telegram dev sends are blocked" };
   try {
     const form = new FormData();
     form.append("chat_id", chatId);
@@ -644,13 +644,15 @@ export async function sendVoice(
     form.append("voice", new Blob([new Uint8Array(audioBuffer)], { type: "audio/ogg" }), "voice.ogg");
     const res = await fetch(`${BASE}/sendVoice`, { method: "POST", body: form });
     if (!res.ok) {
-      console.error("Telegram sendVoice error:", await res.text());
-      return false;
+      const error = await res.text();
+      console.error("Telegram sendVoice error:", error);
+      return { ok: false, error };
     }
-    return true;
+    const data = await res.json() as { ok: boolean; result?: { message_id: number } };
+    return { ok: true, messageId: data.result?.message_id };
   } catch (e) {
     console.error("Telegram sendVoice threw:", String(e));
-    return false;
+    return { ok: false, error: String(e) };
   }
 }
 

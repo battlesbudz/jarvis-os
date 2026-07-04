@@ -261,9 +261,24 @@ function testTelegramDiagnosticCacheBoundsContract() {
   console.log("OK: Telegram diagnostic cache is bounded by per-chat, total-chat, and TTL limits");
 }
 
+function testTelegramVoiceDiagnosticsCaptureMessageIdContract() {
+  const projectRoot = process.cwd();
+  const telegramRoutes = fs.readFileSync(path.join(projectRoot, "server/telegramRoutes.ts"), "utf8");
+  const telegramIntegration = fs.readFileSync(path.join(projectRoot, "server/integrations/telegram.ts"), "utf8");
+  const tts = fs.readFileSync(path.join(projectRoot, "server/agent/tools/tts.ts"), "utf8");
+
+  assert.match(telegramIntegration, /result\?:\s*\{\s*message_id:\s*number\s*\}/);
+  assert.match(telegramIntegration, /messageId:\s*data\.result\?\.message_id/);
+  assert.match(tts, /export type SpeakResult = \{ ok: boolean; error\?: string; messageId\?: number \}/);
+  assert.match(tts, /return \{ ok: true, messageId: sent\.messageId \}/);
+  assert.match(telegramRoutes, /deliveredTextMessageId = voiceResult\.messageId \?\? null/);
+  console.log("OK: Telegram voice diagnostics capture reply-targetable message IDs");
+}
+
 testFailedActionCopyBundle();
 testSuccessfulTurnCopyBundle();
 testTelegramTargetResolution();
 testVoiceClarificationAndNoAudioBytes();
 testAndroidPlainTextClipboardContract();
 testTelegramDiagnosticCacheBoundsContract();
+testTelegramVoiceDiagnosticsCaptureMessageIdContract();

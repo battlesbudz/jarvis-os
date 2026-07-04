@@ -657,6 +657,8 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
             await sendMessage(chatId, textReply);
             return null;
           });
+        } else {
+          deliveredTextMessageId = voiceResult.messageId ?? null;
         }
         logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
       } else {
