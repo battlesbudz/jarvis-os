@@ -742,6 +742,30 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(unrelatedUrlQueryDoesNotConfirmAppCompletion.status, "blocked_false_completion");
 
+  const genericMailIntentDoesNotConfirmGmailCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open mailto:foo@example.com.",
+    responseText: "I opened Gmail.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "mailto:foo@example.com",
+    }],
+  });
+  assert.equal(genericMailIntentDoesNotConfirmGmailCompletion.status, "blocked_false_completion");
+
+  const genericWazeIntentDoesNotConfirmMapsCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open waze://?ll=1,2.",
+    responseText: "I opened Maps.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "waze://?ll=1,2",
+    }],
+  });
+  assert.equal(genericWazeIntentDoesNotConfirmMapsCompletion.status, "blocked_false_completion");
+
   const confirmedDeepLinkOpen = auditLocalRuntimeResponse({
     userMessage: "Open geo:0,0?q=coffee.",
     responseText: "I opened geo:0,0?q=coffee.",

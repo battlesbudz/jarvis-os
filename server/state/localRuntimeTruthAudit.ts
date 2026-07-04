@@ -123,11 +123,11 @@ const ANDROID_APP_URL_CONFIRMERS_BY_PACKAGE: Record<string, { hostSuffixes: stri
   },
   "com.google.android.gm": {
     hostSuffixes: ["gmail.com", "mail.google.com"],
-    schemes: ["googlegmail", "mailto"],
+    schemes: ["googlegmail"],
   },
   "com.google.android.apps.maps": {
     hostSuffixes: ["maps.google.com"],
-    schemes: ["geo", "google.navigation", "waze"],
+    schemes: [],
   },
 };
 
