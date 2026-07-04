@@ -477,7 +477,7 @@ function activeNotificationWorkingContextRequest(
     const referenceOpen = wantsNotificationReferenceOpen(clause, notifications);
     const summaryFollowUp = wantsNotificationSummaryFollowUp(clause);
     if (!orderedRead && !referenceOpen && !summaryFollowUp) continue;
-    if (clauseIsNegated(clause)) return null;
+    if (clauseIsNegated(clause)) continue;
     return { clause, orderedRead, referenceOpen, summaryFollowUp };
   }
   return null;

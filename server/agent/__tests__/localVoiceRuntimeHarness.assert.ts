@@ -192,13 +192,13 @@ async function testNotificationReferenceUsesStoredAppNames() {
 
 function testOrdinalNotificationReferencesSelectWithinMatches() {
   const match = resolveAndroidNotificationReference([
+    { app: "Second", title: "Payment card", text: "Statement ready" },
     { app: "Reddit", title: "First thread", text: "r/vivecoding" },
-    { app: "Gmail", title: "Invoice due", text: "Payment due today" },
-    { app: "Reddit", title: "Second thread", text: "r/localmodels" },
+    { app: "Reddit", title: "Local models thread", text: "r/localmodels" },
   ], "Open the second Reddit one");
 
   assert.equal(match?.index, 2);
-  assert.equal(match?.notification.title, "Second thread");
+  assert.equal(match?.notification.title, "Local models thread");
   console.log("OK: ordinal notification references select within matched notifications");
 }
 
@@ -325,6 +325,48 @@ async function testLaterPositiveNotificationClauseAfterNegationRuns() {
   assert.equal(mixed.androidExecutions[0]?.ok, true);
   assert.match(mixed.canonicalResponse, /opened Life360/i);
   console.log("OK: later positive notification clauses still run after an earlier negation");
+}
+
+async function testEarlierPositiveNotificationClauseSurvivesLaterNegation() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const summarize = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Summarize those, but don't read all of them",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "I cannot summarize notifications." },
+    ]),
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:03:00.000Z"),
+  });
+
+  assert.equal(summarize.diagnostics.outcome, "notification_context_summary");
+  assert.match(summarize.canonicalResponse, /Codex/i);
+  assert.doesNotMatch(summarize.canonicalResponse, /1\. Codex/);
+
+  const open = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open the Reddit one, but don't open Life360",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "I cannot open that." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "Reddit", action: "open", success: true }],
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:04:00.000Z"),
+  });
+
+  assert.equal(open.diagnostics.outcome, "notification_reference_opened");
+  assert.equal(open.androidExecutions[0]?.toolName, "android_open_app_by_name");
+  assert.equal(open.androidExecutions[0]?.label, "Opened Reddit");
+  console.log("OK: earlier positive notification clauses survive later unrelated negations");
 }
 
 async function testMissingAppControlFixtureFails() {
@@ -670,6 +712,7 @@ async function main() {
   await testGenericOneAppRequestDoesNotUseNotificationContext();
   await testNegatedNotificationFollowUpsDoNotUseWorkingContext();
   await testLaterPositiveNotificationClauseAfterNegationRuns();
+  await testEarlierPositiveNotificationClauseSurvivesLaterNegation();
   await testMissingAppControlFixtureFails();
   await testMismatchedAppControlFixtureFails();
   await testAppControlFalseDenialRecoveryKeepsRequestedApp();

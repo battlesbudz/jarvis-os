@@ -94,12 +94,32 @@ function ordinalReference(query: string): number | null {
   return null;
 }
 
+const REFERENCE_STOPWORDS = new Set([
+  "the",
+  "one",
+  "ones",
+  "that",
+  "this",
+  "open",
+  "read",
+  "show",
+  "notification",
+  "notifications",
+  "first",
+  "1st",
+  "second",
+  "2nd",
+  "third",
+  "3rd",
+  "last",
+]);
+
 function scoreNotificationReference(entry: AndroidNotificationSummaryEntry, query: string): number {
   const normalizedQuery = query.toLowerCase();
   const haystack = `${entry.app} ${entry.title} ${entry.text}`.toLowerCase();
   const tokens = normalizedQuery
     .split(/[^a-z0-9]+/i)
-    .filter((token) => token.length >= 3 && !new Set(["the", "one", "that", "this", "open", "read", "show", "notification"]).has(token));
+    .filter((token) => token.length >= 3 && !REFERENCE_STOPWORDS.has(token));
   let score = 0;
   for (const token of tokens) {
     if (entry.app.toLowerCase() === token) score += 5;
