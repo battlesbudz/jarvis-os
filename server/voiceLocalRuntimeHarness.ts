@@ -452,7 +452,7 @@ function wantsOrderedNotificationRead(transcript: string): boolean {
 
 function notificationWorkingContextClauses(transcript: string): string[] {
   return compactText(transcript)
-    .split(/[.!?;,]|\b(?:but|then)\b|\band\s+(?=(?:open|launch|start|read|show|check|summari[sz]e|repeat|tell|tap|go)\b)/i)
+    .split(/[.!?;,]|\b(?:but|then)\b|\band\s+(?=(?:(?:don't|dont|do not|never|stop|didn't|did not|not|no)\s+)?(?:open|launch|start|read|show|check|summari[sz]e|repeat|tell|tap|go)\b)/i)
     .map((clause) => clause.trim())
     .filter(Boolean);
 }

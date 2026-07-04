@@ -135,13 +135,16 @@ export function resolveAndroidNotificationReference(
   const entries = normalizeAndroidNotifications(notifications);
   if (entries.length === 0) return null;
 
+  const ordinal = ordinalReference(query);
   const scored = entries
     .map((notification, index) => ({ notification, index, score: scoreNotificationReference(notification, query) }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score);
-  const ordinal = ordinalReference(query);
-  if (ordinal !== null && scored.length > 0) {
-    const orderedMatches = [...scored].sort((a, b) => a.index - b.index);
+
+  if (ordinal !== null) {
+    const orderedMatches = scored.length > 0
+      ? [...scored].sort((a, b) => a.index - b.index)
+      : entries.map((notification, index) => ({ notification, index, score: 0 }));
     const matchIndex = ordinal === -1 ? orderedMatches.length - 1 : ordinal;
     const match = orderedMatches[matchIndex];
     return match ? { notification: match.notification, index: match.index } : null;
@@ -149,12 +152,6 @@ export function resolveAndroidNotificationReference(
 
   const best = scored[0];
   if (best) return { notification: best.notification, index: best.index };
-
-  if (ordinal !== null) {
-    const index = ordinal === -1 ? entries.length - 1 : ordinal;
-    const notification = entries[index];
-    return notification ? { notification, index } : null;
-  }
 
   return null;
 }

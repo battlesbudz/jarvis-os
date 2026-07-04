@@ -354,7 +354,7 @@ async function testEarlierPositiveNotificationClauseSurvivesLaterNegation() {
 
   const open = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
-    transcript: "Open the Reddit one, but don't open Life360",
+    transcript: "Open the Reddit one and don't open Life360",
     gemma: new ScriptedFakeLocalGemmaProvider([
       { type: "final", text: "I cannot open that." },
     ]),
