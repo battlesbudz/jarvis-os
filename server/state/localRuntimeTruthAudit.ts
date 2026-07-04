@@ -230,7 +230,7 @@ function completionClaimTarget(text: string): { toolName: string; target?: strin
   if (opened?.[1]) {
     return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(opened[1]) };
   }
-  const startedApp = text.match(/\b(?:i\s+)?started\s+(?:the\s+)?([a-z0-9 ._-]{2,80}?)(?:\s+(?:app|application)|\s+on\s+(?:your\s+phone|your\s+device|my\s+phone|the\s+device))(?:[.!?]|$)/i);
+  const startedApp = text.match(/\b(?:i\s+)?started\s+(?:the\s+)?([a-z0-9 ._-]{2,80}?)(?:\s+(?:app|application)|\s+for\s+you|\s+on\s+(?:your\s+phone|your\s+device|my\s+phone|the\s+device))(?:[.!?]|$)/i);
   if (startedApp?.[1]) {
     return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(startedApp[1]) };
   }

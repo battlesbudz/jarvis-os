@@ -428,6 +428,14 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(falseBareStartedAppCompletion.status, "blocked_false_completion");
 
+  const falsePoliteStartedAppCompletion = auditLocalRuntimeResponse({
+    userMessage: "Start Gmail.",
+    responseText: "I started Gmail for you.",
+    capabilityState: { app_control: "available" },
+    actionResults: [],
+  });
+  assert.equal(falsePoliteStartedAppCompletion.status, "blocked_false_completion");
+
   const falseUrlCompletion = auditLocalRuntimeResponse({
     userMessage: "Open https://example.com.",
     responseText: "I opened https://example.com.",
