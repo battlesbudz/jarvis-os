@@ -769,7 +769,9 @@ function packageTargetNegatedInText(text: string, packageName: string): boolean 
 function rawUrlFromText(text: string): string | null {
   const match = text.match(/\bhttps?:\/\/[^\s<>"']+|\bwww\.[^\s<>"']+|\byoutu\.be\/[^\s<>"']+|\byoutube\.com\/[^\s<>"']+|\b(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):[^\s<>"']+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d{1,5})?(?:[/?#][^\s<>"']*)?/i);
   if (!match) return null;
-  return match[0].replace(/[),.;]+$/g, "");
+  const raw = match[0].replace(/[),.;]+$/g, "");
+  if (Object.values(ANDROID_APP_PACKAGE_ALIASES).includes(raw.toLowerCase())) return null;
+  return raw;
 }
 
 function urlFromText(text: string): string | null {

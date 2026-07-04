@@ -267,10 +267,17 @@ function userAskedForAuditedLocalAction(
   }
 }
 
-function confirmingToolNamesForClaim(claim: { toolName: string }): Set<string> {
-  return claim.toolName === "android_open_app_by_name"
-    ? new Set(["android_open_app_by_name", "android_youtube_search", "android_open_phone_url"])
-    : new Set([claim.toolName]);
+function isUrlLikeActionTarget(target: string): boolean {
+  return webUrlTarget(target) !== null ||
+    /^(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):/i.test(target);
+}
+
+function confirmingToolNamesForClaim(claim: { toolName: string; target?: string }): Set<string> {
+  if (claim.toolName !== "android_open_app_by_name") return new Set([claim.toolName]);
+  const target = compactText(claim.target).toLowerCase();
+  if (isUrlLikeActionTarget(target)) return new Set(["android_open_phone_url"]);
+  if (/\byoutube\b/i.test(target)) return new Set(["android_open_app_by_name", "android_youtube_search"]);
+  return new Set(["android_open_app_by_name"]);
 }
 
 function youtubeSearchClaimQuery(target: string): string {

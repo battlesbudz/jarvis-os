@@ -529,6 +529,19 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(confirmedYoutubeSearchResults.status, "allow");
 
+  const youtubeSearchDoesNotConfirmGmailAppOpen = auditLocalRuntimeResponse({
+    userMessage: "Search YouTube for Gmail.",
+    responseText: "I opened Gmail.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_youtube_search",
+      ok: true,
+      target: "Gmail",
+      summary: "YouTube search: Gmail.",
+    }],
+  });
+  assert.equal(youtubeSearchDoesNotConfirmGmailAppOpen.status, "blocked_false_completion");
+
   const confirmedUrlOpen = auditLocalRuntimeResponse({
     userMessage: "Open example.com.",
     responseText: "I opened example.com.",
