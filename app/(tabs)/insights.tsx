@@ -1355,7 +1355,11 @@ export default function InsightsScreen() {
 
   const speakText = useCallback(async (text: string, assistantId?: string) => {
     if (isSpeaking && speakingTextRef.current === text) {
-      stopSpeaking();
+      if (talkModeRef.current) {
+        interruptSpeakingAndListen();
+      } else {
+        stopSpeaking();
+      }
       return;
     }
     stopSpeaking();
@@ -1721,7 +1725,7 @@ export default function InsightsScreen() {
         onError();
       }
     }
-  }, [isSpeaking, stopSpeaking]);
+  }, [interruptSpeakingAndListen, isSpeaking, stopSpeaking]);
 
   speakTextRef.current = speakText;
 

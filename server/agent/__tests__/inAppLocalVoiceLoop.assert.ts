@@ -75,6 +75,12 @@ assert.match(
 
 assert.match(
   insights,
+  /if\s*\(isSpeaking && speakingTextRef\.current === text\)\s*\{\s*if\s*\(talkModeRef\.current\)\s*\{\s*interruptSpeakingAndListen\(\);/,
+  "The assistant bubble speaker stop should also use Talk Mode interrupt behavior",
+);
+
+assert.match(
+  insights,
   /if\s*\(typeof status\.metering !== 'number'\)\s*\{\s*return;\s*\}/,
   "Native Talk Mode should skip missing metering samples instead of treating them as silence",
 );
