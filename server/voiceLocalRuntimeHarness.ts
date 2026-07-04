@@ -285,6 +285,20 @@ function queryNeedsNotificationWorkingContext(transcript: string): boolean {
       /\b(?:it|that|those|them|one|ones|last|previous|again|rest|all)\b/i.test(transcript));
 }
 
+function hasNegatedNotificationWorkingContextRequest(transcript: string): boolean {
+  const text = compactText(transcript);
+  if (!text) return false;
+  const clauses = text
+    .split(/[.!?;,]|\b(?:but|then)\b|\band\s+(?=(?:open|launch|start|read|show|check|summari[sz]e|repeat|tell|tap|go)\b)/i)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+
+  return clauses.some((clause) =>
+    /\b(?:don't|dont|do not|never|stop|didn't|did not|not|no)\b/i.test(clause) &&
+    /\b(?:notifications?|it|that|those|them|one|ones|last|previous|again|rest|reddit|gmail|codex|life360|facebook|linkedin|youtube|slack|discord|telegram|message|mail)\b/i.test(clause) &&
+    /\b(?:summari[sz]e|read|open|launch|show|tell|repeat|tap|go to)\b/i.test(clause));
+}
+
 function wantsNotificationSummaryFollowUp(transcript: string): boolean {
   return /\b(?:summari[sz]e|repeat|tell me|which|what|again)\b/i.test(transcript) &&
     /\b(?:that|those|them|last|previous|again)\b/i.test(transcript);
@@ -465,6 +479,7 @@ function responseFromNotificationWorkingContext(
   androidRuntime: FakeAndroidVoiceRuntime,
 ): { response: string; outcome: string; workingContext: LocalVoiceWorkingContext } | null {
   const recentNotifications = notificationWorkingContextActive(workingContext, now);
+  if (hasNegatedNotificationWorkingContextRequest(transcript)) return null;
   const orderedRead = wantsOrderedNotificationRead(transcript);
   const referenceOpen = wantsNotificationReferenceOpen(transcript);
   const summaryFollowUp = wantsNotificationSummaryFollowUp(transcript);

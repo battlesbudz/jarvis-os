@@ -207,6 +207,48 @@ async function testGenericOneAppRequestDoesNotUseNotificationContext() {
   console.log("OK: generic one-app requests do not hijack recent notification context");
 }
 
+async function testNegatedNotificationFollowUpsDoNotUseWorkingContext() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const dontOpen = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Don't open the Reddit one",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "I will not open it." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "Reddit", action: "open", success: true }],
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:01:00.000Z"),
+  });
+
+  assert.equal(dontOpen.diagnostics.outcome, "final");
+  assert.equal(dontOpen.androidExecutions.length, 0);
+  assert.equal(dontOpen.canonicalResponse, "I will not open it.");
+
+  const dontRead = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Don't read all of them",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "I will not read them." },
+    ]),
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:02:00.000Z"),
+  });
+
+  assert.equal(dontRead.diagnostics.outcome, "final");
+  assert.equal(dontRead.androidExecutions.length, 0);
+  assert.equal(dontRead.canonicalResponse, "I will not read them.");
+  console.log("OK: negated notification follow-ups do not use working context");
+}
+
 async function testMissingAppControlFixtureFails() {
   const result = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
@@ -546,6 +588,7 @@ async function main() {
   await testNotificationReferenceOpensMatchingApp();
   await testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns();
   await testGenericOneAppRequestDoesNotUseNotificationContext();
+  await testNegatedNotificationFollowUpsDoNotUseWorkingContext();
   await testMissingAppControlFixtureFails();
   await testMismatchedAppControlFixtureFails();
   await testAppControlFalseDenialRecoveryKeepsRequestedApp();
