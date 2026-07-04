@@ -870,6 +870,13 @@ async function testAndroidLocalGemmaScopesPhoneUrlCapabilityToExposedTools() {
       tools: [{
         type: "function",
         function: {
+          name: "android_open_app_by_name",
+          description: "Open a phone app by name.",
+          parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+        },
+      }, {
+        type: "function",
+        function: {
           name: "android_open_phone_url",
           description: "Open a URL on the Android phone.",
           parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
@@ -4866,6 +4873,53 @@ async function testAndroidLocalGemmaRecoversDeepLinkUrlToPhoneOpen() {
   }
 }
 
+async function testAndroidLocalGemmaKeepsPhoneUrlToolForPronounConfirmations() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "android_open_phone_url", arguments: { url: "geo:0,0?q=coffee" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Open geo:0,0?q=coffee." },
+        { role: "assistant", content: "Should I open that on your phone?" },
+        { role: "user", content: "yes" },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "android_open_phone_url",
+            description: "Open a URL on the Android phone.",
+            parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+          },
+        },
+      ],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_open_phone_url");
+    assert.equal(result.toolCallList[0].function.arguments, '{"url":"geo:0,0?q=coffee"}');
+    console.log("OK: Android Local Gemma keeps phone URL tool for pronoun confirmations");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaUsesToolProtocolForBareDeepLinks() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -6484,6 +6538,7 @@ async function main() {
   await testAndroidLocalGemmaDoesNotRecoverYoutubeTranscriptUrlToPhoneOpen();
   await testAndroidLocalGemmaStillRecoversNonYoutubeUrlToPhoneOpen();
   await testAndroidLocalGemmaRecoversDeepLinkUrlToPhoneOpen();
+  await testAndroidLocalGemmaKeepsPhoneUrlToolForPronounConfirmations();
   await testAndroidLocalGemmaUsesToolProtocolForBareDeepLinks();
   await testAndroidLocalGemmaDoesNotOpenInformationalDeepLinkMentions();
   await testAndroidLocalGemmaDoesNotRepeatCompletedRecoveredActions();

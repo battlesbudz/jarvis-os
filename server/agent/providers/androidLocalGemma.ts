@@ -433,10 +433,19 @@ function isPhoneUrlToolConfirmationTurn(
 ): boolean {
   const latest = latestUserText(messages).trim();
   if (!looksLikeApprovalConfirmation(latest)) return false;
+  let assistantIndex = -1;
   for (let index = messages.length - 2; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.role !== "assistant") continue;
-    return looksLikePhoneUrlActionRequest(textFromContent(message.content));
+    assistantIndex = index;
+    if (looksLikePhoneUrlActionRequest(textFromContent(message.content))) return true;
+    break;
+  }
+  if (assistantIndex < 0) return false;
+  const scanStart = Math.max(0, assistantIndex - 4);
+  for (let index = assistantIndex - 1; index >= scanStart; index -= 1) {
+    const message = messages[index];
+    if (message.role === "user" && looksLikePhoneUrlActionRequest(textFromContent(message.content))) return true;
   }
   return false;
 }
@@ -1123,6 +1132,12 @@ async function localRuntimeCapabilityState(
   const requestText = latestUserText(params.messages);
   const hasYoutubeSearchIntent = hasYoutubeSearchTool && !!youtubeSearchQueryFromRequest(requestText);
   const hasUrlOpenIntent = hasOpenPhoneUrlTool && looksLikePhoneUrlActionRequest(requestText);
+  const hasOpenAppIntent = hasOpenAppTool &&
+    /\b(?:open|launch|start)\b/i.test(requestText) &&
+    !looksLikePhoneUrlOpenIntent(requestText) &&
+    !looksLikeDeviceInstructionRequest(requestText) &&
+    !looksLikeOpenSourceQuestion(requestText) &&
+    (inferPackageNamesFromText(requestText).length > 0 || openAppNameFromRequest(requestText) !== null);
   const androidChecks: Array<[LocalRuntimeCapabilityName, RuntimeCapabilityAndroidAction, boolean]> = [
     ["notifications", "android_read_notifications", hasFunctionTool(tools, "android_read_notifications")],
     ["screen", "android_read_screen", hasFunctionTool(tools, "android_read_screen_context")],
@@ -1131,7 +1146,7 @@ async function localRuntimeCapabilityState(
   const appControlActions: RuntimeCapabilityAndroidAction[] = [];
   if (hasYoutubeSearchIntent || hasUrlOpenIntent) {
     appControlActions.push("android_browse");
-  } else if (hasOpenAppTool) {
+  } else if (hasOpenAppIntent) {
     appControlActions.push("android_open_app");
   } else if (hasOpenPhoneUrlTool) {
     appControlActions.push("android_browse");
