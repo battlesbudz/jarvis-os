@@ -151,6 +151,7 @@ export function isDiagnosticCopyRequest(text: string): boolean {
 
 export function diagnosticRecordHasFailure(record: DiagnosticTurnRecord): boolean {
   if (record.bundle.responseText?.trim().toLowerCase().startsWith("error:")) return true;
+  if (record.bundle.modelErrors.length > 0) return true;
   return record.bundle.toolResults.some((result) => {
     if (!result || typeof result !== "object") return false;
     const value = result as { result?: unknown; ok?: unknown };

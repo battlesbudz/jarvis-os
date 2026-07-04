@@ -8,6 +8,7 @@ const settingsSource = fs.readFileSync(path.join(projectRoot, "app/(tabs)/settin
 const coachAgentSource = fs.readFileSync(path.join(projectRoot, "server/channels/coachAgent.ts"), "utf8");
 const daemonToolSource = fs.readFileSync(path.join(projectRoot, "server/agent/tools/daemon.ts"), "utf8");
 const routesSource = fs.readFileSync(path.join(projectRoot, "server/routes.ts"), "utf8");
+const daemonBridgeSource = fs.readFileSync(path.join(projectRoot, "server/daemon/bridge.ts"), "utf8");
 const androidControlCardSource = fs.readFileSync(
   path.join(projectRoot, "components/androidDaemon/AndroidDeviceControlCard.tsx"),
   "utf8",
@@ -84,6 +85,12 @@ assert.match(
   daemonToolSource,
   /Screen recording is not available in the unified Jarvis Android app yet/,
   "Daemon tool recovery copy should not point users to a missing screen-record grant flow.",
+);
+
+assert.match(
+  daemonBridgeSource,
+  /android_copy_text_to_clipboard:\s*"android_tap_type"/,
+  "Android text clipboard writes should be gated by the Android input-control permission.",
 );
 
 assert.match(

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   buildTurnDiagnosticBundle,
+  diagnosticRecordHasFailure,
   formatDiagnosticBundleForClipboard,
   getActionableDiagnosticRecords,
   getDiagnosticRecordsForUser,
@@ -157,6 +158,34 @@ function testTelegramTargetResolution() {
     makeRecord({ turnId: "current-user", messageId: 105, createdAt: "2026-07-04T00:04:00.000Z", userId: "user_current" }),
   ], "user_current");
   assert.deepEqual(userScoped.map((record) => record.turnId), ["current-user"]);
+
+  const modelErrorOnlyBundle = buildTurnDiagnosticBundle({
+    turnId: "model-error-only",
+    source: "telegram",
+    userId: "user_current",
+    channel: "telegram",
+    channelTurnId: 109,
+    requestText: "Do the thing",
+    responseText: "Sorry, I encountered an error. Please try again.",
+    selected: { mode: "telegram", model: "server-selected", profile: "server-selected" },
+    contextPacket: { userText: "Do the thing" },
+    toolResults: [],
+    modelErrors: [{ message: "provider timeout" }],
+    timing: { startedAt: "2026-07-04T00:07:00.000Z" },
+    recentTurnHistory: [],
+  });
+  const modelErrorOnlyRecord: DiagnosticTurnRecord = {
+    turnId: modelErrorOnlyBundle.turnId,
+    source: "telegram",
+    channel: "telegram",
+    channelTurnId: 109,
+    createdAt: modelErrorOnlyBundle.createdAt,
+    bundle: modelErrorOnlyBundle,
+  };
+  assert.equal(diagnosticRecordHasFailure(modelErrorOnlyRecord), true);
+  const modelErrorFailed = resolveDiagnosticTargetFromText([modelErrorOnlyRecord], "copy last failed details");
+  assert.equal(modelErrorFailed.ok, true);
+  if (modelErrorFailed.ok) assert.equal(modelErrorFailed.record.turnId, "model-error-only");
 
   const missingChannelIdRecords = [
     makeRecord({ turnId: "voice-without-message-id", messageId: null, createdAt: "2026-07-04T00:06:00.000Z" }),
