@@ -54,7 +54,10 @@ export function normalizeAndroidNotifications(notifications: unknown[]): Android
 function spokenNotification(entry: AndroidNotificationSummaryEntry): string {
   const title = entry.title || "(no title)";
   const age = entry.age ? ` ${entry.age}` : "";
-  return `${entry.app}${age}: ${title}`;
+  const body = entry.text && entry.text !== entry.title
+    ? ` (${entry.text.length > 90 ? `${entry.text.slice(0, 87).trim()}...` : entry.text})`
+    : "";
+  return `${entry.app}${age}: ${title}${body}`;
 }
 
 export function summarizeAndroidNotifications(notifications: unknown[]): string {
@@ -116,10 +119,17 @@ export function resolveAndroidNotificationReference(
     .map((notification, index) => ({ notification, index, score: scoreNotificationReference(notification, query) }))
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score);
+  const ordinal = ordinalReference(query);
+  if (ordinal !== null && scored.length > 0) {
+    const orderedMatches = [...scored].sort((a, b) => a.index - b.index);
+    const matchIndex = ordinal === -1 ? orderedMatches.length - 1 : ordinal;
+    const match = orderedMatches[matchIndex];
+    return match ? { notification: match.notification, index: match.index } : null;
+  }
+
   const best = scored[0];
   if (best) return { notification: best.notification, index: best.index };
 
-  const ordinal = ordinalReference(query);
   if (ordinal !== null) {
     const index = ordinal === -1 ? entries.length - 1 : ordinal;
     const notification = entries[index];

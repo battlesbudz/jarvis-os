@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { resolveAndroidNotificationReference } from "../androidNotificationSummary";
 import {
   FakeAndroidVoiceRuntime,
   LocalVoiceRuntimeHarnessError,
@@ -39,6 +40,7 @@ async function testCompleteLocalVoiceNotificationTurn() {
   assert.match(result.canonicalResponse, /I checked your Android notifications/i);
   assert.match(result.canonicalResponse, /Codex/i);
   assert.match(result.canonicalResponse, /Reddit/i);
+  assert.match(result.canonicalResponse, /No major issues found/);
   assert.doesNotMatch(result.canonicalResponse, /Codex: Review finished - No major issues found/);
   assert.ok(result.workingContext.notifications);
   assert.match(result.workingContext.notifications?.summary ?? "", /Review finished/);
@@ -186,6 +188,18 @@ async function testNotificationReferenceUsesStoredAppNames() {
   assert.equal(open.androidExecutions[0]?.ok, true);
   assert.match(open.canonicalResponse, /opened Microsoft Teams/i);
   console.log("OK: notification references use stored app names instead of a fixed whitelist");
+}
+
+function testOrdinalNotificationReferencesSelectWithinMatches() {
+  const match = resolveAndroidNotificationReference([
+    { app: "Reddit", title: "First thread", text: "r/vivecoding" },
+    { app: "Gmail", title: "Invoice due", text: "Payment due today" },
+    { app: "Reddit", title: "Second thread", text: "r/localmodels" },
+  ], "Open the second Reddit one");
+
+  assert.equal(match?.index, 2);
+  assert.equal(match?.notification.title, "Second thread");
+  console.log("OK: ordinal notification references select within matched notifications");
 }
 
 async function testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns() {
@@ -651,6 +665,7 @@ async function main() {
   await testNotificationFollowUpReadAllUsesWorkingContextInOrder();
   await testNotificationReferenceOpensMatchingApp();
   await testNotificationReferenceUsesStoredAppNames();
+  testOrdinalNotificationReferencesSelectWithinMatches();
   await testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns();
   await testGenericOneAppRequestDoesNotUseNotificationContext();
   await testNegatedNotificationFollowUpsDoNotUseWorkingContext();
