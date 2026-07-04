@@ -382,12 +382,24 @@ function isBarePhoneUrlRequest(text: string): boolean {
   return remaining.length === 0;
 }
 
+function phoneUrlIntentText(text: string): string {
+  return text
+    .replace(/^\s*(?:hey\s+)?jarvis\b[\s,:-]*/i, "")
+    .trim();
+}
+
+function looksLikeAdvisoryPhoneUrlQuestion(text: string): boolean {
+  const requestText = phoneUrlIntentText(text);
+  return /^\s*(?:should\s+(?:i|we)|can\s+i|could\s+i|would\s+it|is\s+it|do\s+you\s+think|would\s+you\s+recommend)\b/i.test(requestText);
+}
+
 function looksLikePhoneUrlActionRequest(text: string): boolean {
-  if (!looksLikePhoneUrlOpenIntent(text)) return false;
-  if (isBarePhoneUrlRequest(text)) return true;
-  if (/^\s*(?:should\s+(?:i|we)|can\s+i|could\s+i|would\s+it|is\s+it|do\s+you\s+think|would\s+you\s+recommend)\b/i.test(text)) return false;
-  return /\b(?:open|browse|visit|go\s+to|navigate(?:\s+to)?|launch|start|pull\s+up)\b/i.test(text) &&
-    !/^\s*(?:what|why|how|explain|describe|define|summari[sz]e|tell\s+me)\b/i.test(text);
+  const requestText = phoneUrlIntentText(text);
+  if (!looksLikePhoneUrlOpenIntent(requestText)) return false;
+  if (isBarePhoneUrlRequest(requestText)) return true;
+  if (looksLikeAdvisoryPhoneUrlQuestion(requestText)) return false;
+  return /\b(?:open|browse|visit|go\s+to|navigate(?:\s+to)?|launch|start|pull\s+up)\b/i.test(requestText) &&
+    !/^\s*(?:what|why|how|explain|describe|define|summari[sz]e|tell\s+me)\b/i.test(requestText);
 }
 
 function isToolConfirmationTurn(
@@ -2338,6 +2350,11 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
           }
           if (/\b(?:open|launch|start)\b/i.test(requestText) && inferPackageNamesFromText(requestText).length > 1) {
             yield { type: "text", delta: "I need one app target at a time for local app opening." };
+            yield { type: "finish", reason: "stop" };
+            return;
+          }
+          if (looksLikePhoneUrlOpenIntent(requestText) && !looksLikePhoneUrlActionRequest(requestText)) {
+            yield { type: "text", delta: "Phone Gemma did not return a usable local answer for that request." };
             yield { type: "finish", reason: "stop" };
             return;
           }

@@ -5058,7 +5058,7 @@ async function testAndroidLocalGemmaDoesNotOpenAdvisoryUrlQuestions() {
   try {
     const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
       model: "android-local-gemma/gemma-4-e4b-it",
-      messages: [{ role: "user", content: "Should I open https://example.com?" }],
+      messages: [{ role: "user", content: "Hey Jarvis, should I open https://example.com?" }],
       tools: [
         {
           type: "function",
@@ -5079,6 +5079,47 @@ async function testAndroidLocalGemmaDoesNotOpenAdvisoryUrlQuestions() {
     assert.equal(result.toolCallList.length, 0);
     assert.equal(result.textContent, "You should only open that link if you trust it.");
     console.log("OK: Android Local Gemma does not open advisory URL questions");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaGracefullyRejectsAdvisoryPhoneUrlToolCalls() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "android_open_phone_url", arguments: { url: "https://example.com" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Should I open https://example.com?" }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "android_open_phone_url",
+            description: "Open a URL on the Android phone.",
+            parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+          },
+        },
+      ],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.equal(result.textContent, "Phone Gemma did not return a usable local answer for that request.");
+    console.log("OK: Android Local Gemma gracefully rejects advisory phone URL tool calls");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -6629,6 +6670,7 @@ async function main() {
   await testAndroidLocalGemmaUsesToolProtocolForBareDeepLinks();
   await testAndroidLocalGemmaDoesNotOpenInformationalDeepLinkMentions();
   await testAndroidLocalGemmaDoesNotOpenAdvisoryUrlQuestions();
+  await testAndroidLocalGemmaGracefullyRejectsAdvisoryPhoneUrlToolCalls();
   await testAndroidLocalGemmaDoesNotRepeatCompletedRecoveredActions();
   await testAndroidLocalGemmaDoesNotAdvanceAfterFailedDaemonAction();
   await testAndroidLocalGemmaDisplaysJsonShapedFinalRepliesAsText();
