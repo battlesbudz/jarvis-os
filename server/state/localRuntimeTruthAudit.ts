@@ -371,6 +371,17 @@ function webUrlTarget(value: string): { host: string; port: string; suffix: stri
   };
 }
 
+function leadingWebUrlTarget(value: string): { host: string; port: string; suffix: string } | null {
+  const normalized = value.trim().toLowerCase();
+  if (
+    !/^(?:https?:\/\/|www\.)/i.test(normalized) &&
+    !/^(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d{1,5})?(?:[/?#\s]|$)/i.test(normalized)
+  ) {
+    return null;
+  }
+  return webUrlTarget(normalized);
+}
+
 function looksLikeAndroidPackageId(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   if (!normalized || /[:/?#]/.test(normalized)) return false;
@@ -383,7 +394,7 @@ function looksLikeAndroidPackageId(value: string): boolean {
 function webUrlTargetsMatch(claimTarget: string, resultTarget: string): boolean | null {
   const claimUrl = webUrlTarget(claimTarget);
   if (!claimUrl) return null;
-  const resultUrl = webUrlTarget(resultTarget);
+  const resultUrl = leadingWebUrlTarget(resultTarget);
   if (!resultUrl) return false;
   if (claimUrl.host !== resultUrl.host) return false;
   if (claimUrl.port !== resultUrl.port) return false;
@@ -409,7 +420,7 @@ function phoneUrlResultMatchesAppClaim(appTarget: string, resultTarget: string):
   const confirmers = appUrlConfirmersForTarget(appTarget);
   if (!confirmers) return false;
 
-  const resultUrl = webUrlTarget(resultTarget);
+  const resultUrl = leadingWebUrlTarget(resultTarget);
   if (resultUrl && confirmers.hostSuffixes.some((suffix) => hostMatchesSuffix(resultUrl.host, suffix))) {
     return true;
   }
