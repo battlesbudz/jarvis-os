@@ -582,6 +582,18 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(confirmedBareDomainQueryOpen.status, "allow");
 
+  const confirmedAppSubdomainOpen = auditLocalRuntimeResponse({
+    userMessage: "Open app.slack.com.",
+    responseText: "I opened app.slack.com.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "https://app.slack.com",
+    }],
+  });
+  assert.equal(confirmedAppSubdomainOpen.status, "allow");
+
   const confirmedSchemeUrlOpen = auditLocalRuntimeResponse({
     userMessage: "Open https://example.com.",
     responseText: "I opened https://example.com.",

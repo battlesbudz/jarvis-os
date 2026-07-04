@@ -315,7 +315,11 @@ function looksLikeAndroidPackageId(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   if (!normalized || /[:/?#]/.test(normalized)) return false;
   if (Object.values(ANDROID_APP_PACKAGE_ALIASES).includes(normalized)) return true;
-  return /^(?:com|org|net|io|app|dev)\.[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$/i.test(normalized);
+  const labels = normalized.split(".");
+  if (labels.length < 3 || !/^(?:com|org|net|io|app|dev)$/i.test(labels[0] ?? "")) return false;
+  const webTlds = new Set(["com", "org", "net", "io", "app", "dev", "co", "uk", "us", "ai", "me", "gg", "tv", "edu", "gov", "mil", "info", "biz", "xyz", "site", "online", "cloud"]);
+  return !webTlds.has(labels[labels.length - 1] ?? "") &&
+    labels.slice(1).every((label) => /^[a-z][a-z0-9_]*$/i.test(label));
 }
 
 function webUrlTargetsMatch(claimTarget: string, resultTarget: string): boolean | null {
