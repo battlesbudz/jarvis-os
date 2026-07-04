@@ -135,7 +135,7 @@ const ANDROID_APP_URL_CONFIRMERS_BY_PACKAGE: Record<string, { hostSuffixes: stri
   },
   "com.google.android.apps.maps": {
     hostSuffixes: ["maps.google.com"],
-    schemes: [],
+    schemes: ["geo", "google.navigation"],
   },
 };
 
@@ -185,9 +185,15 @@ function actionToolsForCapability(capability: LocalRuntimeCapabilityName): Set<s
 function hasFailedActionForCapability(
   capability: LocalRuntimeCapabilityName,
   results: LocalRuntimeActionResult[],
+  deniedTarget?: string | null,
 ): boolean {
   const toolNames = actionToolsForCapability(capability);
-  return results.some((result) => !result.ok && toolNames.has(result.toolName));
+  return results.some((result) => {
+    if (result.ok || !toolNames.has(result.toolName)) return false;
+    if (capability !== "app_control" || !deniedTarget) return true;
+    const resultTarget = compactText(`${result.target ?? ""} ${result.summary ?? ""}`).toLowerCase();
+    return actionTargetsMatch(deniedTarget, resultTarget);
+  });
 }
 
 function isMemoryDataAbsenceAnswer(text: string): boolean {
@@ -237,13 +243,26 @@ function isNonAppOpenTarget(target: string): boolean {
   return /\b(?:account|bank|door|file|document|doc|folder|business|shop|case|ticket|conversation|chat|thread|email|message)\b/i.test(target);
 }
 
-function deniesLocalAppControl(text: string): boolean {
+function localAppControlDenialTarget(text: string): string | null {
   const denial = "i\\s+(?:can(?:not|'t)|(?:do\\s+not|don.?t)\\s+have\\s+access|am\\s+unable\\s+to|am\\s+not\\s+able\\s+to|cannot|can't|unable\\s+to|not\\s+able\\s+to)";
   const localAppTarget = "(?:apps?|applications?|app\\s+control|device\\s+control)";
   const directTarget = new RegExp(`\\b${denial}\\s+(?:open|launch)\\b(?![-\\s]+source\\b)\\s+(?:the\\s+)?([a-z0-9][a-z0-9 ._'-]{1,60}?)(?:[.!?]|\\s+because\\b|\\s+on\\s+(?:your\\s+phone|your\\s+device|my\\s+phone|the\\s+device)|$)`, "i").exec(text)?.[1];
-  if (directTarget && !isNonAppOpenTarget(normalizeOpenedTarget(directTarget))) return true;
-  return new RegExp(`\\b${denial}\\s+(?:open|launch|start)\\s+(?:the\\s+)?${localAppTarget}\\b`, "i").test(text) ||
-    new RegExp(`\\b${denial}\\s+(?:to\\s+)?${localAppTarget}\\b`, "i").test(text);
+  if (directTarget) {
+    const target = normalizeOpenedTarget(directTarget);
+    if (new RegExp(`^${localAppTarget}$`, "i").test(target)) return "";
+    if (!isNonAppOpenTarget(target)) return target;
+  }
+  if (
+    new RegExp(`\\b${denial}\\s+(?:open|launch|start)\\s+(?:the\\s+)?${localAppTarget}\\b`, "i").test(text) ||
+    new RegExp(`\\b${denial}\\s+(?:to\\s+)?${localAppTarget}\\b`, "i").test(text)
+  ) {
+    return "";
+  }
+  return null;
+}
+
+function deniesLocalAppControl(text: string): boolean {
+  return localAppControlDenialTarget(text) !== null;
 }
 
 function requestedOpenTarget(text: string): string | undefined {
@@ -613,7 +632,10 @@ export function auditLocalRuntimeResponse(input: LocalRuntimeTruthAuditInput): L
   }
 
   const deniedCapability = deniedAvailableCapability(text, input.userMessage, input.capabilityState);
-  if (deniedCapability && !hasFailedActionForCapability(deniedCapability, input.actionResults ?? [])) {
+  const deniedTarget = deniedCapability === "app_control"
+    ? localAppControlDenialTarget(text) || requestedOpenTarget(input.confirmedRequestText ?? "") || requestedOpenTarget(input.userMessage)
+    : undefined;
+  if (deniedCapability && !hasFailedActionForCapability(deniedCapability, input.actionResults ?? [], deniedTarget)) {
     return {
       status: "blocked_false_denial",
       text: "I can do that locally. Let me try again.",

@@ -309,6 +309,19 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(failedAppActionDenial.status, "allow");
 
+  const unrelatedFailedAppActionDenial = auditLocalRuntimeResponse({
+    userMessage: "Open Gmail.",
+    responseText: "I can't open Gmail.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_app_by_name",
+      ok: false,
+      target: "YouTube",
+      summary: "Could not resolve an installed Android app named YouTube.",
+    }],
+  });
+  assert.equal(unrelatedFailedAppActionDenial.status, "blocked_false_denial");
+
   const startAppDenial = auditLocalRuntimeResponse({
     userMessage: "Start Gmail.",
     responseText: "I can't start Gmail app.",
@@ -488,6 +501,30 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     actionResults: [],
   });
   assert.equal(falseDeepLinkCompletion.status, "blocked_false_completion");
+
+  const confirmedMapsGeoCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open geo:0,0?q=coffee.",
+    responseText: "I opened Maps.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "geo:0,0?q=coffee",
+    }],
+  });
+  assert.equal(confirmedMapsGeoCompletion.status, "allow");
+
+  const confirmedMapsNavigationCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open google.navigation:q=coffee.",
+    responseText: "I opened Maps.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "google.navigation:q=coffee",
+    }],
+  });
+  assert.equal(confirmedMapsNavigationCompletion.status, "allow");
 
   const falseTrailingUrlCompletion = auditLocalRuntimeResponse({
     userMessage: "Open https://example.com.",
