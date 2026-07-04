@@ -187,14 +187,19 @@ export async function sendMessage(
 export async function sendMessageGetId(
   chatId: string,
   text: string,
+  opts?: { quickActions?: boolean },
 ): Promise<number | null> {
   if (!BOT_TOKEN) return null;
   if (devSendBlocked) return null;
   try {
+    const body: Record<string, unknown> = { chat_id: chatId, text };
+    if (opts?.quickActions && process.env.TELEGRAM_QUICK_ACTIONS_ENABLED !== "0") {
+      body.reply_markup = buildTelegramQuickActionKeyboard();
+    }
     const res = await fetch(`${BASE}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text }),
+      body: JSON.stringify(body),
     });
     if (!res.ok) {
       console.error('Telegram sendMessageGetId error:', await res.text());

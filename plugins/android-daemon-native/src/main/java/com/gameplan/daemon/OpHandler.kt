@@ -64,6 +64,7 @@ object OpHandler {
                 "android_file_search" -> handleFileSearch(context, op)
                 "android_open_file" -> handleOpenFile(context, op)
                 "android_copy_to_clipboard" -> handleCopyToClipboard(context, op)
+                "android_copy_text_to_clipboard" -> handleCopyTextToClipboard(context, op)
                 "notify" -> handleNotify(context, op)
                 "voice_set_wake_words" -> handleSetWakeWords(context, op)
                 "voice_set_talk_mode" -> handleSetTalkMode(context, op)
@@ -1025,6 +1026,26 @@ object OpHandler {
     }
 
     // ── android_location_get ──────────────────────────────────────────────────
+
+    private fun handleCopyTextToClipboard(context: Context, op: JSONObject): OpResult {
+        val text = op.optString("text").ifEmpty {
+            return OpResult(false, error = "text required")
+        }
+        val label = op.optString("label").ifEmpty { "JARVIS details" }
+
+        return try {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
+            Log.i(TAG, "Copied text to clipboard: ${text.length} chars")
+            OpResult(true, data = JSONObject()
+                .put("label", label)
+                .put("chars", text.length)
+                .put("copied", true))
+        } catch (e: Exception) {
+            Log.e(TAG, "android_copy_text_to_clipboard failed: ${e.message}")
+            OpResult(false, error = "Could not copy text to clipboard: ${e.message}")
+        }
+    }
 
     private fun handleLocationGet(context: Context, op: JSONObject): OpResult {
         val preciseGranted = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED

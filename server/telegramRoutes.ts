@@ -50,8 +50,20 @@ import {
   buildVisibleTurnProgressMessage,
   shouldEmitVisibleProgressUpdate,
 } from "./agent/turnProgress";
+import { sendDaemonOp } from "./daemon/bridge";
+import {
+  buildTurnDiagnosticBundle,
+  formatDiagnosticBundleForClipboard,
+  inferRuntimeIntent,
+  isDiagnosticCopyRequest,
+  resolveDiagnosticTarget,
+  type DiagnosticTurnRecord,
+  type TurnDiagnosticBundle,
+} from "@shared/turnDiagnostics";
 
 const openai = new OpenAI(getOpenAIClientConfig());
+const telegramDiagnosticTurnsByChat = new Map<string, DiagnosticTurnRecord[]>();
+const MAX_TELEGRAM_DIAGNOSTIC_TURNS = 20;
 
 function generateLinkCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -60,6 +72,58 @@ function generateLinkCode(): string {
     code += chars[Math.floor(Math.random() * chars.length)];
   }
   return code;
+}
+
+function rememberTelegramDiagnosticTurn(chatId: string, record: DiagnosticTurnRecord): void {
+  const records = telegramDiagnosticTurnsByChat.get(chatId) ?? [];
+  const next = [record, ...records.filter((candidate) => candidate.turnId !== record.turnId)]
+    .slice(0, MAX_TELEGRAM_DIAGNOSTIC_TURNS);
+  telegramDiagnosticTurnsByChat.set(chatId, next);
+}
+
+async function copyTelegramDiagnosticDetails(input: {
+  userId: string;
+  chatId: string;
+  replyToMessageId?: number;
+}): Promise<void> {
+  const records = telegramDiagnosticTurnsByChat.get(input.chatId) ?? [];
+  const resolution = resolveDiagnosticTarget(
+    records,
+    input.replyToMessageId
+      ? { kind: "reply", channelTurnId: input.replyToMessageId }
+      : { kind: "last" },
+  );
+
+  if (!resolution.ok) {
+    await sendMessage(
+      input.chatId,
+      resolution.reason === "empty"
+        ? "I do not have diagnostic details for this Telegram chat yet."
+        : "I could not find diagnostic details for that message.",
+    );
+    return;
+  }
+
+  const copyResult = await sendDaemonOp(
+    input.userId,
+    {
+      type: "android_copy_text_to_clipboard",
+      text: formatDiagnosticBundleForClipboard(resolution.record.bundle),
+      label: "JARVIS diagnostic details",
+    },
+    10_000,
+    "android",
+  );
+
+  if (copyResult.ok) {
+    await sendMessage(input.chatId, "Copied those diagnostic details to your phone clipboard.");
+    return;
+  }
+
+  await sendMessage(
+    input.chatId,
+    `I found the diagnostic details, but I could not copy them because Android Device Control is not connected. ${copyResult.error ?? ""}`.trim(),
+  );
 }
 
 function getTelegramE2eProbeId(text?: string): string | null {
@@ -186,8 +250,8 @@ async function deliverCoachText(
   chatId: string,
   text: string,
   placeholderMsgId: number | null,
-): Promise<void> {
-  if (!text.trim()) return;
+): Promise<number | null> {
+  if (!text.trim()) return null;
   if (placeholderMsgId) {
     // Edit the placeholder with the first 4096 chars, send overflow chunks separately.
     const first = text.slice(0, 4096);
@@ -196,8 +260,17 @@ async function deliverCoachText(
       // sendLongMessage handles chunking for the overflow portion.
       await sendLongMessage(chatId, text.slice(4096));
     }
+    return placeholderMsgId;
+  }
+
+  if (text.length <= 4096) {
+    return await sendMessageGetId(chatId, text, { quickActions: true }).catch(async () => {
+      await sendLongMessage(chatId, text);
+      return null;
+    });
   } else {
     await sendLongMessage(chatId, text);
+    return null;
   }
 }
 
@@ -396,11 +469,13 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     // Non-markdown attachments (images, documents, files) require text to be
     // sent first so message ordering is natural (text → media).
     const mediaAtts = attachments.filter((a) => a.kind !== "markdown");
+    let deliveredTextMessageId: number | null = null;
+    const diagnosticResponseText = textReply || rawTextReply;
 
     if (mediaAtts.length > 0 && textReply && textReply.trim()) {
       if (!ttsPrefs.enabled) {
         try {
-          await deliverCoachText(chatId, textReply, placeholderMsgId);
+          deliveredTextMessageId = await deliverCoachText(chatId, textReply, placeholderMsgId);
           // Placeholder consumed — don't reuse for anything else.
           placeholderMsgId = null;
         } catch (sendErr) {
@@ -452,14 +527,65 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         }));
         if (!voiceResult.ok) {
           console.warn(`[Telegram] TTS failed (${voiceResult.error}), falling back to text`);
-          await sendMessage(chatId, textReply);
+          deliveredTextMessageId = await sendMessageGetId(chatId, textReply, { quickActions: true }).catch(async () => {
+            await sendMessage(chatId, textReply);
+            return null;
+          });
         }
         logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
       } else {
-        await deliverCoachText(chatId, textReply, placeholderMsgId);
+        deliveredTextMessageId = await deliverCoachText(chatId, textReply, placeholderMsgId);
         logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
       }
     }
+
+    const diagnosticBundle: TurnDiagnosticBundle = buildTurnDiagnosticBundle({
+      turnId: `telegram_${chatId}_${deliveredTextMessageId ?? Date.now()}`,
+      source: "telegram",
+      userId,
+      channel: "telegram",
+      channelTurnId: deliveredTextMessageId,
+      requestText: userText,
+      responseText: diagnosticResponseText,
+      selected: {
+        mode: "telegram",
+        model: "server-selected",
+        profile: "server-selected",
+      },
+      runtimeIntent: inferRuntimeIntent(userText),
+      contextPacket: {
+        userText,
+        imageUrl,
+        sdkSessionId,
+        ttsEnabled: ttsPrefs.enabled,
+        streamBuffer: streamBuf,
+        latestProgressPhase,
+        progressUpdateCount,
+        attachments: attachments.map((attachment) => ({
+          kind: attachment.kind,
+          filename: attachment.filename,
+          caption: attachment.caption,
+          mimeType: attachment.mimeType,
+        })),
+      },
+      timing: {
+        startedAt: new Date(turnStartedAtMs).toISOString(),
+        finishedAt: new Date().toISOString(),
+        durationMs: Date.now() - turnStartedAtMs,
+      },
+      recentTurnHistory: [
+        { role: "user", content: userText },
+        { role: "assistant", content: diagnosticResponseText },
+      ],
+    });
+    rememberTelegramDiagnosticTurn(chatId, {
+      turnId: diagnosticBundle.turnId,
+      source: "telegram",
+      channel: "telegram",
+      channelTurnId: deliveredTextMessageId,
+      createdAt: diagnosticBundle.createdAt,
+      bundle: diagnosticBundle,
+    });
 
     extractProfileFromTelegram(userId, userText).catch(err => {
       console.error("[Profile] Telegram extraction error:", err);
@@ -1035,6 +1161,16 @@ async function processUpdate(update: any): Promise<void> {
         await sendMessage(chatId, "Your Telegram isn't linked to a JARVIS account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
         return;
       }
+      const replyToMsgId = (message.reply_to_message as { message_id?: number } | undefined)?.message_id;
+
+      if (isDiagnosticCopyRequest(rawUserText || text)) {
+        await copyTelegramDiagnosticDetails({
+          userId: link[0].userId,
+          chatId,
+          replyToMessageId: replyToMsgId,
+        });
+        return;
+      }
 
       // ── Stop-intent detection ──────────────────────────────────────────
       // If the user sends a stop/cancel intent while a task is running, abort it
@@ -1060,7 +1196,6 @@ async function processUpdate(update: any): Promise<void> {
       // ── Project question reply-thread routing ─────────────────────────
       // If this message is a Telegram reply and the replied-to message_id
       // matches a pending question stored in questionMeta, auto-answer it.
-      const replyToMsgId = (message.reply_to_message as { message_id?: number } | undefined)?.message_id;
       if (replyToMsgId && text && link.length > 0) {
         try {
           const { answerProjectQuestion } = await import("./agent/projectRunner");

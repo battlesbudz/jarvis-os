@@ -3,6 +3,7 @@ import { getAuthToken } from '@/lib/auth-context';
 import { generateId, getGreeting, getTodayKey } from '@/lib/storageHelpers';
 import { insertTaskAtOptimalPosition, sortTasksByEnergy } from '@/lib/storageTaskOrdering';
 import { getSuggestions } from '@/lib/suggestions';
+import type { TurnDiagnosticBundle } from '@shared/turnDiagnostics';
 
 export interface Task {
   id: string;
@@ -351,6 +352,7 @@ export interface ChatMessage {
    * channel attachment pipeline in coachAgent / runCoachAgent.
    */
   mcpAttachments?: McpAttachment[];
+  diagnostics?: TurnDiagnosticBundle;
   pendingConfirm?: PendingConfirm;
   stopped?: boolean;
 }
