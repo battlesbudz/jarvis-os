@@ -385,6 +385,7 @@ function isBarePhoneUrlRequest(text: string): boolean {
 function looksLikePhoneUrlActionRequest(text: string): boolean {
   if (!looksLikePhoneUrlOpenIntent(text)) return false;
   if (isBarePhoneUrlRequest(text)) return true;
+  if (/^\s*(?:should\s+(?:i|we)|can\s+i|could\s+i|would\s+it|is\s+it|do\s+you\s+think|would\s+you\s+recommend)\b/i.test(text)) return false;
   return /\b(?:open|browse|visit|go\s+to|navigate(?:\s+to)?|launch|start|pull\s+up)\b/i.test(text) &&
     !/^\s*(?:what|why|how|explain|describe|define|summari[sz]e|tell\s+me)\b/i.test(text);
 }
@@ -434,14 +435,21 @@ function isPhoneUrlToolConfirmationTurn(
   const latest = latestUserText(messages).trim();
   if (!looksLikeApprovalConfirmation(latest)) return false;
   let assistantIndex = -1;
+  let assistantText = "";
   for (let index = messages.length - 2; index >= 0; index -= 1) {
     const message = messages[index];
     if (message.role !== "assistant") continue;
     assistantIndex = index;
-    if (looksLikePhoneUrlActionRequest(textFromContent(message.content))) return true;
+    assistantText = textFromContent(message.content);
+    if (looksLikePhoneUrlActionRequest(assistantText)) return true;
     break;
   }
   if (assistantIndex < 0) return false;
+  const pronounUrlConfirmation = (
+    /\b(?:open|launch|start|browse|visit|go\s+to|navigate(?:\s+to)?|pull\s+up|proceed|continue)\b[\s\S]{0,48}\b(?:it|that|link|url|page|site)\b/i.test(assistantText) ||
+    /\b(?:it|that|link|url|page|site)\b[\s\S]{0,48}\b(?:open|launch|start|browse|visit|go\s+to|navigate(?:\s+to)?|pull\s+up|proceed|continue)\b/i.test(assistantText)
+  );
+  if (!pronounUrlConfirmation) return false;
   const scanStart = Math.max(0, assistantIndex - 4);
   for (let index = assistantIndex - 1; index >= scanStart; index -= 1) {
     const message = messages[index];

@@ -4920,6 +4920,51 @@ async function testAndroidLocalGemmaKeepsPhoneUrlToolForPronounConfirmations() {
   }
 }
 
+async function testAndroidLocalGemmaDoesNotUsePhoneUrlToolForUnrelatedConfirmations() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "tool_calls",
+        tool_calls: [{ name: "android_open_phone_url", arguments: { url: "geo:0,0?q=coffee" } }],
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Open geo:0,0?q=coffee." },
+        { role: "assistant", content: "Should I search memory first?" },
+        { role: "user", content: "yes" },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "android_open_phone_url",
+            description: "Open a URL on the Android phone.",
+            parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+          },
+        },
+      ],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.equal(result.textContent, "Phone Gemma did not return a usable local answer for that request.");
+    console.log("OK: Android Local Gemma does not use phone URL tools for unrelated confirmations");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaUsesToolProtocolForBareDeepLinks() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -4993,6 +5038,47 @@ async function testAndroidLocalGemmaDoesNotOpenInformationalDeepLinkMentions() {
     assert.equal(result.toolCallList.length, 0);
     assert.equal(result.textContent, "That looks like an Android location deep link.");
     console.log("OK: Android Local Gemma does not open informational deep-link mentions");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotOpenAdvisoryUrlQuestions() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "final",
+        content: "You should only open that link if you trust it.",
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Should I open https://example.com?" }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "android_open_phone_url",
+            description: "Open a URL on the Android phone.",
+            parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+          },
+        },
+      ],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.equal(result.textContent, "You should only open that link if you trust it.");
+    console.log("OK: Android Local Gemma does not open advisory URL questions");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
@@ -6539,8 +6625,10 @@ async function main() {
   await testAndroidLocalGemmaStillRecoversNonYoutubeUrlToPhoneOpen();
   await testAndroidLocalGemmaRecoversDeepLinkUrlToPhoneOpen();
   await testAndroidLocalGemmaKeepsPhoneUrlToolForPronounConfirmations();
+  await testAndroidLocalGemmaDoesNotUsePhoneUrlToolForUnrelatedConfirmations();
   await testAndroidLocalGemmaUsesToolProtocolForBareDeepLinks();
   await testAndroidLocalGemmaDoesNotOpenInformationalDeepLinkMentions();
+  await testAndroidLocalGemmaDoesNotOpenAdvisoryUrlQuestions();
   await testAndroidLocalGemmaDoesNotRepeatCompletedRecoveredActions();
   await testAndroidLocalGemmaDoesNotAdvanceAfterFailedDaemonAction();
   await testAndroidLocalGemmaDisplaysJsonShapedFinalRepliesAsText();
