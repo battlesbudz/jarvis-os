@@ -254,6 +254,13 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(genericAppDenial.status, "blocked_false_denial");
 
+  const userCentricAppExplanation = auditLocalRuntimeResponse({
+    userMessage: "Why can't I open Gmail?",
+    responseText: "You can't open Gmail because the account needs to be reconnected.",
+    capabilityState: { app_control: "available" },
+  });
+  assert.equal(userCentricAppExplanation.status, "allow");
+
   const failedAppActionDenial = auditLocalRuntimeResponse({
     userMessage: "Open Gmail.",
     responseText: "I can't open Gmail.",
