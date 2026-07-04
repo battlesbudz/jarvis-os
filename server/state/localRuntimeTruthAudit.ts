@@ -257,23 +257,23 @@ function userAskedForAuditedLocalAction(
   const text = compactText(userMessage).toLowerCase();
   if (!text) return false;
 
-  switch (claim.toolName) {
-    case "android_capture_screen":
-      return /\b(?:screenshot|screen\s+shot|screen\s+grab|capture)\b/i.test(text);
-    case "android_copy_to_clipboard":
-      return /\b(?:copy|clipboard)\b/i.test(text);
-    case "android_open_app_by_name": {
-      if (/\bopen[-\s]+source\b/i.test(text)) return false;
-      if (/\bsearch\b[\s\S]{0,40}\byoutube\b|\byoutube\b[\s\S]{0,40}\bsearch\b/i.test(text)) return true;
-      if (!/\b(?:open|launch|start|browse|visit|go\s+to|navigate(?:\s+to)?|pull\s+up)\b/i.test(text)) return false;
-      const target = compactText(claim.target).toLowerCase();
-      const urlMatch = webUrlTargetsMatch(target, text);
-      if (urlMatch !== null) return urlMatch;
-      return !target || text.includes(target);
-    }
-    default:
-      return false;
+  if (claim.toolName === "android_capture_screen") {
+    return /\b(?:screenshot|screen\s+shot|screen\s+grab|capture)\b/i.test(text);
   }
+  if (claim.toolName === "android_copy_to_clipboard") {
+    return /\b(?:copy|clipboard)\b/i.test(text);
+  }
+  if (claim.toolName === "android_open_app_by_name") {
+    if (/\bopen[-\s]+source\b/i.test(text)) return false;
+    if (/\bsearch\b[\s\S]{0,40}\byoutube\b|\byoutube\b[\s\S]{0,40}\bsearch\b/i.test(text)) return true;
+    if (!/\b(?:open|launch|start|browse|visit|go\s+to|navigate(?:\s+to)?|pull\s+up)\b/i.test(text)) return false;
+    const target = compactText(claim.target).toLowerCase();
+    const urlMatch = webUrlTargetsMatch(target, text);
+    if (urlMatch !== null) return urlMatch;
+    return !target || text.includes(target);
+  }
+
+  return false;
 }
 
 function isUrlLikeActionTarget(target: string): boolean {
