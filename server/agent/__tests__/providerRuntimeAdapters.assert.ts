@@ -5606,6 +5606,47 @@ async function testAndroidLocalGemmaDoesNotOpenAdvisoryUrlQuestions() {
   }
 }
 
+async function testAndroidLocalGemmaPreservesCheckIfUrlIsSafeAnswers() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "final",
+        content: "I would not open that unless you trust the source.",
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Can you check if https://example.com is safe to open?" }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "android_open_phone_url",
+            description: "Open a URL on the Android phone.",
+            parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+          },
+        },
+      ],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.equal(result.textContent, "I would not open that unless you trust the source.");
+    console.log("OK: Android Local Gemma preserves check-if-URL-is-safe answers");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaPreservesAdvisoryUrlAnswersWithUrlBackedTools() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -7376,6 +7417,7 @@ async function main() {
   await testAndroidLocalGemmaUsesToolProtocolForBareDeepLinks();
   await testAndroidLocalGemmaDoesNotOpenInformationalDeepLinkMentions();
   await testAndroidLocalGemmaDoesNotOpenAdvisoryUrlQuestions();
+  await testAndroidLocalGemmaPreservesCheckIfUrlIsSafeAnswers();
   await testAndroidLocalGemmaPreservesAdvisoryUrlAnswersWithUrlBackedTools();
   await testAndroidLocalGemmaGracefullyRejectsAdvisoryPhoneUrlToolCalls();
   await testAndroidLocalGemmaRejectsUrlSafetyQuestionToolCalls();
