@@ -443,6 +443,18 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(mismatchedBareDomainCompletion.status, "blocked_false_completion");
 
+  const mismatchedBareDomainQueryCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open example.com?x=1.",
+    responseText: "I opened example.com?x=1.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "https://example.com?x=2",
+    }],
+  });
+  assert.equal(mismatchedBareDomainQueryCompletion.status, "blocked_false_completion");
+
   const falseTrailingDeepLinkCompletion = auditLocalRuntimeResponse({
     userMessage: "Open spotify:search:foo.",
     responseText: "I opened spotify:search:foo in Spotify.",
@@ -520,6 +532,18 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     }],
   });
   assert.equal(confirmedUrlOpen.status, "allow");
+
+  const confirmedBareDomainQueryOpen = auditLocalRuntimeResponse({
+    userMessage: "Open example.com?x=1.",
+    responseText: "I opened example.com?x=1.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "https://example.com?x=1",
+    }],
+  });
+  assert.equal(confirmedBareDomainQueryOpen.status, "allow");
 
   const confirmedSchemeUrlOpen = auditLocalRuntimeResponse({
     userMessage: "Open https://example.com.",

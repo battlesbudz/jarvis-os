@@ -213,7 +213,7 @@ function completionClaimTarget(text: string): { toolName: string; target?: strin
   if (openedUrl?.[1]) {
     return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(openedUrl[1]) };
   }
-  const openedBareDomain = text.match(/\b(?:i\s+)?(?:opened|launched|started)\s+((?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<>"']*)?)/i);
+  const openedBareDomain = text.match(/\b(?:i\s+)?(?:opened|launched|started)\s+((?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d{1,5})?(?:[/?#][^\s<>"']*)?)/i);
   if (openedBareDomain?.[1]) {
     return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(openedBareDomain[1]) };
   }
@@ -290,12 +290,13 @@ function youtubeSearchResultMatches(target: string, resultTarget: string): boole
   return terms.length > 0 && terms.every((term) => resultTarget.includes(term));
 }
 
-function webUrlTarget(value: string): { host: string; path: string } | null {
-  const match = value.match(/\b(?:https?:\/\/)?(?:www\.)?((?:[a-z0-9-]+\.)+[a-z]{2,})(\/[^\s<>"']*)?/i);
+function webUrlTarget(value: string): { host: string; port: string; suffix: string } | null {
+  const match = value.match(/\b(?:https?:\/\/)?(?:www\.)?((?:[a-z0-9-]+\.)+[a-z]{2,})(:\d{1,5})?([/?#][^\s<>"']*)?/i);
   if (!match?.[1]) return null;
   return {
     host: match[1].toLowerCase(),
-    path: (match[2] ?? "").replace(/[),.;]+$/g, "").toLowerCase(),
+    port: (match[2] ?? "").toLowerCase(),
+    suffix: (match[3] ?? "").replace(/[),.;]+$/g, "").toLowerCase(),
   };
 }
 
@@ -305,7 +306,10 @@ function webUrlTargetsMatch(claimTarget: string, resultTarget: string): boolean 
   const resultUrl = webUrlTarget(resultTarget);
   if (!resultUrl) return false;
   if (claimUrl.host !== resultUrl.host) return false;
-  return !claimUrl.path || resultUrl.path === claimUrl.path || resultUrl.path.startsWith(`${claimUrl.path}/`);
+  if (claimUrl.port !== resultUrl.port) return false;
+  if (!claimUrl.suffix) return true;
+  if (/[?#]/.test(claimUrl.suffix)) return resultUrl.suffix === claimUrl.suffix;
+  return resultUrl.suffix === claimUrl.suffix || resultUrl.suffix.startsWith(`${claimUrl.suffix}/`);
 }
 
 function hasConfirmingActionResult(
