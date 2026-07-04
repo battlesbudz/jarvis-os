@@ -5606,6 +5606,55 @@ async function testAndroidLocalGemmaDoesNotOpenAdvisoryUrlQuestions() {
   }
 }
 
+async function testAndroidLocalGemmaPreservesAdvisoryUrlAnswersWithUrlBackedTools() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "final",
+        content: "That YouTube link is not automatically safe just because it is from YouTube.",
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Is https://youtu.be/dQw4w9WgXcQ safe to open?" }],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "get_youtube_transcript",
+            description: "Fetch a YouTube transcript.",
+            parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+          },
+        },
+        {
+          type: "function",
+          function: {
+            name: "web_fetch",
+            description: "Fetch web URL content.",
+            parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+          },
+        },
+      ],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.equal(result.textContent, "That YouTube link is not automatically safe just because it is from YouTube.");
+    console.log("OK: Android Local Gemma preserves advisory URL answers when URL-backed tools exist");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaGracefullyRejectsAdvisoryPhoneUrlToolCalls() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -7327,6 +7376,7 @@ async function main() {
   await testAndroidLocalGemmaUsesToolProtocolForBareDeepLinks();
   await testAndroidLocalGemmaDoesNotOpenInformationalDeepLinkMentions();
   await testAndroidLocalGemmaDoesNotOpenAdvisoryUrlQuestions();
+  await testAndroidLocalGemmaPreservesAdvisoryUrlAnswersWithUrlBackedTools();
   await testAndroidLocalGemmaGracefullyRejectsAdvisoryPhoneUrlToolCalls();
   await testAndroidLocalGemmaRejectsUrlSafetyQuestionToolCalls();
   await testAndroidLocalGemmaDoesNotRecoverAdvisoryUrlAsAppOpen();

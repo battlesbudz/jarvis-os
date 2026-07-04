@@ -500,6 +500,7 @@ function hasRelevantUrlBackedNonPhoneTool(
 ): boolean {
   const url = urlFromText(requestText);
   if (!url) return false;
+  if (looksLikeAdvisoryPhoneUrlQuestion(requestText)) return false;
   const isYoutubeRequest = isYouTubeUrl(url);
   const isWebRequest = /^https?:\/\//i.test(url);
   return !!tools?.some((tool) => {
