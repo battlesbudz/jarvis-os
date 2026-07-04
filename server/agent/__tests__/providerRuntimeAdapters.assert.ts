@@ -855,6 +855,39 @@ async function testAndroidLocalGemmaChecksPhoneUrlAgainstBrowseCapability() {
   }
 }
 
+async function testAndroidLocalGemmaScopesPhoneUrlCapabilityToExposedTools() {
+  const checkedAt = "2026-07-04T00:42:00.000Z";
+  _setRuntimeCapabilityDepsForTesting({
+    now: () => new Date(checkedAt),
+    loadConnectedAccounts: async () => [],
+    loadDeviceControlState: async () => androidDeviceCapabilityState(checkedAt),
+  });
+
+  try {
+    const capabilityState = await _localRuntimeCapabilityStateForTesting({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "What does geo:0,0?q=coffee mean?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_phone_url",
+          description: "Open a URL on the Android phone.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    });
+
+    assert.equal(capabilityState.app_control, "unknown");
+    console.log("OK: Android Local Gemma scopes phone URL capability to exposed tools");
+  } finally {
+    _setRuntimeCapabilityDepsForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaTreatsMemorySaveAsMemoryCapability() {
   const capabilityState = await _localRuntimeCapabilityStateForTesting({
     model: "android-local-gemma/gemma-4-e4b-it",
@@ -6369,6 +6402,7 @@ async function main() {
   await testAndroidLocalGemmaAuditsOpenAppWhenBrowseIsUnavailable();
   await testAndroidLocalGemmaChecksYoutubeSearchAgainstBrowseCapability();
   await testAndroidLocalGemmaChecksPhoneUrlAgainstBrowseCapability();
+  await testAndroidLocalGemmaScopesPhoneUrlCapabilityToExposedTools();
   await testAndroidLocalGemmaTreatsMemorySaveAsMemoryCapability();
   await testAndroidLocalGemmaConfirmsLegacyDaemonBrowseCompletion();
   await testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit();

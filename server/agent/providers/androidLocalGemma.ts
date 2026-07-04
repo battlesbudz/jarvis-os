@@ -1106,7 +1106,7 @@ function hasFunctionTool(tools: ProviderQueryParams["tools"], name: string): boo
 async function localRuntimeCapabilityState(
   params: ProviderQueryParams,
 ): Promise<Partial<Record<LocalRuntimeCapabilityName, LocalRuntimeCapabilityAvailability>>> {
-  const tools = params.toolChoice === "none" ? [] : params.tools;
+  const tools = params.toolChoice === "none" ? [] : toolsForLocalTurn(params);
   const state: Partial<Record<LocalRuntimeCapabilityName, LocalRuntimeCapabilityAvailability>> = {
     notifications: "unknown",
     screen: "unknown",
