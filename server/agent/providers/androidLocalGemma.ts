@@ -694,12 +694,12 @@ function inferPackageNameForAction(actionToken: string, args: Record<string, unk
 }
 
 function inferPackageNamesFromText(text: string): string[] {
-  const explicitPackageNames = explicitPackageIdsFromText(text);
-  if (explicitPackageNames.length > 0) return explicitPackageNames;
+  const explicitPackageMatches = explicitPackageIdMatchesFromText(text);
+  const aliasScanText = textWithoutRanges(text, explicitPackageMatches);
+  const packages = new Set(explicitPackageMatches.map((match) => match.packageName));
 
-  const requestToken = aliasToken(text);
-  if (!requestToken) return [];
-  const packages = new Set<string>();
+  const requestToken = aliasToken(aliasScanText);
+  if (!requestToken) return [...packages];
   for (const [alias, packageName] of Object.entries(ANDROID_APP_PACKAGE_ALIASES)) {
     const escapedAlias = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     if (new RegExp(`(?:^|_)${escapedAlias}(?:_|$)`).test(requestToken)) {
@@ -709,13 +709,29 @@ function inferPackageNamesFromText(text: string): string[] {
   return [...packages];
 }
 
-function explicitPackageIdsFromText(text: string): string[] {
-  const packages = new Set<string>();
+function explicitPackageIdMatchesFromText(text: string): Array<{ packageName: string; start: number; end: number }> {
+  const matches: Array<{ packageName: string; start: number; end: number }> = [];
   for (const match of text.matchAll(/\b(?:com|org|net|io)(?:\.[a-z][a-z0-9_]*)+\b/gi)) {
+    const start = match.index ?? -1;
+    if (start < 0) continue;
     const packageName = match[0].replace(/[),.;]+$/g, "").toLowerCase();
-    if (looksLikeAndroidPackageId(packageName)) packages.add(packageName);
+    if (looksLikeAndroidPackageId(packageName)) {
+      matches.push({ packageName, start, end: start + match[0].length });
+    }
   }
-  return [...packages];
+  return matches;
+}
+
+function textWithoutRanges(text: string, ranges: Array<{ start: number; end: number }>): string {
+  if (ranges.length === 0) return text;
+  let result = "";
+  let cursor = 0;
+  for (const range of ranges.sort((a, b) => a.start - b.start)) {
+    result += text.slice(cursor, range.start);
+    result += " ".repeat(Math.max(0, range.end - range.start));
+    cursor = Math.max(cursor, range.end);
+  }
+  return result + text.slice(cursor);
 }
 
 function inferPackageNameFromText(text: string): string | null {
@@ -766,7 +782,7 @@ function requestSegmentForIndex(text: string, index: number): string {
 }
 
 function packageTargetNegatedInText(text: string, packageName: string): boolean {
-  const aliases = packageAliases(packageName);
+  const aliases = new Set([...packageAliases(packageName), packageName]);
   const negationPattern = /\b(?:do not|don['’]?t|never|please don['’]?t|avoid|without|except|not)\b/i;
   for (const alias of aliases) {
     const pattern = aliasPattern(alias);
