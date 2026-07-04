@@ -2014,6 +2014,49 @@ async function testAndroidLocalGemmaPreservesRequiredFinalAnswerWhenPhoneUrlTool
   }
 }
 
+async function testAndroidLocalGemmaPreservesInformationalFollowupAfterPhoneUrlPrompt() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "final",
+        content: "That geo link is a map search deep link; I will not open it.",
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Open geo:0,0?q=coffee." },
+        { role: "assistant", content: "Should I open geo:0,0?q=coffee on your phone?" },
+        { role: "user", content: "What does geo:0,0?q=coffee mean?" },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_phone_url",
+          description: "Open a URL on the Android phone.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.equal(result.textContent, "That geo link is a map search deep link; I will not open it.");
+    console.log("OK: Android Local Gemma preserves informational follow-ups after phone URL prompts");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaCompactsLocalToolPrompt() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   const largeSchema = {
@@ -6350,6 +6393,7 @@ async function main() {
   await testAndroidLocalGemmaRejectsPhoneUrlToolForUrlToolConfirmationTurns();
   await testAndroidLocalGemmaDoesNotThrowPhoneUrlToolForInformationalDeepLinks();
   await testAndroidLocalGemmaPreservesRequiredFinalAnswerWhenPhoneUrlToolIsHidden();
+  await testAndroidLocalGemmaPreservesInformationalFollowupAfterPhoneUrlPrompt();
   await testAndroidLocalGemmaCompactsLocalToolPrompt();
   await testAndroidLocalGemmaHonorsReducedToolPromptBudget();
   await testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming();

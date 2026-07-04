@@ -428,6 +428,19 @@ function isToolConfirmationTurn(
   return false;
 }
 
+function isPhoneUrlToolConfirmationTurn(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): boolean {
+  const latest = latestUserText(messages).trim();
+  if (!looksLikeApprovalConfirmation(latest)) return false;
+  for (let index = messages.length - 2; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant") continue;
+    return looksLikePhoneUrlActionRequest(textFromContent(message.content));
+  }
+  return false;
+}
+
 function looksLikeApprovalConfirmation(text: string): boolean {
   const normalized = text
     .toLowerCase()
@@ -445,17 +458,9 @@ function hasUrlBackedNonPhoneTool(tools: ProviderQueryParams["tools"]): boolean 
   });
 }
 
-function hasRecentPhoneUrlActionContext(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): boolean {
-  const scanStart = Math.max(0, messages.length - 5);
-  for (const message of messages.slice(scanStart)) {
-    if (message.role === "tool") continue;
-    if (looksLikePhoneUrlActionRequest(textFromContent(message.content))) return true;
-  }
-  return false;
-}
-
 function shouldExposePhoneUrlTool(params: ProviderQueryParams): boolean {
-  return hasRecentPhoneUrlActionContext(params.messages);
+  return looksLikePhoneUrlActionRequest(latestUserText(params.messages)) ||
+    isPhoneUrlToolConfirmationTurn(params.messages);
 }
 
 function shouldUseLocalToolProtocol(params: ProviderQueryParams): boolean {
