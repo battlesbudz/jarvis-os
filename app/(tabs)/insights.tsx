@@ -2895,14 +2895,12 @@ export default function InsightsScreen() {
             pendingConfirm: undefined,
             content: successContent,
             executedActions: [execAction],
-            diagnostics: execAction.result === 'error'
-              ? buildConfirmedActionDiagnostics({
-                  responseText: successContent,
-                  executedActions: [execAction],
-                  modelErrors: [{ message: successContent }],
-                  apiResult: data,
-                })
-              : updated[idx].diagnostics,
+            diagnostics: buildConfirmedActionDiagnostics({
+              responseText: successContent,
+              executedActions: [execAction],
+              modelErrors: execAction.result === 'error' ? [{ message: successContent }] : [],
+              apiResult: data,
+            }),
           };
         }
         persistChatHistory(updated);

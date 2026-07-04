@@ -58,6 +58,7 @@ import {
   inferRuntimeIntent,
   isDiagnosticCopyRequest,
   resolveDiagnosticTarget,
+  resolveDiagnosticTargetFromText,
   type DiagnosticTurnRecord,
   type TurnDiagnosticBundle,
 } from "@shared/turnDiagnostics";
@@ -97,19 +98,20 @@ function rememberTelegramDiagnosticTurn(chatId: string, record: DiagnosticTurnRe
 async function copyTelegramDiagnosticDetails(input: {
   userId: string;
   chatId: string;
+  requestText: string;
   replyToMessageId?: number;
 }): Promise<void> {
   const records = getDiagnosticRecordsForUser(
     telegramDiagnosticTurnsByChat.get(input.chatId) ?? [],
     input.userId,
   );
-  const resolution = resolveDiagnosticTarget(
-    records,
-    input.replyToMessageId
-      ? { kind: "reply", channelTurnId: input.replyToMessageId }
-      : { kind: "last" },
-    { fallbackReplyToLastWhenChannelIdMissing: true },
-  );
+  const resolution = input.replyToMessageId
+    ? resolveDiagnosticTarget(
+        records,
+        { kind: "reply", channelTurnId: input.replyToMessageId },
+        { fallbackReplyToLastWhenChannelIdMissing: true },
+      )
+    : resolveDiagnosticTargetFromText(records, input.requestText);
 
   if (!resolution.ok) {
     await sendMessage(
@@ -1259,6 +1261,7 @@ async function processUpdate(update: any): Promise<void> {
         await copyTelegramDiagnosticDetails({
           userId: link[0].userId,
           chatId,
+          requestText: rawUserText || text,
           replyToMessageId: replyToMsgId,
         });
         return;
