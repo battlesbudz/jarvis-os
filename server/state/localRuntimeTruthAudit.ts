@@ -83,6 +83,8 @@ const ANDROID_APP_PACKAGE_ALIASES: Record<string, string> = {
   tiktok: "com.ss.android.ugc.trill",
   discord: "com.discord",
 };
+const ANDROID_APP_PACKAGE_STANDARD_ROOTS = new Set(["com", "org", "net", "io"]);
+const ANDROID_APP_PACKAGE_NONSTANDARD_ROOTS = new Set(["de", "me", "tv"]);
 
 const ANDROID_APP_URL_CONFIRMERS_BY_PACKAGE: Record<string, { hostSuffixes: string[]; schemes: string[] }> = {
   "com.google.android.youtube": {
@@ -387,8 +389,12 @@ function looksLikeAndroidPackageId(value: string): boolean {
   if (!normalized || /[:/?#]/.test(normalized)) return false;
   if (Object.values(ANDROID_APP_PACKAGE_ALIASES).includes(normalized)) return true;
   const labels = normalized.split(".");
-  if (labels.length < 2 || !/^(?:com|org|net|io)$/i.test(labels[0] ?? "")) return false;
-  return labels.every((label) => /^[a-z][a-z0-9_]*$/i.test(label));
+  if (labels.length < 2 || !labels.every((label) => /^[a-z][a-z0-9_]*$/i.test(label))) {
+    return false;
+  }
+  const root = labels[0] ?? "";
+  if (ANDROID_APP_PACKAGE_STANDARD_ROOTS.has(root)) return true;
+  return labels.length >= 3 && ANDROID_APP_PACKAGE_NONSTANDARD_ROOTS.has(root);
 }
 
 function webUrlTargetsMatch(claimTarget: string, resultTarget: string): boolean | null {

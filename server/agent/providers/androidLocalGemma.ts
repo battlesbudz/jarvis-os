@@ -142,6 +142,8 @@ const ANDROID_APP_PACKAGE_ALIASES: Record<string, string> = {
   tiktok: "com.ss.android.ugc.trill",
   discord: "com.discord",
 };
+const ANDROID_APP_PACKAGE_STANDARD_ROOTS = new Set(["com", "org", "net", "io"]);
+const ANDROID_APP_PACKAGE_NONSTANDARD_ROOTS = new Set(["de", "me", "tv"]);
 
 function isFunctionTool(tool: OpenAI.Chat.Completions.ChatCompletionTool): tool is ChatCompletionFunctionTool {
   return tool.type === "function";
@@ -732,7 +734,7 @@ function inferPackageNamesFromText(text: string): string[] {
 
 function explicitPackageIdMatchesFromText(text: string): Array<{ packageName: string; start: number; end: number }> {
   const matches: Array<{ packageName: string; start: number; end: number }> = [];
-  for (const match of text.matchAll(/\b(?:(?:com|org|net|io)|[a-z]{2})(?:\.[a-z][a-z0-9_]*)+\b/gi)) {
+  for (const match of text.matchAll(/\b[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+\b/gi)) {
     const start = match.index ?? -1;
     if (start < 0) continue;
     const packageName = match[0].replace(/[),.;]+$/g, "").toLowerCase();
@@ -832,8 +834,8 @@ function looksLikeAndroidPackageId(value: string): boolean {
     return false;
   }
   const root = labels[0] ?? "";
-  if (/^(?:com|org|net|io)$/i.test(root)) return true;
-  return labels.length >= 3 && /^[a-z]{2}$/i.test(root);
+  if (ANDROID_APP_PACKAGE_STANDARD_ROOTS.has(root)) return true;
+  return labels.length >= 3 && ANDROID_APP_PACKAGE_NONSTANDARD_ROOTS.has(root);
 }
 
 function urlFromText(text: string): string | null {

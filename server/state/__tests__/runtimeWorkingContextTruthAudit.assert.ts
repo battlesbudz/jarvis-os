@@ -580,7 +580,14 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(confirmedPackageIdCompletion.status, "allow");
 
-  for (const packageName of ["com.twitter.android", "org.telegram.messenger", "com.ubercab"]) {
+  for (const packageName of [
+    "com.twitter.android",
+    "org.telegram.messenger",
+    "com.ubercab",
+    "tv.twitch.android.app",
+    "me.lyft.android",
+    "de.blinkt.openvpn",
+  ]) {
     const confirmedUnlistedPackageIdCompletion = auditLocalRuntimeResponse({
       userMessage: `Open ${packageName}.`,
       responseText: `I opened ${packageName}.`,

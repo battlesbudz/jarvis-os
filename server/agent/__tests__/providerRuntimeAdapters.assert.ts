@@ -5096,6 +5096,8 @@ async function testAndroidLocalGemmaKeepsUnknownTldSubdomainsAsPhoneUrls() {
   const cases = [
     { prompt: "Open app.example.help.", url: "https://app.example.help" },
     { prompt: "Open dev.example.run.", url: "https://dev.example.run" },
+    { prompt: "Open go.example.com.", url: "https://go.example.com" },
+    { prompt: "Open id.example.com.", url: "https://id.example.com" },
   ];
 
   for (const testCase of cases) {
