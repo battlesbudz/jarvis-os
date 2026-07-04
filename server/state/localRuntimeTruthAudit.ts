@@ -254,14 +254,18 @@ function userAskedForAuditedLocalAction(
   }
 }
 
+function confirmingToolNamesForClaim(claim: { toolName: string }): Set<string> {
+  return claim.toolName === "android_open_app_by_name"
+    ? new Set(["android_open_app_by_name", "android_youtube_search", "android_open_phone_url"])
+    : new Set([claim.toolName]);
+}
+
 function hasConfirmingActionResult(
   claim: { toolName: string; target?: string },
   results: LocalRuntimeActionResult[],
 ): boolean {
   const target = compactText(claim.target).toLowerCase();
-  const confirmingToolNames = claim.toolName === "android_open_app_by_name"
-    ? new Set(["android_open_app_by_name", "android_youtube_search", "android_open_phone_url"])
-    : new Set([claim.toolName]);
+  const confirmingToolNames = confirmingToolNamesForClaim(claim);
   return results.some((result) => {
     if (!result.ok || !confirmingToolNames.has(result.toolName)) return false;
     if (!target) return true;
@@ -302,6 +306,14 @@ function actionTargetsMatch(claimTarget: string, resultTarget: string): boolean 
     if (resultTarget.includes(variant) || resultVariants.has(variant)) return true;
   }
   return false;
+}
+
+function hasRelatedLocalActionResult(
+  claim: { toolName: string; target?: string },
+  results: LocalRuntimeActionResult[],
+): boolean {
+  const confirmingToolNames = confirmingToolNamesForClaim(claim);
+  return results.some((result) => confirmingToolNames.has(result.toolName));
 }
 
 function strongPersonalClaim(text: string): string | null {
@@ -349,7 +361,7 @@ export function auditLocalRuntimeResponse(input: LocalRuntimeTruthAuditInput): L
   const completionClaim = completionClaimTarget(text);
   if (
     completionClaim &&
-    (actionResults.length > 0 || userAskedForAuditedLocalAction(input.userMessage, completionClaim)) &&
+    (hasRelatedLocalActionResult(completionClaim, actionResults) || userAskedForAuditedLocalAction(input.userMessage, completionClaim)) &&
     !hasConfirmingActionResult(completionClaim, actionResults)
   ) {
     return {

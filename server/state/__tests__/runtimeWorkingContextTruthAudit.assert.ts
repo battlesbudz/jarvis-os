@@ -372,6 +372,14 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(nonDeviceCopiedAnswer.status, "allow");
 
+  const memoryBackedOpenedAnswer = auditLocalRuntimeResponse({
+    userMessage: "What do you know about my business?",
+    responseText: "You opened your shop in 2020.",
+    capabilityState: { app_control: "available", memory: "available" },
+    actionResults: [{ toolName: "memory_search", ok: true, summary: "Found business timeline memory." }],
+  });
+  assert.equal(memoryBackedOpenedAnswer.status, "allow");
+
   const falseStartedAppCompletion = auditLocalRuntimeResponse({
     userMessage: "Start Gmail.",
     responseText: "I started Gmail app.",
