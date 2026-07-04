@@ -15,6 +15,7 @@ const notificationEvents: LocalVoiceAndroidEvent[] = [{
   type: "notification",
   notifications: [
     { app: "Codex", title: "Review finished", text: "No major issues found" },
+    { app: "Reddit", title: "vivecoding thread is trending", text: "New replies in r/vivecoding" },
     { app: "Life360", title: "Justin arrived Home" },
   ],
 }];
@@ -35,8 +36,13 @@ async function testCompleteLocalVoiceNotificationTurn() {
   assert.equal(result.responseCount, 1);
   assert.equal(result.chatOutput, result.canonicalResponse);
   assert.equal(result.ttsOutput, result.canonicalResponse);
-  assert.match(result.canonicalResponse, /Codex: Review finished/);
-  assert.match(result.canonicalResponse, /Life360: Justin arrived Home/);
+  assert.match(result.canonicalResponse, /I checked your Android notifications/i);
+  assert.match(result.canonicalResponse, /Codex/i);
+  assert.match(result.canonicalResponse, /Reddit/i);
+  assert.doesNotMatch(result.canonicalResponse, /Codex: Review finished - No major issues found/);
+  assert.ok(result.workingContext.notifications);
+  assert.match(result.workingContext.notifications?.summary ?? "", /Review finished/);
+  assert.match(result.workingContext.notifications?.orderedDetail ?? "", /1\. Codex/);
   assert.deepEqual(result.modelCalls.map((call) => call.kind), ["local_gemma"]);
   assert.equal(result.androidExecutions[0].toolName, "android_read_notifications");
   assert.equal(gemma.prompts[0].transcript, "Read my notifications");
@@ -55,9 +61,150 @@ async function testEmptyNotificationReadSucceeds() {
   });
 
   assert.equal(result.androidExecutions[0].ok, true);
-  assert.match(result.canonicalResponse, /do not have visible notifications/i);
+  assert.match(result.canonicalResponse, /no current notifications/i);
   assert.equal(result.chatOutput, result.ttsOutput);
   console.log("OK: empty notification shade is a successful local voice read");
+}
+
+async function testNotificationFollowUpSummaryUsesWorkingContext() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const followUp = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Summarize those again",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "I cannot access your notifications." },
+    ]),
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:01:00.000Z"),
+  });
+
+  assert.equal(followUp.diagnostics.outcome, "notification_context_summary");
+  assert.equal(followUp.androidExecutions.length, 0);
+  assert.match(followUp.canonicalResponse, /Codex/i);
+  assert.match(followUp.canonicalResponse, /Reddit/i);
+  assert.doesNotMatch(followUp.canonicalResponse, /cannot|do not have access|language model/i);
+  console.log("OK: notification follow-up summaries use short-lived runtime working context");
+}
+
+async function testNotificationFollowUpReadAllUsesWorkingContextInOrder() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const readAll = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read all of them",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "notifications", text: "I cannot read notifications." },
+    ]),
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:02:00.000Z"),
+  });
+
+  assert.equal(readAll.diagnostics.outcome, "notification_context_read_all");
+  assert.match(readAll.canonicalResponse, /1\. Codex/);
+  assert.match(readAll.canonicalResponse, /2\. Reddit/);
+  assert.match(readAll.canonicalResponse, /3\. Life360/);
+  assert.doesNotMatch(readAll.canonicalResponse, /language model/i);
+  console.log("OK: explicit read-all notification follow-ups preserve notification order");
+}
+
+async function testNotificationReferenceOpensMatchingApp() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const open = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open the Reddit one",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "I cannot open notifications." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "Reddit", action: "open", success: true }],
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:03:00.000Z"),
+  });
+
+  assert.equal(open.diagnostics.outcome, "notification_reference_opened");
+  assert.equal(open.androidExecutions[0]?.toolName, "android_open_app_by_name");
+  assert.equal(open.androidExecutions[0]?.ok, true);
+  assert.match(open.canonicalResponse, /opened Reddit/i);
+  console.log("OK: notification references resolve to the matching app action");
+}
+
+async function testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+  const gemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "Here is a short joke." }]);
+
+  const unrelated = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Tell me a joke",
+    gemma,
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:01:00.000Z"),
+  });
+
+  assert.equal(unrelated.diagnostics.outcome, "final");
+  assert.doesNotMatch(gemma.prompts[0].contextPacket, /Recent notifications/);
+  assert.doesNotMatch(unrelated.canonicalResponse, /Codex|Reddit|Life360/);
+  console.log("OK: notification working context is not injected into unrelated voice turns");
+}
+
+async function testGenericOneAppRequestDoesNotUseNotificationContext() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const generic = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open one app",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "Which app should I open?" },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "Codex", action: "open", success: true }],
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:01:00.000Z"),
+  });
+
+  assert.equal(generic.diagnostics.outcome, "final");
+  assert.equal(generic.androidExecutions.length, 0);
+  assert.equal(generic.canonicalResponse, "Which app should I open?");
+  console.log("OK: generic one-app requests do not hijack recent notification context");
 }
 
 async function testMissingAppControlFixtureFails() {
@@ -394,6 +541,11 @@ async function testCanonicalFinalResponseContract() {
 async function main() {
   await testCompleteLocalVoiceNotificationTurn();
   await testEmptyNotificationReadSucceeds();
+  await testNotificationFollowUpSummaryUsesWorkingContext();
+  await testNotificationFollowUpReadAllUsesWorkingContextInOrder();
+  await testNotificationReferenceOpensMatchingApp();
+  await testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns();
+  await testGenericOneAppRequestDoesNotUseNotificationContext();
   await testMissingAppControlFixtureFails();
   await testMismatchedAppControlFixtureFails();
   await testAppControlFalseDenialRecoveryKeepsRequestedApp();

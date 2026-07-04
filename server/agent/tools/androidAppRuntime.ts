@@ -14,7 +14,10 @@ import {
 import {
   ANDROID_PHONE_RUNTIME_TOOL_NAMES,
 } from "../androidPhoneRuntimeToolNames";
-import { summarizeAndroidNotificationDetail } from "../androidNotificationSummary";
+import {
+  formatAndroidNotificationsInOrder,
+  summarizeAndroidNotificationDetail,
+} from "../androidNotificationSummary";
 import { checkAndIncrementScreenshotBudget } from "./androidDaemonToolHelpers";
 import {
   recordLocalRuntimeObservation,
@@ -85,7 +88,7 @@ function observationDetailFromOutcome(outcome: RuntimeOutcome): string {
   const userSummary = compactRuntimeObservationText(outcome.detail.userFacingSummary, 1_500);
   const screenContext = compactRuntimeObservationText(outcome.detail.screenContext, 3_500);
   const notifications = Array.isArray(outcome.detail.notifications)
-    ? compactRuntimeObservationText(outcome.detail.notifications, 3_500)
+    ? compactRuntimeObservationText(formatAndroidNotificationsInOrder(outcome.detail.notifications), 3_500)
     : "";
   const screenshotUrl = compactRuntimeObservationText(outcome.detail.screenshotUrl, 500);
   return [userSummary, screenContext, notifications, screenshotUrl].filter(Boolean).join("\n");
