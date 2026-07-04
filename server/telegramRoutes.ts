@@ -50,8 +50,41 @@ import {
   buildVisibleTurnProgressMessage,
   shouldEmitVisibleProgressUpdate,
 } from "./agent/turnProgress";
+import { sendDaemonOp } from "./daemon/bridge";
+import {
+  buildTurnDiagnosticBundle,
+  formatDiagnosticBundleForClipboard,
+  getDiagnosticRecordsForUser,
+  inferRuntimeIntent,
+  isDiagnosticCopyRequest,
+  resolveDiagnosticTarget,
+  resolveDiagnosticTargetFromText,
+  type DiagnosticTurnRecord,
+  type TurnDiagnosticBundle,
+} from "@shared/turnDiagnostics";
 
 const openai = new OpenAI(getOpenAIClientConfig());
+type TelegramDiagnosticCacheEntry = {
+  records: DiagnosticTurnRecord[];
+  lastAccessAt: number;
+};
+
+const telegramDiagnosticTurnsByChat = new Map<string, TelegramDiagnosticCacheEntry>();
+const MAX_TELEGRAM_DIAGNOSTIC_TURNS = 20;
+const MAX_TELEGRAM_DIAGNOSTIC_CHATS = 100;
+const TELEGRAM_DIAGNOSTIC_TTL_MS = 60 * 60 * 1000;
+
+function serializeDiagnosticError(error: unknown): unknown {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    };
+  }
+  if (error && typeof error === "object") return error;
+  return { message: String(error) };
+}
 
 function generateLinkCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -60,6 +93,113 @@ function generateLinkCode(): string {
     code += chars[Math.floor(Math.random() * chars.length)];
   }
   return code;
+}
+
+function isFreshTelegramDiagnosticRecord(record: DiagnosticTurnRecord, now: number): boolean {
+  const createdAt = Date.parse(record.createdAt);
+  return !Number.isFinite(createdAt) || now - createdAt <= TELEGRAM_DIAGNOSTIC_TTL_MS;
+}
+
+function pruneTelegramDiagnosticCache(now = Date.now()): void {
+  for (const [chatId, entry] of telegramDiagnosticTurnsByChat) {
+    const records = entry.records.filter((record) => isFreshTelegramDiagnosticRecord(record, now));
+    if (records.length === 0 || now - entry.lastAccessAt > TELEGRAM_DIAGNOSTIC_TTL_MS) {
+      telegramDiagnosticTurnsByChat.delete(chatId);
+      continue;
+    }
+    entry.records = records;
+  }
+
+  if (telegramDiagnosticTurnsByChat.size <= MAX_TELEGRAM_DIAGNOSTIC_CHATS) return;
+
+  const excess = telegramDiagnosticTurnsByChat.size - MAX_TELEGRAM_DIAGNOSTIC_CHATS;
+  const oldestChats = [...telegramDiagnosticTurnsByChat.entries()]
+    .sort((a, b) => a[1].lastAccessAt - b[1].lastAccessAt)
+    .slice(0, excess);
+  for (const [chatId] of oldestChats) {
+    telegramDiagnosticTurnsByChat.delete(chatId);
+  }
+}
+
+function getTelegramDiagnosticTurnsForChat(chatId: string): DiagnosticTurnRecord[] {
+  const now = Date.now();
+  pruneTelegramDiagnosticCache(now);
+  const entry = telegramDiagnosticTurnsByChat.get(chatId);
+  if (!entry) return [];
+
+  const records = entry.records.filter((record) => isFreshTelegramDiagnosticRecord(record, now));
+  if (records.length === 0) {
+    telegramDiagnosticTurnsByChat.delete(chatId);
+    return [];
+  }
+
+  entry.records = records;
+  entry.lastAccessAt = now;
+  return records;
+}
+
+function rememberTelegramDiagnosticTurn(chatId: string, record: DiagnosticTurnRecord): void {
+  const now = Date.now();
+  pruneTelegramDiagnosticCache(now);
+  const records = telegramDiagnosticTurnsByChat.get(chatId)?.records ?? [];
+  const next = [record, ...records.filter((candidate) => candidate.turnId !== record.turnId)]
+    .filter((candidate) => isFreshTelegramDiagnosticRecord(candidate, now))
+    .slice(0, MAX_TELEGRAM_DIAGNOSTIC_TURNS);
+  if (next.length === 0) {
+    telegramDiagnosticTurnsByChat.delete(chatId);
+    return;
+  }
+  telegramDiagnosticTurnsByChat.set(chatId, { records: next, lastAccessAt: now });
+}
+
+async function copyTelegramDiagnosticDetails(input: {
+  userId: string;
+  chatId: string;
+  requestText: string;
+  replyToMessageId?: number;
+}): Promise<void> {
+  const records = getDiagnosticRecordsForUser(
+    getTelegramDiagnosticTurnsForChat(input.chatId),
+    input.userId,
+  );
+  const resolution = input.replyToMessageId
+    ? resolveDiagnosticTarget(
+        records,
+        { kind: "reply", channelTurnId: input.replyToMessageId },
+        { fallbackReplyToLastWhenChannelIdMissing: true },
+      )
+    : resolveDiagnosticTargetFromText(records, input.requestText);
+
+  if (!resolution.ok) {
+    await sendMessage(
+      input.chatId,
+      resolution.reason === "empty"
+        ? "I do not have diagnostic details for this Telegram chat yet."
+        : "I could not find diagnostic details for that message.",
+    );
+    return;
+  }
+
+  const copyResult = await sendDaemonOp(
+    input.userId,
+    {
+      type: "android_copy_text_to_clipboard",
+      text: formatDiagnosticBundleForClipboard(resolution.record.bundle),
+      label: "JARVIS diagnostic details",
+    },
+    10_000,
+    "android",
+  );
+
+  if (copyResult.ok) {
+    await sendMessage(input.chatId, "Copied those diagnostic details to your phone clipboard.");
+    return;
+  }
+
+  await sendMessage(
+    input.chatId,
+    `I found the diagnostic details, but I could not copy them because Android Device Control is not connected. ${copyResult.error ?? ""}`.trim(),
+  );
 }
 
 function getTelegramE2eProbeId(text?: string): string | null {
@@ -186,8 +326,8 @@ async function deliverCoachText(
   chatId: string,
   text: string,
   placeholderMsgId: number | null,
-): Promise<void> {
-  if (!text.trim()) return;
+): Promise<number | null> {
+  if (!text.trim()) return null;
   if (placeholderMsgId) {
     // Edit the placeholder with the first 4096 chars, send overflow chunks separately.
     const first = text.slice(0, 4096);
@@ -196,8 +336,17 @@ async function deliverCoachText(
       // sendLongMessage handles chunking for the overflow portion.
       await sendLongMessage(chatId, text.slice(4096));
     }
+    return placeholderMsgId;
+  }
+
+  if (text.length <= 4096) {
+    return await sendMessageGetId(chatId, text, { quickActions: true }).catch(async () => {
+      await sendLongMessage(chatId, text);
+      return null;
+    });
   } else {
     await sendLongMessage(chatId, text);
+    return null;
   }
 }
 
@@ -316,6 +465,56 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     if (ttsStillThinkingTimer !== null) clearTimeout(ttsStillThinkingTimer);
   };
 
+  const rememberFailureDiagnosticTurn = (input: {
+    responseText: string;
+    channelTurnId?: number | null;
+    modelErrors?: unknown[];
+    reason: string;
+  }) => {
+    const diagnosticBundle = buildTurnDiagnosticBundle({
+      turnId: `telegram_${chatId}_${input.channelTurnId ?? Date.now()}`,
+      source: "telegram",
+      userId,
+      channel: "telegram",
+      channelTurnId: input.channelTurnId ?? null,
+      requestText: userText,
+      responseText: input.responseText,
+      selected: {
+        mode: "telegram",
+        model: "server-selected",
+        profile: "server-selected",
+      },
+      runtimeIntent: inferRuntimeIntent(userText),
+      contextPacket: {
+        userText,
+        imageUrl,
+        ttsEnabled: ttsPrefs.enabled,
+        streamBuffer: streamBuf,
+        latestProgressPhase,
+        progressUpdateCount,
+        failureReason: input.reason,
+      },
+      modelErrors: input.modelErrors ?? [],
+      timing: {
+        startedAt: new Date(turnStartedAtMs).toISOString(),
+        finishedAt: new Date().toISOString(),
+        durationMs: Date.now() - turnStartedAtMs,
+      },
+      recentTurnHistory: [
+        { role: "user", content: userText },
+        { role: "assistant", content: input.responseText },
+      ],
+    });
+    rememberTelegramDiagnosticTurn(chatId, {
+      turnId: diagnosticBundle.turnId,
+      source: "telegram",
+      channel: "telegram",
+      channelTurnId: input.channelTurnId ?? null,
+      createdAt: diagnosticBundle.createdAt,
+      bundle: diagnosticBundle,
+    });
+  };
+
   try {
     // Check if this Telegram chatId is assigned to a named agent first.
     // Pass onToken so named-agent replies also stream into the placeholder.
@@ -396,11 +595,13 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     // Non-markdown attachments (images, documents, files) require text to be
     // sent first so message ordering is natural (text → media).
     const mediaAtts = attachments.filter((a) => a.kind !== "markdown");
+    let deliveredTextMessageId: number | null = null;
+    const diagnosticResponseText = textReply || rawTextReply;
 
     if (mediaAtts.length > 0 && textReply && textReply.trim()) {
       if (!ttsPrefs.enabled) {
         try {
-          await deliverCoachText(chatId, textReply, placeholderMsgId);
+          deliveredTextMessageId = await deliverCoachText(chatId, textReply, placeholderMsgId);
           // Placeholder consumed — don't reuse for anything else.
           placeholderMsgId = null;
         } catch (sendErr) {
@@ -452,14 +653,67 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         }));
         if (!voiceResult.ok) {
           console.warn(`[Telegram] TTS failed (${voiceResult.error}), falling back to text`);
-          await sendMessage(chatId, textReply);
+          deliveredTextMessageId = await sendMessageGetId(chatId, textReply, { quickActions: true }).catch(async () => {
+            await sendMessage(chatId, textReply);
+            return null;
+          });
+        } else {
+          deliveredTextMessageId = voiceResult.messageId ?? null;
         }
         logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
       } else {
-        await deliverCoachText(chatId, textReply, placeholderMsgId);
+        deliveredTextMessageId = await deliverCoachText(chatId, textReply, placeholderMsgId);
         logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
       }
     }
+
+    const diagnosticBundle: TurnDiagnosticBundle = buildTurnDiagnosticBundle({
+      turnId: `telegram_${chatId}_${deliveredTextMessageId ?? Date.now()}`,
+      source: "telegram",
+      userId,
+      channel: "telegram",
+      channelTurnId: deliveredTextMessageId,
+      requestText: userText,
+      responseText: diagnosticResponseText,
+      selected: {
+        mode: "telegram",
+        model: "server-selected",
+        profile: "server-selected",
+      },
+      runtimeIntent: inferRuntimeIntent(userText),
+      contextPacket: {
+        userText,
+        imageUrl,
+        sdkSessionId,
+        ttsEnabled: ttsPrefs.enabled,
+        streamBuffer: streamBuf,
+        latestProgressPhase,
+        progressUpdateCount,
+        attachments: attachments.map((attachment) => ({
+          kind: attachment.kind,
+          filename: attachment.filename,
+          caption: attachment.caption,
+          mimeType: attachment.mimeType,
+        })),
+      },
+      timing: {
+        startedAt: new Date(turnStartedAtMs).toISOString(),
+        finishedAt: new Date().toISOString(),
+        durationMs: Date.now() - turnStartedAtMs,
+      },
+      recentTurnHistory: [
+        { role: "user", content: userText },
+        { role: "assistant", content: diagnosticResponseText },
+      ],
+    });
+    rememberTelegramDiagnosticTurn(chatId, {
+      turnId: diagnosticBundle.turnId,
+      source: "telegram",
+      channel: "telegram",
+      channelTurnId: deliveredTextMessageId,
+      createdAt: diagnosticBundle.createdAt,
+      bundle: diagnosticBundle,
+    });
 
     extractProfileFromTelegram(userId, userText).catch(err => {
       console.error("[Profile] Telegram extraction error:", err);
@@ -476,27 +730,52 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
     }
     if (isTelegramRunTimeoutError(error)) {
       const timeoutMessage = "I stopped this Telegram turn because I did not see meaningful progress for a long time. Send it again or ask me to delegate it as a background job.";
+      let timeoutMessageId: number | null = placeholderMsgId;
       console.warn(`[Telegram] coach turn inactive for ${TELEGRAM_REPLY_TIMEOUT_MS}ms; delivering timeout fallback.`);
       if (placeholderMsgId) {
         await editMessage(chatId, placeholderMsgId, timeoutMessage).catch(() => {
           sendMessage(chatId, timeoutMessage).catch(() => {});
         });
       } else {
-        await sendMessage(chatId, timeoutMessage);
+        timeoutMessageId = await sendMessageGetId(chatId, timeoutMessage).catch(async () => {
+          await sendMessage(chatId, timeoutMessage);
+          return null;
+        });
       }
       logInteraction(userId, "telegram", "outbound", timeoutMessage).catch(() => {});
+      rememberFailureDiagnosticTurn({
+        responseText: timeoutMessage,
+        channelTurnId: timeoutMessageId,
+        reason: "timeout",
+        modelErrors: [{
+          name: "TelegramRunTimeout",
+          message: timeoutMessage,
+          timeoutMs: TELEGRAM_REPLY_TIMEOUT_MS,
+        }],
+      });
       return;
     }
     console.error("Error handling Telegram coach reply:", error);
     // If we have a placeholder, update it with the error message instead of sending
     // a separate message (avoids leaving an orphaned "Working on it…" bubble).
+    const errorMessage = "Sorry, I encountered an error. Please try again.";
+    let errorMessageId: number | null = placeholderMsgId;
     if (placeholderMsgId) {
-      await editMessage(chatId, placeholderMsgId, "Sorry, I encountered an error. Please try again.").catch(() => {
-        sendMessage(chatId, "Sorry, I encountered an error. Please try again.").catch(() => {});
+      await editMessage(chatId, placeholderMsgId, errorMessage).catch(() => {
+        sendMessage(chatId, errorMessage).catch(() => {});
       });
     } else {
-      await sendMessage(chatId, "Sorry, I encountered an error. Please try again.");
+      errorMessageId = await sendMessageGetId(chatId, errorMessage).catch(async () => {
+        await sendMessage(chatId, errorMessage);
+        return null;
+      });
     }
+    rememberFailureDiagnosticTurn({
+      responseText: errorMessage,
+      channelTurnId: errorMessageId,
+      reason: "error",
+      modelErrors: [serializeDiagnosticError(error)],
+    });
     return;
   } finally {
     runGuard.finish();
@@ -1035,6 +1314,17 @@ async function processUpdate(update: any): Promise<void> {
         await sendMessage(chatId, "Your Telegram isn't linked to a JARVIS account yet. Open the app, go to Profile > Connected Apps > Telegram, and send the link code here.");
         return;
       }
+      const replyToMsgId = (message.reply_to_message as { message_id?: number } | undefined)?.message_id;
+
+      if (isDiagnosticCopyRequest(rawUserText || text)) {
+        await copyTelegramDiagnosticDetails({
+          userId: link[0].userId,
+          chatId,
+          requestText: rawUserText || text,
+          replyToMessageId: replyToMsgId,
+        });
+        return;
+      }
 
       // ── Stop-intent detection ──────────────────────────────────────────
       // If the user sends a stop/cancel intent while a task is running, abort it
@@ -1060,7 +1350,6 @@ async function processUpdate(update: any): Promise<void> {
       // ── Project question reply-thread routing ─────────────────────────
       // If this message is a Telegram reply and the replied-to message_id
       // matches a pending question stored in questionMeta, auto-answer it.
-      const replyToMsgId = (message.reply_to_message as { message_id?: number } | undefined)?.message_id;
       if (replyToMsgId && text && link.length > 0) {
         try {
           const { answerProjectQuestion } = await import("./agent/projectRunner");

@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { fetch as expoFetch } from 'expo/fetch';
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BottomTabBarHeightContext } from '@react-navigation/bottom-tabs';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -66,6 +67,19 @@ import {
 import { getApiUrl, queryClient, apiRequest } from '@/lib/query-client';
 import { authFetch, getAuthToken } from '@/lib/auth-context';
 import { useWakeWord } from '@/lib/wake-word-context';
+import {
+  buildTurnDiagnosticBundle,
+  getActionableDiagnosticRecords,
+  inferRuntimeIntent,
+  isDiagnosticCopyRequest,
+  resolveDiagnosticCopyRequestTarget,
+  resolveDiagnosticTargetFromText,
+  resolveVoiceDiagnosticFollowupTarget,
+  shouldClarifyVoiceDiagnosticTarget,
+  type DiagnosticTurnRecord,
+  type DiagnosticVoiceTrace,
+  type TurnDiagnosticBundle,
+} from '@shared/turnDiagnostics';
 
 
 interface EmailSuggestion {
@@ -78,6 +92,10 @@ interface EmailSuggestion {
 }
 
 const DEFAULT_RUNTIME_MODE: CoachingMode = 'sharp';
+
+type SendMessageOrigin =
+  | { source: 'in_app' }
+  | { source: 'voice'; voiceTrace: DiagnosticVoiceTrace };
 
 const SUGGESTED_PROMPTS = [
   "How am I doing overall?",
@@ -268,9 +286,17 @@ interface MessageBubbleProps {
   isStreaming?: boolean;
   onConfirmAction?: (msgId: string, confirmed: boolean) => void;
   onDiscordConnect?: () => void;
+  onCopyDiagnostics?: (
+    message: ChatMessage,
+    target?: { reason: 'message' | 'action'; actionIndex?: number; action?: ExecutedAction },
+  ) => void;
 }
 
-function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, onSpeak, isSpeaking, isStreaming, onConfirmAction, onDiscordConnect }: MessageBubbleProps) {
+function persistChatHistory(messages: ChatMessage[]) {
+  saveChatHistory(messages.map(({ diagnostics: _diagnostics, ...message }) => message));
+}
+
+function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, onSpeak, isSpeaking, isStreaming, onConfirmAction, onDiscordConnect, onCopyDiagnostics }: MessageBubbleProps) {
   const isUser = message.role === 'user';
   const router = useRouter();
   const [addedMap, setAddedMap] = useState<Record<string, boolean>>({});
@@ -295,6 +321,11 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
   }, [onConfirmAction, message.id, message.pendingConfirm]);
 
   const parsedDraft = !isUser ? parseEmailDraft(message.content) : null;
+  const hasDiagnostics = !isUser && !!message.diagnostics;
+  const hasFailedDiagnostics = hasDiagnostics && (
+    message.content.trim().toLowerCase().startsWith('error:') ||
+    !!message.executedActions?.some((action) => action.result === 'error')
+  );
 
   const handleSaveDraft = useCallback(async () => {
     if (!parsedDraft || draftStatus === 'saving' || draftStatus === 'saved') return;
@@ -422,12 +453,20 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
           isLoading={confirmLoading}
         />
       ) : (
-        <View style={[styles.bubble, isUser ? styles.bubbleUser : styles.bubbleAssistant]}>
+        <Pressable
+          disabled={!hasDiagnostics}
+          onLongPress={() => onCopyDiagnostics?.(message, { reason: 'message' })}
+          style={({ pressed }) => [
+            styles.bubble,
+            isUser ? styles.bubbleUser : styles.bubbleAssistant,
+            hasDiagnostics && pressed && styles.diagnosticPressActive,
+          ]}
+        >
           <MarkdownText
             text={message.content}
             isUser={isUser}
           />
-        </View>
+        </Pressable>
       )}
 
       {!isUser && message.stopped && (
@@ -435,6 +474,16 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
           <Ionicons name="stop-circle-outline" size={12} color={Colors.textSecondary} />
           <Text style={styles.stoppedPillText}>stopped</Text>
         </View>
+      )}
+
+      {hasFailedDiagnostics && (
+        <Pressable
+          style={({ pressed }) => [styles.diagnosticCopyButton, pressed && { opacity: 0.75 }]}
+          onPress={() => onCopyDiagnostics?.(message, { reason: 'message' })}
+        >
+          <Ionicons name="copy-outline" size={12} color={Colors.warning} />
+          <Text style={styles.diagnosticCopyButtonText}>Copy details</Text>
+        </Pressable>
       )}
 
       {!isUser && message.executedActions && message.executedActions.length > 0 && (() => {
@@ -492,7 +541,15 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
             {nonUrlActions.length > 0 && (
               <View style={styles.executedActionsRow}>
                 {nonUrlActions.map((ea, idx) => (
-                  <View key={`badge-${idx}`} style={[styles.executedActionBadge, ea.result === 'error' && styles.executedActionBadgeError]}>
+                  <Pressable
+                    key={`badge-${idx}`}
+                    onLongPress={() => onCopyDiagnostics?.(message, { reason: 'action', actionIndex: idx, action: ea })}
+                    style={({ pressed }) => [
+                      styles.executedActionBadge,
+                      ea.result === 'error' && styles.executedActionBadgeError,
+                      hasDiagnostics && pressed && styles.diagnosticPressActive,
+                    ]}
+                  >
                     <Ionicons
                       name={ea.result === 'success' ? 'checkmark-circle' : 'alert-circle'}
                       size={12}
@@ -501,7 +558,7 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
                     <Text style={[styles.executedActionText, ea.result === 'error' && styles.executedActionTextError]}>
                       {ea.buttonLabel || ea.label}
                     </Text>
-                  </View>
+                  </Pressable>
                 ))}
               </View>
             )}
@@ -848,8 +905,9 @@ export default function InsightsScreen() {
   const isSpeakingRef = useRef(false);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
   const webChunksRef = useRef<Blob[]>([]);
-  const sendMessageRef = useRef<(text: string) => void>(() => {});
+  const sendMessageRef = useRef<(text: string, origin?: SendMessageOrigin) => void>(() => {});
   const messagesRef = useRef<ChatMessage[]>([]);
+  const pendingVoiceDiagnosticCopyRef = useRef(false);
   const hasScrolledRef = useRef(false);
   const initialScanDoneRef = useRef(false);
   const [commitments, setCommitments] = useState<Commitment[]>([]);
@@ -991,7 +1049,17 @@ export default function InsightsScreen() {
         if (talkModeRef.current) {
           // Talk Mode: auto-send immediately so the conversation flows hands-free.
           setInput(data.text);
-          sendMessageRef.current(data.text);
+          const now = new Date().toISOString();
+          sendMessageRef.current(data.text, {
+            source: 'voice',
+            voiceTrace: {
+              finalTranscript: data.text,
+              finishedAt: now,
+              stateTransitions: [
+                { state: 'transcription_complete', at: now, detail: 'Talk Mode transcript auto-sent' },
+              ],
+            },
+          });
         } else {
           // Regular mic tap: drop the transcript into the input so the user
           // can review and edit before sending manually.
@@ -1725,7 +1793,7 @@ export default function InsightsScreen() {
         const updated = [...prev];
         const idx = updated.findIndex(m => m.id === proactiveId);
         if (idx !== -1) updated[idx] = { ...updated[idx], content: fullContent };
-        saveChatHistory(updated);
+        persistChatHistory(updated);
         return updated;
       });
     } catch {}
@@ -1804,7 +1872,7 @@ export default function InsightsScreen() {
           };
           // Prepend so it appears at the top of the chat (most recent)
           const updated = [briefMsg, ...prev];
-          saveChatHistory(updated);
+          persistChatHistory(updated);
           return updated;
         });
       }
@@ -1832,7 +1900,7 @@ export default function InsightsScreen() {
             } : {}),
           };
           const updated = [pendingMsg, ...prev];
-          saveChatHistory(updated);
+          persistChatHistory(updated);
           return updated;
         });
       }
@@ -1975,7 +2043,40 @@ export default function InsightsScreen() {
     setInput(prompt.name + (argHints ? ' ' + argHints : ''));
   }, []);
 
-  const sendMessage = useCallback(async (text: string) => {
+  const getDiagnosticRecords = useCallback((): DiagnosticTurnRecord[] => {
+    const records = messagesRef.current
+      .filter((message) => message.role === 'assistant' && !!message.diagnostics)
+      .map((message) => {
+        const bundle = message.diagnostics!;
+        return {
+          turnId: bundle.turnId,
+          source: bundle.source,
+          channel: bundle.channel ?? 'appchat',
+          channelTurnId: message.id,
+          createdAt: bundle.createdAt,
+          bundle,
+        };
+      });
+    return getActionableDiagnosticRecords(records);
+  }, []);
+
+  const copyDiagnosticBundleToClipboard = useCallback(async (
+    bundle: TurnDiagnosticBundle,
+    copyTarget: unknown,
+    opts?: { alert?: boolean },
+  ) => {
+    const copiedPayload = {
+      copiedAt: new Date().toISOString(),
+      copyTarget,
+      bundle,
+    };
+    await Clipboard.setStringAsync(JSON.stringify(copiedPayload, null, 2));
+    if (opts?.alert !== false) {
+      Alert.alert('Copied details', 'Diagnostic details were copied to your clipboard.');
+    }
+  }, []);
+
+  const sendMessage = useCallback(async (text: string, origin: SendMessageOrigin = { source: 'in_app' }) => {
     if (!text.trim() || isStreaming) return;
     // Intercept /mcp command to open MCP prompt browser
     if (text.trim().toLowerCase().startsWith('/mcp')) {
@@ -1985,11 +2086,130 @@ export default function InsightsScreen() {
     }
     const userMsg: ChatMessage = { id: generateId(), role: 'user', content: text.trim() };
     const assistantId = generateId();
+    const diagnosticStartedAt = new Date();
+    const diagnosticStreamEvents: { type: string; at: string; payload?: unknown }[] = [];
+    const diagnosticModelErrors: unknown[] = [];
+    const diagnosticRawToolCalls: unknown[] = [];
+    const diagnosticWorkingEvents: { message: string; at: string }[] = [];
     hasScrolledRef.current = false;
+
+    const normalizedVoiceText = userMsg.content.toLowerCase();
+    const voiceDiagnosticFollowupTarget = origin.source === 'voice' && pendingVoiceDiagnosticCopyRef.current
+      ? resolveVoiceDiagnosticFollowupTarget(normalizedVoiceText)
+      : null;
+    const isVoiceDiagnosticFollowup = !!voiceDiagnosticFollowupTarget;
+    if (origin.source === 'voice' && pendingVoiceDiagnosticCopyRef.current && !isVoiceDiagnosticFollowup && !isDiagnosticCopyRequest(userMsg.content)) {
+      pendingVoiceDiagnosticCopyRef.current = false;
+    }
+    if (origin.source === 'voice' && (isDiagnosticCopyRequest(userMsg.content) || isVoiceDiagnosticFollowup)) {
+      const records = getDiagnosticRecords();
+      let assistantText = '';
+      let copiedTurnId: string | null = null;
+      let copyError: string | null = null;
+      let resolvedTarget = voiceDiagnosticFollowupTarget
+        ?? resolveDiagnosticCopyRequestTarget(userMsg.content)
+        ?? 'last turn';
+
+      if (records.length === 0) {
+        pendingVoiceDiagnosticCopyRef.current = false;
+        assistantText = "I don't have any diagnostic details to copy yet.";
+      } else if (!isVoiceDiagnosticFollowup && shouldClarifyVoiceDiagnosticTarget(userMsg.content, records)) {
+        pendingVoiceDiagnosticCopyRef.current = true;
+        assistantText = 'The last failed action, or the last turn?';
+      } else {
+        pendingVoiceDiagnosticCopyRef.current = false;
+        const targetText = resolvedTarget === 'last failed action'
+          ? 'copy last failed details'
+          : 'copy last turn details';
+        const resolution = resolveDiagnosticTargetFromText(records, targetText);
+        if (resolution.ok) {
+          try {
+            copiedTurnId = resolution.record.turnId;
+            await copyDiagnosticBundleToClipboard(
+              resolution.record.bundle,
+              { reason: 'voice_command', requestText: userMsg.content, resolvedTarget },
+              { alert: false },
+            );
+            assistantText = resolvedTarget === 'last failed action'
+              ? 'Copied the last failed action details to your clipboard.'
+              : 'Copied the last turn details to your clipboard.';
+          } catch (error) {
+            copyError = error instanceof Error ? error.message : String(error);
+            assistantText = 'I found the details, but I could not copy them to the clipboard.';
+          }
+        } else {
+          resolvedTarget = resolvedTarget === 'last failed action' ? 'last failed action' : 'last turn';
+          assistantText = resolvedTarget === 'last failed action'
+            ? "I don't have a recent failed action to copy."
+            : "I couldn't find recent diagnostic details to copy.";
+        }
+      }
+
+      const finishedAt = new Date();
+      const assistantMsg: ChatMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: assistantText,
+        diagnostics: buildTurnDiagnosticBundle({
+          turnId: assistantId,
+          source: 'voice',
+          channel: 'voice',
+          requestText: userMsg.content,
+          responseText: assistantText,
+          selected: {
+            mode: coachingModeRef.current,
+            model: 'local-runtime',
+            profile: 'diagnostic-copy',
+          },
+          runtimeIntent: 'diagnostic_copy',
+          contextPacket: {
+            command: 'voice_copy_details',
+            resolvedTarget,
+            copiedTurnId,
+            copyError,
+            availableDiagnosticTurns: records.map((record) => ({
+              turnId: record.turnId,
+              channelTurnId: record.channelTurnId,
+              createdAt: record.createdAt,
+            })),
+          },
+          toolResults: [{
+            tool: 'clipboard.copy',
+            result: copiedTurnId && !copyError ? 'success' : 'none',
+            copiedTurnId,
+            error: copyError,
+          }],
+          modelErrors: copyError ? [{ message: copyError }] : [],
+          timing: {
+            startedAt: diagnosticStartedAt.toISOString(),
+            finishedAt: finishedAt.toISOString(),
+            durationMs: finishedAt.getTime() - diagnosticStartedAt.getTime(),
+          },
+          androidState: null,
+          recentTurnHistory: messagesRef.current.slice(0, 8).map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
+          voiceTrace: origin.voiceTrace,
+        }),
+      };
+      setMessages(prev => {
+        const updated = [assistantMsg, userMsg, ...prev];
+        persistChatHistory(updated);
+        return updated;
+      });
+      setInput('');
+      setIntegrationError(null);
+      setConfirmClear(false);
+      if (talkModeRef.current && assistantText.trim()) {
+        speakTextRef.current(assistantText);
+      }
+      return;
+    }
 
     setMessages(prev => {
       const updated = [userMsg, ...prev];
-      saveChatHistory(updated);
+      persistChatHistory(updated);
       return updated;
     });
     setInput('');
@@ -2002,10 +2222,66 @@ export default function InsightsScreen() {
     chatAbortControllerRef.current = fetchAbort;
     chatRunIdRef.current = null;
 
-    try {
-      const contextMessages = [userMsg, ...messagesRef.current].slice(0, CONTEXT_WINDOW);
-      const apiMessages = contextMessages.map(m => ({ role: m.role, content: m.content })).reverse();
+    const contextMessages = [userMsg, ...messagesRef.current].slice(0, CONTEXT_WINDOW);
+    const apiMessages = contextMessages.map(m => ({ role: m.role, content: m.content })).reverse();
+    const buildDiagnostics = (params: {
+      responseText?: string;
+      executedActions?: ExecutedAction[];
+      modelErrors?: unknown[];
+      androidState?: unknown;
+    }): TurnDiagnosticBundle => {
+      const finishedAt = new Date();
+      return buildTurnDiagnosticBundle({
+        turnId: assistantId,
+        source: origin.source === 'voice' ? 'voice' : 'in_app',
+        channel: origin.source === 'voice' ? 'voice' : 'appchat',
+        requestText: userMsg.content,
+        responseText: params.responseText,
+        selected: {
+          mode: coachingModeRef.current,
+          model: 'server-selected',
+          profile: 'server-selected',
+        },
+        runtimeIntent: inferRuntimeIntent(userMsg.content),
+        contextPacket: {
+          messages: apiMessages,
+          sdkSessionId: sdkSessionIdRef.current,
+          goals: goalsRef.current,
+          stats: statsRef.current,
+          commitments: commitmentsRef.current,
+          coachingMode: coachingModeRef.current,
+          streamEvents: diagnosticStreamEvents.slice(),
+        },
+        offeredTools: Array.from(new Set((params.executedActions ?? []).map((action) => action.tool))),
+        rawToolCalls: diagnosticRawToolCalls.slice(),
+        normalizedToolCalls: (params.executedActions ?? []).map((action) => ({
+          tool: action.tool,
+          result: action.result,
+          label: action.label,
+          detail: action.detail,
+        })),
+        toolResults: params.executedActions ?? [],
+        modelErrors: params.modelErrors ?? diagnosticModelErrors.slice(),
+        timing: {
+          startedAt: diagnosticStartedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+          durationMs: finishedAt.getTime() - diagnosticStartedAt.getTime(),
+        },
+        androidState: params.androidState ?? {
+          workingEvents: diagnosticWorkingEvents.slice(),
+          lastWorkingMessage: diagnosticWorkingEvents.length > 0
+            ? diagnosticWorkingEvents[diagnosticWorkingEvents.length - 1].message
+            : null,
+        },
+        recentTurnHistory: contextMessages.slice(0, 8).map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
+        voiceTrace: origin.source === 'voice' ? origin.voiceTrace : undefined,
+      });
+    };
 
+    try {
       const url = new URL('/api/coach/chat', getApiUrl());
       const token = await getAuthToken();
       const streamHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -2083,6 +2359,11 @@ export default function InsightsScreen() {
             if (data === '[DONE]') continue;
             try {
               const parsed = JSON.parse(data);
+              diagnosticStreamEvents.push({
+                type: String(parsed.type || (parsed.content ? 'content' : 'unknown')),
+                at: new Date().toISOString(),
+                payload: parsed,
+              });
               if (parsed.type === 'session_init' && parsed.sdkSessionId) {
                 sdkSessionIdRef.current = parsed.sdkSessionId;
                 saveCoachSessionId(parsed.sdkSessionId).catch(() => {});
@@ -2091,14 +2372,25 @@ export default function InsightsScreen() {
                 break outer;
               } else if (parsed.type === 'error' || parsed.error) {
                 streamErrorMessage = String(parsed.message || parsed.error || 'Jarvis hit a model provider error.');
+                diagnosticModelErrors.push(parsed);
                 fullContent = `Error: ${streamErrorMessage}`;
                 setIsSearchingWeb(false);
                 setIsWorkingOnPhone(false);
                 setMessages(prev => {
                   const updated = [...prev];
                   const idx = updated.findIndex(m => m.id === assistantId);
-                  if (idx !== -1) updated[idx] = { ...updated[idx], content: fullContent };
-                  saveChatHistory(updated);
+                  if (idx !== -1) {
+                    updated[idx] = {
+                      ...updated[idx],
+                      content: fullContent,
+                      diagnostics: buildDiagnostics({
+                        responseText: fullContent,
+                        executedActions,
+                        modelErrors: diagnosticModelErrors,
+                      }),
+                    };
+                  }
+                  persistChatHistory(updated);
                   return updated;
                 });
                 break outer;
@@ -2113,7 +2405,7 @@ export default function InsightsScreen() {
                   const updated = [...prev];
                   const idx = updated.findIndex(m => m.id === assistantId);
                   if (idx !== -1) updated[idx] = { ...updated[idx], pendingConfirm };
-                  saveChatHistory(updated);
+                  persistChatHistory(updated);
                   return updated;
                 });
               } else if (parsed.type === 'searching') {
@@ -2121,17 +2413,20 @@ export default function InsightsScreen() {
               } else if (parsed.type === 'mcp_progress') {
                 const progressMsg = String(parsed.message || '');
                 if (progressMsg) {
+                  diagnosticWorkingEvents.push({ message: progressMsg, at: new Date().toISOString() });
                   setIsWorkingOnPhone(true);
                   setPhoneWorkingMessage(progressMsg);
                 }
               } else if (parsed.type === 'progress') {
                 const progressMsg = String(parsed.message || '');
                 if (progressMsg) {
+                  diagnosticWorkingEvents.push({ message: progressMsg, at: new Date().toISOString() });
                   setIsWorkingOnPhone(true);
                   setPhoneWorkingMessage(progressMsg);
                 }
               } else if (parsed.type === 'working') {
                 const progressMsg = String(parsed.message || 'Working on your phone...');
+                diagnosticWorkingEvents.push({ message: progressMsg, at: new Date().toISOString() });
                 setIsWorkingOnPhone(true);
                 setPhoneWorkingMessage(progressMsg);
               } else if (parsed.type === 'background_job' && parsed.jobId) {
@@ -2154,14 +2449,16 @@ export default function InsightsScreen() {
                   const idx = updated.findIndex(m => m.id === assistantId);
                   if (idx !== -1) {
                     updated[idx] = { ...updated[idx], executedActions };
-                    saveChatHistory(updated);
+                    persistChatHistory(updated);
                   }
                   return updated;
                 });
               } else if (parsed.type === 'integration_error' && parsed.integration) {
                 setIntegrationError({ integration: parsed.integration });
-              } else if (parsed.type === 'actions' && (Array.isArray(parsed.actions) || Array.isArray(parsed.attachments))) {
-                executedActions = parsed.actions ?? [];
+              } else if (parsed.type === 'actions' && (Array.isArray(parsed.actions) || Array.isArray(parsed.executedActions) || Array.isArray(parsed.attachments))) {
+                const nextActions = parsed.actions ?? parsed.executedActions ?? [];
+                diagnosticRawToolCalls.push({ event: 'actions', actions: nextActions, attachments: parsed.attachments });
+                executedActions = nextActions;
                 const parsedAtts = Array.isArray(parsed.attachments) ? parsed.attachments as import('@/lib/storage').McpAttachment[] : undefined;
                 setMessages(prev => {
                   const updated = [...prev];
@@ -2173,7 +2470,7 @@ export default function InsightsScreen() {
                       update.mcpAttachments = [...existing, ...parsedAtts];
                     }
                     updated[idx] = { ...updated[idx], ...update };
-                    saveChatHistory(updated);
+                    persistChatHistory(updated);
                   }
                   return updated;
                 });
@@ -2211,8 +2508,16 @@ export default function InsightsScreen() {
             const idx = prev.findIndex(m => m.id === assistantId);
             if (idx !== -1) {
               const updated = [...prev];
-              updated[idx] = { ...updated[idx], stopped: true };
-              saveChatHistory(updated);
+              updated[idx] = {
+                ...updated[idx],
+                stopped: true,
+                diagnostics: buildDiagnostics({
+                  responseText: fullContent,
+                  executedActions,
+                  modelErrors: diagnosticModelErrors,
+                }),
+              };
+              persistChatHistory(updated);
               return updated;
             }
             return prev;
@@ -2236,8 +2541,19 @@ export default function InsightsScreen() {
       setMessages(prev => {
         const updated = [...prev];
         const idx = updated.findIndex(m => m.id === assistantId);
-        if (idx !== -1) updated[idx] = { ...updated[idx], content: finalContent, executedActions: finalActions.length > 0 ? finalActions : undefined };
-        saveChatHistory(updated);
+        if (idx !== -1) {
+          updated[idx] = {
+            ...updated[idx],
+            content: finalContent,
+            executedActions: finalActions.length > 0 ? finalActions : undefined,
+            diagnostics: buildDiagnostics({
+              responseText: finalContent,
+              executedActions: finalActions,
+              modelErrors: diagnosticModelErrors,
+            }),
+          };
+        }
+        persistChatHistory(updated);
         return updated;
       });
 
@@ -2275,7 +2591,7 @@ export default function InsightsScreen() {
           const updated = [...prev];
           const idx = updated.findIndex(m => m.id === assistantId);
           if (idx !== -1) updated[idx] = { ...updated[idx], actions, followups };
-          saveChatHistory(updated);
+          persistChatHistory(updated);
           return updated;
         });
       } catch {}
@@ -2316,8 +2632,15 @@ export default function InsightsScreen() {
           const idx = prev.findIndex(m => m.id === assistantId);
           if (idx !== -1 && prev[idx].content.length > 0) {
             const updated = [...prev];
-            updated[idx] = { ...updated[idx], stopped: true };
-            saveChatHistory(updated);
+            updated[idx] = {
+              ...updated[idx],
+              stopped: true,
+              diagnostics: updated[idx].diagnostics ?? buildDiagnostics({
+                responseText: updated[idx].content,
+                modelErrors: [error instanceof Error ? { message: error.message, name: error.name } : String(error)],
+              }),
+            };
+            persistChatHistory(updated);
             return updated;
           }
           return prev;
@@ -2333,8 +2656,17 @@ export default function InsightsScreen() {
         const alreadyHasContent = existing && existing.content && existing.content.length > 0;
         if (alreadyHasContent) {
           // Keep whatever partial content arrived — the task mostly worked
-          saveChatHistory(prev);
-          return prev;
+          const updated = prev.map((message) => message.id === assistantId
+            ? {
+                ...message,
+                diagnostics: message.diagnostics ?? buildDiagnostics({
+                  responseText: message.content,
+                  modelErrors: [error instanceof Error ? { message: error.message, name: error.name } : String(error)],
+                }),
+              }
+            : message);
+          persistChatHistory(updated);
+          return updated;
         }
         // If phone actions were underway when the stream dropped, the task likely
         // completed (the notification arrived) but the response text was lost when
@@ -2348,17 +2680,58 @@ export default function InsightsScreen() {
           id: assistantId,
           role: 'assistant',
           content: errContent,
+          diagnostics: buildDiagnostics({
+            responseText: errContent,
+            modelErrors: [error instanceof Error ? { message: error.message, name: error.name } : String(error)],
+          }),
         };
         const updated = [errMsg, ...prev.filter(m => m.id !== assistantId)];
-        saveChatHistory(updated);
+        persistChatHistory(updated);
         return updated;
       });
     }
-  }, [isStreaming]);
+  }, [copyDiagnosticBundleToClipboard, getDiagnosticRecords, isStreaming, openMcpSheet]);
 
   useEffect(() => {
     sendMessageRef.current = sendMessage;
   }, [sendMessage]);
+
+  const handleCopyDiagnostics = useCallback(async (
+    message: ChatMessage,
+    target?: { reason: 'message' | 'action'; actionIndex?: number; action?: ExecutedAction },
+  ) => {
+    const fallbackBundle = message.diagnostics ?? buildTurnDiagnosticBundle({
+      turnId: message.id,
+      source: 'in_app',
+      channel: 'appchat',
+      requestText: messagesRef.current.find((candidate) => candidate.role === 'user')?.content,
+      responseText: message.content,
+      selected: {
+        mode: coachingModeRef.current,
+        model: 'unknown',
+        profile: 'unknown',
+      },
+      runtimeIntent: inferRuntimeIntent(message.content),
+      contextPacket: {
+        message,
+        recentMessages: messagesRef.current.slice(0, 8).map((candidate) => ({
+          role: candidate.role,
+          content: candidate.content,
+        })),
+      },
+      offeredTools: message.executedActions?.map((action) => action.tool) ?? [],
+      normalizedToolCalls: message.executedActions ?? [],
+      toolResults: message.executedActions ?? [],
+      modelErrors: message.content.trim().toLowerCase().startsWith('error:') ? [{ message: message.content }] : [],
+      timing: { startedAt: new Date().toISOString() },
+      androidState: null,
+      recentTurnHistory: messagesRef.current.slice(0, 8).map((candidate) => ({
+        role: candidate.role,
+        content: candidate.content,
+      })),
+    });
+    await copyDiagnosticBundleToClipboard(fallbackBundle, target ?? { reason: 'message' });
+  }, [copyDiagnosticBundleToClipboard]);
 
   const handleStop = useCallback(async () => {
     const runId = chatRunIdRef.current;
@@ -2380,6 +2753,55 @@ export default function InsightsScreen() {
     const msg = messagesRef.current.find(m => m.id === msgId);
     if (!msg?.pendingConfirm) return;
     const { token, tool } = msg.pendingConfirm;
+    const confirmStartedAt = new Date();
+    const buildConfirmedActionDiagnostics = (input: {
+      responseText: string;
+      executedActions: ExecutedAction[];
+      modelErrors?: unknown[];
+      apiResult?: unknown;
+    }): TurnDiagnosticBundle => {
+      const finishedAt = new Date();
+      const recentMessages = messagesRef.current.slice(0, 8).map((candidate) => ({
+        role: candidate.role,
+        content: candidate.content,
+      }));
+      const requestText = messagesRef.current.find((candidate) => candidate.role === 'user')?.content ?? msg.content;
+      return buildTurnDiagnosticBundle({
+        turnId: msgId,
+        source: 'in_app',
+        channel: 'appchat',
+        requestText,
+        responseText: input.responseText,
+        selected: {
+          mode: coachingModeRef.current,
+          model: 'server-selected',
+          profile: 'confirmed-action',
+        },
+        runtimeIntent: inferRuntimeIntent(requestText),
+        contextPacket: {
+          pendingConfirm: msg.pendingConfirm,
+          apiResult: input.apiResult ?? null,
+          recentMessages,
+        },
+        offeredTools: [tool],
+        rawToolCalls: [{ token, tool, preview: msg.pendingConfirm.preview }],
+        normalizedToolCalls: input.executedActions.map((action) => ({
+          tool: action.tool,
+          result: action.result,
+          label: action.label,
+          detail: action.detail,
+        })),
+        toolResults: input.executedActions,
+        modelErrors: input.modelErrors ?? [],
+        timing: {
+          startedAt: confirmStartedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+          durationMs: finishedAt.getTime() - confirmStartedAt.getTime(),
+        },
+        androidState: null,
+        recentTurnHistory: recentMessages,
+      });
+    };
 
     if (!confirmed) {
       setMessages(prev => {
@@ -2392,7 +2814,7 @@ export default function InsightsScreen() {
             content: 'Got it — I\'ll leave that for now.',
           };
         }
-        saveChatHistory(updated);
+        persistChatHistory(updated);
         return updated;
       });
       try {
@@ -2409,7 +2831,7 @@ export default function InsightsScreen() {
               const updated = [...prev];
               const idx = updated.findIndex(m => m.id === msgId);
               if (idx !== -1) updated[idx] = { ...updated[idx], content: data.content };
-              saveChatHistory(updated);
+              persistChatHistory(updated);
               return updated;
             });
           }
@@ -2427,6 +2849,13 @@ export default function InsightsScreen() {
       });
       const data = await res.json();
       if (!res.ok) {
+        const failureContent = data.error || 'Could not execute that action. The confirmation may have expired.';
+        const execAction: ExecutedAction = {
+          tool,
+          result: 'error',
+          label: data.label || 'Failed',
+          detail: data.detail || data.error,
+        };
         setMessages(prev => {
           const updated = [...prev];
           const idx = updated.findIndex(m => m.id === msgId);
@@ -2434,10 +2863,17 @@ export default function InsightsScreen() {
             updated[idx] = {
               ...updated[idx],
               pendingConfirm: undefined,
-              content: data.error || 'Could not execute that action. The confirmation may have expired.',
+              content: failureContent,
+              executedActions: [execAction],
+              diagnostics: buildConfirmedActionDiagnostics({
+                responseText: failureContent,
+                executedActions: [execAction],
+                modelErrors: [{ message: failureContent }],
+                apiResult: data,
+              }),
             };
           }
-          saveChatHistory(updated);
+          persistChatHistory(updated);
           return updated;
         });
         return;
@@ -2459,12 +2895,25 @@ export default function InsightsScreen() {
             pendingConfirm: undefined,
             content: successContent,
             executedActions: [execAction],
+            diagnostics: buildConfirmedActionDiagnostics({
+              responseText: successContent,
+              executedActions: [execAction],
+              modelErrors: execAction.result === 'error' ? [{ message: successContent }] : [],
+              apiResult: data,
+            }),
           };
         }
-        saveChatHistory(updated);
+        persistChatHistory(updated);
         return updated;
       });
-    } catch {
+    } catch (error) {
+      const failureContent = 'Something went wrong while executing that action.';
+      const execAction: ExecutedAction = {
+        tool,
+        result: 'error',
+        label: 'Failed',
+        detail: error instanceof Error ? error.message : String(error),
+      };
       setMessages(prev => {
         const updated = [...prev];
         const idx = updated.findIndex(m => m.id === msgId);
@@ -2472,10 +2921,16 @@ export default function InsightsScreen() {
           updated[idx] = {
             ...updated[idx],
             pendingConfirm: undefined,
-            content: 'Something went wrong while executing that action.',
+            content: failureContent,
+            executedActions: [execAction],
+            diagnostics: buildConfirmedActionDiagnostics({
+              responseText: failureContent,
+              executedActions: [execAction],
+              modelErrors: [error instanceof Error ? { message: error.message, name: error.name } : String(error)],
+            }),
           };
         }
-        saveChatHistory(updated);
+        persistChatHistory(updated);
         return updated;
       });
     }
@@ -2526,7 +2981,7 @@ export default function InsightsScreen() {
             } else {
               updated.unshift(confirmMsg);
             }
-            saveChatHistory(updated);
+            persistChatHistory(updated);
             return updated;
           });
         }
@@ -2659,9 +3114,10 @@ export default function InsightsScreen() {
         isStreaming={isStreaming}
         onConfirmAction={handleConfirmAction}
         onDiscordConnect={handleDiscordConnect}
+        onCopyDiagnostics={handleCopyDiagnostics}
       />
     );
-  }, [listData, lastAssistantId, goals, sendMessage, speakText, isSpeaking, isStreaming, handleConfirmAction, handleDiscordConnect]);
+  }, [listData, lastAssistantId, goals, sendMessage, speakText, isSpeaking, isStreaming, handleConfirmAction, handleDiscordConnect, handleCopyDiagnostics]);
 
   const isEmpty = messages.length === 0 && !isStreaming;
 
@@ -3571,6 +4027,26 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 4,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  diagnosticPressActive: {
+    opacity: 0.82,
+  },
+  diagnosticCopyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginTop: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderRadius: 12,
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.26)',
+  },
+  diagnosticCopyButtonText: {
+    fontSize: 11,
+    fontFamily: 'Inter_600SemiBold',
+    color: Colors.warning,
   },
   executedActionButton: {
     flexDirection: 'row',

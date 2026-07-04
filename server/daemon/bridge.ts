@@ -55,6 +55,7 @@ export type DaemonOp =
   | { type: "android_file_search"; query: string; root?: string; fileType?: string; maxDepth?: number }
   | { type: "android_open_file"; path: string }
   | { type: "android_copy_to_clipboard"; path: string }
+  | { type: "android_copy_text_to_clipboard"; text: string; label?: string }
   | { type: "desktop_screenshot" }
   | { type: "desktop_read_screen" }
   | { type: "android_notification_reply"; notificationKey: string; replyText: string }
@@ -682,6 +683,8 @@ export async function sendDaemonOp(
       android_screen_record:  "android_screen_record",
       android_screen_context: "android_read_screen",
       android_view_hierarchy: "android_read_screen",
+      android_copy_to_clipboard: "android_tap_type",
+      android_copy_text_to_clipboard: "android_tap_type",
       android_pinch:          "android_tap_type",
       android_local_model_status:   "android_local_model",
       android_local_model_import:   "android_local_model",

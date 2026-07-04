@@ -168,6 +168,7 @@ const tests = [
   { file: "server/agent/__tests__/telegramVoiceCallUrl.assert.ts" },
   { file: "server/agent/__tests__/codexVoiceTurn.assert.ts" },
   { file: "server/agent/__tests__/localVoiceRuntimeHarness.assert.ts" },
+  { file: "server/agent/__tests__/developerDiagnostics.assert.ts" },
   { file: "server/agent/__tests__/telegramRunGuard.assert.ts" },
   { file: "server/agent/__tests__/telegramMessageBatcher.assert.ts" },
   { file: "server/agent/__tests__/telegramNeedsAttention.test.ts" },

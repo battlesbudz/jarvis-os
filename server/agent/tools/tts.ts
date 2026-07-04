@@ -200,6 +200,8 @@ export interface SpeakOptions {
   serverBaseUrl?: string;
 }
 
+export type SpeakResult = { ok: boolean; error?: string; messageId?: number };
+
 /** Look up the WhatsApp address for a user (needed to send Twilio media messages). */
 async function getWhatsAppAddress(userId: string): Promise<string | null> {
   try {
@@ -271,7 +273,7 @@ export async function speakToUser(
   text: string,
   voice: TtsVoice = "nova",
   options?: SpeakOptions,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<SpeakResult> {
   const channelRaw = (options?.channel || "telegram").toLowerCase();
   const isDiscord = channelRaw.startsWith("discord");
   const isWhatsApp = channelRaw === "whatsapp";
@@ -322,10 +324,10 @@ export async function speakToUser(
     return { ok: false, error: "User has no linked Telegram account" };
   }
   const sent = await sendVoice(chatId, ogg);
-  if (!sent) {
-    return { ok: false, error: "Failed to deliver voice note via Telegram" };
+  if (!sent.ok) {
+    return { ok: false, error: sent.error ?? "Failed to deliver voice note via Telegram" };
   }
-  return { ok: true };
+  return { ok: true, messageId: sent.messageId };
 }
 
 const VALID_VOICES: TtsVoice[] = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"];
