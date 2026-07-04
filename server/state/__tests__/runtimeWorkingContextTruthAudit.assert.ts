@@ -436,6 +436,14 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(confirmedAppPhraseCompletion.status, "allow");
 
+  const confirmedPackageNameCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open Gmail.",
+    responseText: "I opened Gmail.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "com.google.android.gm" }],
+  });
+  assert.equal(confirmedPackageNameCompletion.status, "allow");
+
   const confirmedYoutubeSearch = auditLocalRuntimeResponse({
     userMessage: "Search YouTube for AI videos.",
     responseText: "I opened YouTube.",

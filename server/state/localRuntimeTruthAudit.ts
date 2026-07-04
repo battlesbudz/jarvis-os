@@ -63,8 +63,36 @@ const TOOL_ALIASES: Record<string, string> = {
   copy_to_clipboard: "android_copy_to_clipboard",
 };
 
+const ANDROID_APP_PACKAGE_ALIASES: Record<string, string> = {
+  youtube: "com.google.android.youtube",
+  yt: "com.google.android.youtube",
+  you_tube: "com.google.android.youtube",
+  chrome: "com.android.chrome",
+  browser: "com.android.chrome",
+  maps: "com.google.android.apps.maps",
+  google_maps: "com.google.android.apps.maps",
+  gmail: "com.google.android.gm",
+  settings: "com.android.settings",
+  spotify: "com.spotify.music",
+  reddit: "com.reddit.frontpage",
+  facebook: "com.facebook.katana",
+  instagram: "com.instagram.android",
+  messenger: "com.facebook.orca",
+  whatsapp: "com.whatsapp",
+  tiktok: "com.ss.android.ugc.trill",
+  discord: "com.discord",
+};
+
 function compactText(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+
+function aliasToken(value: unknown): string {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 function normalizeToolName(name: string): string {
@@ -239,8 +267,41 @@ function hasConfirmingActionResult(
     if (!target) return true;
     if (result.toolName === "android_youtube_search" && target === "youtube") return true;
     const resultTarget = compactText(`${result.target ?? ""} ${result.summary ?? ""}`).toLowerCase();
-    return resultTarget.includes(target);
+    return actionTargetsMatch(target, resultTarget);
   });
+}
+
+function appPackageNameForTarget(value: string): string | null {
+  const normalized = compactText(value).toLowerCase();
+  if (!normalized) return null;
+  const exactPackage = Object.values(ANDROID_APP_PACKAGE_ALIASES).find((packageName) => packageName === normalized);
+  if (exactPackage) return exactPackage;
+  return ANDROID_APP_PACKAGE_ALIASES[aliasToken(normalized)] ?? null;
+}
+
+function appTargetVariants(value: string): Set<string> {
+  const variants = new Set<string>();
+  const normalized = normalizeOpenedTarget(value).toLowerCase();
+  if (normalized) variants.add(normalized);
+  const packageName = appPackageNameForTarget(normalized);
+  if (packageName) {
+    variants.add(packageName);
+    for (const [alias, candidatePackageName] of Object.entries(ANDROID_APP_PACKAGE_ALIASES)) {
+      if (candidatePackageName === packageName) variants.add(alias.replace(/_/g, " "));
+    }
+  }
+  return variants;
+}
+
+function actionTargetsMatch(claimTarget: string, resultTarget: string): boolean {
+  if (!claimTarget) return true;
+  if (resultTarget.includes(claimTarget)) return true;
+  const claimVariants = appTargetVariants(claimTarget);
+  const resultVariants = appTargetVariants(resultTarget);
+  for (const variant of claimVariants) {
+    if (resultTarget.includes(variant) || resultVariants.has(variant)) return true;
+  }
+  return false;
 }
 
 function strongPersonalClaim(text: string): string | null {
