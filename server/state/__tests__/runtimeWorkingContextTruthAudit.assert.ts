@@ -594,6 +594,23 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(confirmedAppSubdomainOpen.status, "allow");
 
+  for (const testCase of [
+    { domain: "app.example.help", target: "https://app.example.help" },
+    { domain: "dev.example.run", target: "https://dev.example.run" },
+  ]) {
+    const confirmedUnknownTldSubdomainOpen = auditLocalRuntimeResponse({
+      userMessage: `Open ${testCase.domain}.`,
+      responseText: `I opened ${testCase.domain}.`,
+      capabilityState: { app_control: "available" },
+      actionResults: [{
+        toolName: "android_open_phone_url",
+        ok: true,
+        target: testCase.target,
+      }],
+    });
+    assert.equal(confirmedUnknownTldSubdomainOpen.status, "allow");
+  }
+
   const confirmedSchemeUrlOpen = auditLocalRuntimeResponse({
     userMessage: "Open https://example.com.",
     responseText: "I opened https://example.com.",
