@@ -80,6 +80,11 @@ import {
   type DiagnosticVoiceTrace,
   type TurnDiagnosticBundle,
 } from '@shared/turnDiagnostics';
+import {
+  LOCAL_VOICE_SILENCE_POLL_MS,
+  createLocalVoiceSilenceState,
+  updateLocalVoiceSilenceState,
+} from '@shared/localVoiceLoop';
 
 
 interface EmailSuggestion {
@@ -281,7 +286,7 @@ interface MessageBubbleProps {
   isLastAssistant: boolean;
   goals: Goal[];
   onFollowup: (text: string) => void;
-  onSpeak?: (text: string) => void;
+  onSpeak?: (text: string, assistantId?: string) => void;
   isSpeaking?: boolean;
   isStreaming?: boolean;
   onConfirmAction?: (msgId: string, confirmed: boolean) => void;
@@ -699,7 +704,7 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
       {!isUser && isLastAssistant && !isStreaming && message.content.length > 0 && onSpeak && (
         <Pressable
           style={styles.speakBtn}
-          onPress={() => onSpeak(message.content)}
+          onPress={() => onSpeak(message.content, message.id)}
         >
           <Ionicons
             name={isSpeaking ? "volume-high" : "volume-medium-outline"}
@@ -887,10 +892,12 @@ export default function InsightsScreen() {
   const talkModeRef = useRef(false);
   const startRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const stopRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
-  const speakTextRef = useRef<(text: string) => void>(() => {});
+  const stopRecordingSilentlyRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const speakTextRef = useRef<(text: string, assistantId?: string) => void>(() => {});
   const isRecordingRef = useRef(false);
   const [isTTSLoading, setIsTTSLoading] = useState(false);
   const speakingTextRef = useRef<string | null>(null);
+  const speakingAssistantIdRef = useRef<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const audioRecorder = useAudioRecorder({ ...RecordingPresets.HIGH_QUALITY, isMeteringEnabled: true });
   const silencePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1030,6 +1037,44 @@ export default function InsightsScreen() {
     };
   }, []);
 
+  const clearSilencePoll = useCallback(() => {
+    if (silencePollRef.current) {
+      clearInterval(silencePollRef.current);
+      silencePollRef.current = null;
+    }
+  }, []);
+
+  const stopRecordingSilently = useCallback(async () => {
+    setIsRecording(false);
+    clearSilencePoll();
+
+    if (Platform.OS === 'web') {
+      const recorder = webRecorderRef.current;
+      webRecorderRef.current = null;
+      webChunksRef.current = [];
+      if (recorder) {
+        recorder.ondataavailable = null;
+        recorder.onstop = null;
+        if (recorder.state !== 'inactive') recorder.stop();
+        recorder.stream.getTracks().forEach(t => t.stop());
+      }
+      return;
+    }
+
+    try {
+      if (audioRecorder.isRecording) {
+        await audioRecorder.stop().catch(() => {});
+      }
+      const uri = audioRecorder.uri;
+      if (uri) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+    } finally {
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+      setIsTranscribing(false);
+    }
+  }, [audioRecorder, clearSilencePoll]);
+
+  stopRecordingSilentlyRef.current = stopRecordingSilently;
+
   const transcribeAndSend = useCallback(async (base64: string) => {
     setIsTranscribing(true);
     try {
@@ -1046,27 +1091,35 @@ export default function InsightsScreen() {
       const data = await res.json();
       if (data.text && data.text.trim()) {
         setIsTranscribing(false);
+        const transcriptText = data.text.trim();
         if (talkModeRef.current) {
-          // Talk Mode: auto-send immediately so the conversation flows hands-free.
-          setInput(data.text);
+          // Talk Mode: show the transcript in the normal composer, then submit it.
+          setInput(transcriptText);
           const now = new Date().toISOString();
-          sendMessageRef.current(data.text, {
-            source: 'voice',
-            voiceTrace: {
-              finalTranscript: data.text,
-              finishedAt: now,
-              stateTransitions: [
-                { state: 'transcription_complete', at: now, detail: 'Talk Mode transcript auto-sent' },
-              ],
-            },
-          });
+          setTimeout(() => {
+            if (!talkModeRef.current) return;
+            sendMessageRef.current(transcriptText, {
+              source: 'voice',
+              voiceTrace: {
+                finalTranscript: transcriptText,
+                finishedAt: now,
+                stateTransitions: [
+                  { state: 'transcription_complete', at: now, detail: 'Talk Mode transcript auto-sent' },
+                ],
+              },
+            });
+          }, 80);
         } else {
           // Regular mic tap: drop the transcript into the input so the user
           // can review and edit before sending manually.
-          setInput(prev => prev.trim() ? prev.trimEnd() + ' ' + data.text.trim() : data.text.trim());
+          setInput(prev => prev.trim() ? prev.trimEnd() + ' ' + transcriptText : transcriptText);
         }
       } else {
         setIsTranscribing(false);
+        if (talkModeRef.current) {
+          setInput('');
+          return;
+        }
         Alert.alert('Could not understand', 'No speech was detected. Please try again and speak clearly.');
       }
     } catch (error) {
@@ -1095,10 +1148,7 @@ export default function InsightsScreen() {
           const analyser = audioCtx.createAnalyser();
           audioCtx.createMediaStreamSource(stream).connect(analyser);
           const data = new Float32Array(analyser.fftSize);
-          let silenceMs = 0;
-          const SILENCE_THRESHOLD_DB = -40;
-          const SILENCE_DURATION_MS = 1500;
-          const POLL_MS = 200;
+          let silenceState = createLocalVoiceSilenceState();
           silencePollRef.current = setInterval(() => {
             if (!talkModeRef.current || !webRecorderRef.current) {
               clearInterval(silencePollRef.current!);
@@ -1108,18 +1158,20 @@ export default function InsightsScreen() {
             analyser.getFloatTimeDomainData(data);
             const maxAmp = data.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
             const db = maxAmp > 0 ? 20 * Math.log10(maxAmp) : -Infinity;
-            if (db < SILENCE_THRESHOLD_DB) {
-              silenceMs += POLL_MS;
-              if (silenceMs >= SILENCE_DURATION_MS) {
-                clearInterval(silencePollRef.current!);
-                silencePollRef.current = null;
-                audioCtx.close().catch(() => {});
+            silenceState = updateLocalVoiceSilenceState(silenceState, {
+              decibels: db,
+              pollMs: LOCAL_VOICE_SILENCE_POLL_MS,
+            });
+            if (silenceState.shouldSubmit || silenceState.shouldPause) {
+              clearSilencePoll();
+              audioCtx.close().catch(() => {});
+              if (silenceState.shouldSubmit) {
                 stopRecordingRef.current().catch(() => {});
+              } else {
+                stopRecordingSilentlyRef.current().catch(() => {});
               }
-            } else {
-              silenceMs = 0;
             }
-          }, POLL_MS);
+          }, LOCAL_VOICE_SILENCE_POLL_MS);
         }
       } else {
         const { granted } = await requestRecordingPermissionsAsync();
@@ -1139,10 +1191,7 @@ export default function InsightsScreen() {
 
         // Native Talk Mode: poll metering and auto-submit after sustained silence
         if (talkModeRef.current) {
-          let silenceMs = 0;
-          const SILENCE_THRESHOLD_DB = -40;
-          const SILENCE_DURATION_MS = 1500;
-          const POLL_MS = 250;
+          let silenceState = createLocalVoiceSilenceState();
           silencePollRef.current = setInterval(() => {
             if (!talkModeRef.current || !audioRecorder.isRecording) {
               clearInterval(silencePollRef.current!);
@@ -1151,38 +1200,34 @@ export default function InsightsScreen() {
             }
             try {
               const status = audioRecorder.getStatus();
-              if (typeof status.metering === 'number') {
-                if (status.metering < SILENCE_THRESHOLD_DB) {
-                  silenceMs += POLL_MS;
-                  if (silenceMs >= SILENCE_DURATION_MS) {
-                    clearInterval(silencePollRef.current!);
-                    silencePollRef.current = null;
-                    stopRecordingRef.current().catch(() => {});
-                  }
-                } else {
-                  silenceMs = 0;
-                }
+              const db = typeof status.metering === 'number' ? status.metering : -Infinity;
+              silenceState = updateLocalVoiceSilenceState(silenceState, {
+                decibels: db,
+                pollMs: LOCAL_VOICE_SILENCE_POLL_MS,
+              });
+              if (silenceState.shouldSubmit) {
+                clearSilencePoll();
+                stopRecordingRef.current().catch(() => {});
+              } else if (silenceState.shouldPause) {
+                clearSilencePoll();
+                stopRecordingSilentlyRef.current().catch(() => {});
               }
             } catch { /* recording may have been stopped externally */ }
-          }, POLL_MS);
+          }, LOCAL_VOICE_SILENCE_POLL_MS);
         }
       }
     } catch (error) {
       console.error('Failed to start recording:', error);
       Alert.alert('Recording Failed', 'Could not start recording. Please check microphone permissions and try again.');
     }
-  }, []);
+  }, [audioRecorder, clearSilencePoll]);
 
   startRecordingRef.current = startRecording;
 
 
   const stopRecordingAndSend = useCallback(async () => {
     setIsRecording(false);
-    // Clear silence detection polling if active
-    if (silencePollRef.current) {
-      clearInterval(silencePollRef.current);
-      silencePollRef.current = null;
-    }
+    clearSilencePoll();
 
     if (Platform.OS === 'web') {
       const recorder = webRecorderRef.current;
@@ -1203,6 +1248,7 @@ export default function InsightsScreen() {
         recorder.stop();
         recorder.stream.getTracks().forEach(t => t.stop());
       });
+      webChunksRef.current = [];
       transcribeAndSend(base64);
     } else {
       if (!audioRecorder.isRecording) {
@@ -1210,11 +1256,12 @@ export default function InsightsScreen() {
         return;
       }
       setIsTranscribing(true);
+      let uri: string | null = null;
 
       try {
         await audioRecorder.stop();
         await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
-        const uri = audioRecorder.uri;
+        uri = audioRecorder.uri;
         if (!uri) {
           throw new Error('Recording produced no audio file');
         }
@@ -1231,9 +1278,11 @@ export default function InsightsScreen() {
         // Release audio focus even on error so other apps can use the mic
         setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
         Alert.alert('Recording Error', `Could not process your recording: ${msg}. Please try again.`);
+      } finally {
+        if (uri) FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
       }
     }
-  }, [transcribeAndSend]);
+  }, [audioRecorder, clearSilencePoll, transcribeAndSend]);
 
   stopRecordingRef.current = stopRecordingAndSend;
   useEffect(() => { talkModeRef.current = talkModeEnabled; }, [talkModeEnabled]);
@@ -1258,11 +1307,24 @@ export default function InsightsScreen() {
     startRecordingRef.current();
   }, [pendingWakeEvent, clearWakeEvent]);
 
+  const markAssistantSpeechStopped = useCallback((assistantId?: string | null) => {
+    if (!assistantId) return;
+    setMessages(prev => {
+      const idx = prev.findIndex(message => message.id === assistantId && message.role === 'assistant');
+      if (idx === -1 || prev[idx].stopped) return prev;
+      const updated = [...prev];
+      updated[idx] = { ...updated[idx], stopped: true };
+      persistChatHistory(updated);
+      return updated;
+    });
+  }, []);
+
   const stopSpeaking = useCallback(() => {
     speakAbortRef.current?.abort();
     speakAbortRef.current = null;
     isSpeakingRef.current = false;
     speakingTextRef.current = null;
+    speakingAssistantIdRef.current = null;
     if (Platform.OS === 'web') {
       webAudioRef.current?.pause();
       webAudioRef.current = null;
@@ -1277,7 +1339,16 @@ export default function InsightsScreen() {
     setIsTTSLoading(false);
   }, []);
 
-  const speakText = useCallback(async (text: string) => {
+  const interruptSpeakingAndListen = useCallback(() => {
+    const interruptedAssistantId = speakingAssistantIdRef.current;
+    markAssistantSpeechStopped(interruptedAssistantId);
+    stopSpeaking();
+    if (talkModeRef.current) {
+      setTimeout(() => startRecordingRef.current(), 0);
+    }
+  }, [markAssistantSpeechStopped, stopSpeaking]);
+
+  const speakText = useCallback(async (text: string, assistantId?: string) => {
     if (isSpeaking && speakingTextRef.current === text) {
       stopSpeaking();
       return;
@@ -1285,6 +1356,7 @@ export default function InsightsScreen() {
     stopSpeaking();
     isSpeakingRef.current = true;
     speakingTextRef.current = text;
+    speakingAssistantIdRef.current = assistantId ?? null;
     setIsSpeaking(true);
     setIsTTSLoading(true);
 
@@ -1294,6 +1366,7 @@ export default function InsightsScreen() {
     const onPlaybackEnd = () => {
       isSpeakingRef.current = false;
       speakingTextRef.current = null;
+      speakingAssistantIdRef.current = null;
       setIsSpeaking(false);
       setIsTTSLoading(false);
       apiRequest('POST', '/api/voice/tts-done').catch(() => {});
@@ -1305,6 +1378,7 @@ export default function InsightsScreen() {
     const onError = () => {
       isSpeakingRef.current = false;
       speakingTextRef.current = null;
+      speakingAssistantIdRef.current = null;
       setIsSpeaking(false);
       setIsTTSLoading(false);
     };
@@ -2202,7 +2276,7 @@ export default function InsightsScreen() {
       setIntegrationError(null);
       setConfirmClear(false);
       if (talkModeRef.current && assistantText.trim()) {
-        speakTextRef.current(assistantText);
+        speakTextRef.current(assistantText, assistantId);
       }
       return;
     }
@@ -2559,7 +2633,7 @@ export default function InsightsScreen() {
 
       // Auto-speak the reply in Talk Mode once streaming finishes.
       if (talkModeRef.current && finalContent.trim()) {
-        speakTextRef.current(finalContent);
+        speakTextRef.current(finalContent, assistantId);
       }
 
       // If Jarvis just sent a channel connect link, start polling for connection.
@@ -3301,24 +3375,11 @@ export default function InsightsScreen() {
             setTalkModeEnabled(next);
             talkModeRef.current = next;
             if (!next) {
-              // Clear silence detection poll immediately
-              if (silencePollRef.current) {
-                clearInterval(silencePollRef.current);
-                silencePollRef.current = null;
-              }
+              clearSilencePoll();
             }
             if (!next && isRecordingRef.current) {
               // Immediately disarm the active loop
-              setIsRecording(false);
-              if (Platform.OS !== 'web') {
-                if (audioRecorder.isRecording) {
-                  audioRecorder.stop().catch(() => {});
-                }
-                setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
-              } else {
-                webRecorderRef.current?.stop();
-                webRecorderRef.current = null;
-              }
+              stopRecordingSilentlyRef.current().catch(() => {});
             }
             apiRequest('PUT', '/api/voice/wake-settings', { talkModeEnabled: next }).catch(() => {});
           }}
@@ -3331,7 +3392,7 @@ export default function InsightsScreen() {
         </Pressable>
         <Pressable
           style={[styles.micBtn, isRecording && styles.micBtnRecording, isBaseLoading && { opacity: 0.4 }]}
-          onPress={isSpeaking ? stopSpeaking : isRecording ? stopRecordingAndSend : startRecording}
+          onPress={isSpeaking ? interruptSpeakingAndListen : isRecording ? stopRecordingAndSend : startRecording}
           disabled={isTranscribing || isBaseLoading}
         >
           {isTranscribing ? (
@@ -3385,7 +3446,7 @@ export default function InsightsScreen() {
               <Animated.View style={[styles.waveBar, waveBarStyle3]} />
               <Animated.View style={[styles.waveBar, styles.waveBarTall, waveBarStyle4]} />
             </View>
-            <Pressable style={styles.stopBtn} onPress={stopSpeaking}>
+            <Pressable style={styles.stopBtn} onPress={interruptSpeakingAndListen}>
               <Ionicons name="stop" size={16} color="#fff" />
             </Pressable>
           </View>

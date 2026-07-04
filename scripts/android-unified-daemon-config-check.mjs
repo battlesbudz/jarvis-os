@@ -188,6 +188,12 @@ function assertExcludes(contents, forbidden, source) {
   }
 }
 
+function assertMatches(contents, pattern, description, source) {
+  if (!pattern.test(contents)) {
+    throw new Error(`${source} is missing ${description}`);
+  }
+}
+
 async function assertFileExists(filePath) {
   try {
     await access(filePath);
@@ -406,7 +412,7 @@ assertIncludes(webSocketService, "private var currentConnectUsesBootstrapToken =
 assertIncludes(webSocketService, "private var reconnectFuture: java.util.concurrent.ScheduledFuture<*>? = null", "WebSocketService.kt");
 assertIncludes(webSocketService, "already connected; ignoring duplicate", "WebSocketService.kt");
 assertIncludes(webSocketService, "closeCurrentSocket(scheduleReconnectOnClose = false)", "WebSocketService.kt");
-assertIncludes(webSocketService, "connecting = false\n                    paired = true", "WebSocketService.kt");
+assertMatches(webSocketService, /connecting\s*=\s*false\s+paired\s*=\s*true/, "connecting=false before paired=true", "WebSocketService.kt");
 assertExcludes(webSocketService, 'Log.i(TAG, "WebSocket opened")\n                connecting = false', "WebSocketService.kt");
 assertIncludes(webSocketService, "ACTION_BOOTSTRAP", "WebSocketService.kt");
 assertIncludes(webSocketService, "EXTRA_BOOTSTRAP_TOKEN", "WebSocketService.kt");
@@ -418,7 +424,7 @@ assertIncludes(pluginTemplateWebSocket, "private var currentConnectUsesBootstrap
 assertIncludes(pluginTemplateWebSocket, "private var reconnectFuture: java.util.concurrent.ScheduledFuture<*>? = null", "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "already connected; ignoring duplicate", "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "closeCurrentSocket(scheduleReconnectOnClose = false)", "plugins/android-daemon-native/WebSocketService.kt");
-assertIncludes(pluginTemplateWebSocket, "connecting = false\n                    paired = true", "plugins/android-daemon-native/WebSocketService.kt");
+assertMatches(pluginTemplateWebSocket, /connecting\s*=\s*false\s+paired\s*=\s*true/, "connecting=false before paired=true", "plugins/android-daemon-native/WebSocketService.kt");
 assertExcludes(pluginTemplateWebSocket, 'Log.i(TAG, "WebSocket opened")\n                connecting = false', "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "private fun startForegroundCompat(): Boolean", "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "Failed to start foreground daemon service", "plugins/android-daemon-native/WebSocketService.kt");
