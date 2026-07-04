@@ -5,6 +5,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { channelLinks, channelLinkCodes, userPreferences } from "@shared/schema";
 import { randomBytes, createHash } from "crypto";
 import { getSession as _getCoachSession, setSession as _setCoachSession } from "../channels/sessionStore";
+import { resolveAndroidNotificationFollowUp } from "../agent/androidNotificationFollowups";
 
 type DaemonClientKind = "unified_android_app" | "standalone_android_daemon" | "desktop_daemon";
 type AndroidDaemonClientKind = "unified_android_app" | "standalone_android_daemon";
@@ -90,10 +91,19 @@ export interface PhoneNotification {
 const userNotifications = new Map<string, PhoneNotification[]>();
 
 const MAX_NOTIFS_PER_USER = 60;
+const VOICE_NOTIFICATION_FOLLOWUP_TTL_MS = 5 * 60 * 1000;
 
 export function getRecentPhoneNotifications(userId: string, limit = 20): PhoneNotification[] {
   const arr = userNotifications.get(userId) || [];
   return arr.slice(0, limit);
+}
+
+function getRecentVoiceNotificationContext(userId: string, limit = 20): PhoneNotification[] {
+  const now = Date.now();
+  return getRecentPhoneNotifications(userId, limit).filter((notification) => {
+    if (typeof notification.ts !== "number" || !Number.isFinite(notification.ts)) return true;
+    return now - notification.ts <= VOICE_NOTIFICATION_FOLLOWUP_TTL_MS;
+  });
 }
 
 interface PendingOp {
@@ -180,24 +190,53 @@ export function subscribeWakeWordTrigger(
  * After getting the reply text, converts to speech and sends voice_speak_audio
  * back to the daemon so the phone plays it immediately (hands-free loop).
  */
+async function processDaemonNotificationFollowUp(userId: string, utterance: string): Promise<string | null> {
+  const notifications = getRecentVoiceNotificationContext(userId);
+  if (notifications.length === 0) return null;
+
+  const followUp = resolveAndroidNotificationFollowUp(utterance, notifications);
+  if (!followUp) return null;
+
+  if (followUp.kind === "read_all" || followUp.kind === "read" || followUp.kind === "summary") {
+    return followUp.response;
+  }
+
+  const notification = notifications[followUp.index];
+  const packageName = typeof notification?.pkg === "string" ? notification.pkg.trim() : "";
+  if (!packageName) {
+    return `I found the ${followUp.notification.app} notification, but I could not identify the app package to open yet.`;
+  }
+  if (!(await isAndroidDaemonActionAllowed(userId, "android_open_app"))) {
+    return `I found the ${followUp.notification.app} notification, but Android app opening is not enabled.`;
+  }
+
+  const result = await sendDaemonOp(userId, { type: "android_open_app", packageName }, 10_000);
+  return result.ok
+    ? `I found the ${followUp.notification.app} notification and opened ${followUp.notification.app}.`
+    : `I found the ${followUp.notification.app} notification, but I could not open ${followUp.notification.app} yet.`;
+}
+
 async function processDaemonUtterance(userId: string, utterance: string): Promise<void> {
   try {
     console.log(`[daemon] talk: processing utterance for userId=${userId}: "${utterance.slice(0, 60)}"`);
-    const { runCoachAgent } = await import("../channels/coachAgent");
     const { textToSpeech } = await import("../integrations/audioClient");
 
-    const storedSessionId = await _getCoachSession(userId, "Voice");
-    const result = await runCoachAgent({
-      userId,
-      userText: utterance,
-      channelName: "Voice",
-      sdkSessionId: storedSessionId,
-    });
-    if (result.sdkSessionId) {
-      _setCoachSession(userId, "Voice", result.sdkSessionId);
+    let responseText = await processDaemonNotificationFollowUp(userId, utterance);
+    if (!responseText) {
+      const { runCoachAgent } = await import("../channels/coachAgent");
+      const storedSessionId = await _getCoachSession(userId, "Voice");
+      const result = await runCoachAgent({
+        userId,
+        userText: utterance,
+        channelName: "Voice",
+        sdkSessionId: storedSessionId,
+      });
+      if (result.sdkSessionId) {
+        _setCoachSession(userId, "Voice", result.sdkSessionId);
+      }
+      responseText = result.reply.trim() || "I'm not sure how to help with that.";
     }
 
-    const responseText = result.reply.trim() || "I'm not sure how to help with that.";
     console.log(`[daemon] talk: Jarvis reply: "${responseText.slice(0, 80)}"`);
 
     const audioBuffer = await textToSpeech(responseText, "alloy", "mp3");

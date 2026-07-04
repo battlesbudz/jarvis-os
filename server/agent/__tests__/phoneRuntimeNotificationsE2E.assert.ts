@@ -20,6 +20,7 @@ async function main() {
     deterministicPhoneRuntimeToolCallFromRequest,
     isPhoneRuntimeCoveredRequest,
   } = await import("../phoneRuntimeRouting");
+  const { resolveAndroidNotificationFollowUp } = await import("../androidNotificationFollowups");
 
   const phoneTools = [
     chatTool("android_open_app"),
@@ -113,6 +114,24 @@ async function main() {
     null,
     "model-selected notification tool calls must not short-circuit the multi-tool loop",
   );
+
+  const followUpNotifications = [
+    { app: "Gmail", pkg: "com.google.android.gm", title: "Reddit digest", text: "Trending posts from Reddit", ts: Date.now() },
+    { app: "Reddit", pkg: "com.reddit.frontpage", title: "vivecoding thread", text: "New replies", ts: Date.now() },
+  ];
+  const referencedOpen = resolveAndroidNotificationFollowUp("Open the Reddit one", followUpNotifications);
+  assert.equal(referencedOpen?.kind, "open");
+  assert.equal(referencedOpen?.notification.app, "Reddit");
+
+  const plainOpen = resolveAndroidNotificationFollowUp("Open Reddit", [
+    { app: "Gmail", pkg: "com.google.android.gm", title: "Reddit digest", text: "Trending posts from Reddit", ts: Date.now() },
+  ]);
+  assert.equal(plainOpen, null, "plain app opens must fall through to app control instead of notification context");
+
+  const messagesOpen = resolveAndroidNotificationFollowUp("Open Messages", [
+    { app: "Gmail", pkg: "com.google.android.gm", title: "New messages", text: "Unread messages are waiting", ts: Date.now() },
+  ]);
+  assert.equal(messagesOpen, null, "Messages app opens must not be treated as notification-message references");
 
   console.log("All Phone Runtime notification E2E contract assertions passed.");
 }
