@@ -96,6 +96,7 @@ async function copyTelegramDiagnosticDetails(input: {
     input.replyToMessageId
       ? { kind: "reply", channelTurnId: input.replyToMessageId }
       : { kind: "last" },
+    { fallbackReplyToLastWhenChannelIdMissing: true },
   );
 
   if (!resolution.ok) {

@@ -17,7 +17,7 @@ import {
 
 function makeRecord(input: {
   turnId: string;
-  messageId: number;
+  messageId?: number | null;
   createdAt: string;
   result?: "success" | "error";
   runtimeIntent?: string;
@@ -28,7 +28,7 @@ function makeRecord(input: {
     source: "telegram",
     userId: input.userId ?? "user_current",
     channel: "telegram",
-    channelTurnId: input.messageId,
+    channelTurnId: input.messageId ?? null,
     requestText: "Open YouTube",
     responseText: input.result === "error" ? "I could not open YouTube." : "Opened YouTube.",
     selected: { mode: "telegram", model: "server-selected", profile: "server-selected" },
@@ -43,7 +43,7 @@ function makeRecord(input: {
     turnId: input.turnId,
     source: "telegram",
     channel: "telegram",
-    channelTurnId: input.messageId,
+    channelTurnId: input.messageId ?? null,
     createdAt: input.createdAt,
     bundle,
   };
@@ -120,6 +120,10 @@ function testTelegramTargetResolution() {
 
   assert.equal(isDiagnosticCopyRequest("copy details"), true);
   assert.equal(isDiagnosticCopyRequest("copy last failed details"), true);
+  assert.equal(isDiagnosticCopyRequest("diagnostic details"), true);
+  assert.equal(isDiagnosticCopyRequest("send details"), false);
+  assert.equal(isDiagnosticCopyRequest("show details"), false);
+  assert.equal(isDiagnosticCopyRequest("get details"), false);
   const failedFromText = resolveDiagnosticTargetFromText(records, "copy last failed details");
   assert.equal(failedFromText.ok, true);
   if (failedFromText.ok) assert.equal(failedFromText.record.turnId, "newer");
@@ -153,6 +157,20 @@ function testTelegramTargetResolution() {
     makeRecord({ turnId: "current-user", messageId: 105, createdAt: "2026-07-04T00:04:00.000Z", userId: "user_current" }),
   ], "user_current");
   assert.deepEqual(userScoped.map((record) => record.turnId), ["current-user"]);
+
+  const missingChannelIdRecords = [
+    makeRecord({ turnId: "voice-without-message-id", messageId: null, createdAt: "2026-07-04T00:06:00.000Z" }),
+    makeRecord({ turnId: "older-with-message-id", messageId: 108, createdAt: "2026-07-04T00:05:00.000Z" }),
+  ];
+  const replyWithoutFallback = resolveDiagnosticTarget(missingChannelIdRecords, { kind: "reply", channelTurnId: 999 });
+  assert.equal(replyWithoutFallback.ok, false);
+  const replyWithFallback = resolveDiagnosticTarget(
+    missingChannelIdRecords,
+    { kind: "reply", channelTurnId: 999 },
+    { fallbackReplyToLastWhenChannelIdMissing: true },
+  );
+  assert.equal(replyWithFallback.ok, true);
+  if (replyWithFallback.ok) assert.equal(replyWithFallback.record.turnId, "voice-without-message-id");
   console.log("OK: Telegram diagnostics resolve reply targets and plain last-turn targets");
 }
 

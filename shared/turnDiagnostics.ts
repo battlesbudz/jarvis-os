@@ -144,8 +144,9 @@ export function formatDiagnosticBundleForClipboard(bundle: TurnDiagnosticBundle)
 }
 
 export function isDiagnosticCopyRequest(text: string): boolean {
-  return /^\s*(?:copy|get|show|send)\s+(?:the\s+)?(?:(?:last|failed|turn|action)\s+)*(?:debug\s+|diagnostic\s+)?details\s*$/i.test(text)
-    || /^\s*copy\s+diagnostics?\s*$/i.test(text);
+  return /^\s*(?:copy|clipboard)\s+(?:the\s+)?(?:(?:last|failed|turn|action)\s+)*(?:debug\s+|diagnostic\s+)?details\s*$/i.test(text)
+    || /^\s*copy\s+diagnostics?\s*$/i.test(text)
+    || /^\s*(?:debug|diagnostic)\s+(?:the\s+)?(?:(?:last|failed|turn|action)\s+)*details\s*$/i.test(text);
 }
 
 export function diagnosticRecordHasFailure(record: DiagnosticTurnRecord): boolean {
@@ -177,6 +178,7 @@ export function getDiagnosticRecordsForUser(records: DiagnosticTurnRecord[], use
 export function resolveDiagnosticTarget(
   records: DiagnosticTurnRecord[],
   request: DiagnosticTargetRequest,
+  options: { fallbackReplyToLastWhenChannelIdMissing?: boolean } = {},
 ): DiagnosticTargetResolution {
   if (records.length === 0) return { ok: false, reason: "empty", ambiguous: false };
   const newestFirst = [...records].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
@@ -195,6 +197,9 @@ export function resolveDiagnosticTarget(
   const matches = newestFirst.filter((candidate) => String(candidate.channelTurnId ?? "") === String(request.channelTurnId));
   if (matches.length === 1) return { ok: true, record: matches[0], ambiguous: false };
   if (matches.length > 1) return { ok: false, reason: "ambiguous", ambiguous: true, candidates: matches };
+  if (options.fallbackReplyToLastWhenChannelIdMissing && newestFirst[0]?.channelTurnId == null) {
+    return { ok: true, record: newestFirst[0], ambiguous: false };
+  }
   return { ok: false, reason: "not_found", ambiguous: false };
 }
 
