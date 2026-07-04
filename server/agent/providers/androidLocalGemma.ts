@@ -850,7 +850,7 @@ function correctiveDeviceCommandText(text: string): string {
   const imperativePattern = "(?:please\\s+)?(?:(?:can|could|would|will)\\s+you\\s+)?(?:open|launch|start|take|capture|read|show|list|check|view|see|tap|click|press|swipe|scroll|type|go to|search)\\b[\\s\\S]*";
   const notificationQuestionPattern = "(?:(?:what(?:'s|\\s+is|\\s+are)?|how\\s+many|do\\s+i\\s+have|are\\s+there|any)\\b[\\s\\S]{0,64}\\bnotifications?\\b[\\s\\S]*)";
   const commandPattern = `(?:${imperativePattern}|${notificationQuestionPattern})`;
-  const punctuationMatch = text.match(new RegExp(`[.;!?]\\s*(${commandPattern})$`, "i"));
+  const punctuationMatch = text.match(new RegExp(`[,.;!?]\\s*(${commandPattern})$`, "i"));
   if (punctuationMatch?.[1]?.trim()) return punctuationMatch[1].trim();
 
   const connectiveMatch = text.match(new RegExp(`\\b(?:but|instead|rather)\\b\\s*(${commandPattern})$`, "i"));
@@ -1664,8 +1664,10 @@ function recoverAndroidRuntimeToolFromRequest(
   }
 
   if (hasFunctionTool(params.tools, "android_open_app_by_name") && /\b(?:open|launch|start)\b/i.test(recoveryText)) {
-    if (inferPackageNamesFromText(recoveryText).length > 1 || looksLikeMultiAppOpenRequest(recoveryText)) return null;
-    const packageName = inferPackageNameFromText(recoveryText);
+    const allowedPackageNames = inferPackageNamesFromText(recoveryText)
+      .filter((packageName) => !packageTargetNegatedInText(recoveryText, packageName));
+    if (allowedPackageNames.length > 1 || looksLikeMultiAppOpenRequest(recoveryText)) return null;
+    const packageName = allowedPackageNames.length === 1 ? allowedPackageNames[0] : null;
     const appName = packageName
       ? packageAliases(packageName)[0]?.replace(/_/g, " ") || packageName
       : openAppNameFromRequest(recoveryText);

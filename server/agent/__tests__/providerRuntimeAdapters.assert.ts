@@ -3453,6 +3453,44 @@ async function testAndroidLocalGemmaKeepsAliasesAfterNegatedPackageIdOpenAppTool
   }
 }
 
+async function testAndroidLocalGemmaRecoversNegatedPackageIdFinalAnswerToAllowedAlias() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "final", content: "Opening Maps." }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Don't open org.telegram.messenger, open Maps." }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_app_by_name",
+          description: "Open an installed Android app by name.",
+          parameters: { type: "object", properties: { appName: { type: "string" } }, required: ["appName"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    assert.equal(result.textContent, "");
+    assert.equal(result.toolCallList.length, 1);
+    assert.equal(result.toolCallList[0].function.name, "android_open_app_by_name");
+    assert.equal(result.toolCallList[0].function.arguments, '{"appName":"maps"}');
+    console.log("OK: Android Local Gemma recovers negated package-ID final answers to the allowed alias");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaKeepsAllowedPackagesAfterAndNegation() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: true,
@@ -6964,6 +7002,7 @@ async function main() {
   await testAndroidLocalGemmaKeepsAllowedPackagesAfterCommaNegation();
   await testAndroidLocalGemmaInfersAllowedPackageForMixedNegatedBareOpenAppToolCall();
   await testAndroidLocalGemmaKeepsAliasesAfterNegatedPackageIdOpenAppToolCall();
+  await testAndroidLocalGemmaRecoversNegatedPackageIdFinalAnswerToAllowedAlias();
   await testAndroidLocalGemmaKeepsAllowedPackagesAfterAndNegation();
   await testAndroidLocalGemmaDropsAmbiguousBareOpenAppToolCalls();
   await testAndroidLocalGemmaDoesNotRecoverNegatedRequiredActions();
