@@ -1393,7 +1393,7 @@ function localRuntimeConfirmedRequestText(
 
 function looksLikeLocalActionConfirmationPrompt(text: string): boolean {
   return /\b(?:open|launch|start|browse|visit|go\s+to|navigate(?:\s+to)?|pull\s+up|take|capture|read|show|list|check|view|tap|click|press|swipe|scroll|type)\b/i.test(text) ||
-    /\b(?:proceed|go ahead|continue|do it)\b/i.test(text);
+    /\b(?:proceed|go ahead|continue|do it)\??\s*$/i.test(text);
 }
 
 function localRuntimeEffectiveRequestText(
