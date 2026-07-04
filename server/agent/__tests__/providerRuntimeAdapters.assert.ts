@@ -995,6 +995,13 @@ async function testAndroidLocalGemmaAuditsPronounConfirmationCompletions() {
           description: "Search memory.",
           parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
         },
+      }, {
+        type: "function",
+        function: {
+          name: "android_youtube_search",
+          description: "Search YouTube on the phone.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
       }],
       toolChoice: "auto",
       maxCompletionTokens: 128,

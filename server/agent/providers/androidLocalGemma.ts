@@ -491,6 +491,22 @@ function hasUrlBackedNonPhoneTool(tools: ProviderQueryParams["tools"]): boolean 
   });
 }
 
+function hasRelevantUrlBackedNonPhoneTool(
+  requestText: string,
+  tools: ProviderQueryParams["tools"],
+): boolean {
+  const url = urlFromText(requestText);
+  if (!url) return false;
+  const isYoutubeRequest = isYouTubeUrl(url);
+  const isWebRequest = /^https?:\/\//i.test(url);
+  return !!tools?.some((tool) => {
+    if (!isFunctionTool(tool) || tool.function.name === "android_open_phone_url") return false;
+    const toolText = `${tool.function.name} ${tool.function.description ?? ""}`;
+    if (isYoutubeRequest && /\b(?:youtube|transcript)\b/i.test(toolText)) return true;
+    return isWebRequest && /\b(?:url|browse|web|fetch)\b/i.test(toolText);
+  });
+}
+
 function shouldExposePhoneUrlTool(params: ProviderQueryParams): boolean {
   return looksLikePhoneUrlActionRequest(latestUserText(params.messages)) ||
     looksLikePhoneUrlActionRequest(localRuntimeConfirmedRequestText(params.messages) ?? "") ||
@@ -1804,7 +1820,7 @@ function shouldPreserveRequiredFinalAnswer(
   const notificationConceptQuestion = looksLikeNotificationNonActionQuestion(recoveryText);
   const phoneUrlConceptQuestion = looksLikePhoneUrlOpenIntent(recoveryText) &&
     !looksLikePhoneUrlActionRequest(recoveryText) &&
-    !hasUrlBackedNonPhoneTool(tools);
+    !hasRelevantUrlBackedNonPhoneTool(recoveryText, tools);
   const genericPhoneQuestion = /\b(?:phone|device|screen|display)\b/i.test(recoveryText) &&
     !wantsScreenReadContextRequest(recoveryText) &&
     !wantsScreenshotRequest(recoveryText) &&
