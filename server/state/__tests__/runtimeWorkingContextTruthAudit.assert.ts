@@ -261,6 +261,13 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(userCentricAppExplanation.status, "allow");
 
+  const accountAuthAppExplanation = auditLocalRuntimeResponse({
+    userMessage: "Why can't I open Gmail?",
+    responseText: "You can't open Gmail because I can't sign into that account yet.",
+    capabilityState: { app_control: "available" },
+  });
+  assert.equal(accountAuthAppExplanation.status, "allow");
+
   const mixedUserAndJarvisAppDenial = auditLocalRuntimeResponse({
     userMessage: "Why can't I open Gmail?",
     responseText: "You can't open Gmail because I can't open apps on this device.",
@@ -563,6 +570,22 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "YouTube" }],
   });
   assert.equal(confirmedAppPhraseCompletion.status, "allow");
+
+  const confirmedPronounCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open YouTube.",
+    responseText: "I opened it.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "YouTube" }],
+  });
+  assert.equal(confirmedPronounCompletion.status, "allow");
+
+  const unconfirmedPronounCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open YouTube.",
+    responseText: "I opened it.",
+    capabilityState: { app_control: "available" },
+    actionResults: [],
+  });
+  assert.equal(unconfirmedPronounCompletion.status, "blocked_false_completion");
 
   const confirmedPackageNameCompletion = auditLocalRuntimeResponse({
     userMessage: "Open Gmail.",

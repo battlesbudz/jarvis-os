@@ -221,6 +221,21 @@ function normalizeOpenedTarget(value: string): string {
     .trim();
 }
 
+function completionTarget(value: string | undefined): string | undefined {
+  const target = normalizeOpenedTarget(value ?? "");
+  if (!target || /^(?:it|that|this|that one|this one)$/i.test(target)) return undefined;
+  return target;
+}
+
+function deniesLocalAppControl(text: string): boolean {
+  const appTarget = "[a-z0-9][a-z0-9 ._'-]{1,60}";
+  const denial = "i\\s+(?:can(?:not|'t)|(?:do\\s+not|don.?t)\\s+have\\s+access|am\\s+unable\\s+to|am\\s+not\\s+able\\s+to|cannot|can't|unable\\s+to|not\\s+able\\s+to)";
+  const localAppTarget = "(?:apps?|applications?|app\\s+control|device\\s+control)";
+  return new RegExp(`\\b${denial}\\s+(?:open|launch)\\b(?![-\\s]+source\\b)(?:\\s+(?:the\\s+)?${appTarget})?`, "i").test(text) ||
+    new RegExp(`\\b${denial}\\s+(?:open|launch|start)\\s+(?:the\\s+)?${localAppTarget}\\b`, "i").test(text) ||
+    new RegExp(`\\b${denial}\\s+(?:to\\s+)?${localAppTarget}\\b`, "i").test(text);
+}
+
 function deniedAvailableCapability(
   text: string,
   userMessage: string,
@@ -240,6 +255,13 @@ function deniedAvailableCapability(
   const bareStart = bareStartTarget(text);
   if (
     capabilityAvailable(capabilities, "app_control") &&
+    deniesLocalAppControl(text)
+  ) {
+    return "app_control";
+  }
+
+  if (
+    capabilityAvailable(capabilities, "app_control") &&
     (/\bstart\b(?![-\s]+source\b)\s+(?:the\s+)?[a-z0-9][a-z0-9 ._'-]{1,60}?(?:\s+(?:app|application)|\s+on\s+(?:your\s+phone|your\s+device|my\s+phone|the\s+device))\b/i.test(text) ||
       (bareStart !== null && userAskedToStartTarget(userMessage, bareStart)))
   ) {
@@ -250,7 +272,6 @@ function deniedAvailableCapability(
     ["notifications", /\bnotifications?\b/i],
     ["screen", /\b(?:screen|display)\b/i],
     ["screenshot", /\b(?:screenshot|screen\s+shot|screen\s+grab|capture)\b/i],
-    ["app_control", /\b(?:open|launch)\b(?![-\s]+source\b)(?:\s+(?:the\s+)?[a-z0-9][a-z0-9 ._'-]{1,60})?/i],
     ["clipboard", /\bclipboard\b/i],
     ["memory", /\b(?:memory|remember|know about you|who you are|who i am)\b/i],
   ];
@@ -269,24 +290,24 @@ function deniedAvailableCapability(
 function completionClaimTarget(text: string): { toolName: string; target?: string } | null {
   const openedUrl = text.match(/\b(?:i\s+)?(?:opened|launched|started)\s+((?:https?:\/\/|[a-z][a-z0-9+.-]*:\/\/|www\.|(?:geo|spotify|tel|sms|mailto|market|intent|vnd\.[a-z0-9_.-]+|google\.navigation|waze):)[^\s<>"']{2,160})/i);
   if (openedUrl?.[1]) {
-    return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(openedUrl[1]) };
+    return { toolName: "android_open_app_by_name", target: completionTarget(openedUrl[1]) };
   }
   const openedBareDomain = text.match(/\b(?:i\s+)?(?:opened|launched|started)\s+((?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d{1,5})?(?:[/?#][^\s<>"']*)?)/i);
   if (openedBareDomain?.[1]) {
-    return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(openedBareDomain[1]) };
+    return { toolName: "android_open_app_by_name", target: completionTarget(openedBareDomain[1]) };
   }
   const opened = text.match(/\b(?:i\s+)?(?:opened|launched)\s+([a-z0-9 ._-]{2,80}?)(?:\s+for\s+you|\s+successfully|\s+and\s+(?:(?:it\s+is|it's)\s+(?:ready|open)|it\s+loaded)|\s+on\s+your\s+phone|\s+on\s+the\s+device|[.!?]|$)/i);
   if (opened?.[1]) {
-    return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(opened[1]) };
+    return { toolName: "android_open_app_by_name", target: completionTarget(opened[1]) };
   }
   const startedApp = text.match(/\b(?:i\s+)?started\s+(?:the\s+)?([a-z0-9 ._-]{2,80}?)(?:\s+(?:app|application)|\s+for\s+you|\s+on\s+(?:your\s+phone|your\s+device|my\s+phone|the\s+device))(?:[.!?]|$)/i);
   if (startedApp?.[1]) {
-    return { toolName: "android_open_app_by_name", target: normalizeOpenedTarget(startedApp[1]) };
+    return { toolName: "android_open_app_by_name", target: completionTarget(startedApp[1]) };
   }
   const bareStartedApp = text.match(/\b(?:i\s+)?started\s+(?!by\b)([a-z0-9 ._-]{2,80}?)(?:[.!?]|$)/i);
   if (bareStartedApp?.[1]) {
-    const target = normalizeOpenedTarget(bareStartedApp[1]);
-    if (target && !/^(?:(?:a|an|the)\s+)?(?:task|work|process|draft|outline|plan|summary|response|analysis|review|conversation|chat|setup|account)\b/i.test(target)) {
+    const target = completionTarget(bareStartedApp[1]);
+    if (!target || !/^(?:(?:a|an|the)\s+)?(?:task|work|process|draft|outline|plan|summary|response|analysis|review|conversation|chat|setup|account)\b/i.test(target)) {
       return { toolName: "android_open_app_by_name", target };
     }
   }
