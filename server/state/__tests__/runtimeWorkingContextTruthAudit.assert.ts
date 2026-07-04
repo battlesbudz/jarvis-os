@@ -235,6 +235,20 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   assert.equal(falseDenial.status, "blocked_false_denial");
   assert.doesNotMatch(falseDenial.text, /android_|{|}/);
 
+  const terseNotificationDenial = auditLocalRuntimeResponse({
+    userMessage: "Read my notifications.",
+    responseText: "Can't read notifications.",
+    capabilityState: { notifications: "available" },
+  });
+  assert.equal(terseNotificationDenial.status, "blocked_false_denial");
+
+  const genericNotificationExplanation = auditLocalRuntimeResponse({
+    userMessage: "Why do apps ask for notification permission?",
+    responseText: "Android apps cannot read notifications without permission.",
+    capabilityState: { notifications: "available" },
+  });
+  assert.equal(genericNotificationExplanation.status, "allow");
+
   const failedNotificationActionDenial = auditLocalRuntimeResponse({
     userMessage: "Read my notifications.",
     responseText: "I cannot read notifications on this device.",

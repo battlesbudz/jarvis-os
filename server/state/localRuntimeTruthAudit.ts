@@ -309,6 +309,8 @@ function deniedAvailableCapability(
 
   const denial = /\b(?:i\s+)?(?:can(?:not|'t)|(?:do\s+not|don.?t)\s+have\s+access|unable\s+to|not\s+able\s+to)\b/i;
   if (!denial.test(text)) return null;
+  const terseLocalDenial = /^\s*(?:can(?:not|'t)|cannot|can't|unable\s+to|not\s+able\s+to|(?:do\s+not|don.?t)\s+have\s+access)\b/i;
+  if (!firstPersonDenial.test(text) && !terseLocalDenial.test(text)) return null;
 
   const bareStart = bareStartTarget(text);
   if (
