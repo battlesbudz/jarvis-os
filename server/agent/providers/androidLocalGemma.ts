@@ -1976,6 +1976,10 @@ function toolsForLocalTurn(params: ProviderQueryParams): OpenAI.Chat.Completions
   return params.tools?.filter((tool) => !isFunctionTool(tool) || tool.function.name !== "android_open_phone_url");
 }
 
+function hasCallableLocalToolsForTurn(params: ProviderQueryParams): boolean {
+  return availableFunctionToolNames(toolsForLocalTurn(params)).size > 0;
+}
+
 function availableFunctionToolNamesForTurn(params: ProviderQueryParams): string[] {
   if (params.toolChoice === "none") return [];
   return Array.from(availableFunctionToolNames(toolsForLocalTurn(params)));
@@ -2040,13 +2044,14 @@ function toolPromptFromParams(params: ProviderQueryParams, runtimeStateCardPromp
   const requestText = latestUserText(params.messages);
   const promptBudget = phoneGemmaPromptCharBudget();
   const conversationReserve = hasActiveToolContinuation(params.messages) ? 240 : MIN_REQUIRED_PROMPT_SECTION_CHARS;
+  const hasCallableTools = hasCallableLocalToolsForTurn(params);
   const baseIntro = [
     "You are Jarvis running entirely through Android Local Gemma on the user's phone; Gemma is the engine, not your name.",
     "Return ONLY one JSON object. Tool results are authoritative.",
     "Call only Available tools; never invent names like identify_user, google_search, or android_view_screenshot.",
     `Tool call: {"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
     `Final: {"type":"final","content":"your reply to the user"}`,
-    params.toolChoice === "required"
+    params.toolChoice === "required" && hasCallableTools
       ? "A tool call is required for this turn. Do not return a final answer."
       : "Use tools only when they are necessary to satisfy the user's request.",
   ].join("\n");
@@ -2361,6 +2366,11 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
         }
         if (shouldPreserveRequiredFinalAnswer(requestText)) {
           yield { type: "text", delta: parsed.content.trim() || "No device action was run." };
+          yield { type: "finish", reason: "stop" };
+          return;
+        }
+        if (!hasCallableLocalToolsForTurn(params)) {
+          yield { type: "text", delta: parsed.content.trim() || "Phone Gemma did not return a usable local answer for that request." };
           yield { type: "finish", reason: "stop" };
           return;
         }

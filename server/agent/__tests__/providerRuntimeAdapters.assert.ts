@@ -1975,6 +1975,45 @@ async function testAndroidLocalGemmaDoesNotThrowPhoneUrlToolForInformationalDeep
   }
 }
 
+async function testAndroidLocalGemmaPreservesRequiredFinalAnswerWhenPhoneUrlToolIsHidden() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({
+        type: "final",
+        content: "geo:0,0?q=coffee is a map deep link format.",
+      }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "What does geo:0,0?q=coffee mean?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_open_phone_url",
+          description: "Open a URL on the Android phone.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }],
+      toolChoice: "required",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone",
+    }));
+
+    assert.equal(result.finishReason, "stop");
+    assert.equal(result.toolCallList.length, 0);
+    assert.equal(result.textContent, "geo:0,0?q=coffee is a map deep link format.");
+    console.log("OK: Android Local Gemma preserves required final answers when phone URL tool is hidden");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaCompactsLocalToolPrompt() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   const largeSchema = {
@@ -6310,6 +6349,7 @@ async function main() {
   await testAndroidLocalGemmaKeepsToolProtocolForUrlToolConfirmationTurns();
   await testAndroidLocalGemmaRejectsPhoneUrlToolForUrlToolConfirmationTurns();
   await testAndroidLocalGemmaDoesNotThrowPhoneUrlToolForInformationalDeepLinks();
+  await testAndroidLocalGemmaPreservesRequiredFinalAnswerWhenPhoneUrlToolIsHidden();
   await testAndroidLocalGemmaCompactsLocalToolPrompt();
   await testAndroidLocalGemmaHonorsReducedToolPromptBudget();
   await testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming();
