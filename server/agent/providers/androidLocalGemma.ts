@@ -453,7 +453,11 @@ function isPhoneUrlToolConfirmationTurn(
     if (message.role !== "assistant") continue;
     assistantIndex = index;
     assistantText = textFromContent(message.content);
-    if (looksLikePhoneUrlActionRequest(assistantText)) return true;
+    if (
+      looksLikePhoneUrlActionRequest(assistantText) ||
+      (/\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead|proceed)\b[\s\S]{0,48}\b(?:open|browse|visit|go\s+to|navigate(?:\s+to)?|launch|start|pull\s+up)\b/i.test(assistantText) &&
+        urlFromText(assistantText) !== null)
+    ) return true;
     break;
   }
   if (assistantIndex < 0) return false;

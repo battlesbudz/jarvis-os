@@ -261,6 +261,13 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(userCentricAppExplanation.status, "allow");
 
+  const mixedUserAndJarvisAppDenial = auditLocalRuntimeResponse({
+    userMessage: "Why can't I open Gmail?",
+    responseText: "You can't open Gmail because I can't open apps on this device.",
+    capabilityState: { app_control: "available" },
+  });
+  assert.equal(mixedUserAndJarvisAppDenial.status, "blocked_false_denial");
+
   const failedAppActionDenial = auditLocalRuntimeResponse({
     userMessage: "Open Gmail.",
     responseText: "I can't open Gmail.",

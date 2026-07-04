@@ -176,7 +176,11 @@ function deniedAvailableCapability(
   userMessage: string,
   capabilities: LocalRuntimeTruthAuditInput["capabilityState"],
 ): LocalRuntimeCapabilityName | null {
-  if (/\byou\s+(?:can(?:not|'t)|do\s+not\s+have\s+access|are\s+unable\s+to|are\s+not\s+able\s+to)\b/i.test(text)) {
+  const firstPersonDenial = /\bi\s+(?:can(?:not|'t)|do\s+not\s+have\s+access|am\s+unable\s+to|am\s+not\s+able\s+to|cannot|can't|unable\s+to|not\s+able\s+to)\b/i;
+  if (
+    /\byou\s+(?:can(?:not|'t)|do\s+not\s+have\s+access|are\s+unable\s+to|are\s+not\s+able\s+to)\b/i.test(text) &&
+    !firstPersonDenial.test(text)
+  ) {
     return null;
   }
 
