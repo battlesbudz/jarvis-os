@@ -145,7 +145,7 @@ export function resolveAndroidNotificationReference(
 
   if (ordinal !== null) {
     const orderedMatches = scored.length > 0
-      ? [...scored].sort((a, b) => a.index - b.index)
+      ? scored.filter((item) => item.score === scored[0].score).sort((a, b) => a.index - b.index)
       : entries.map((notification, index) => ({ notification, index, score: 0 }));
     const matchIndex = ordinal === -1 ? orderedMatches.length - 1 : ordinal;
     const match = orderedMatches[matchIndex];

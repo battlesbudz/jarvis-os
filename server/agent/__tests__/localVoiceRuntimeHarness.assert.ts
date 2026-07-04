@@ -193,11 +193,12 @@ async function testNotificationReferenceUsesStoredAppNames() {
 function testOrdinalNotificationReferencesSelectWithinMatches() {
   const match = resolveAndroidNotificationReference([
     { app: "Second", title: "Payment card", text: "Statement ready" },
+    { app: "Gmail", title: "Reddit digest", text: "Trending posts from Reddit" },
     { app: "Reddit", title: "First thread", text: "r/vivecoding" },
     { app: "Reddit", title: "Local models thread", text: "r/localmodels" },
   ], "Open the second Reddit one");
 
-  assert.equal(match?.index, 2);
+  assert.equal(match?.index, 3);
   assert.equal(match?.notification.title, "Local models thread");
   console.log("OK: ordinal notification references select within matched notifications");
 }
