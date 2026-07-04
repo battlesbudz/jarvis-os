@@ -1474,7 +1474,22 @@ function filterToolCallsToAvailableTools(
   if (!params.tools?.length) return toolCalls;
   const available = availableFunctionToolNames(toolsForLocalTurn(params));
   if (available.size === 0) return [];
-  return toolCalls.filter((toolCall) => available.has(toolCall.function.name));
+  return toolCalls.filter((toolCall) =>
+    !isHiddenPhoneUrlToolCall(params, toolCall) &&
+    available.has(toolCall.function.name)
+  );
+}
+
+function isHiddenPhoneUrlToolCall(
+  params: ProviderQueryParams,
+  toolCall: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall,
+): boolean {
+  if (shouldExposePhoneUrlTool(params)) return false;
+  if (toolCall.function.name === "android_open_phone_url") return true;
+  if (toolCall.function.name !== "daemon_action") return false;
+  const args = toolArgumentsObject(toolCall.function.arguments);
+  if (!args) return false;
+  return normalizeDaemonActionArguments(args).action === "android_browse";
 }
 
 function looksLikeMemorySaveRequest(text: string): boolean {
