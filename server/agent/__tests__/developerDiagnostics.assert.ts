@@ -8,6 +8,7 @@ import {
   isDiagnosticCopyRequest,
   resolveDiagnosticTarget,
   resolveDiagnosticTargetFromText,
+  resolveVoiceDiagnosticFollowupTarget,
   shouldClarifyVoiceDiagnosticTarget,
   type DiagnosticTurnRecord,
 } from "@shared/turnDiagnostics";
@@ -143,6 +144,9 @@ function testVoiceClarificationAndNoAudioBytes() {
   ];
   assert.equal(shouldClarifyVoiceDiagnosticTarget("copy details", records), true);
   assert.equal(shouldClarifyVoiceDiagnosticTarget("copy last turn details", records), false);
+  assert.equal(resolveVoiceDiagnosticFollowupTarget("last failed action"), "last failed action");
+  assert.equal(resolveVoiceDiagnosticFollowupTarget("No, just the last turn."), "last turn");
+  assert.equal(resolveVoiceDiagnosticFollowupTarget("read my last notification"), null);
 
   const bundle = buildTurnDiagnosticBundle({
     turnId: "voice-turn",

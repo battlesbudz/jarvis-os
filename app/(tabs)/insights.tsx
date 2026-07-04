@@ -73,6 +73,7 @@ import {
   inferRuntimeIntent,
   isDiagnosticCopyRequest,
   resolveDiagnosticTargetFromText,
+  resolveVoiceDiagnosticFollowupTarget,
   shouldClarifyVoiceDiagnosticTarget,
   type DiagnosticTurnRecord,
   type DiagnosticVoiceTrace,
@@ -2088,17 +2089,19 @@ export default function InsightsScreen() {
     hasScrolledRef.current = false;
 
     const normalizedVoiceText = userMsg.content.toLowerCase();
-    const isVoiceDiagnosticFollowup = origin.source === 'voice'
-      && pendingVoiceDiagnosticCopyRef.current
-      && /\b(last|failed|turn|action)\b/.test(normalizedVoiceText);
+    const voiceDiagnosticFollowupTarget = origin.source === 'voice' && pendingVoiceDiagnosticCopyRef.current
+      ? resolveVoiceDiagnosticFollowupTarget(normalizedVoiceText)
+      : null;
+    const isVoiceDiagnosticFollowup = !!voiceDiagnosticFollowupTarget;
+    if (origin.source === 'voice' && pendingVoiceDiagnosticCopyRef.current && !isVoiceDiagnosticFollowup && !isDiagnosticCopyRequest(userMsg.content)) {
+      pendingVoiceDiagnosticCopyRef.current = false;
+    }
     if (origin.source === 'voice' && (isDiagnosticCopyRequest(userMsg.content) || isVoiceDiagnosticFollowup)) {
       const records = getDiagnosticRecords();
       let assistantText = '';
       let copiedTurnId: string | null = null;
       let copyError: string | null = null;
-      let resolvedTarget = isVoiceDiagnosticFollowup && /\bfailed|action\b/.test(normalizedVoiceText)
-        ? 'last failed action'
-        : 'last turn';
+      let resolvedTarget = voiceDiagnosticFollowupTarget ?? 'last turn';
 
       if (records.length === 0) {
         pendingVoiceDiagnosticCopyRef.current = false;

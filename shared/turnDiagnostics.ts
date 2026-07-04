@@ -68,6 +68,8 @@ export type DiagnosticTargetResolution =
   | { ok: true; record: DiagnosticTurnRecord; ambiguous: false }
   | { ok: false; reason: "not_found" | "empty" | "ambiguous"; ambiguous: boolean; candidates?: DiagnosticTurnRecord[] };
 
+export type VoiceDiagnosticFollowupTarget = "last failed action" | "last turn";
+
 export function estimateDiagnosticContext(value: unknown): { chars: number; approximateTokens: number } {
   const serialized = typeof value === "string" ? value : JSON.stringify(value ?? null);
   const chars = serialized.length;
@@ -209,6 +211,15 @@ export function resolveDiagnosticTargetFromText(
   }
 
   return resolveDiagnosticTarget(actionableRecords, { kind: "last" });
+}
+
+export function resolveVoiceDiagnosticFollowupTarget(text: string): VoiceDiagnosticFollowupTarget | null {
+  const normalized = text.trim().toLowerCase().replace(/[.?!]+$/g, "");
+  if (/^(?:the\s+)?(?:last\s+)?failed\s+action$/.test(normalized)) return "last failed action";
+  if (/^last\s+failed$/.test(normalized)) return "last failed action";
+  if (/^failed\s+action$/.test(normalized)) return "last failed action";
+  if (/^(?:no,?\s*)?(?:just\s+)?(?:the\s+)?(?:last|previous)\s+turn$/.test(normalized)) return "last turn";
+  return null;
 }
 
 export function shouldClarifyVoiceDiagnosticTarget(text: string, recentRecords: DiagnosticTurnRecord[]): boolean {
