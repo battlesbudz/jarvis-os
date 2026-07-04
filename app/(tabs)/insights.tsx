@@ -72,6 +72,7 @@ import {
   getActionableDiagnosticRecords,
   inferRuntimeIntent,
   isDiagnosticCopyRequest,
+  resolveDiagnosticCopyRequestTarget,
   resolveDiagnosticTargetFromText,
   resolveVoiceDiagnosticFollowupTarget,
   shouldClarifyVoiceDiagnosticTarget,
@@ -289,6 +290,10 @@ interface MessageBubbleProps {
     message: ChatMessage,
     target?: { reason: 'message' | 'action'; actionIndex?: number; action?: ExecutedAction },
   ) => void;
+}
+
+function persistChatHistory(messages: ChatMessage[]) {
+  saveChatHistory(messages.map(({ diagnostics: _diagnostics, ...message }) => message));
 }
 
 function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, onSpeak, isSpeaking, isStreaming, onConfirmAction, onDiscordConnect, onCopyDiagnostics }: MessageBubbleProps) {
@@ -1788,7 +1793,7 @@ export default function InsightsScreen() {
         const updated = [...prev];
         const idx = updated.findIndex(m => m.id === proactiveId);
         if (idx !== -1) updated[idx] = { ...updated[idx], content: fullContent };
-        saveChatHistory(updated);
+        persistChatHistory(updated);
         return updated;
       });
     } catch {}
@@ -1867,7 +1872,7 @@ export default function InsightsScreen() {
           };
           // Prepend so it appears at the top of the chat (most recent)
           const updated = [briefMsg, ...prev];
-          saveChatHistory(updated);
+          persistChatHistory(updated);
           return updated;
         });
       }
@@ -1895,7 +1900,7 @@ export default function InsightsScreen() {
             } : {}),
           };
           const updated = [pendingMsg, ...prev];
-          saveChatHistory(updated);
+          persistChatHistory(updated);
           return updated;
         });
       }
@@ -2101,7 +2106,9 @@ export default function InsightsScreen() {
       let assistantText = '';
       let copiedTurnId: string | null = null;
       let copyError: string | null = null;
-      let resolvedTarget = voiceDiagnosticFollowupTarget ?? 'last turn';
+      let resolvedTarget = voiceDiagnosticFollowupTarget
+        ?? resolveDiagnosticCopyRequestTarget(userMsg.content)
+        ?? 'last turn';
 
       if (records.length === 0) {
         pendingVoiceDiagnosticCopyRef.current = false;
@@ -2188,7 +2195,7 @@ export default function InsightsScreen() {
       };
       setMessages(prev => {
         const updated = [assistantMsg, userMsg, ...prev];
-        saveChatHistory(updated);
+        persistChatHistory(updated);
         return updated;
       });
       setInput('');
@@ -2202,7 +2209,7 @@ export default function InsightsScreen() {
 
     setMessages(prev => {
       const updated = [userMsg, ...prev];
-      saveChatHistory(updated);
+      persistChatHistory(updated);
       return updated;
     });
     setInput('');
@@ -2383,7 +2390,7 @@ export default function InsightsScreen() {
                       }),
                     };
                   }
-                  saveChatHistory(updated);
+                  persistChatHistory(updated);
                   return updated;
                 });
                 break outer;
@@ -2398,7 +2405,7 @@ export default function InsightsScreen() {
                   const updated = [...prev];
                   const idx = updated.findIndex(m => m.id === assistantId);
                   if (idx !== -1) updated[idx] = { ...updated[idx], pendingConfirm };
-                  saveChatHistory(updated);
+                  persistChatHistory(updated);
                   return updated;
                 });
               } else if (parsed.type === 'searching') {
@@ -2442,7 +2449,7 @@ export default function InsightsScreen() {
                   const idx = updated.findIndex(m => m.id === assistantId);
                   if (idx !== -1) {
                     updated[idx] = { ...updated[idx], executedActions };
-                    saveChatHistory(updated);
+                    persistChatHistory(updated);
                   }
                   return updated;
                 });
@@ -2463,7 +2470,7 @@ export default function InsightsScreen() {
                       update.mcpAttachments = [...existing, ...parsedAtts];
                     }
                     updated[idx] = { ...updated[idx], ...update };
-                    saveChatHistory(updated);
+                    persistChatHistory(updated);
                   }
                   return updated;
                 });
@@ -2510,7 +2517,7 @@ export default function InsightsScreen() {
                   modelErrors: diagnosticModelErrors,
                 }),
               };
-              saveChatHistory(updated);
+              persistChatHistory(updated);
               return updated;
             }
             return prev;
@@ -2546,7 +2553,7 @@ export default function InsightsScreen() {
             }),
           };
         }
-        saveChatHistory(updated);
+        persistChatHistory(updated);
         return updated;
       });
 
@@ -2584,7 +2591,7 @@ export default function InsightsScreen() {
           const updated = [...prev];
           const idx = updated.findIndex(m => m.id === assistantId);
           if (idx !== -1) updated[idx] = { ...updated[idx], actions, followups };
-          saveChatHistory(updated);
+          persistChatHistory(updated);
           return updated;
         });
       } catch {}
@@ -2633,7 +2640,7 @@ export default function InsightsScreen() {
                 modelErrors: [error instanceof Error ? { message: error.message, name: error.name } : String(error)],
               }),
             };
-            saveChatHistory(updated);
+            persistChatHistory(updated);
             return updated;
           }
           return prev;
@@ -2658,7 +2665,7 @@ export default function InsightsScreen() {
                 }),
               }
             : message);
-          saveChatHistory(updated);
+          persistChatHistory(updated);
           return updated;
         }
         // If phone actions were underway when the stream dropped, the task likely
@@ -2679,7 +2686,7 @@ export default function InsightsScreen() {
           }),
         };
         const updated = [errMsg, ...prev.filter(m => m.id !== assistantId)];
-        saveChatHistory(updated);
+        persistChatHistory(updated);
         return updated;
       });
     }
@@ -2758,7 +2765,7 @@ export default function InsightsScreen() {
             content: 'Got it — I\'ll leave that for now.',
           };
         }
-        saveChatHistory(updated);
+        persistChatHistory(updated);
         return updated;
       });
       try {
@@ -2775,7 +2782,7 @@ export default function InsightsScreen() {
               const updated = [...prev];
               const idx = updated.findIndex(m => m.id === msgId);
               if (idx !== -1) updated[idx] = { ...updated[idx], content: data.content };
-              saveChatHistory(updated);
+              persistChatHistory(updated);
               return updated;
             });
           }
@@ -2803,7 +2810,7 @@ export default function InsightsScreen() {
               content: data.error || 'Could not execute that action. The confirmation may have expired.',
             };
           }
-          saveChatHistory(updated);
+          persistChatHistory(updated);
           return updated;
         });
         return;
@@ -2827,7 +2834,7 @@ export default function InsightsScreen() {
             executedActions: [execAction],
           };
         }
-        saveChatHistory(updated);
+        persistChatHistory(updated);
         return updated;
       });
     } catch {
@@ -2841,7 +2848,7 @@ export default function InsightsScreen() {
             content: 'Something went wrong while executing that action.',
           };
         }
-        saveChatHistory(updated);
+        persistChatHistory(updated);
         return updated;
       });
     }
@@ -2892,7 +2899,7 @@ export default function InsightsScreen() {
             } else {
               updated.unshift(confirmMsg);
             }
-            saveChatHistory(updated);
+            persistChatHistory(updated);
             return updated;
           });
         }

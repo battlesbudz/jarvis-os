@@ -217,6 +217,13 @@ export function resolveDiagnosticTargetFromText(
   return resolveDiagnosticTarget(actionableRecords, { kind: "last" });
 }
 
+export function resolveDiagnosticCopyRequestTarget(text: string): VoiceDiagnosticFollowupTarget | null {
+  const normalized = text.trim().toLowerCase();
+  if (/\b(failed action|last failed|failed)\b/.test(normalized)) return "last failed action";
+  if (/\b(last turn|this turn|current turn|previous turn)\b/.test(normalized)) return "last turn";
+  return null;
+}
+
 export function resolveVoiceDiagnosticFollowupTarget(text: string): VoiceDiagnosticFollowupTarget | null {
   const normalized = text.trim().toLowerCase().replace(/[.?!]+$/g, "");
   if (/^(?:the\s+)?(?:last\s+)?failed\s+action$/.test(normalized)) return "last failed action";

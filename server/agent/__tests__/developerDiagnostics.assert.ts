@@ -7,6 +7,7 @@ import {
   getActionableDiagnosticRecords,
   getDiagnosticRecordsForUser,
   isDiagnosticCopyRequest,
+  resolveDiagnosticCopyRequestTarget,
   resolveDiagnosticTarget,
   resolveDiagnosticTargetFromText,
   resolveVoiceDiagnosticFollowupTarget,
@@ -122,6 +123,15 @@ function testTelegramTargetResolution() {
   const failedFromText = resolveDiagnosticTargetFromText(records, "copy last failed details");
   assert.equal(failedFromText.ok, true);
   if (failedFromText.ok) assert.equal(failedFromText.record.turnId, "newer");
+  assert.equal(resolveDiagnosticCopyRequestTarget("copy last failed details"), "last failed action");
+
+  const successfulAfterFailure = [
+    makeRecord({ turnId: "success-after-failure", messageId: 106, createdAt: "2026-07-04T00:05:00.000Z" }),
+    makeRecord({ turnId: "older-failure", messageId: 107, createdAt: "2026-07-04T00:04:00.000Z", result: "error" }),
+  ];
+  const explicitFailed = resolveDiagnosticTargetFromText(successfulAfterFailure, "copy last failed details");
+  assert.equal(explicitFailed.ok, true);
+  if (explicitFailed.ok) assert.equal(explicitFailed.record.turnId, "older-failure");
 
   const withClarification = [
     makeRecord({
