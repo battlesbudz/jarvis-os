@@ -84,11 +84,17 @@ async function testExpiredWorkingContextCompactsIntoRecentContext(): Promise<voi
   };
   const inserted: PlannedMemoryRecord[] = [];
   const stale: Array<{ id: string; memoryId: string; claimUpdatedAt: Date | string }> = [];
+  const calls: string[] = [];
   const deps: WorkingContextDeps = {
     async upsertWorkingContext(record) {
       return record;
     },
+    async expireNonCompactingWorkingContext() {
+      calls.push("expire-non-compacting");
+      return 0;
+    },
     async listExpiredWorkingContext() {
+      calls.push("list-expired");
       return [expired];
     },
     async insertRecentContextMemory(record) {
@@ -109,6 +115,7 @@ async function testExpiredWorkingContextCompactsIntoRecentContext(): Promise<voi
   assert.equal(inserted[0]?.reviewStatus, "active");
   assert.match(inserted[0]?.content ?? "", /Recent chat context/);
   assert.deepEqual(stale, [{ id: "wc-1", memoryId: "recent-1", claimUpdatedAt: "2026-06-26T12:00:00.000Z" }]);
+  assert.deepEqual(calls, ["expire-non-compacting", "list-expired"]);
   console.log("OK: expired working context compacts into recent short-term context");
 }
 

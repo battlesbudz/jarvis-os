@@ -184,7 +184,7 @@ export interface MemoryWritePipelineDeps {
 
 export interface WorkingContextDeps {
   upsertWorkingContext(record: WorkingContextRecord): Promise<WorkingContextRecord>;
-  expireNonCompactingWorkingContext?(now: Date, scopeTypes: string[]): Promise<number>;
+  expireNonCompactingWorkingContext(now: Date, scopeTypes: string[]): Promise<number>;
   listExpiredWorkingContext(now: Date, limit: number): Promise<ExpiredWorkingContextRow[]>;
   insertRecentContextMemory(record: PlannedMemoryRecord): Promise<{ id: string }>;
   markWorkingContextStale(id: string, memoryId: string, claimUpdatedAt: Date | string): Promise<void>;
@@ -632,7 +632,7 @@ export async function compactExpiredWorkingContext(
   const now = input.now ?? new Date();
   const nonCompactingScopeTypes = Array.from(NON_COMPACTING_WORKING_CONTEXT_SCOPE_TYPES);
   if (nonCompactingScopeTypes.length > 0) {
-    await deps.expireNonCompactingWorkingContext?.(now, nonCompactingScopeTypes);
+    await deps.expireNonCompactingWorkingContext(now, nonCompactingScopeTypes);
   }
   const rows = await deps.listExpiredWorkingContext(now, Math.max(1, Math.min(input.limit ?? 100, 500)));
   const memoryIds: string[] = [];

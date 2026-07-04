@@ -11,7 +11,7 @@ assert.match(
 );
 assert.match(
   source,
-  /ne\(schema\.memoryWorkingContext\.scopeType, "local_runtime_observation"\)/,
+  /LOCAL_RUNTIME_OBSERVATION_SCOPE_TYPE = "local_runtime_observation"[\s\S]*ne\(schema\.memoryWorkingContext\.scopeType, LOCAL_RUNTIME_OBSERVATION_SCOPE_TYPE\)/,
   "dream corpus should exclude ephemeral local runtime observations",
 );
 assert.match(

@@ -33,6 +33,8 @@ import {
 import { evaluateMemoryAutoReviewDecision } from "./autoReview";
 import { keepPendingMemoryWrites, writeMemoryThroughPipeline } from "./writePipeline";
 
+const LOCAL_RUNTIME_OBSERVATION_SCOPE_TYPE = "local_runtime_observation";
+
 async function isMemoryReviewEnabledForUser(userId: string): Promise<boolean> {
   try {
     const rows = await db
@@ -175,7 +177,7 @@ async function buildCorpus(userId: string): Promise<CorpusResult> {
         and(
           eq(schema.memoryWorkingContext.userId, userId),
           eq(schema.memoryWorkingContext.state, "active"),
-          ne(schema.memoryWorkingContext.scopeType, "local_runtime_observation"),
+          ne(schema.memoryWorkingContext.scopeType, LOCAL_RUNTIME_OBSERVATION_SCOPE_TYPE),
           gt(schema.memoryWorkingContext.expiresAt, now),
         ),
       )
