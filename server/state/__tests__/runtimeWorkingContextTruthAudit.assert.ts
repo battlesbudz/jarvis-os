@@ -694,6 +694,42 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(confirmedSchemeUrlOpen.status, "allow");
 
+  const confirmedYoutubeUrlAsAppCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open https://youtube.com/watch?v=abc.",
+    responseText: "I opened YouTube.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "https://youtube.com/watch?v=abc",
+    }],
+  });
+  assert.equal(confirmedYoutubeUrlAsAppCompletion.status, "allow");
+
+  const confirmedSpotifyDeepLinkAsAppCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open spotify:search:foo.",
+    responseText: "I opened Spotify.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "spotify:search:foo",
+    }],
+  });
+  assert.equal(confirmedSpotifyDeepLinkAsAppCompletion.status, "allow");
+
+  const unrelatedUrlDoesNotConfirmAppCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open https://example.com.",
+    responseText: "I opened YouTube.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "https://example.com",
+    }],
+  });
+  assert.equal(unrelatedUrlDoesNotConfirmAppCompletion.status, "blocked_false_completion");
+
   const confirmedDeepLinkOpen = auditLocalRuntimeResponse({
     userMessage: "Open geo:0,0?q=coffee.",
     responseText: "I opened geo:0,0?q=coffee.",

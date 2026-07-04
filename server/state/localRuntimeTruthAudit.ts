@@ -287,8 +287,8 @@ function confirmingToolNamesForClaim(claim: { toolName: string; target?: string 
   if (claim.toolName !== "android_open_app_by_name") return new Set([claim.toolName]);
   const target = compactText(claim.target).toLowerCase();
   if (isUrlLikeActionTarget(target)) return new Set(["android_open_phone_url"]);
-  if (/\byoutube\b/i.test(target)) return new Set(["android_open_app_by_name", "android_youtube_search"]);
-  return new Set(["android_open_app_by_name"]);
+  if (/\byoutube\b/i.test(target)) return new Set(["android_open_app_by_name", "android_youtube_search", "android_open_phone_url"]);
+  return new Set(["android_open_app_by_name", "android_open_phone_url"]);
 }
 
 function youtubeSearchClaimQuery(target: string): string {
