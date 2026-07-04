@@ -503,6 +503,14 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(confirmedPackageNameCompletion.status, "allow");
 
+  const confirmedPackageIdCompletion = auditLocalRuntimeResponse({
+    userMessage: "Open com.google.android.youtube.",
+    responseText: "I opened com.google.android.youtube.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{ toolName: "android_open_app_by_name", ok: true, target: "com.google.android.youtube" }],
+  });
+  assert.equal(confirmedPackageIdCompletion.status, "allow");
+
   const confirmedYoutubeSearch = auditLocalRuntimeResponse({
     userMessage: "Search YouTube for AI videos.",
     responseText: "I opened YouTube.",
