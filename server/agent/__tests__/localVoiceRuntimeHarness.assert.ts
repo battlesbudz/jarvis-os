@@ -359,6 +359,39 @@ async function testPlainAppOpenDoesNotUseNotificationTitleReference() {
   console.log("OK: plain app opens do not use notification title references");
 }
 
+async function testMessagesAppOpenDoesNotUseNotificationMessageReference() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: [{
+      type: "notification",
+      notifications: [
+        { app: "Gmail", title: "New messages", text: "Unread social messages are waiting" },
+      ],
+    }],
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const open = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open Messages",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot open apps." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "Messages", action: "open", success: true }],
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:01:00.000Z"),
+  });
+
+  assert.equal(open.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(open.androidExecutions[0]?.label, "Opened Messages");
+  assert.doesNotMatch(open.canonicalResponse, /Gmail/i);
+  console.log("OK: Messages app opens do not use notification message references");
+}
+
 async function testNegatedNotificationFollowUpsDoNotUseWorkingContext() {
   const first = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
@@ -889,6 +922,7 @@ async function main() {
   await testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns();
   await testGenericOneAppRequestDoesNotUseNotificationContext();
   await testPlainAppOpenDoesNotUseNotificationTitleReference();
+  await testMessagesAppOpenDoesNotUseNotificationMessageReference();
   await testNegatedNotificationFollowUpsDoNotUseWorkingContext();
   await testLaterPositiveNotificationClauseAfterNegationRuns();
   await testEarlierPositiveNotificationClauseSurvivesLaterNegation();

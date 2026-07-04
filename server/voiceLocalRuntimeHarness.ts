@@ -529,7 +529,7 @@ function notificationReferenceNamesApp(transcript: string, notification: LocalVo
 }
 
 function hasNotificationReferent(transcript: string): boolean {
-  return /\b(?:one|ones|notification|notifications|alert|alerts|message|messages)\b/i.test(transcript) ||
+  return /\b(?:one|ones|notification|notifications|alert|alerts)\b/i.test(transcript) ||
     /\b(?:first|1st|second|2nd|third|3rd|last)\b/i.test(transcript);
 }
 
