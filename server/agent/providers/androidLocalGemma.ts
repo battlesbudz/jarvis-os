@@ -1372,6 +1372,22 @@ function localRuntimeAuditEvidence(
   return [...stateCardEvidence, ...currentTurnToolEvidence(messages)];
 }
 
+function localRuntimeConfirmedRequestText(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): string | null {
+  if (!looksLikeApprovalConfirmation(latestUserText(messages))) return null;
+  for (let index = messages.length - 2; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== "assistant") continue;
+    const assistantText = textFromContent(message.content).trim();
+    if (!/\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead|proceed)\b/i.test(assistantText)) {
+      return null;
+    }
+    return assistantText || null;
+  }
+  return null;
+}
+
 async function auditedLocalRuntimeFinalText(
   params: ProviderQueryParams,
   text: string,
@@ -1380,6 +1396,7 @@ async function auditedLocalRuntimeFinalText(
   if (options.preserveRequestedJson) return text;
   const audit = auditLocalRuntimeResponse({
     userMessage: latestUserText(params.messages),
+    confirmedRequestText: localRuntimeConfirmedRequestText(params.messages),
     responseText: text,
     capabilityState: await localRuntimeCapabilityState(params),
     actionResults: localRuntimeActionResults(params.messages),

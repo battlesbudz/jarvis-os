@@ -268,6 +268,13 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(mixedUserAndJarvisAppDenial.status, "blocked_false_denial");
 
+  const mixedContractedAccessDenial = auditLocalRuntimeResponse({
+    userMessage: "Why can't I open Gmail?",
+    responseText: "You can't open Gmail because I don't have access to apps.",
+    capabilityState: { app_control: "available" },
+  });
+  assert.equal(mixedContractedAccessDenial.status, "blocked_false_denial");
+
   const failedAppActionDenial = auditLocalRuntimeResponse({
     userMessage: "Open Gmail.",
     responseText: "I can't open Gmail.",
@@ -484,6 +491,14 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
     actionResults: [],
   });
   assert.equal(falseTrailingDeepLinkCompletion.status, "blocked_false_completion");
+
+  const falseConfirmedUrlCompletion = auditLocalRuntimeResponse({
+    userMessage: "yes",
+    confirmedRequestText: "Should I open example.com?",
+    responseText: "I opened example.com.",
+    capabilityState: { app_control: "available" },
+  });
+  assert.equal(falseConfirmedUrlCompletion.status, "blocked_false_completion");
 
   const confirmedCompletion = auditLocalRuntimeResponse({
     userMessage: "Open YouTube.",

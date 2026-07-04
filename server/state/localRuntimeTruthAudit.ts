@@ -17,6 +17,7 @@ export interface LocalRuntimeActionResult {
 
 export interface LocalRuntimeTruthAuditInput {
   userMessage: string;
+  confirmedRequestText?: string | null;
   responseText?: string | null;
   capabilityState?: Partial<Record<LocalRuntimeCapabilityName, LocalRuntimeCapabilityAvailability>>;
   actionResults?: LocalRuntimeActionResult[];
@@ -176,15 +177,15 @@ function deniedAvailableCapability(
   userMessage: string,
   capabilities: LocalRuntimeTruthAuditInput["capabilityState"],
 ): LocalRuntimeCapabilityName | null {
-  const firstPersonDenial = /\bi\s+(?:can(?:not|'t)|do\s+not\s+have\s+access|am\s+unable\s+to|am\s+not\s+able\s+to|cannot|can't|unable\s+to|not\s+able\s+to)\b/i;
+  const firstPersonDenial = /\bi\s+(?:can(?:not|'t)|(?:do\s+not|don.?t)\s+have\s+access|am\s+unable\s+to|am\s+not\s+able\s+to|cannot|can't|unable\s+to|not\s+able\s+to)\b/i;
   if (
-    /\byou\s+(?:can(?:not|'t)|do\s+not\s+have\s+access|are\s+unable\s+to|are\s+not\s+able\s+to)\b/i.test(text) &&
+    /\byou\s+(?:can(?:not|'t)|(?:do\s+not|don.?t)\s+have\s+access|are\s+unable\s+to|are\s+not\s+able\s+to)\b/i.test(text) &&
     !firstPersonDenial.test(text)
   ) {
     return null;
   }
 
-  const denial = /\b(?:i\s+)?(?:can(?:not|'t)|do\s+not\s+have\s+access|unable\s+to|not\s+able\s+to)\b/i;
+  const denial = /\b(?:i\s+)?(?:can(?:not|'t)|(?:do\s+not|don.?t)\s+have\s+access|unable\s+to|not\s+able\s+to)\b/i;
   if (!denial.test(text)) return null;
 
   const bareStart = bareStartTarget(text);
@@ -448,9 +449,13 @@ export function auditLocalRuntimeResponse(input: LocalRuntimeTruthAuditInput): L
 
   const actionResults = input.actionResults ?? [];
   const completionClaim = completionClaimTarget(text);
+  const askedForAuditedAction = !!completionClaim && [
+    input.userMessage,
+    input.confirmedRequestText ?? "",
+  ].some((message) => userAskedForAuditedLocalAction(message, completionClaim));
   if (
     completionClaim &&
-    (hasMatchingLocalActionResult(completionClaim, actionResults) || userAskedForAuditedLocalAction(input.userMessage, completionClaim)) &&
+    (hasMatchingLocalActionResult(completionClaim, actionResults) || askedForAuditedAction) &&
     !hasConfirmingActionResult(completionClaim, actionResults)
   ) {
     return {
