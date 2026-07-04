@@ -73,4 +73,10 @@ assert.match(
   "The speaking stop control should interrupt and return to listening",
 );
 
+assert.match(
+  insights,
+  /if\s*\(typeof status\.metering !== 'number'\)\s*\{\s*return;\s*\}/,
+  "Native Talk Mode should skip missing metering samples instead of treating them as silence",
+);
+
 console.log("OK: in-app local voice loop wiring keeps chat, TTS, cleanup, and interrupt behavior aligned");

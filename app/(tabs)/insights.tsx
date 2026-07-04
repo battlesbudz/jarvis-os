@@ -1200,7 +1200,10 @@ export default function InsightsScreen() {
             }
             try {
               const status = audioRecorder.getStatus();
-              const db = typeof status.metering === 'number' ? status.metering : -Infinity;
+              if (typeof status.metering !== 'number') {
+                return;
+              }
+              const db = status.metering;
               silenceState = updateLocalVoiceSilenceState(silenceState, {
                 decibels: db,
                 pollMs: LOCAL_VOICE_SILENCE_POLL_MS,
