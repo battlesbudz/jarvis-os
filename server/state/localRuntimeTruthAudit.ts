@@ -392,6 +392,9 @@ function looksLikeAndroidPackageId(value: string): boolean {
 }
 
 function webUrlTargetsMatch(claimTarget: string, resultTarget: string): boolean | null {
+  const customSchemeMatch = customSchemeTargetsMatch(claimTarget, resultTarget);
+  if (customSchemeMatch !== null) return customSchemeMatch;
+
   const claimUrl = webUrlTarget(claimTarget);
   if (!claimUrl) return null;
   const resultUrl = leadingWebUrlTarget(resultTarget);
@@ -405,6 +408,25 @@ function webUrlTargetsMatch(claimTarget: string, resultTarget: string): boolean 
 
 function urlSchemeTarget(value: string): string | null {
   return value.match(/^\s*([a-z][a-z0-9+.-]*):/i)?.[1]?.toLowerCase() ?? null;
+}
+
+function leadingCustomSchemeTarget(value: string): { scheme: string; value: string } | null {
+  const match = value.match(/^\s*([a-z][a-z0-9+.-]*):[^\s<>"']*/i);
+  const scheme = match?.[1]?.toLowerCase();
+  if (!match?.[0] || !scheme || scheme === "http" || scheme === "https") return null;
+  return {
+    scheme,
+    value: match[0].replace(/[),.;]+$/g, "").toLowerCase(),
+  };
+}
+
+function customSchemeTargetsMatch(claimTarget: string, resultTarget: string): boolean | null {
+  const claimDeepLink = leadingCustomSchemeTarget(claimTarget);
+  if (!claimDeepLink) return null;
+  const resultDeepLink = leadingCustomSchemeTarget(resultTarget);
+  return !!resultDeepLink &&
+    resultDeepLink.scheme === claimDeepLink.scheme &&
+    resultDeepLink.value === claimDeepLink.value;
 }
 
 function hostMatchesSuffix(host: string, suffix: string): boolean {

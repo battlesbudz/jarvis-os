@@ -766,6 +766,30 @@ function testTruthAuditBlocksFalseDenialsAndCompletions() {
   });
   assert.equal(genericWazeIntentDoesNotConfirmMapsCompletion.status, "blocked_false_completion");
 
+  const confirmedMailtoDeepLinkOpen = auditLocalRuntimeResponse({
+    userMessage: "Open mailto:foo@gmail.com.",
+    responseText: "I opened mailto:foo@gmail.com.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "mailto:foo@gmail.com",
+    }],
+  });
+  assert.equal(confirmedMailtoDeepLinkOpen.status, "allow");
+
+  const confirmedWazePayloadDeepLinkOpen = auditLocalRuntimeResponse({
+    userMessage: "Open waze://?q=https://maps.google.com.",
+    responseText: "I opened waze://?q=https://maps.google.com.",
+    capabilityState: { app_control: "available" },
+    actionResults: [{
+      toolName: "android_open_phone_url",
+      ok: true,
+      target: "waze://?q=https://maps.google.com",
+    }],
+  });
+  assert.equal(confirmedWazePayloadDeepLinkOpen.status, "allow");
+
   const confirmedDeepLinkOpen = auditLocalRuntimeResponse({
     userMessage: "Open geo:0,0?q=coffee.",
     responseText: "I opened geo:0,0?q=coffee.",
