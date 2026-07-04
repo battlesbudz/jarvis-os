@@ -493,6 +493,7 @@ function hasUrlBackedNonPhoneTool(tools: ProviderQueryParams["tools"]): boolean 
 
 function shouldExposePhoneUrlTool(params: ProviderQueryParams): boolean {
   return looksLikePhoneUrlActionRequest(latestUserText(params.messages)) ||
+    looksLikePhoneUrlActionRequest(localRuntimeConfirmedRequestText(params.messages) ?? "") ||
     isPhoneUrlToolConfirmationTurn(params.messages);
 }
 
@@ -1383,10 +1384,16 @@ function localRuntimeConfirmedRequestText(
     if (!/\b(?:confirm|approve|permission|should i|do you want me|want me to|shall i|go ahead|proceed)\b/i.test(assistantText)) {
       return null;
     }
+    if (!looksLikeLocalActionConfirmationPrompt(assistantText)) return null;
     const previousUserText = previousUserTextBefore(messages, index);
     return [previousUserText, assistantText].filter(Boolean).join("\n") || null;
   }
   return null;
+}
+
+function looksLikeLocalActionConfirmationPrompt(text: string): boolean {
+  return /\b(?:open|launch|start|browse|visit|go\s+to|navigate(?:\s+to)?|pull\s+up|take|capture|read|show|list|check|view|tap|click|press|swipe|scroll|type)\b/i.test(text) ||
+    /\b(?:proceed|go ahead|continue|do it)\b/i.test(text);
 }
 
 function localRuntimeEffectiveRequestText(
