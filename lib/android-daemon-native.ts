@@ -1,4 +1,4 @@
-import { NativeModules, Platform } from "react-native";
+import { DeviceEventEmitter, NativeModules, Platform } from "react-native";
 
 export type AndroidDaemonStatus = {
   available: boolean;
@@ -28,6 +28,12 @@ export type AndroidLocalGemmaValidationOptions = {
   cachePolicy?: "default" | "fresh" | "none";
   profileId?: string;
   profileLabel?: string;
+};
+
+export type AndroidOutsideAppVoiceControlEvent = {
+  action?: string;
+  state?: string;
+  outsideApp?: boolean;
 };
 
 const unavailableStatus: AndroidDaemonStatus = {
@@ -133,6 +139,15 @@ export async function setAndroidOutsideAppVoiceSessionState(
     return null;
   }
   return NativeJarvisDaemon.setOutsideAppVoiceSessionState(state);
+}
+
+export function addAndroidOutsideAppVoiceControlListener(
+  listener: (event: AndroidOutsideAppVoiceControlEvent) => void,
+): { remove: () => void } {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon) {
+    return { remove: () => {} };
+  }
+  return DeviceEventEmitter.addListener("JarvisVoiceSessionControl", listener);
 }
 
 export const AndroidDaemonNative = NativeJarvisDaemon;

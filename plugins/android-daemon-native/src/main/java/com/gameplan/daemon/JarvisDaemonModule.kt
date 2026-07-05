@@ -11,13 +11,52 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableMap
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.json.JSONObject
 
 class JarvisDaemonModule(
     private val reactApplicationContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactApplicationContext) {
 
+    companion object {
+        private const val VOICE_SESSION_CONTROL_EVENT = "JarvisVoiceSessionControl"
+
+        @Volatile private var activeReactContext: ReactApplicationContext? = null
+
+        fun emitVoiceSessionControl(actionName: String, state: String) {
+            val context = activeReactContext ?: return
+            val payload = Arguments.createMap().apply {
+                putString("action", actionName)
+                putString("state", state)
+                putBoolean("outsideApp", true)
+            }
+            context
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit(VOICE_SESSION_CONTROL_EVENT, payload)
+        }
+    }
+
     override fun getName(): String = "JarvisDaemonModule"
+
+    override fun initialize() {
+        super.initialize()
+        activeReactContext = reactApplicationContext
+    }
+
+    override fun invalidate() {
+        if (activeReactContext === reactApplicationContext) activeReactContext = null
+        super.invalidate()
+    }
+
+    @ReactMethod
+    fun addListener(eventName: String) {
+        // Required by React Native NativeEventEmitter.
+    }
+
+    @ReactMethod
+    fun removeListeners(count: Int) {
+        // Required by React Native NativeEventEmitter.
+    }
 
     @ReactMethod
     fun getStatus(promise: Promise) {

@@ -68,6 +68,7 @@ import { getApiUrl, queryClient, apiRequest } from '@/lib/query-client';
 import { authFetch, getAuthToken } from '@/lib/auth-context';
 import { useWakeWord } from '@/lib/wake-word-context';
 import {
+  addAndroidOutsideAppVoiceControlListener,
   endAndroidOutsideAppVoiceSession,
   setAndroidOutsideAppVoiceSessionState,
   startAndroidOutsideAppVoiceSession,
@@ -918,6 +919,7 @@ export default function InsightsScreen() {
   const sdkSessionIdRef = useRef<string | null>(null);
   const streamingAssistantIdRef = useRef<string | null>(null);
   const isSpeakingRef = useRef(false);
+  const lastNativeVoiceInterruptAtRef = useRef(0);
   const isTranscribingRef = useRef(false);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
   const webChunksRef = useRef<Blob[]>([]);
@@ -1412,6 +1414,30 @@ export default function InsightsScreen() {
       setTimeout(() => startRecordingRef.current(), 0);
     }
   }, [markAssistantSpeechStopped, stopSpeaking]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    const subscription = addAndroidOutsideAppVoiceControlListener((event) => {
+      const action = String(event?.action ?? '').toLowerCase();
+      if (action === 'interrupt') {
+        lastNativeVoiceInterruptAtRef.current = Date.now();
+        interruptSpeakingAndListen();
+        return;
+      }
+      if (action === 'pause' || action === 'paused' || action === 'end') {
+        stopSpeaking();
+        stopRecordingSilentlyRef.current().catch(() => {});
+        return;
+      }
+      if (action === 'resume' || action === 'listening') {
+        if (action === 'listening' && Date.now() - lastNativeVoiceInterruptAtRef.current < 1000) return;
+        if (talkModeRef.current && !isSpeakingRef.current && !isRecordingRef.current) {
+          setTimeout(() => startRecordingRef.current(), 0);
+        }
+      }
+    });
+    return () => subscription.remove();
+  }, [interruptSpeakingAndListen, stopSpeaking]);
 
   const speakText = useCallback(async (text: string, assistantId?: string) => {
     if (isSpeaking && speakingTextRef.current === text) {

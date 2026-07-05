@@ -220,6 +220,7 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private fun pauseWakeCapture() {
+        JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         WakeWordService.pauseForPlayback()
         DaemonLog.add("outside_app_voice: wake capture paused")
     }
@@ -353,6 +354,7 @@ class OutsideAppVoiceSessionService : Service() {
             put("outsideApp", true)
         }
         WebSocketService.sendEvent(event.toString())
+        JarvisDaemonModule.emitVoiceSessionControl(actionName, state.wireName)
         DaemonLog.add("voice_session: $actionName state=${state.wireName}")
     }
 }
