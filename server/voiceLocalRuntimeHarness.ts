@@ -279,12 +279,6 @@ function notificationWorkingContextActive(
   return Number.isFinite(expiresAt) && expiresAt > now.getTime() ? notifications : null;
 }
 
-function queryNeedsNotificationWorkingContext(transcript: string): boolean {
-  return /\bnotifications?\b/i.test(transcript) ||
-    (/\b(?:summari[sz]e|read|open|show|tell me|repeat|again|rest|all|which)\b/i.test(transcript) &&
-      /\b(?:it|that|those|them|one|ones|last|previous|again|rest|all)\b/i.test(transcript));
-}
-
 function contextPacketFromEvents(
   events: LocalVoiceAndroidEvent[],
   transcript: string,
@@ -299,7 +293,7 @@ function contextPacketFromEvents(
     `Available phone event fixtures: ${eventTypes}`,
   ];
   const recentNotifications = notificationWorkingContextActive(workingContext, now);
-  if (recentNotifications && queryNeedsNotificationWorkingContext(transcript)) {
+  if (recentNotifications && resolveAndroidNotificationFollowUp(transcript, recentNotifications.notifications)) {
     packet.push(`Recent notifications: ${recentNotifications.summary}`);
   }
   return packet.join("\n");

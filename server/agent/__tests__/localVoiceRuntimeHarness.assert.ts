@@ -325,6 +325,38 @@ async function testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns() {
   console.log("OK: notification working context is not injected into unrelated voice turns");
 }
 
+async function testNotificationWorkingContextIsNotInjectedIntoMetaQuestions() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  for (const transcript of [
+    "What are notifications?",
+    "Summarize how Android notifications work",
+    "What are my current notifications?",
+  ]) {
+    const gemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "I can explain notifications generally." }]);
+    const result = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript,
+      gemma,
+      workingContext: first.workingContext,
+      now: new Date("2026-07-04T12:01:00.000Z"),
+    });
+
+    assert.equal(result.diagnostics.outcome, "final");
+    assert.doesNotMatch(gemma.prompts[0].contextPacket, /Recent notifications/);
+    assert.doesNotMatch(result.canonicalResponse, /Codex|Reddit|Life360/);
+  }
+  console.log("OK: notification working context is not injected into meta or current-state questions");
+}
+
 async function testGenericOneAppRequestDoesNotUseNotificationContext() {
   const first = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
@@ -973,6 +1005,7 @@ async function main() {
   testNotificationReferencePrefersAppNameTermsOverBodyMentions();
   testShortAppNameReferencesRequireWholeTokenMatches();
   await testNotificationWorkingContextIsNotInjectedIntoUnrelatedTurns();
+  await testNotificationWorkingContextIsNotInjectedIntoMetaQuestions();
   await testGenericOneAppRequestDoesNotUseNotificationContext();
   await testPlainAppOpenDoesNotUseNotificationTitleReference();
   await testMessagesAppOpenDoesNotUseNotificationMessageReference();
