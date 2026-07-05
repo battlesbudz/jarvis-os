@@ -76,8 +76,7 @@ function wantsNotificationSummaryFollowUp(transcript: string): boolean {
     return false;
   }
   const hasExplicitSummaryVerb = /\b(?:summari[sz]e|recap|go over)\b/i.test(transcript);
-  return /\b(?:my|current|recent)\s+(?:notifications?|alerts?)\b/i.test(transcript) ||
-    /\b(?:last|previous)\s+(?:notifications?|alerts?)\b/i.test(transcript) ||
+  return /\b(?:last|previous)\s+(?:notifications?|alerts?)\b/i.test(transcript) ||
     /\b(?:notifications?|alerts?)\b[\s\S]{0,32}\b(?:again|from before|you just read)\b/i.test(transcript) ||
     (hasExplicitSummaryVerb && /\b(?:that|those|these|them|it)\b/i.test(transcript));
 }

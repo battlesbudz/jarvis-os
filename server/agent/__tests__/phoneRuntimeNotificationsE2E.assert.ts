@@ -136,7 +136,11 @@ async function main() {
   const metaQuestion = resolveAndroidNotificationFollowUp("What are notifications?", followUpNotifications);
   assert.equal(metaQuestion, null, "generic notification meta questions must not reveal current notifications");
   const ownNotificationQuestion = resolveAndroidNotificationFollowUp("What are my notifications?", followUpNotifications);
-  assert.equal(ownNotificationQuestion?.kind, "summary");
+  assert.equal(ownNotificationQuestion, null, "explicit current notification requests must refresh from Android");
+  const currentNotificationQuestion = resolveAndroidNotificationFollowUp("What are my current notifications?", followUpNotifications);
+  assert.equal(currentNotificationQuestion, null, "current notification requests must not use stale follow-up context");
+  const justReadNotificationQuestion = resolveAndroidNotificationFollowUp("What were the notifications you just read?", followUpNotifications);
+  assert.equal(justReadNotificationQuestion?.kind, "summary");
 
   const olderVisibleNotification = resolveAndroidNotificationFollowUp("Read all of them", [
     { app: "Reddit", pkg: "com.reddit.frontpage", title: "Older thread", text: "Still visible", ts: Date.now() - 60 * 60 * 1000 },
