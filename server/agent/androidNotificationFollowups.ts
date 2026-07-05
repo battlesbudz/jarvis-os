@@ -71,8 +71,12 @@ function wantsNotificationReferenceRead(transcript: string, notifications: unkno
 }
 
 function wantsNotificationSummaryFollowUp(transcript: string): boolean {
-  return /\b(?:summari[sz]e|recap|what were|what are|tell me about|go over)\b/i.test(transcript) &&
-    /\b(?:notifications?|them|those|alerts?)\b/i.test(transcript);
+  if (!/\b(?:summari[sz]e|recap|what were|what are|tell me about|go over)\b/i.test(transcript)) {
+    return false;
+  }
+  return /\b(?:my|current|recent)\s+(?:notifications?|alerts?)\b/i.test(transcript) ||
+    /\b(?:notifications?|alerts?)\b[\s\S]{0,32}\b(?:again|from before|you just read)\b/i.test(transcript) ||
+    /\b(?:that|those|these|them|last|previous|again)\b/i.test(transcript);
 }
 
 function isNegatedNotificationCancellationClause(clause: string, notifications: unknown[]): boolean {

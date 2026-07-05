@@ -89,6 +89,7 @@ export interface PhoneNotification {
 
 // In-memory notification cache per user (newest first, max 60 per user)
 const userNotifications = new Map<string, PhoneNotification[]>();
+const userVoiceNotificationContexts = new Map<string, { notifications: PhoneNotification[]; observedAt: number }>();
 
 const MAX_NOTIFS_PER_USER = 60;
 const VOICE_NOTIFICATION_FOLLOWUP_TTL_MS = 5 * 60 * 1000;
@@ -98,12 +99,37 @@ export function getRecentPhoneNotifications(userId: string, limit = 20): PhoneNo
   return arr.slice(0, limit);
 }
 
-function getRecentVoiceNotificationContext(userId: string, limit = 20): PhoneNotification[] {
-  const now = Date.now();
-  return getRecentPhoneNotifications(userId, limit).filter((notification) => {
-    if (typeof notification.ts !== "number" || !Number.isFinite(notification.ts)) return true;
-    return now - notification.ts <= VOICE_NOTIFICATION_FOLLOWUP_TTL_MS;
+function normalizePhoneNotification(data: unknown): PhoneNotification | null {
+  if (!data || typeof data !== "object") return null;
+  const item = data as Record<string, unknown>;
+  const app = String(item.app || item.pkg || "Unknown").trim();
+  const pkg = String(item.pkg || "").trim();
+  return {
+    pkg,
+    app,
+    title: String(item.title || "").trim(),
+    text: String(item.text || "").trim(),
+    ts: typeof item.ts === "number" && Number.isFinite(item.ts) ? item.ts : Date.now(),
+    key: String(item.key || item.notificationKey || "").trim(),
+    hasReplyAction: item.hasReplyAction === true,
+  };
+}
+
+export function recordVoiceNotificationObservation(userId: string, notifications: unknown[]): void {
+  const normalized = notifications
+    .map(normalizePhoneNotification)
+    .filter((notification): notification is PhoneNotification => notification !== null)
+    .slice(0, 20);
+  userVoiceNotificationContexts.set(userId, {
+    notifications: normalized,
+    observedAt: Date.now(),
   });
+}
+
+function getRecentVoiceNotificationContext(userId: string, limit = 20): PhoneNotification[] {
+  const context = userVoiceNotificationContexts.get(userId);
+  if (!context || Date.now() - context.observedAt > VOICE_NOTIFICATION_FOLLOWUP_TTL_MS) return [];
+  return context.notifications.slice(0, limit);
 }
 
 interface PendingOp {

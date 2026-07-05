@@ -6,6 +6,7 @@ import {
   isAndroidDaemonActionAllowed,
   isAndroidDaemonActive,
   isDesktopDaemonActive,
+  recordVoiceNotificationObservation,
   type DaemonAction,
   type AndroidDaemonAction,
   type DaemonOp,
@@ -299,6 +300,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
             ? notificationsValue as Record<string, unknown>[]
             : [];
           const count = rawNotifications.length;
+          recordVoiceNotificationObservation(ctx.userId, rawNotifications);
 
           if (listenerEnabled && count > 0) {
             const relativeTime = (tsMs: number): string => {

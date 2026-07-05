@@ -133,6 +133,16 @@ async function main() {
   ]);
   assert.equal(messagesOpen, null, "Messages app opens must not be treated as notification-message references");
 
+  const metaQuestion = resolveAndroidNotificationFollowUp("What are notifications?", followUpNotifications);
+  assert.equal(metaQuestion, null, "generic notification meta questions must not reveal current notifications");
+  const ownNotificationQuestion = resolveAndroidNotificationFollowUp("What are my notifications?", followUpNotifications);
+  assert.equal(ownNotificationQuestion?.kind, "summary");
+
+  const olderVisibleNotification = resolveAndroidNotificationFollowUp("Read all of them", [
+    { app: "Reddit", pkg: "com.reddit.frontpage", title: "Older thread", text: "Still visible", ts: Date.now() - 60 * 60 * 1000 },
+  ]);
+  assert.equal(olderVisibleNotification?.kind, "read_all", "observed notification context must not depend on post age");
+
   console.log("All Phone Runtime notification E2E contract assertions passed.");
 }
 
