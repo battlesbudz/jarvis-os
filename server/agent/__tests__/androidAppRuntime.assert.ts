@@ -6,9 +6,19 @@ process.env.DATABASE_URL ||= "postgres://test:test@localhost:5432/test";
 
 async function main() {
   const runtimeSource = fs.readFileSync(path.resolve("server/agent/tools/androidAppRuntime.ts"), "utf8");
+  const daemonToolSource = fs.readFileSync(path.resolve("server/agent/tools/daemon.ts"), "utf8");
   assert.match(runtimeSource, /checkAndIncrementScreenshotBudget/);
   assert.match(runtimeSource, /runAndroidCaptureScreen\(args,\s*ctx\.userId,\s*ctx\)/);
   assert.match(runtimeSource, /normalizedQuery\.length > 2 && normalizedCandidate\.includes\(normalizedQuery\)/);
+  assert.match(daemonToolSource, /clearVoiceNotificationObservation/);
+  assert.doesNotMatch(
+    daemonToolSource,
+    /const count = rawNotifications\.length;\s*recordVoiceNotificationObservation\(ctx\.userId, rawNotifications\);/,
+  );
+  assert.match(
+    daemonToolSource,
+    /if \(listenerEnabled && count === 0\) \{\s*recordVoiceNotificationObservation\(ctx\.userId, \[\]\);/,
+  );
 
   const {
     ANDROID_PHONE_RUNTIME_TOOL_NAMES,
