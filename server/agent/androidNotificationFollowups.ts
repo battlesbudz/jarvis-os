@@ -79,11 +79,32 @@ function wantsNotificationSummaryFollowUp(transcript: string): boolean {
     /\b(?:that|those|these|them|last|previous|again)\b/i.test(transcript);
 }
 
-function isNegatedNotificationCancellationClause(clause: string, notifications: unknown[]): boolean {
-  if (!clauseIsNegated(clause)) return false;
-  if (!/\b(?:open|launch|show|tap|go to|read|repeat)\b/i.test(clause)) return false;
-  if (!/\b(?:it|that|this|one)\b/i.test(clause)) return false;
-  return resolveAndroidNotificationReference(notifications, clause) === null;
+function negatedNotificationCancellationAction(
+  clause: string,
+  notifications: unknown[],
+): "open" | "read" | null {
+  if (!clauseIsNegated(clause)) return null;
+  const negatesOpen = /\b(?:open|launch|show|tap|go to)\b/i.test(clause);
+  const negatesRead = /\b(?:read|repeat)\b/i.test(clause);
+  if (!negatesOpen && !negatesRead) return null;
+  if (!/\b(?:it|that|this|one)\b/i.test(clause)) return null;
+  if (resolveAndroidNotificationReference(notifications, clause) !== null) return null;
+  return negatesOpen ? "open" : "read";
+}
+
+function negatedPronounCancelsEarlierAction(
+  clauses: string[],
+  negatedClauseIndex: number,
+  action: "open" | "read",
+  notifications: unknown[],
+): boolean {
+  const earlierClauses = clauses.slice(0, negatedClauseIndex);
+  return earlierClauses.some((clause) => {
+    if (clauseIsNegated(clause)) return false;
+    return action === "open"
+      ? wantsNotificationReferenceOpen(clause, notifications)
+      : wantsNotificationReferenceRead(clause, notifications);
+  });
 }
 
 function negatedReferenceCancelsEarlierClause(
@@ -119,7 +140,13 @@ function activeNotificationWorkingContextRequest(
   const clauses = notificationWorkingContextClauses(transcript);
   for (let index = clauses.length - 1; index >= 0; index -= 1) {
     const clause = clauses[index];
-    if (isNegatedNotificationCancellationClause(clause, notifications)) return null;
+    const negatedPronounAction = negatedNotificationCancellationAction(clause, notifications);
+    if (negatedPronounAction) {
+      if (negatedPronounCancelsEarlierAction(clauses, index, negatedPronounAction, notifications)) {
+        return null;
+      }
+      continue;
+    }
     const orderedRead = wantsOrderedNotificationRead(clause);
     const referenceOpen = wantsNotificationReferenceOpen(clause, notifications);
     const referenceRead = wantsNotificationReferenceRead(clause, notifications);

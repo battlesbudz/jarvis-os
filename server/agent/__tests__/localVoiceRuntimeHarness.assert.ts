@@ -581,6 +581,22 @@ async function testLaterPronounNegationCancelsNotificationAction() {
   assert.equal(explicitCancel.diagnostics.outcome, "final");
   assert.equal(explicitCancel.androidExecutions.length, 0);
   assert.equal(explicitCancel.canonicalResponse, "Okay, I won't open it.");
+
+  const readStillRuns = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read the Reddit one, but don't open it",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "I cannot access your notifications." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "Reddit", action: "open", success: true }],
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:04:45.000Z"),
+  });
+
+  assert.equal(readStillRuns.diagnostics.outcome, "notification_reference_read");
+  assert.equal(readStillRuns.androidExecutions.length, 0);
+  assert.match(readStillRuns.canonicalResponse, /Reddit: vivecoding thread is trending/);
+  assert.doesNotMatch(readStillRuns.canonicalResponse, /cannot access/i);
   console.log("OK: later pronoun negations cancel earlier notification actions");
 }
 
