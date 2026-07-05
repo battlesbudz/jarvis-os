@@ -158,6 +158,16 @@ async function main() {
     { app: "News", pkg: "com.google.android.apps.magazines", title: "Markets rally", text: "Stocks rose today", ts: Date.now() },
   ]);
   assert.equal(newsNotificationRequest?.kind, "read", "explicit notification reads should still use cached context");
+  const bareOrdinalRead = resolveAndroidNotificationFollowUp("Read the last paragraph", followUpNotifications);
+  assert.equal(bareOrdinalRead, null, "bare ordinal reads must not use notification context");
+  const bareOrdinalOpen = resolveAndroidNotificationFollowUp("Open the last project", followUpNotifications);
+  assert.equal(bareOrdinalOpen, null, "bare ordinal opens must not use notification context");
+  const ordinalNotificationRead = resolveAndroidNotificationFollowUp("Read the last one", followUpNotifications);
+  assert.equal(ordinalNotificationRead?.kind, "read", "ordinal notification referents should still work when anchored by one");
+  const unrelatedLastSummary = resolveAndroidNotificationFollowUp("Tell me about the last budget meeting", followUpNotifications);
+  assert.equal(unrelatedLastSummary, null, "generic last/previous summary questions must not dump cached notifications");
+  const notificationSummaryAgain = resolveAndroidNotificationFollowUp("Summarize those again", followUpNotifications);
+  assert.equal(notificationSummaryAgain?.kind, "summary", "pronoun-anchored notification summaries should still work");
   const emptyObservedNotifications = resolveAndroidNotificationFollowUp("Read all of them", []);
   assert.equal(emptyObservedNotifications?.kind, "read_all", "empty observations must remain valid follow-up context");
   assert.match(emptyObservedNotifications?.response ?? "", /no current notifications/i);

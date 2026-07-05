@@ -55,8 +55,7 @@ function notificationReferenceNamesApp(transcript: string, notification: Android
 }
 
 function hasNotificationReferent(transcript: string): boolean {
-  return /\b(?:it|that|this|those|these|them|one|ones|notification|notifications|alert|alerts)\b/i.test(transcript) ||
-    /\b(?:first|1st|second|2nd|third|3rd|last)\b/i.test(transcript);
+  return /\b(?:it|that|this|those|these|them|one|ones|notification|notifications|alert|alerts)\b/i.test(transcript);
 }
 
 function wantsNotificationReferenceOpen(transcript: string, notifications: unknown[]): boolean {
@@ -77,8 +76,9 @@ function wantsNotificationSummaryFollowUp(transcript: string): boolean {
     return false;
   }
   return /\b(?:my|current|recent)\s+(?:notifications?|alerts?)\b/i.test(transcript) ||
+    /\b(?:last|previous)\s+(?:notifications?|alerts?)\b/i.test(transcript) ||
     /\b(?:notifications?|alerts?)\b[\s\S]{0,32}\b(?:again|from before|you just read)\b/i.test(transcript) ||
-    /\b(?:that|those|these|them|last|previous|again)\b/i.test(transcript);
+    /\b(?:that|those|these|them|it)\b/i.test(transcript);
 }
 
 function negatedNotificationCancellationAction(
