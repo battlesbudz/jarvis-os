@@ -126,6 +126,77 @@ async function testNotificationFollowUpReadAllUsesWorkingContextInOrder() {
   console.log("OK: explicit read-all notification follow-ups preserve notification order");
 }
 
+async function testNotificationFalseDenialIgnoresNegatedUnrelatedFollowUp() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications but don't open Reddit",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "notifications", text: "I cannot read notifications." },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_read_notifications");
+  assert.match(result.canonicalResponse, /Codex/i);
+  assert.doesNotMatch(result.canonicalResponse, /could not|blocked|language model/i);
+  console.log("OK: notification false-denial recovery ignores negated unrelated follow-ups");
+}
+
+async function testNotificationFalseDenialBlocksPronounCancellation() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications and don't read them",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "notifications", text: "I cannot read notifications." },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_recovery_blocked");
+  assert.equal(result.androidExecutions.length, 0);
+  assert.match(result.canonicalResponse, /not completed/i);
+  console.log("OK: notification false-denial recovery blocks pronoun cancellations");
+}
+
+async function testNotificationFalseDenialIgnoresDifferentPronounCapabilityCancellation() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications and don't copy them",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "notifications", text: "I cannot read notifications." },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_read_notifications");
+  assert.match(result.canonicalResponse, /Codex/i);
+  assert.doesNotMatch(result.canonicalResponse, /not completed|language model/i);
+  console.log("OK: notification false-denial recovery ignores pronoun cancellations for other capabilities");
+}
+
+async function testNotificationFalseDenialIgnoresPunctuatedNoRushAside() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications, no rush",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "notifications", text: "I cannot read notifications." },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_read_notifications");
+  assert.match(result.canonicalResponse, /Codex/i);
+  assert.doesNotMatch(result.canonicalResponse, /not completed|language model/i);
+  console.log("OK: notification false-denial recovery ignores punctuated no-rush asides");
+}
+
 async function testNotificationReadAllWinsOverSpecificReference() {
   const allHandsEvents: LocalVoiceAndroidEvent[] = [{
     type: "notification",
@@ -739,6 +810,805 @@ async function testMismatchedAppControlFixtureFails() {
   console.log("OK: app-control harness fixtures must match the requested app");
 }
 
+async function testYoutubeSearchExecutesDeterministically() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open YouTube and search for Alex Hormozi videos",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_youtube_search", arguments: { query: "Alex Hormozi videos" } },
+    ]),
+    androidEvents: [
+      {
+        type: "app_control",
+        appName: "YouTube",
+        action: "search",
+        query: "Alex Hormozi videos",
+        success: true,
+        detail: "Search results are visible.",
+      },
+      { type: "screen", activeApp: "YouTube", title: "Alex Hormozi videos - YouTube", text: "Search results" },
+    ],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_call_executed");
+  assert.equal(result.androidExecutions[0]?.toolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.ok, true);
+  assert.match(result.canonicalResponse, /Searched YouTube for Alex Hormozi videos/);
+  assert.match(result.canonicalResponse, /Search results are visible/);
+  assert.equal(result.chatOutput, result.ttsOutput);
+  console.log("OK: YouTube search voice requests execute through the deterministic phone runtime");
+}
+
+async function testYoutubeSearchAcceptsSnakeCaseSearchQueryArgument() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open YouTube and search for Alex Hormozi videos",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_youtube_search", arguments: { search_query: "Alex Hormozi videos" } },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      query: "Alex Hormozi videos",
+      success: true,
+    }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_call_executed");
+  assert.equal(result.androidExecutions[0]?.toolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.ok, true);
+  assert.match(result.canonicalResponse, /Searched YouTube for Alex Hormozi videos/);
+  console.log("OK: YouTube search accepts the runtime search_query argument");
+}
+
+async function testYoutubeSearchFalseDenialRecoveryExecutes() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open YouTube and search for Alex Hormozi videos",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      query: "Alex Hormozi videos",
+      success: true,
+      detail: "Search results are visible.",
+    }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.ok, true);
+  assert.match(result.canonicalResponse, /Searched YouTube for Alex Hormozi videos/);
+  assert.doesNotMatch(result.canonicalResponse, /cannot/i);
+  assert.equal(result.chatOutput, result.ttsOutput);
+  console.log("OK: YouTube search false denials recover to the deterministic phone runtime");
+}
+
+async function testYoutubeSearchFalseDenialAcceptsYouTubeAliasesInFixtures() {
+  const cases = [
+    { transcript: "Search YT for cats", appName: "YT" },
+    { transcript: "Search You Tube for cats", appName: "You Tube" },
+  ];
+
+  for (const { transcript, appName } of cases) {
+    const result = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript,
+      gemma: new ScriptedFakeLocalGemmaProvider([
+        { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+      ]),
+      androidEvents: [{
+        type: "app_control",
+        appName,
+        action: "search",
+        query: "cats",
+        success: true,
+      }],
+    });
+
+    assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial", transcript);
+    assert.equal(result.diagnostics.executedToolName, "android_youtube_search", transcript);
+    assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for cats", transcript);
+  }
+
+  console.log("OK: YouTube search false-denial recovery accepts YouTube aliases in fixtures");
+}
+
+async function testYoutubeSearchRequiresMatchingQuery() {
+  const missingArgs = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open YouTube and search for Alex Hormozi videos",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_youtube_search", arguments: {} },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      query: "Alex Hormozi videos",
+      success: true,
+    }],
+  });
+
+  assert.equal(missingArgs.androidExecutions[0]?.ok, false);
+  assert.match(missingArgs.canonicalResponse, /could not complete/i);
+
+  const missingFixtureQuery = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open YouTube and search for Alex Hormozi videos",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_youtube_search", arguments: { query: "Alex Hormozi videos" } },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      success: true,
+    }],
+  });
+
+  assert.equal(missingFixtureQuery.androidExecutions[0]?.ok, false);
+  assert.match(missingFixtureQuery.canonicalResponse, /could not complete/i);
+  console.log("OK: YouTube search confirmation requires the requested query on both sides");
+}
+
+async function testYoutubeSearchRejectsTruncatedTitleQueryMatch() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Search YouTube for Please Please Please",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_youtube_search", arguments: { query: "Please Please Please" } },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      query: "Please Please",
+      success: true,
+    }],
+  });
+
+  assert.equal(result.androidExecutions[0]?.ok, false);
+  assert.match(result.canonicalResponse, /could not complete/i);
+  assert.doesNotMatch(result.canonicalResponse, /Searched YouTube for Please Please Please/i);
+  console.log("OK: YouTube search confirmation rejects truncated title query matches");
+}
+
+async function testYoutubeSearchFalseDenialSkipsNegatedSearchClause() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Don't search YouTube for cats; open Chrome instead",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [
+      { type: "app_control", appName: "YouTube", action: "search", query: "cats", success: true },
+      { type: "app_control", appName: "Chrome", action: "open", success: true, detail: "Chrome is open." },
+    ],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_open_app_by_name");
+  assert.equal(result.androidExecutions[0]?.label, "Opened Chrome");
+  assert.doesNotMatch(result.canonicalResponse, /Searched YouTube/i);
+  console.log("OK: YouTube search false-denial recovery ignores negated search clauses");
+}
+
+async function testYoutubeSearchFalseDenialLaterAppCorrectionWins() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Search YouTube for cats but open Chrome instead",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [
+      { type: "app_control", appName: "YouTube", action: "search", query: "cats", success: true },
+      { type: "app_control", appName: "Chrome", action: "open", success: true, detail: "Chrome is open." },
+    ],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_open_app_by_name");
+  assert.equal(result.androidExecutions[0]?.label, "Opened Chrome");
+  assert.doesNotMatch(result.canonicalResponse, /Searched YouTube/i);
+  console.log("OK: YouTube search false-denial recovery lets later app corrections win");
+}
+
+async function testYoutubeSearchFalseDenialLaterSearchCorrectionWins() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open Chrome, but search YouTube for cats instead",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [
+      { type: "app_control", appName: "Chrome", action: "open", success: true },
+      { type: "app_control", appName: "YouTube", action: "search", query: "cats", success: true },
+    ],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for cats");
+  assert.match(result.canonicalResponse, /Searched YouTube for cats/i);
+  console.log("OK: YouTube search false-denial recovery lets later search corrections win");
+}
+
+async function testYoutubeSearchFalseDenialLaterAndSearchCorrectionWins() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Don't search YouTube for cats and search YouTube for dogs",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [
+      { type: "app_control", appName: "YouTube", action: "search", query: "cats", success: true },
+      { type: "app_control", appName: "YouTube", action: "search", query: "dogs", success: true },
+    ],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for dogs");
+  assert.match(result.canonicalResponse, /Searched YouTube for dogs/i);
+  assert.doesNotMatch(result.canonicalResponse, /cats/i);
+  console.log("OK: YouTube search false-denial recovery lets later and-search corrections win");
+}
+
+async function testYoutubeSearchFalseDenialTargetlessCorrectionReusesPriorSearchContext() {
+  const cases = [
+    "Search YouTube for cats; search for dogs instead",
+    "Search YouTube for cats and search for dogs instead",
+  ];
+
+  for (const transcript of cases) {
+    const result = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript,
+      gemma: new ScriptedFakeLocalGemmaProvider([
+        { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+      ]),
+      androidEvents: [
+        { type: "app_control", appName: "YouTube", action: "search", query: "cats", success: true },
+        { type: "app_control", appName: "YouTube", action: "search", query: "dogs", success: true },
+      ],
+    });
+
+    assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial", transcript);
+    assert.equal(result.diagnostics.executedToolName, "android_youtube_search", transcript);
+    assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for dogs", transcript);
+    assert.match(result.canonicalResponse, /Searched YouTube for dogs/i, transcript);
+    assert.doesNotMatch(result.canonicalResponse, /cats/i, transcript);
+  }
+
+  console.log("OK: YouTube search false-denial recovery reuses prior search context for targetless corrections");
+}
+
+async function testYoutubeSearchFalseDenialPreservesConjunctionsInQuery() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Search YouTube for Now and Then Beatles",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      query: "Now and Then Beatles",
+      success: true,
+    }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for Now and Then Beatles");
+  assert.match(result.canonicalResponse, /Searched YouTube for Now and Then Beatles/i);
+  console.log("OK: YouTube search false-denial recovery preserves conjunctions inside queries");
+}
+
+async function testYoutubeSearchFalseDenialPreservesPunctuationInQuery() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Search YouTube for Mr. Beast",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      query: "Mr. Beast",
+      success: true,
+    }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for Mr. Beast");
+  assert.match(result.canonicalResponse, /Searched YouTube for Mr\. Beast/i);
+  console.log("OK: YouTube search false-denial recovery preserves punctuation inside queries");
+}
+
+async function testYoutubeSearchFalseDenialAllowsInOnPhrasesInQuery() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Search YouTube for Linkin Park In The End",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      query: "Linkin Park In The End",
+      success: true,
+    }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for Linkin Park In The End");
+  assert.match(result.canonicalResponse, /Searched YouTube for Linkin Park In The End/i);
+  console.log("OK: YouTube search false-denial recovery allows in/on phrases inside queries");
+}
+
+async function testYoutubeSearchFalseDenialUsesPriorYouTubeContext() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open YouTube and then search for cats",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      query: "cats",
+      success: true,
+    }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for cats");
+  assert.match(result.canonicalResponse, /Searched YouTube for cats/i);
+  console.log("OK: YouTube search false-denial recovery uses prior YouTube context");
+}
+
+async function testYoutubeSearchFalseDenialHandlesPunctuatedSearchFollowUp() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open YouTube, and search for cats",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      query: "cats",
+      success: true,
+    }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for cats");
+  assert.match(result.canonicalResponse, /Searched YouTube for cats/i);
+  console.log("OK: YouTube search false-denial recovery handles punctuated search follow-ups");
+}
+
+async function testYoutubeSearchFalseDenialDoesNotReuseContextForDifferentTarget() {
+  const cases = [
+    "Open YouTube, then search Google for cats",
+    "Open YouTube and search Google for cats",
+    "Open YouTube and search in Chrome for cats",
+    "Open YouTube and search for cats on Google",
+    "Search YouTube for cats on Google",
+  ];
+
+  for (const transcript of cases) {
+    const result = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript,
+      gemma: new ScriptedFakeLocalGemmaProvider([
+        { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+      ]),
+      androidEvents: [
+        { type: "app_control", appName: "YouTube", action: "open", success: true },
+        { type: "app_control", appName: "YouTube", action: "search", query: "cats", success: true },
+      ],
+    });
+
+    assert.equal(result.diagnostics.outcome, "tool_recovery_blocked", transcript);
+    assert.equal(result.androidExecutions.length, 0, transcript);
+    assert.doesNotMatch(result.canonicalResponse, /Searched YouTube/i, transcript);
+  }
+  console.log("OK: YouTube search false-denial recovery does not reuse context for a different search target");
+}
+
+async function testAppControlFalseDenialBlocksPronounCancellations() {
+  const cases = [
+    {
+      transcript: "Open YouTube and don't open it",
+      events: [
+        { type: "app_control" as const, appName: "YouTube", action: "open" as const, success: true },
+      ],
+    },
+    {
+      transcript: "Search YouTube for cats and don't search it",
+      events: [
+        { type: "app_control" as const, appName: "YouTube", action: "search" as const, query: "cats", success: true },
+      ],
+    },
+  ];
+
+  for (const { transcript, events } of cases) {
+    const result = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript,
+      gemma: new ScriptedFakeLocalGemmaProvider([
+        { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+      ]),
+      androidEvents: events,
+    });
+
+    assert.equal(result.diagnostics.outcome, "tool_recovery_blocked", transcript);
+    assert.equal(result.androidExecutions.length, 0, transcript);
+    assert.match(result.canonicalResponse, /not completed/i, transcript);
+  }
+
+  console.log("OK: app-control false-denial recovery blocks pronoun cancellations");
+}
+
+async function testAppControlFalseDenialBlocksExplicitCancellations() {
+  const cases = [
+    {
+      transcript: "Open YouTube, but don't open YouTube",
+      events: [
+        { type: "app_control" as const, appName: "YouTube", action: "open" as const, success: true },
+      ],
+    },
+    {
+      transcript: "Open YouTube, but could you not open YouTube?",
+      events: [
+        { type: "app_control" as const, appName: "YouTube", action: "open" as const, success: true },
+      ],
+    },
+    {
+      transcript: "Open YouTube, actually don't open YouTube",
+      events: [
+        { type: "app_control" as const, appName: "YouTube", action: "open" as const, success: true },
+      ],
+    },
+    {
+      transcript: "Search YouTube for cats but don't search YouTube for cats",
+      events: [
+        { type: "app_control" as const, appName: "YouTube", action: "search" as const, query: "cats", success: true },
+      ],
+    },
+    {
+      transcript: "Search YouTube for cats, but could you not search YouTube?",
+      events: [
+        { type: "app_control" as const, appName: "YouTube", action: "search" as const, query: "cats", success: true },
+      ],
+    },
+    {
+      transcript: "Search YouTube for cats but don't search YouTube",
+      events: [
+        { type: "app_control" as const, appName: "YouTube", action: "search" as const, query: "cats", success: true },
+      ],
+    },
+    {
+      transcript: "Search YouTube for cats and don't search for cats",
+      events: [
+        { type: "app_control" as const, appName: "YouTube", action: "search" as const, query: "cats", success: true },
+      ],
+    },
+    {
+      transcript: "Open YouTube and search for cats, but don't search for cats",
+      events: [
+        { type: "app_control" as const, appName: "YouTube", action: "search" as const, query: "cats", success: true },
+      ],
+    },
+  ];
+
+  for (const { transcript, events } of cases) {
+    const result = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript,
+      gemma: new ScriptedFakeLocalGemmaProvider([
+        { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+      ]),
+      androidEvents: events,
+    });
+
+    assert.equal(result.diagnostics.outcome, "tool_recovery_blocked", transcript);
+    assert.equal(result.androidExecutions.length, 0, transcript);
+    assert.match(result.canonicalResponse, /not completed/i, transcript);
+  }
+
+  console.log("OK: app-control false-denial recovery blocks explicit cancellations");
+}
+
+async function testAppControlFalseDenialMatchesPronounCancellationAction() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open YouTube and don't search it",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [
+      { type: "app_control", appName: "YouTube", action: "open", success: true, detail: "YouTube is open." },
+      { type: "app_control", appName: "YouTube", action: "search", query: "cats", success: true },
+    ],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_open_app_by_name");
+  assert.equal(result.androidExecutions[0]?.label, "Opened YouTube");
+  assert.doesNotMatch(result.canonicalResponse, /Searched YouTube/i);
+  console.log("OK: app-control false-denial recovery matches pronoun cancellations to the same action");
+}
+
+async function testYoutubeSearchFalseDenialIgnoresNegatedUnrelatedFollowUp() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Search YouTube for cats but don't open Chrome",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [
+      { type: "app_control", appName: "YouTube", action: "search", query: "cats", success: true },
+      { type: "app_control", appName: "Chrome", action: "open", success: true },
+    ],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for cats");
+  assert.match(result.canonicalResponse, /Searched YouTube for cats/i);
+  assert.doesNotMatch(result.canonicalResponse, /Chrome/i);
+  console.log("OK: YouTube search false-denial recovery ignores negated unrelated follow-ups");
+}
+
+async function testYoutubeSearchFalseDenialIgnoresNegatedSearchFollowUps() {
+  const cases = [
+    "Search YouTube for cats and don't search Google for dogs",
+    "Search YouTube for cats but don't search Google for dogs",
+  ];
+
+  for (const transcript of cases) {
+    const result = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript,
+      gemma: new ScriptedFakeLocalGemmaProvider([
+        { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+      ]),
+      androidEvents: [
+        { type: "app_control", appName: "YouTube", action: "search", query: "cats", success: true },
+        { type: "app_control", appName: "Google", action: "search", query: "dogs", success: true },
+      ],
+    });
+
+    assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial", transcript);
+    assert.equal(result.diagnostics.executedToolName, "android_youtube_search", transcript);
+    assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for cats", transcript);
+    assert.doesNotMatch(result.canonicalResponse, /dogs/i, transcript);
+  }
+
+  console.log("OK: YouTube search false-denial recovery ignores negated search follow-ups");
+}
+
+async function testYoutubeSearchFalseDenialMatchesRequestedFixtureQuery() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Search YouTube for cats but don't search YouTube for dogs",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [
+      { type: "app_control", appName: "YouTube", action: "search", query: "cats", success: true },
+      { type: "app_control", appName: "YouTube", action: "search", query: "dogs", success: true },
+    ],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for cats");
+  assert.match(result.canonicalResponse, /Searched YouTube for cats/i);
+  assert.doesNotMatch(result.canonicalResponse, /dogs/i);
+  console.log("OK: YouTube search false-denial recovery matches the requested fixture query");
+}
+
+async function testYoutubeSearchFalseDenialSupportsLookForPhrasing() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Look for cats on YouTube",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      query: "cats",
+      success: true,
+    }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for cats");
+  assert.match(result.canonicalResponse, /Searched YouTube for cats/i);
+  console.log("OK: YouTube search false-denial recovery supports look-for phrasing");
+}
+
+async function testYoutubeSearchFalseDenialStripsIndirectObjectPronouns() {
+  const cases = [
+    "Find me cats on YouTube",
+    "Open YouTube and find me cats",
+  ];
+
+  for (const transcript of cases) {
+    const result = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript,
+      gemma: new ScriptedFakeLocalGemmaProvider([
+        { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+      ]),
+      androidEvents: [{
+        type: "app_control",
+        appName: "YouTube",
+        action: "search",
+        query: "cats",
+        success: true,
+      }],
+    });
+
+    assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial", transcript);
+    assert.equal(result.diagnostics.executedToolName, "android_youtube_search", transcript);
+    assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for cats", transcript);
+  }
+
+  console.log("OK: YouTube search false-denial recovery strips indirect-object pronouns");
+}
+
+async function testYoutubeSearchFalseDenialSupportsSearchOnYoutubePhrasing() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Search on YouTube for cats",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      query: "cats",
+      success: true,
+    }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for cats");
+  assert.match(result.canonicalResponse, /Searched YouTube for cats/i);
+  console.log("OK: YouTube search false-denial recovery supports search-on-YouTube phrasing");
+}
+
+async function testYoutubeSearchFalseDenialStripsPoliteQuerySuffixes() {
+  const cases = [
+    "Open YouTube and search for cats please",
+    "Open YouTube and search for cats for me",
+    "Search YouTube for cats, please",
+  ];
+
+  for (const transcript of cases) {
+    const result = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript,
+      gemma: new ScriptedFakeLocalGemmaProvider([
+        { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+      ]),
+      androidEvents: [{
+        type: "app_control",
+        appName: "YouTube",
+        action: "search",
+        query: "cats",
+        success: true,
+      }],
+    });
+
+    assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial", transcript);
+    assert.equal(result.diagnostics.executedToolName, "android_youtube_search", transcript);
+    assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for cats", transcript);
+  }
+
+  console.log("OK: YouTube search false-denial recovery strips polite query suffixes");
+}
+
+async function testYoutubeSearchFalseDenialPreservesTitleLikePoliteWords() {
+  const cases = [
+    "Do It For Me",
+    "Please Please Please",
+  ];
+
+  for (const query of cases) {
+    const result = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript: `Search YouTube for ${query}`,
+      gemma: new ScriptedFakeLocalGemmaProvider([
+        { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+      ]),
+      androidEvents: [{
+        type: "app_control",
+        appName: "YouTube",
+        action: "search",
+        query,
+        success: true,
+      }],
+    });
+
+    assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial", query);
+    assert.equal(result.diagnostics.executedToolName, "android_youtube_search", query);
+    assert.equal(result.androidExecutions[0]?.label, `Searched YouTube for ${query}`, query);
+  }
+
+  console.log("OK: YouTube search false-denial recovery preserves title-like polite words");
+}
+
+async function testYoutubeSearchFalseDenialAllowsNegationWordsInQuery() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Search YouTube for Not Like Us",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_denial", capability: "app_control", text: "I cannot use phone tools." },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      query: "Not Like Us",
+      success: true,
+    }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "tool_executed_after_false_denial");
+  assert.equal(result.diagnostics.executedToolName, "android_youtube_search");
+  assert.equal(result.androidExecutions[0]?.label, "Searched YouTube for Not Like Us");
+  assert.match(result.canonicalResponse, /Searched YouTube for Not Like Us/i);
+  console.log("OK: YouTube search false-denial recovery allows negation words inside queries");
+}
+
+async function testYoutubeSearchFalseCompletionIsBlocked() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open YouTube and search for Alex Hormozi videos",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "false_completion", action: "android_youtube_search", text: "I searched YouTube." },
+    ]),
+    androidEvents: [{
+      type: "app_control",
+      appName: "YouTube",
+      action: "search",
+      query: "Alex Hormozi videos",
+      success: true,
+    }],
+  });
+
+  assert.equal(result.diagnostics.outcome, "false_completion_blocked");
+  assert.equal(result.androidExecutions.length, 0);
+  assert.match(result.canonicalResponse, /not completed/i);
+  assert.equal(result.chatOutput, result.ttsOutput);
+  console.log("OK: YouTube search completion claims require runtime confirmation");
+}
+
 async function testAppControlFalseDenialRecoveryKeepsRequestedApp() {
   const result = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
@@ -969,6 +1839,7 @@ function testFakeAndroidRuntimeEventCoverage() {
     ...notificationEvents,
     { type: "screen", activeApp: "YouTube", title: "Shorts", text: "Video details", elements: ["Search", "Subscribe"] },
     { type: "app_control", appName: "YouTube", action: "open", success: true, detail: "Ready to search" },
+    { type: "app_control", appName: "YouTube", action: "search", query: "Alex Hormozi", success: true, detail: "Search results are visible" },
     { type: "clipboard", text: "diagnostic details" },
     { type: "approval", action: "delete file", approved: false },
     { type: "scheduler", activeJobs: ["voice call"], pausedJobs: ["cloud research"] },
@@ -990,12 +1861,16 @@ function testFakeAndroidRuntimeEventCoverage() {
   assert.match(runtime.execute("android_read_screen_context").label, /YouTube/);
   assert.match(runtime.execute("android_capture_screen").detail, /Subscribe/);
   assert.equal(runtime.execute("android_open_app_by_name", { appName: "YouTube" }).ok, true);
+  assert.equal(runtime.execute("android_youtube_search", { query: "Alex Hormozi" }).ok, true);
   assert.match(runtime.execute("android_copy_to_clipboard").detail, /diagnostic details/);
   assert.equal(runtime.execute("runtime_request_approval").ok, false);
   assert.match(runtime.execute("runtime_scheduler_status").detail, /cloud research/);
   assert.equal(runtime.execute("runtime_service_status").ok, false);
-  assert.equal(runtime.executions.length, 8);
+  assert.equal(runtime.executions.length, 9);
   assert.equal(normalizeLocalVoiceToolName("android_view_screenshot"), "android_capture_screen");
+  assert.equal(normalizeLocalVoiceToolName("youtube_search"), "android_youtube_search");
+  assert.equal(normalizeLocalVoiceToolName("search_youtube"), null);
+  assert.equal(normalizeLocalVoiceToolName("search youtube"), null);
   console.log("OK: fake Android runtime simulates notification, screen, app, clipboard, approval, scheduler, and crash events");
 }
 
@@ -1042,6 +1917,10 @@ async function main() {
   await testEmptyNotificationReadSucceeds();
   await testNotificationFollowUpSummaryUsesWorkingContext();
   await testNotificationFollowUpReadAllUsesWorkingContextInOrder();
+  await testNotificationFalseDenialIgnoresNegatedUnrelatedFollowUp();
+  await testNotificationFalseDenialBlocksPronounCancellation();
+  await testNotificationFalseDenialIgnoresDifferentPronounCapabilityCancellation();
+  await testNotificationFalseDenialIgnoresPunctuatedNoRushAside();
   await testNotificationReadAllWinsOverSpecificReference();
   await testNotificationToolCallFollowUpUsesWorkingContext();
   await testNotificationReferenceOpensMatchingApp();
@@ -1063,6 +1942,36 @@ async function main() {
   await testSpecificNotificationReadUsesWorkingContext();
   await testMissingAppControlFixtureFails();
   await testMismatchedAppControlFixtureFails();
+  await testYoutubeSearchExecutesDeterministically();
+  await testYoutubeSearchAcceptsSnakeCaseSearchQueryArgument();
+  await testYoutubeSearchFalseDenialRecoveryExecutes();
+  await testYoutubeSearchFalseDenialAcceptsYouTubeAliasesInFixtures();
+  await testYoutubeSearchRequiresMatchingQuery();
+  await testYoutubeSearchRejectsTruncatedTitleQueryMatch();
+  await testYoutubeSearchFalseDenialSkipsNegatedSearchClause();
+  await testYoutubeSearchFalseDenialLaterAppCorrectionWins();
+  await testYoutubeSearchFalseDenialLaterSearchCorrectionWins();
+  await testYoutubeSearchFalseDenialLaterAndSearchCorrectionWins();
+  await testYoutubeSearchFalseDenialTargetlessCorrectionReusesPriorSearchContext();
+  await testYoutubeSearchFalseDenialPreservesConjunctionsInQuery();
+  await testYoutubeSearchFalseDenialPreservesPunctuationInQuery();
+  await testYoutubeSearchFalseDenialAllowsInOnPhrasesInQuery();
+  await testYoutubeSearchFalseDenialUsesPriorYouTubeContext();
+  await testYoutubeSearchFalseDenialHandlesPunctuatedSearchFollowUp();
+  await testYoutubeSearchFalseDenialDoesNotReuseContextForDifferentTarget();
+  await testAppControlFalseDenialBlocksPronounCancellations();
+  await testAppControlFalseDenialBlocksExplicitCancellations();
+  await testAppControlFalseDenialMatchesPronounCancellationAction();
+  await testYoutubeSearchFalseDenialIgnoresNegatedUnrelatedFollowUp();
+  await testYoutubeSearchFalseDenialIgnoresNegatedSearchFollowUps();
+  await testYoutubeSearchFalseDenialMatchesRequestedFixtureQuery();
+  await testYoutubeSearchFalseDenialSupportsLookForPhrasing();
+  await testYoutubeSearchFalseDenialStripsIndirectObjectPronouns();
+  await testYoutubeSearchFalseDenialSupportsSearchOnYoutubePhrasing();
+  await testYoutubeSearchFalseDenialStripsPoliteQuerySuffixes();
+  await testYoutubeSearchFalseDenialPreservesTitleLikePoliteWords();
+  await testYoutubeSearchFalseDenialAllowsNegationWordsInQuery();
+  await testYoutubeSearchFalseCompletionIsBlocked();
   await testAppControlFalseDenialRecoveryKeepsRequestedApp();
   await testAppControlFalseDenialUsesActiveOpenRequest();
   await testAppControlFalseDenialUsesPunctuationFreeCorrection();
