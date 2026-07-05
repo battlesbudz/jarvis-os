@@ -126,9 +126,9 @@ export function recordVoiceNotificationObservation(userId: string, notifications
   });
 }
 
-function getRecentVoiceNotificationContext(userId: string, limit = 20): PhoneNotification[] {
+function getRecentVoiceNotificationContext(userId: string, limit = 20): PhoneNotification[] | null {
   const context = userVoiceNotificationContexts.get(userId);
-  if (!context || Date.now() - context.observedAt > VOICE_NOTIFICATION_FOLLOWUP_TTL_MS) return [];
+  if (!context || Date.now() - context.observedAt > VOICE_NOTIFICATION_FOLLOWUP_TTL_MS) return null;
   return context.notifications.slice(0, limit);
 }
 
@@ -218,7 +218,7 @@ export function subscribeWakeWordTrigger(
  */
 async function processDaemonNotificationFollowUp(userId: string, utterance: string): Promise<string | null> {
   const notifications = getRecentVoiceNotificationContext(userId);
-  if (notifications.length === 0) return null;
+  if (!notifications) return null;
 
   const followUp = resolveAndroidNotificationFollowUp(utterance, notifications);
   if (!followUp) return null;

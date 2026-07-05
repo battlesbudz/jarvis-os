@@ -605,16 +605,23 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
         modelOutputType: modelOutput.type,
       };
     } else {
-      const execution = androidRuntime.execute(normalizedToolName, parseToolArguments(modelOutput.arguments));
-      canonicalResponse = summarizeExecution(execution);
-      workingContext = mergeWorkingContext(workingContext, workingContextFromNotificationExecution(execution, now));
-      diagnostics = {
-        outcome: modelOutput.type === "invalid_tool_call" ? "tool_call_recovered" : "tool_call_executed",
-        requestedToolName: modelOutput.name,
-        executedToolName: normalizedToolName,
-        recoveredToolName: modelOutput.name === normalizedToolName ? undefined : normalizedToolName,
-        modelOutputType: modelOutput.type,
-      };
+      const workingContextResponse = responseFromNotificationWorkingContext(transcript, workingContext, now, androidRuntime);
+      if (workingContextResponse) {
+        canonicalResponse = workingContextResponse.response;
+        workingContext = workingContextResponse.workingContext;
+        diagnostics = { outcome: workingContextResponse.outcome, modelOutputType: modelOutput.type };
+      } else {
+        const execution = androidRuntime.execute(normalizedToolName, parseToolArguments(modelOutput.arguments));
+        canonicalResponse = summarizeExecution(execution);
+        workingContext = mergeWorkingContext(workingContext, workingContextFromNotificationExecution(execution, now));
+        diagnostics = {
+          outcome: modelOutput.type === "invalid_tool_call" ? "tool_call_recovered" : "tool_call_executed",
+          requestedToolName: modelOutput.name,
+          executedToolName: normalizedToolName,
+          recoveredToolName: modelOutput.name === normalizedToolName ? undefined : normalizedToolName,
+          modelOutputType: modelOutput.type,
+        };
+      }
     }
   } else if (modelOutput.type === "false_denial") {
     const workingContextResponse = responseFromNotificationWorkingContext(transcript, workingContext, now, androidRuntime);

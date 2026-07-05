@@ -160,6 +160,35 @@ async function testNotificationReadAllWinsOverSpecificReference() {
   console.log("OK: read-all follow-ups win over specific notification references");
 }
 
+async function testNotificationToolCallFollowUpUsesWorkingContext() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: notificationEvents,
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const readAll = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read all of them",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:01:00.000Z"),
+  });
+
+  assert.equal(readAll.diagnostics.outcome, "notification_context_read_all");
+  assert.equal(readAll.androidExecutions.length, 0);
+  assert.match(readAll.canonicalResponse, /1\. Codex/);
+  assert.match(readAll.canonicalResponse, /2\. Reddit/);
+  assert.match(readAll.canonicalResponse, /3\. Life360/);
+  console.log("OK: notification tool-call follow-ups use stored working context first");
+}
+
 async function testNotificationReferenceOpensMatchingApp() {
   const first = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
@@ -913,6 +942,7 @@ async function main() {
   await testNotificationFollowUpSummaryUsesWorkingContext();
   await testNotificationFollowUpReadAllUsesWorkingContextInOrder();
   await testNotificationReadAllWinsOverSpecificReference();
+  await testNotificationToolCallFollowUpUsesWorkingContext();
   await testNotificationReferenceOpensMatchingApp();
   await testNotificationReferenceUsesStoredAppNames();
   testOrdinalNotificationReferencesSelectWithinMatches();
