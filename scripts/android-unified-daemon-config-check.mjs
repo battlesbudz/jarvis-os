@@ -397,6 +397,10 @@ for (const [contents, source] of [
   assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)", source);
   assertIncludes(contents, "WakeWordService.ACTION_STOP", source);
   assertIncludes(contents, "private fun stopWakeCapture()", source);
+  assertIncludes(contents, "private fun pauseWakeCapture()", source);
+  assertIncludes(contents, "private fun resumeWakeCapture()", source);
+  assertIncludes(contents, "WakeWordService.pauseForPlayback()", source);
+  assertIncludes(contents, "WakeWordService.onTtsFinished()", source);
 }
 for (const [contents, source] of [
   [opHandler, "OpHandler.kt"],

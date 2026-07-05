@@ -137,10 +137,12 @@ class OutsideAppVoiceSessionService : Service() {
             }
             ACTION_PAUSE -> {
                 if (!sessionActive) sessionActive = true
+                pauseWakeCapture()
                 setState(OutsideAppVoiceState.PAUSED)
             }
             ACTION_RESUME -> {
                 if (!sessionActive) sessionActive = true
+                resumeWakeCapture()
                 setState(OutsideAppVoiceState.LISTENING)
             }
             ACTION_SET_STATE -> {
@@ -192,10 +194,12 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     internal fun onOverlayPause() {
+        pauseWakeCapture()
         setState(OutsideAppVoiceState.PAUSED)
     }
 
     internal fun onOverlayResume() {
+        resumeWakeCapture()
         setState(OutsideAppVoiceState.LISTENING)
     }
 
@@ -205,6 +209,16 @@ class OutsideAppVoiceSessionService : Service() {
 
     internal fun onOverlayOpen() {
         openJarvis()
+    }
+
+    private fun pauseWakeCapture() {
+        WakeWordService.pauseForPlayback()
+        DaemonLog.add("outside_app_voice: wake capture paused")
+    }
+
+    private fun resumeWakeCapture() {
+        WakeWordService.onTtsFinished()
+        DaemonLog.add("outside_app_voice: wake capture resumed")
     }
 
     private fun setState(nextState: OutsideAppVoiceState) {

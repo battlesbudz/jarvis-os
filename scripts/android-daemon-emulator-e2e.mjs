@@ -489,6 +489,7 @@ async function main() {
   if (!fs.existsSync(apk)) throw new Error(`APK not found: ${apk}`);
   adb(["install", "-r", apk]);
   adbShell(`pm grant ${PACKAGE_NAME} android.permission.POST_NOTIFICATIONS || true`);
+  adbShell(`pm grant ${PACKAGE_NAME} android.permission.RECORD_AUDIO || true`);
   adbShell(`monkey -p ${PACKAGE_NAME} -c android.intent.category.LAUNCHER 1`);
   await sleep(3000);
   const outsideAppVoice = await runOutsideAppVoiceFakeLocalGemmaSmoke();
