@@ -34,6 +34,8 @@ export type LocalVoiceToolName =
   | "runtime_scheduler_status"
   | "runtime_service_status";
 
+type LocalVoiceScreenToolName = Extract<LocalVoiceToolName, "android_read_screen_context" | "android_capture_screen">;
+
 export type ScriptedLocalGemmaStep =
   | { type: "final"; text: string }
   | { type: "tool_call"; name: string; arguments?: Record<string, unknown> | string }
@@ -68,9 +70,60 @@ export interface LocalVoiceNotification {
   receivedAt?: string;
 }
 
+export type LocalVoiceScreenSource = "accessibility" | "temporary_capture";
+
+export interface LocalVoiceScreenEvent {
+  type: "screen";
+  activeApp: string;
+  title?: string;
+  text: string;
+  elements?: string[];
+  source?: LocalVoiceScreenSource;
+  captureId?: string;
+  capturePath?: string;
+  savedToGallery?: boolean;
+  galleryPath?: string;
+}
+
+export interface LocalVoiceScreenSnapshot {
+  source: LocalVoiceScreenSource;
+  activeApp: string;
+  title?: string;
+  text: string;
+  elements: string[];
+  captureId?: string;
+  capturePath?: string;
+  savedToGallery?: boolean;
+  galleryPath?: string;
+}
+
+export type LocalVoiceScreenCapturePreviewAction = "copy_details" | "delete";
+
+export interface LocalVoiceScreenCaptureContext {
+  id: string;
+  path: string;
+  createdAt: string;
+  expiresAt: string;
+  savedToGallery: boolean;
+  galleryPath?: string;
+  previewLabel: "Temporary screen capture";
+  previewActions: LocalVoiceScreenCapturePreviewAction[];
+}
+
+export interface LocalVoiceScreenWorkingContext {
+  source: LocalVoiceScreenSource;
+  activeApp: string;
+  title?: string;
+  text: string;
+  elements: string[];
+  recordedAt: string;
+  expiresAt: string;
+  capture?: LocalVoiceScreenCaptureContext;
+}
+
 export type LocalVoiceAndroidEvent =
   | { type: "notification"; notifications: LocalVoiceNotification[] }
-  | { type: "screen"; activeApp: string; title?: string; text: string; elements?: string[] }
+  | LocalVoiceScreenEvent
   | { type: "app_control"; appName: string; action: "open" | "search" | "tap" | "type"; query?: string; success?: boolean; detail?: string }
   | { type: "clipboard"; text: string }
   | { type: "approval"; action: string; approved: boolean }
@@ -84,6 +137,8 @@ export interface FakeAndroidExecution {
   detail: string;
   data?: {
     notifications?: LocalVoiceNotification[];
+    screen?: LocalVoiceScreenSnapshot;
+    blockedByUser?: boolean;
   };
 }
 
@@ -97,6 +152,7 @@ export interface LocalVoiceNotificationWorkingContext {
 
 export interface LocalVoiceWorkingContext {
   notifications?: LocalVoiceNotificationWorkingContext;
+  screen?: LocalVoiceScreenWorkingContext;
 }
 
 export interface LocalVoiceHarnessDiagnostics {
@@ -105,6 +161,15 @@ export interface LocalVoiceHarnessDiagnostics {
   executedToolName?: LocalVoiceToolName;
   recoveredToolName?: LocalVoiceToolName;
   modelOutputType: ScriptedLocalGemmaStep["type"];
+  copiedDetails?: {
+    capture?: {
+      id: string;
+      path: string;
+      savedToGallery: boolean;
+      galleryPath?: string;
+      expiresAt: string;
+    };
+  };
 }
 
 export interface LocalVoiceHarnessResult {
@@ -173,6 +238,43 @@ function latestEvent<T extends LocalVoiceAndroidEvent["type"]>(
   return (event ?? null) as Extract<LocalVoiceAndroidEvent, { type: T }> | null;
 }
 
+function latestScreenEvent(
+  events: LocalVoiceAndroidEvent[],
+  toolName: LocalVoiceScreenToolName,
+): LocalVoiceScreenEvent | null {
+  const screens = events.filter((event): event is LocalVoiceScreenEvent => event.type === "screen");
+  if (toolName === "android_read_screen_context") {
+    return [...screens].reverse().find((event) => screenEventSource(event) !== "temporary_capture") ?? null;
+  }
+
+  return [...screens].reverse().find((event) => screenEventSource(event) === "temporary_capture") ?? null;
+}
+
+function screenEventSource(event: LocalVoiceScreenEvent): LocalVoiceScreenSource {
+  return event.source ?? "accessibility";
+}
+
+function screenSnapshotFromEvent(
+  event: LocalVoiceScreenEvent,
+  toolName: Extract<LocalVoiceToolName, "android_read_screen_context" | "android_capture_screen">,
+): LocalVoiceScreenSnapshot {
+  return {
+    source: toolName === "android_capture_screen" ? "temporary_capture" : screenEventSource(event),
+    activeApp: event.activeApp,
+    title: event.title,
+    text: event.text,
+    elements: event.elements ?? [],
+    captureId: event.captureId,
+    capturePath: event.capturePath,
+    savedToGallery: event.savedToGallery,
+    galleryPath: event.galleryPath,
+  };
+}
+
+function formatScreenSnapshot(snapshot: LocalVoiceScreenSnapshot | LocalVoiceScreenWorkingContext): string {
+  return [snapshot.title, snapshot.text, ...snapshot.elements].filter(Boolean).join("\n");
+}
+
 export function normalizeLocalVoiceToolName(name: string): LocalVoiceToolName | null {
   const normalized = name
     .trim()
@@ -205,7 +307,7 @@ const YOUTUBE_APP_NAME_PATTERN = String.raw`(?:youtube|you\s*tube|yt)`;
 const YOUTUBE_SEARCH_VERB_PATTERN = String.raw`(?:search|find|look\s+up|look\s+for)`;
 const YOUTUBE_APP_NAME_REGEX = new RegExp(String.raw`\b${YOUTUBE_APP_NAME_PATTERN}\b`, "i");
 const YOUTUBE_SEARCH_VERB_REGEX = new RegExp(String.raw`\b${YOUTUBE_SEARCH_VERB_PATTERN}\b`, "i");
-const ANY_ACTION_COMMAND_WORDS = String.raw`(?:open|launch|start|read|show|check|copy|approve|confirm|request|take|capture|search|find|look\s+up|look\s+for)`;
+const ANY_ACTION_COMMAND_WORDS = String.raw`(?:open|launch|start|read|show|check|copy|save|keep|delete|remove|discard|approve|confirm|request|take|capture|search|find|look\s+up|look\s+for)`;
 const OPEN_STYLE_ACTION_COMMAND_WORDS = String.raw`(?:open|launch|start|read|show|check|copy|approve|confirm|request|take|capture)`;
 const SEARCH_TARGET_ACTION_PATTERN = String.raw`${YOUTUBE_SEARCH_VERB_PATTERN}\s+(?:on\s+)?(?:${YOUTUBE_APP_NAME_PATTERN}|google|chrome|browser|web)\b`;
 const TARGETLESS_SEARCH_ACTION_PATTERN = String.raw`${YOUTUBE_SEARCH_VERB_PATTERN}\s+(?:for\s+|me\s+)?[a-z0-9]`;
@@ -225,6 +327,7 @@ function transcriptActionClauses(transcript: string): string[] {
 }
 
 const NEGATED_ACTION_PREFIX_PATTERN = /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\b/i;
+const SCREEN_UNDERSTANDING_ACTION_PREFIX_PATTERN = /\b(?:read|show|check|describe|look\s+at|tell\s+me\s+about)\b/i;
 
 function isNegatedActionClause(clause: string): boolean {
   const match = clause.match(capabilityRequestPattern("app_control"));
@@ -557,7 +660,7 @@ function capabilityRequestPattern(capability: LocalVoiceCapability): RegExp {
     case "notifications":
       return /\bnotifications?\b/i;
     case "screen":
-      return /\b(?:screen|screenshot|screen grab|display)\b/i;
+      return /\b(?:screen|screenshot|screen grab|capture|display|on[-\s]?screen)\b/i;
     case "app_control":
       return /\b(?:open|launch|start|search|find|look\s+up|look\s+for)\b/i;
     case "clipboard":
@@ -576,7 +679,7 @@ function capabilityPronounCancellationPattern(capability: LocalVoiceCapability):
     case "notifications":
       return /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+(?:read|show|check)\s+(?:it|them|that|this)\b/i;
     case "screen":
-      return /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+(?:read|show|check|take|capture)\s+(?:it|that|this)\b/i;
+      return /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+(?:read|show|check)\s+(?:it|that|this)\b/i;
     case "clipboard":
       return /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+copy\s+(?:it|them|that|this)\b/i;
     case "approval":
@@ -590,6 +693,8 @@ function capabilityPronounCancellationPattern(capability: LocalVoiceCapability):
   }
 }
 
+const SCREEN_CAPTURE_PRONOUN_CANCELLATION_PATTERN = /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+(?:take|capture|grab|snap|attach)\s+(?:it|that|this)\b/i;
+
 function hasNegatedCapabilityRequest(capability: LocalVoiceCapability, transcript: string): boolean {
   const requestPattern = capabilityRequestPattern(capability);
   const cancellationPattern = capabilityPronounCancellationPattern(capability);
@@ -597,16 +702,40 @@ function hasNegatedCapabilityRequest(capability: LocalVoiceCapability, transcrip
 
   for (let index = clauses.length - 1; index >= 0; index -= 1) {
     const clause = clauses[index];
+    const previousClauses = clauses.slice(0, index).join(" ");
+    const hasPreviousRequest = capability === "screen"
+      ? isScreenWorkingContextFollowUpRequest(previousClauses)
+      : requestPattern.test(previousClauses);
     if (
-      cancellationPattern &&
-      cancellationPattern.test(clause) &&
-      requestPattern.test(clauses.slice(0, index).join(" "))
+      capability === "screen"
+      && SCREEN_CAPTURE_PRONOUN_CANCELLATION_PATTERN.test(clause)
+      && screenCaptureRequestNegationState(previousClauses).positive
     ) {
       return true;
     }
-    const requestMatch = clause.match(requestPattern);
+    if (
+      cancellationPattern &&
+      cancellationPattern.test(clause) &&
+      hasPreviousRequest
+    ) {
+      return true;
+    }
+    const requestMatch = capability === "screen" ? screenContextRequestMatch(clause) : clause.match(requestPattern);
     if (!requestMatch) continue;
     const commandPrefix = clause.slice(0, requestMatch.index ?? 0);
+    if (capability === "screen") {
+      const negated = NEGATED_ACTION_PREFIX_PATTERN.test(commandPrefix);
+      const actionPrefix = commandPrefix.replace(NEGATED_ACTION_PREFIX_PATTERN, "").trim();
+      if (!negated) return false;
+      if (screenCaptureRequestNegationState(clause).negated) {
+        return !(
+          hasPositiveScreenContextRequest(clauses.slice(0, index).join(" "))
+          || hasPositiveScreenContextRequestAfterNegatedCapture(clause)
+        );
+      }
+      if (!actionPrefix || SCREEN_UNDERSTANDING_ACTION_PREFIX_PATTERN.test(actionPrefix)) return true;
+      continue;
+    }
     return NEGATED_ACTION_PREFIX_PATTERN.test(commandPrefix);
   }
 
@@ -621,6 +750,236 @@ function notificationWorkingContextActive(
   if (!notifications) return null;
   const expiresAt = Date.parse(notifications.expiresAt);
   return Number.isFinite(expiresAt) && expiresAt > now.getTime() ? notifications : null;
+}
+
+function screenWorkingContextActive(
+  workingContext: LocalVoiceWorkingContext | undefined,
+  now: Date,
+): LocalVoiceScreenWorkingContext | null {
+  const screen = workingContext?.screen;
+  if (!screen) return null;
+  const expiresAt = Date.parse(screen.expiresAt);
+  if (!Number.isFinite(expiresAt)) return null;
+  if (expiresAt > now.getTime()) return screen;
+  return null;
+}
+
+function pruneExpiredWorkingContext(
+  workingContext: LocalVoiceWorkingContext | undefined,
+  now: Date,
+): LocalVoiceWorkingContext {
+  return {
+    ...(notificationWorkingContextActive(workingContext, now)
+      ? { notifications: workingContext?.notifications }
+      : {}),
+    ...(screenWorkingContextActive(workingContext, now)
+      ? { screen: workingContext?.screen }
+      : {}),
+  };
+}
+
+function isScreenCaptureContextFollowUpRequest(transcript: string): boolean {
+  return /\b(?:what'?s|whats|what is)\s+(?:in|inside|on)\s+(?:this|that|the)\s+(?:screenshot|screen\s*shot|screen\s*capture|capture)\b/i.test(transcript)
+    || /\b(?:read|show|describe|look at|tell me about)\s+(?:this|that|the)\s+(?:screenshot|screen\s*shot|screen\s*capture|capture)\b/i.test(transcript);
+}
+
+const SCREEN_CONTEXT_META_QUESTION_PATTERN = /\b(?:how\s+(?:do|can|would|to)|can\s+you\s+show\s+me\s+how|why\s+(?:can't|cant|can|would|do))\b.*\b(?:read|show|describe|look\s+at)?\s*(?:my\s+|the\s+|this\s+|that\s+)?(?:screen|display)\b|\bscreen\s+(?:capture|readers?|reading)\b/i;
+
+function isScreenContextFollowUpRequest(transcript: string): boolean {
+  return transcriptActionClauses(transcript).some((clause) => {
+    if (isScreenCaptureContextFollowUpRequest(clause)) return true;
+    if (SCREEN_CONTEXT_META_QUESTION_PATTERN.test(clause)) return false;
+    return /\b(?:what'?s|whats|what is)\s+on\s+(?:(?:my|the|this|that)\s+)?(?:screen|display)\b/i.test(clause)
+      || /\b(?:read|show|describe|look at)\s+(?:(?:my|the current|current|the|this|that)\s+)?(?:screen|display)\b/i.test(clause)
+      || /\btell\s+me\s+about\s+(?:(?:my|the current|current|the|this|that)\s+)(?:screen|display)\b/i.test(clause)
+      || SCREEN_APP_UI_CONTEXT_REQUEST_PATTERN.test(clause);
+  });
+}
+
+const SCREEN_APP_UI_CONTEXT_REQUEST_PATTERN = /\bwhat\s+(?:does|is)\s+(?:the\s+)?(?:title|button|form|page)\b.*\b(?:screen|display|app|ui|on[-\s]?screen)\b|\bwhere\s+is\s+(?:the\s+)?[a-z0-9 ._-]+\b.*\b(?:screen|display|app|ui|on[-\s]?screen)\b/i;
+const SCREEN_CONTEXT_PRONOUN_FOLLOW_UP_PATTERN = /\bwhat\s+(?:does|do)\s+(?:it|that|this)\s+(?:show|say|contain)(?:\s+(?:please|again|now|right\s+now|currently|current|latest|live))*\s*[.!?]*$|\b(?:what'?s|whats|what is)\s+(?:in|inside|on)\s+(?:it|that|this)(?:\s+(?:please|again|now|right\s+now|currently|current|latest|live))*\s*[.!?]*$|\b(?:read|show|describe|look at|tell me about)\s+(?:it|that|this)(?:\s+(?:please|for\s+me|again|now|right\s+now|currently|current|latest|live))*\s*[.!?]*$/i;
+const NEGATED_SCREEN_CONTEXT_PRONOUN_FOLLOW_UP_PATTERN = /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+(?:read|show|describe|look at|tell me about|check)\s+(?:it|that|this)\b/i;
+const NEGATED_SCREEN_READBACK_PATTERN = /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+(?:read|show|describe|look\s+at|tell\s+me\s+about|check)\s+(?:(?:my|the|this|that)\s+)?(?:screen|display|screenshot|screen\s*shot|screen\s*capture|capture|it|that|this)\b/i;
+const SCREEN_CONTEXT_PRONOUN_IDIOM_PATTERN = /\b(?:what'?s|whats|what is)\s+in\s+it\s+for\s+(?:me|you|us|them|him|her)\b/i;
+const SCREEN_CAPTURE_META_QUESTION_PATTERN = /\b(?:how\s+(?:do|can|would|to)|can\s+you\s+show\s+me\s+how|why\s+(?:can't|cant|can|would|do)|what\s+is|tell\s+me\s+about)\b.*\b(?:screenshot|screen\s*shot|screen\s*capture|screen\s*grab)\b/i;
+
+function isScreenContextPronounFollowUpRequest(transcript: string): boolean {
+  if (SCREEN_CONTEXT_PRONOUN_IDIOM_PATTERN.test(transcript)) return false;
+  return SCREEN_CONTEXT_PRONOUN_FOLLOW_UP_PATTERN.test(transcript);
+}
+
+function isNegatedScreenContextPronounFollowUpRequest(transcript: string): boolean {
+  return NEGATED_SCREEN_CONTEXT_PRONOUN_FOLLOW_UP_PATTERN.test(transcript);
+}
+
+function hasNegatedScreenReadbackRequest(transcript: string): boolean {
+  return transcriptActionClauses(transcript).some((clause) => NEGATED_SCREEN_READBACK_PATTERN.test(clause));
+}
+
+function isScreenWorkingContextFollowUpRequest(transcript: string): boolean {
+  return isScreenContextFollowUpRequest(transcript) || isScreenContextPronounFollowUpRequest(transcript);
+}
+
+function screenContextRequestMatch(clause: string): RegExpMatchArray | null {
+  return clause.match(capabilityRequestPattern("screen"))
+    ?? clause.match(SCREEN_APP_UI_CONTEXT_REQUEST_PATTERN)
+    ?? clause.match(SCREEN_CONTEXT_PRONOUN_FOLLOW_UP_PATTERN);
+}
+
+function hasPositiveScreenContextRequest(transcript: string): boolean {
+  for (const clause of transcriptActionClauses(transcript)) {
+    if (!isScreenWorkingContextFollowUpRequest(clause)) continue;
+    const requestMatch = screenContextRequestMatch(clause);
+    const commandPrefix = clause.slice(0, requestMatch?.index ?? 0);
+    if (!NEGATED_ACTION_PREFIX_PATTERN.test(commandPrefix)) return true;
+  }
+  return false;
+}
+
+function hasPositiveCapabilityRequest(capability: LocalVoiceCapability, transcript: string): boolean {
+  for (const clause of transcriptActionClauses(transcript)) {
+    const match = clause.match(capabilityRequestPattern(capability));
+    if (!match) continue;
+    const commandPrefix = clause.slice(0, match.index ?? 0);
+    if (!NEGATED_ACTION_PREFIX_PATTERN.test(commandPrefix)) return true;
+  }
+  return false;
+}
+
+function hasPositiveClipboardRequest(transcript: string): boolean {
+  for (const clause of transcriptActionClauses(transcript)) {
+    const match = clause.match(/\b(?:copy\b.*\bclipboard\b|clipboard)\b/i);
+    if (!match) continue;
+    const commandPrefix = clause.slice(0, match.index ?? 0);
+    if (!NEGATED_ACTION_PREFIX_PATTERN.test(commandPrefix)) return true;
+  }
+  return false;
+}
+
+function hasPositiveNonScreenRuntimeRequest(transcript: string): boolean {
+  if (inferRecoveredAppControlRequest(transcript)) return true;
+  if (hasPositiveClipboardRequest(transcript)) return true;
+  return (["notifications", "approval", "scheduler", "service"] as LocalVoiceCapability[])
+    .some((capability) => hasPositiveCapabilityRequest(capability, transcript));
+}
+
+function hasPositiveScreenContextRequestAfterNegatedCapture(clause: string): boolean {
+  for (const pattern of [...EXPLICIT_SCREEN_CAPTURE_PATTERNS, BARE_SCREEN_CAPTURE_NEGATION_PATTERN]) {
+    const match = clause.match(pattern);
+    if (!match) continue;
+    const commandPrefix = clause.slice(0, match.index ?? 0);
+    if (!NEGATED_ACTION_PREFIX_PATTERN.test(commandPrefix)) continue;
+    const remainder = clause.slice((match.index ?? 0) + match[0].length);
+    if (hasPositiveScreenContextRequest(remainder)) return true;
+  }
+  return false;
+}
+
+function requiresFreshScreenRead(transcript: string): boolean {
+  return isScreenWorkingContextFollowUpRequest(transcript)
+    && /\b(?:now|current|currently|live|latest)\b/i.test(transcript);
+}
+
+const EXPLICIT_SCREEN_CAPTURE_PATTERNS = [
+  /^\s*(?:please\s+)?(?:screenshot|screen\s*shot|screen\s*capture|screen\s*grab)(?:\s+(?:please|this|that|it))?\s*[.!?]*\s*$/i,
+  /\b(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:screenshot|screen\s*shot|screen\s*capture|screen\s*grab)\b/i,
+  /\b(?:screenshot|screen\s*shot|screen\s*capture|screen\s*grab)\s+(?:this|that|it|my|the)\b/i,
+  /\b(?:send|share|attach)\s+(?:me\s+)?(?:a|the)?\s*(?:screenshot|screen\s*shot|screen\s*capture|screen\s*grab)\b/i,
+  /\b(?:take|capture|grab|snap|attach)\b.*\b(?:screenshot|screen\s*shot|screen\s*capture|screen\s*grab)\b/i,
+  /\b(?:capture|grab|snap|attach)\b.*\b(?:my|the|this|that)?\s*(?:screen|display)\b/i,
+  /\b(?:screenshot|screen\s*shot|screen\s*capture|screen\s*grab)\s+(?:my|the|this|that)\s+(?:phone|device|screen|display)\b/i,
+  /\b(?:take|capture|grab|snap|attach)\s+(?:it|that|this)\b/i,
+];
+const BARE_SCREEN_CAPTURE_NEGATION_PATTERN = /\b(?:screenshot|screen\s*shot|screen\s*capture|screen\s*grab|capture)\b/i;
+
+function screenCaptureRequestNegationState(transcript: string): { positive: boolean; negated: boolean } {
+  let latestIntent: "positive" | "negated" | null = null;
+  for (const clause of transcriptActionClauses(transcript)) {
+    for (const pattern of EXPLICIT_SCREEN_CAPTURE_PATTERNS) {
+      const match = clause.match(pattern);
+      if (!match) continue;
+      const commandPrefix = clause.slice(0, match.index ?? 0);
+      if (NEGATED_ACTION_PREFIX_PATTERN.test(commandPrefix)) {
+        latestIntent = "negated";
+      } else {
+        latestIntent = "positive";
+      }
+    }
+    const bareCaptureMatch = clause.match(BARE_SCREEN_CAPTURE_NEGATION_PATTERN);
+    if (bareCaptureMatch) {
+      const commandPrefix = clause.slice(0, bareCaptureMatch.index ?? 0);
+      if (NEGATED_ACTION_PREFIX_PATTERN.test(commandPrefix)) {
+        latestIntent = "negated";
+      }
+    }
+  }
+  return {
+    positive: latestIntent === "positive",
+    negated: latestIntent === "negated",
+  };
+}
+
+function isExplicitScreenCaptureRequest(transcript: string): boolean {
+  const clauses = transcriptActionClauses(transcript);
+  for (let index = clauses.length - 1; index >= 0; index -= 1) {
+    const clause = clauses[index];
+    if (SCREEN_CAPTURE_META_QUESTION_PATTERN.test(clause)) continue;
+    const state = screenCaptureRequestNegationState(clause);
+    if (state.positive) return true;
+    if (state.negated) return false;
+  }
+  return false;
+}
+
+function hasNegatedScreenCaptureRequest(transcript: string): boolean {
+  return screenCaptureRequestNegationState(transcript).negated;
+}
+
+function shouldExecuteToolBeforeWorkingContext(toolName: LocalVoiceToolName): boolean {
+  return toolName === "android_read_screen_context" || toolName === "android_capture_screen";
+}
+
+function screenToolNameForTranscript(toolName: LocalVoiceScreenToolName, transcript: string): LocalVoiceScreenToolName {
+  if (isExplicitScreenCaptureRequest(transcript)) return "android_capture_screen";
+  return toolName === "android_capture_screen" ? "android_read_screen_context" : toolName;
+}
+
+function hasFreshScreenEventForTool(
+  events: LocalVoiceAndroidEvent[],
+  toolName: LocalVoiceToolName,
+  transcript: string,
+): boolean {
+  if (toolName !== "android_read_screen_context" && toolName !== "android_capture_screen") return false;
+  const requestedToolName = screenToolNameForTranscript(toolName, transcript);
+  return latestScreenEvent(events, requestedToolName) !== null
+    || (
+      requestedToolName === "android_read_screen_context"
+      && !hasNegatedScreenCaptureRequest(transcript)
+      && latestScreenEvent(events, "android_capture_screen") !== null
+    );
+}
+
+function screenRefreshToolForTranscript(
+  transcript: string,
+  workingContext?: LocalVoiceWorkingContext,
+  now: Date = new Date(),
+): LocalVoiceToolName | null {
+  if (hasNegatedCapabilityRequest("screen", transcript)) return null;
+  const activeScreen = screenWorkingContextActive(workingContext, now);
+  if (
+    activeScreen?.capture
+    && isScreenCaptureContextFollowUpRequest(transcript)
+    && !requiresFreshScreenRead(transcript)
+  ) {
+    return null;
+  }
+  if (isExplicitScreenCaptureRequest(transcript) || isScreenContextFollowUpRequest(transcript)) {
+    return "android_read_screen_context";
+  }
+  if (isScreenContextPronounFollowUpRequest(transcript) && activeScreen) {
+    return "android_read_screen_context";
+  }
+  return null;
 }
 
 function contextPacketFromEvents(
@@ -639,6 +998,16 @@ function contextPacketFromEvents(
   const recentNotifications = notificationWorkingContextActive(workingContext, now);
   if (recentNotifications && resolveAndroidNotificationFollowUp(transcript, recentNotifications.notifications)) {
     packet.push(`Recent notifications: ${recentNotifications.summary}`);
+  }
+  const recentScreen = screenWorkingContextActive(workingContext, now);
+  if (
+    recentScreen
+    && isScreenWorkingContextFollowUpRequest(transcript)
+    && !hasNegatedCapabilityRequest("screen", transcript)
+    && !isNegatedScreenContextPronounFollowUpRequest(transcript)
+    && !requiresFreshScreenRead(transcript)
+  ) {
+    packet.push(`Recent screen: ${recentScreen.activeApp} - ${recentScreen.title ?? recentScreen.text}`);
   }
   return packet.join("\n");
 }
@@ -669,12 +1038,21 @@ export class FakeAndroidVoiceRuntime {
       }
       case "android_read_screen_context":
       case "android_capture_screen": {
-        const event = latestEvent(this.events, "screen");
+        const event = latestScreenEvent(this.events, toolName);
+        const screen = event ? screenSnapshotFromEvent(event, toolName) : null;
+        const detail = screen ? formatScreenSnapshot(screen) : "";
+        const hasCaptureAttachment = !!screen?.captureId || !!screen?.capturePath;
+        const ok = !!screen && (toolName === "android_capture_screen" ? detail.length > 0 || hasCaptureAttachment : detail.length > 0);
         execution = {
           toolName,
-          ok: !!event,
-          label: event ? `Screen: ${event.activeApp}` : "No screen context available",
-          detail: event ? [event.title, event.text, ...(event.elements ?? [])].filter(Boolean).join("\n") : "",
+          ok,
+          label: screen
+            ? screen.source === "temporary_capture"
+              ? "Temporary screen capture"
+              : `Screen: ${screen.activeApp}`
+            : "No screen context available",
+          detail,
+          data: ok && screen ? { screen } : undefined,
         };
         break;
       }
@@ -790,6 +1168,60 @@ function workingContextFromNotificationExecution(
   };
 }
 
+function workingContextFromScreenExecution(
+  execution: FakeAndroidExecution,
+  now: Date,
+  options: { suppressReadableScreenText?: boolean } = {},
+): LocalVoiceWorkingContext | null {
+  const screen = execution.data?.screen;
+  if (
+    !screen ||
+    !execution.ok ||
+    (execution.toolName !== "android_read_screen_context" && execution.toolName !== "android_capture_screen")
+  ) {
+    return null;
+  }
+
+  const recordedAt = now.toISOString();
+  const expiresAt = new Date(now.getTime() + LOCAL_RUNTIME_WORKING_CONTEXT_TTL_MS).toISOString();
+  const captureId = screen.captureId ?? `temporary-capture-${now.getTime()}`;
+  const suppressReadableScreenText = options.suppressReadableScreenText && execution.toolName === "android_capture_screen";
+  return {
+    screen: {
+      source: screen.source,
+      activeApp: screen.activeApp,
+      title: suppressReadableScreenText ? undefined : screen.title,
+      text: suppressReadableScreenText ? undefined : screen.text,
+      elements: suppressReadableScreenText ? [] : screen.elements,
+      recordedAt,
+      expiresAt,
+      ...(screen.source === "temporary_capture"
+        ? {
+            capture: {
+              id: captureId,
+              path: screen.capturePath ?? "",
+              createdAt: recordedAt,
+              expiresAt,
+              savedToGallery: screen.savedToGallery ?? false,
+              galleryPath: screen.galleryPath,
+              previewLabel: "Temporary screen capture" as const,
+              previewActions: ["copy_details", "delete"] as LocalVoiceScreenCapturePreviewAction[],
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+function workingContextFromExecution(
+  execution: FakeAndroidExecution,
+  now: Date,
+  options: { suppressReadableScreenText?: boolean } = {},
+): LocalVoiceWorkingContext | null {
+  return workingContextFromNotificationExecution(execution, now)
+    ?? workingContextFromScreenExecution(execution, now, options);
+}
+
 function mergeWorkingContext(
   current: LocalVoiceWorkingContext | undefined,
   next: LocalVoiceWorkingContext | null,
@@ -798,6 +1230,181 @@ function mergeWorkingContext(
     ...(current ?? {}),
     ...(next ?? {}),
   };
+}
+
+function mergeWorkingContextFromExecution(
+  current: LocalVoiceWorkingContext | undefined,
+  execution: FakeAndroidExecution,
+  now: Date,
+  options: { suppressReadableScreenText?: boolean } = {},
+): LocalVoiceWorkingContext {
+  const next = workingContextFromExecution(execution, now, options);
+  if (next) return mergeWorkingContext(current, next);
+  if (
+    !execution.ok
+    && (execution.toolName === "android_read_screen_context" || execution.toolName === "android_capture_screen")
+    && !execution.data?.blockedByUser
+  ) {
+    const cleared = { ...(current ?? {}) };
+    delete cleared.screen;
+    return cleared;
+  }
+  return mergeWorkingContext(current, null);
+}
+
+function screenContextSummary(screen: LocalVoiceScreenWorkingContext): string {
+  const detail = formatScreenSnapshot(screen);
+  return detail ? `Here is what is on your screen:\n${detail}` : "I could not read anything useful from the screen.";
+}
+
+type ScreenCaptureFollowUpAction = "save" | "copy_details" | "delete";
+
+const SCREEN_CAPTURE_TARGET_NOUN_PATTERN = String.raw`(?:screenshot|screen\s*shot|screen\s*capture|capture)`;
+const SCREEN_CAPTURE_TARGET_PRONOUN_PATTERN = String.raw`(?:it|that|this)`;
+const SCREEN_CAPTURE_COURTESY_TAIL_PATTERN = String.raw`(?:\s+(?:please|for\s+me))*\s*$`;
+const SCREEN_CAPTURE_SAVE_DESTINATION_PATTERN = String.raw`(?:\s+(?:to|in|into)\s+(?:(?:the|my)\s+)?(?:gallery|photos|camera\s+roll|chat|this\s+chat))?`;
+const SCREEN_CAPTURE_COPY_DESTINATION_PATTERN = String.raw`(?:\s+(?:to|in|into)\s+(?:(?:the|my)\s+)?(?:clipboard|chat|this\s+chat))?`;
+const SCREEN_CAPTURE_DELETE_DESTINATION_PATTERN = String.raw`(?:\s+(?:from|out\s+of)\s+(?:(?:the|my)\s+)?(?:chat|this\s+chat))?`;
+
+function screenCaptureFollowUpAction(
+  transcript: string,
+): { action: ScreenCaptureFollowUpAction; negated: boolean } | null {
+  const clauses = transcriptActionClauses(transcript);
+  const negatedActions = new Set<ScreenCaptureFollowUpAction>();
+  let latestNegatedAction: { action: ScreenCaptureFollowUpAction; negated: true } | null = null;
+
+  for (let index = clauses.length - 1; index >= 0; index -= 1) {
+    const clause = clauses[index];
+    const checks: Array<{ action: ScreenCaptureFollowUpAction; pattern: RegExp }> = [
+      {
+        action: "save",
+        pattern: new RegExp(
+          String.raw`\b(?:save|keep)\b(?:.*\b${SCREEN_CAPTURE_TARGET_NOUN_PATTERN}\b${SCREEN_CAPTURE_SAVE_DESTINATION_PATTERN}|\s+${SCREEN_CAPTURE_TARGET_PRONOUN_PATTERN}\b${SCREEN_CAPTURE_SAVE_DESTINATION_PATTERN}|${SCREEN_CAPTURE_SAVE_DESTINATION_PATTERN})${SCREEN_CAPTURE_COURTESY_TAIL_PATTERN}`,
+          "i",
+        ),
+      },
+      {
+        action: "copy_details",
+        pattern: new RegExp(
+          String.raw`(?:\bcopy\b.*\bdetails\b(?:.*\b${SCREEN_CAPTURE_TARGET_NOUN_PATTERN}\b${SCREEN_CAPTURE_COPY_DESTINATION_PATTERN}|\s+(?:for|of|about)\s+${SCREEN_CAPTURE_TARGET_PRONOUN_PATTERN}\b${SCREEN_CAPTURE_COPY_DESTINATION_PATTERN}|${SCREEN_CAPTURE_COPY_DESTINATION_PATTERN})|\bcopy\b\s+${SCREEN_CAPTURE_TARGET_PRONOUN_PATTERN}\b${SCREEN_CAPTURE_COPY_DESTINATION_PATTERN})${SCREEN_CAPTURE_COURTESY_TAIL_PATTERN}`,
+          "i",
+        ),
+      },
+      {
+        action: "delete",
+        pattern: new RegExp(
+          String.raw`\b(?:delete|remove|discard)\b(?:.*\b${SCREEN_CAPTURE_TARGET_NOUN_PATTERN}\b${SCREEN_CAPTURE_DELETE_DESTINATION_PATTERN}|\s+${SCREEN_CAPTURE_TARGET_PRONOUN_PATTERN}\b${SCREEN_CAPTURE_DELETE_DESTINATION_PATTERN}|${SCREEN_CAPTURE_DELETE_DESTINATION_PATTERN})${SCREEN_CAPTURE_COURTESY_TAIL_PATTERN}`,
+          "i",
+        ),
+      },
+    ];
+
+    for (const check of checks) {
+      const match = clause.match(check.pattern);
+      if (!match) continue;
+      const commandPrefix = clause.slice(0, match.index ?? 0);
+      const negated = NEGATED_ACTION_PREFIX_PATTERN.test(commandPrefix);
+      if (negated) {
+        negatedActions.add(check.action);
+        latestNegatedAction ??= { action: check.action, negated: true };
+        continue;
+      }
+      return {
+        action: check.action,
+        negated: negatedActions.has(check.action),
+      };
+    }
+  }
+
+  return latestNegatedAction;
+}
+
+function responseFromScreenWorkingContext(
+  transcript: string,
+  workingContext: LocalVoiceWorkingContext | undefined,
+  now: Date,
+  androidRuntime: FakeAndroidVoiceRuntime,
+  options: { skipScreenContextSummary?: boolean; pendingToolName?: LocalVoiceToolName } = {},
+): {
+  response: string;
+  outcome: string;
+  workingContext: LocalVoiceWorkingContext;
+  copiedDetails?: LocalVoiceHarnessDiagnostics["copiedDetails"];
+} | null {
+  const screen = screenWorkingContextActive(workingContext, now);
+  if (!screen) return null;
+
+  const capture = screen.capture;
+  const captureAction = capture ? screenCaptureFollowUpAction(transcript) : null;
+  if (
+    captureAction?.negated
+    && !hasPositiveScreenContextRequest(transcript)
+    && !(options.pendingToolName && !shouldExecuteToolBeforeWorkingContext(options.pendingToolName))
+    && !hasPositiveNonScreenRuntimeRequest(transcript)
+  ) {
+    return {
+      response: finalResponseForModelProblem("tool_recovery_blocked"),
+      outcome: "screen_capture_action_blocked",
+      workingContext: workingContext ?? {},
+    };
+  }
+
+  if (capture && captureAction?.action === "save" && !captureAction.negated) {
+    return {
+      response: "I can't save temporary screen captures to Gallery yet. They stay attached to this chat unless you delete them.",
+      outcome: "screen_capture_save_unavailable",
+      workingContext: workingContext ?? {},
+    };
+  }
+
+  if (capture && captureAction?.action === "copy_details" && !captureAction.negated) {
+    return {
+      response: "I copied the screen capture details.",
+      outcome: "screen_capture_details_copied",
+      workingContext: workingContext ?? {},
+      copiedDetails: {
+        capture: {
+          id: capture.id,
+          path: capture.path,
+          savedToGallery: capture.savedToGallery,
+          galleryPath: capture.galleryPath,
+          expiresAt: capture.expiresAt,
+        },
+      },
+    };
+  }
+
+  if (capture && captureAction?.action === "delete" && !captureAction.negated) {
+    const nextWorkingContext = { ...(workingContext ?? {}) };
+    delete nextWorkingContext.screen;
+    return {
+      response: "I deleted that temporary screen capture.",
+      outcome: "screen_capture_deleted",
+      workingContext: nextWorkingContext,
+    };
+  }
+
+  if (options.skipScreenContextSummary) return null;
+
+  const screenContextRequested = isScreenWorkingContextFollowUpRequest(transcript);
+  if (
+    screenContextRequested
+    && (hasNegatedCapabilityRequest("screen", transcript) || isNegatedScreenContextPronounFollowUpRequest(transcript))
+  ) {
+    return null;
+  }
+
+  if (screenContextRequested) {
+    return {
+      response: screen.source === "temporary_capture"
+        ? `Temporary screen capture attached. Attached to chat; Gallery save not intended.\n${screenContextSummary(screen)}`
+        : screenContextSummary(screen),
+      outcome: screen.source === "temporary_capture" ? "screen_capture_context_summary" : "screen_context_summary",
+      workingContext: workingContext ?? {},
+    };
+  }
+
+  return null;
 }
 
 function responseFromNotificationWorkingContext(
@@ -845,7 +1452,93 @@ function responseFromNotificationWorkingContext(
   };
 }
 
-function summarizeExecution(execution: FakeAndroidExecution): string {
+function responseFromRuntimeWorkingContext(
+  transcript: string,
+  workingContext: LocalVoiceWorkingContext | undefined,
+  now: Date,
+  androidRuntime: FakeAndroidVoiceRuntime,
+  options: { skipScreenContextSummary?: boolean; pendingToolName?: LocalVoiceToolName } = {},
+): {
+  response: string;
+  outcome: string;
+  workingContext: LocalVoiceWorkingContext;
+  copiedDetails?: LocalVoiceHarnessDiagnostics["copiedDetails"];
+} | null {
+  if (isScreenContextPronounFollowUpRequest(transcript) && !isScreenContextFollowUpRequest(transcript)) {
+    const notificationResponse = responseFromNotificationWorkingContext(transcript, workingContext, now, androidRuntime);
+    if (notificationResponse) return notificationResponse;
+  }
+
+  const screenResponse = responseFromScreenWorkingContext(transcript, workingContext, now, androidRuntime, options);
+  if (screenResponse) return screenResponse;
+
+  return responseFromNotificationWorkingContext(transcript, workingContext, now, androidRuntime);
+}
+
+function executeAndroidToolWithFallback(
+  androidRuntime: FakeAndroidVoiceRuntime,
+  toolName: LocalVoiceToolName,
+  args: Record<string, unknown>,
+  transcript: string,
+): { execution: FakeAndroidExecution; executedToolName: LocalVoiceToolName; usedCaptureFallback: boolean } {
+  const requestedToolName = toolName === "android_read_screen_context" || toolName === "android_capture_screen"
+    ? screenToolNameForTranscript(toolName, transcript)
+    : toolName;
+  if (requestedToolName === "android_read_screen_context" && hasNegatedCapabilityRequest("screen", transcript)) {
+    return {
+      execution: {
+        toolName: "android_read_screen_context",
+        ok: false,
+        label: "Screen read was not allowed",
+        detail: "",
+        data: { blockedByUser: true },
+      },
+      executedToolName: "android_read_screen_context",
+      usedCaptureFallback: false,
+    };
+  }
+  if (requestedToolName === "android_capture_screen" && hasNegatedScreenCaptureRequest(transcript)) {
+    if (hasPositiveScreenContextRequest(transcript)) {
+      const readExecution = androidRuntime.execute("android_read_screen_context", args);
+      return { execution: readExecution, executedToolName: "android_read_screen_context", usedCaptureFallback: false };
+    }
+    return {
+      execution: {
+        toolName: "android_capture_screen",
+        ok: false,
+        label: "Screen capture was not allowed",
+        detail: "",
+        data: { blockedByUser: true },
+      },
+      executedToolName: "android_capture_screen",
+      usedCaptureFallback: false,
+    };
+  }
+  const execution = androidRuntime.execute(requestedToolName, args);
+  if (requestedToolName !== "android_read_screen_context" || execution.ok) {
+    return { execution, executedToolName: requestedToolName, usedCaptureFallback: false };
+  }
+
+  if (hasNegatedScreenCaptureRequest(transcript)) {
+    return { execution, executedToolName: requestedToolName, usedCaptureFallback: false };
+  }
+
+  const captureExecution = androidRuntime.execute("android_capture_screen", args);
+  if (!captureExecution.ok) {
+    return { execution, executedToolName: requestedToolName, usedCaptureFallback: false };
+  }
+
+  return {
+    execution: captureExecution,
+    executedToolName: "android_capture_screen",
+    usedCaptureFallback: true,
+  };
+}
+
+function summarizeExecution(
+  execution: FakeAndroidExecution,
+  options: { suppressReadableScreenText?: boolean } = {},
+): string {
   if (!execution.ok) {
     return `I could not complete that phone action yet. ${execution.label}.`;
   }
@@ -854,8 +1547,14 @@ function summarizeExecution(execution: FakeAndroidExecution): string {
     case "android_read_notifications":
       return summarizeAndroidNotifications(execution.data?.notifications ?? []);
     case "android_read_screen_context":
-    case "android_capture_screen":
       return execution.detail ? `Here is what is on your screen:\n${execution.detail}` : "I could not read anything useful from the screen.";
+    case "android_capture_screen":
+      if (execution.detail && !options.suppressReadableScreenText) {
+        return `Temporary screen capture attached. Attached to chat; Gallery save not intended.\nHere is what is on your screen:\n${execution.detail}`;
+      }
+      return execution.data?.screen?.captureId || execution.data?.screen?.capturePath
+        ? "Temporary screen capture attached. Attached to chat; Gallery save not intended."
+        : "I could not capture anything useful from the screen.";
     case "android_open_app_by_name":
       return execution.detail ? `${execution.label}. ${execution.detail}` : `${execution.label}.`;
     case "android_youtube_search":
@@ -938,21 +1637,51 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
   });
 
   const androidRuntime = new FakeAndroidVoiceRuntime(input.androidEvents ?? []);
+  let workingContext = pruneExpiredWorkingContext(input.workingContext, now);
   const modelOutput = await input.gemma.generate({
     transcript,
-    contextPacket: contextPacketFromEvents(input.androidEvents ?? [], transcript, input.workingContext, now),
+    contextPacket: contextPacketFromEvents(input.androidEvents ?? [], transcript, workingContext, now),
   });
 
   let canonicalResponse = "";
-  let workingContext = mergeWorkingContext(input.workingContext, null);
   let diagnostics: LocalVoiceHarnessDiagnostics;
 
   if (modelOutput.type === "final") {
-    const workingContextResponse = responseFromNotificationWorkingContext(transcript, workingContext, now, androidRuntime);
+    const finalScreenRefreshTool = screenRefreshToolForTranscript(transcript, workingContext, now);
+    const shouldRefreshScreen = !!finalScreenRefreshTool
+      && (
+        requiresFreshScreenRead(transcript)
+        || hasFreshScreenEventForTool(input.androidEvents ?? [], finalScreenRefreshTool, transcript)
+      );
+    const workingContextResponse = responseFromRuntimeWorkingContext(
+      transcript,
+      workingContext,
+      now,
+      androidRuntime,
+      { skipScreenContextSummary: shouldRefreshScreen },
+    );
     if (workingContextResponse) {
       canonicalResponse = workingContextResponse.response;
       workingContext = workingContextResponse.workingContext;
-      diagnostics = { outcome: workingContextResponse.outcome, modelOutputType: modelOutput.type };
+      diagnostics = {
+        outcome: workingContextResponse.outcome,
+        modelOutputType: modelOutput.type,
+        copiedDetails: workingContextResponse.copiedDetails,
+      };
+    } else if (finalScreenRefreshTool && shouldRefreshScreen) {
+      const executionResult = executeAndroidToolWithFallback(androidRuntime, finalScreenRefreshTool, {}, transcript);
+      const execution = executionResult.execution;
+      const suppressReadableScreenText = executionResult.executedToolName === "android_capture_screen"
+        && hasNegatedScreenReadbackRequest(transcript);
+      canonicalResponse = summarizeExecution(execution, { suppressReadableScreenText });
+      workingContext = mergeWorkingContextFromExecution(workingContext, execution, now, { suppressReadableScreenText });
+      diagnostics = {
+        outcome: executionResult.usedCaptureFallback
+          ? "tool_executed_after_final_capture_fallback"
+          : "tool_executed_after_final_screen_refresh",
+        executedToolName: executionResult.executedToolName,
+        modelOutputType: modelOutput.type,
+      };
     } else {
       canonicalResponse = compactText(modelOutput.text) || finalResponseForModelProblem("blank_model_response");
       diagnostics = { outcome: "final", modelOutputType: modelOutput.type };
@@ -967,37 +1696,79 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
         modelOutputType: modelOutput.type,
       };
     } else {
-      const workingContextResponse = responseFromNotificationWorkingContext(transcript, workingContext, now, androidRuntime);
+      const shouldRefreshScreen = shouldExecuteToolBeforeWorkingContext(normalizedToolName)
+        && (
+          requiresFreshScreenRead(transcript)
+          || hasFreshScreenEventForTool(input.androidEvents ?? [], normalizedToolName, transcript)
+        );
+      const workingContextResponse = responseFromRuntimeWorkingContext(
+        transcript,
+        workingContext,
+        now,
+        androidRuntime,
+        { skipScreenContextSummary: shouldRefreshScreen, pendingToolName: normalizedToolName },
+      );
       if (workingContextResponse) {
         canonicalResponse = workingContextResponse.response;
         workingContext = workingContextResponse.workingContext;
-        diagnostics = { outcome: workingContextResponse.outcome, modelOutputType: modelOutput.type };
-      } else {
-        const execution = androidRuntime.execute(normalizedToolName, parseToolArguments(modelOutput.arguments));
-        canonicalResponse = summarizeExecution(execution);
-        workingContext = mergeWorkingContext(workingContext, workingContextFromNotificationExecution(execution, now));
         diagnostics = {
-          outcome: modelOutput.type === "invalid_tool_call" ? "tool_call_recovered" : "tool_call_executed",
+          outcome: workingContextResponse.outcome,
+          modelOutputType: modelOutput.type,
+          copiedDetails: workingContextResponse.copiedDetails,
+        };
+      } else {
+        const executionResult = executeAndroidToolWithFallback(
+          androidRuntime,
+          normalizedToolName,
+          parseToolArguments(modelOutput.arguments),
+          transcript,
+        );
+        const execution = executionResult.execution;
+        const suppressReadableScreenText = executionResult.executedToolName === "android_capture_screen"
+          && hasNegatedScreenReadbackRequest(transcript);
+        canonicalResponse = summarizeExecution(execution, { suppressReadableScreenText });
+        workingContext = mergeWorkingContextFromExecution(workingContext, execution, now, { suppressReadableScreenText });
+        diagnostics = {
+          outcome: executionResult.usedCaptureFallback
+            ? "tool_call_capture_fallback"
+            : modelOutput.type === "invalid_tool_call"
+              ? "tool_call_recovered"
+              : "tool_call_executed",
           requestedToolName: modelOutput.name,
-          executedToolName: normalizedToolName,
-          recoveredToolName: modelOutput.name === normalizedToolName ? undefined : normalizedToolName,
+          executedToolName: executionResult.executedToolName,
+          recoveredToolName: modelOutput.name === normalizedToolName ? undefined : executionResult.executedToolName,
           modelOutputType: modelOutput.type,
         };
       }
     }
   } else if (modelOutput.type === "false_denial") {
-    const workingContextResponse = responseFromNotificationWorkingContext(transcript, workingContext, now, androidRuntime);
+    const recoveredAppControlRequest = modelOutput.capability === "app_control"
+      ? inferRecoveredAppControlRequest(transcript)
+      : null;
+    const recoveredToolName = recoveredAppControlRequest?.toolName ?? capabilityToolName(modelOutput.capability);
+    const recoveredArgs = recoveredAppControlRequest?.args
+      ?? argsForRecoveredCapability(modelOutput.capability, transcript, input.androidEvents ?? []);
+    const shouldRefreshScreen = shouldExecuteToolBeforeWorkingContext(recoveredToolName)
+      && (
+        requiresFreshScreenRead(transcript)
+        || hasFreshScreenEventForTool(input.androidEvents ?? [], recoveredToolName, transcript)
+      );
+    const workingContextResponse = responseFromRuntimeWorkingContext(
+      transcript,
+      workingContext,
+      now,
+      androidRuntime,
+      { skipScreenContextSummary: shouldRefreshScreen, pendingToolName: recoveredToolName },
+    );
     if (workingContextResponse) {
       canonicalResponse = workingContextResponse.response;
       workingContext = workingContextResponse.workingContext;
-      diagnostics = { outcome: workingContextResponse.outcome, modelOutputType: modelOutput.type };
+      diagnostics = {
+        outcome: workingContextResponse.outcome,
+        modelOutputType: modelOutput.type,
+        copiedDetails: workingContextResponse.copiedDetails,
+      };
     } else {
-      const recoveredAppControlRequest = modelOutput.capability === "app_control"
-        ? inferRecoveredAppControlRequest(transcript)
-        : null;
-      const recoveredToolName = recoveredAppControlRequest?.toolName ?? capabilityToolName(modelOutput.capability);
-      const recoveredArgs = recoveredAppControlRequest?.args
-        ?? argsForRecoveredCapability(modelOutput.capability, transcript, input.androidEvents ?? []);
       const recoveryBlocked = modelOutput.capability === "app_control"
         ? !recoveredAppControlRequest
         : hasNegatedCapabilityRequest(modelOutput.capability, transcript);
@@ -1009,12 +1780,17 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
           modelOutputType: modelOutput.type,
         };
       } else {
-        const execution = androidRuntime.execute(recoveredToolName, recoveredArgs);
-        canonicalResponse = summarizeExecution(execution);
-        workingContext = mergeWorkingContext(workingContext, workingContextFromNotificationExecution(execution, now));
+        const executionResult = executeAndroidToolWithFallback(androidRuntime, recoveredToolName, recoveredArgs, transcript);
+        const execution = executionResult.execution;
+        const suppressReadableScreenText = executionResult.executedToolName === "android_capture_screen"
+          && hasNegatedScreenReadbackRequest(transcript);
+        canonicalResponse = summarizeExecution(execution, { suppressReadableScreenText });
+        workingContext = mergeWorkingContextFromExecution(workingContext, execution, now, { suppressReadableScreenText });
         diagnostics = {
-          outcome: "tool_executed_after_false_denial",
-          executedToolName: recoveredToolName,
+          outcome: executionResult.usedCaptureFallback
+            ? "tool_executed_after_false_denial_capture_fallback"
+            : "tool_executed_after_false_denial",
+          executedToolName: executionResult.executedToolName,
           modelOutputType: modelOutput.type,
         };
       }
