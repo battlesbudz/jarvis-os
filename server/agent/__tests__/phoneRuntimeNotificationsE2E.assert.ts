@@ -132,6 +132,14 @@ async function main() {
     { app: "Gmail", pkg: "com.google.android.gm", title: "New messages", text: "Unread messages are waiting", ts: Date.now() },
   ]);
   assert.equal(messagesOpen, null, "Messages app opens must not be treated as notification-message references");
+  const partialAppNameOpen = resolveAndroidNotificationFollowUp("Open Google Maps", [
+    { app: "Google Play Services", pkg: "com.google.android.gms", title: "Account action", text: "Review settings", ts: Date.now() },
+  ]);
+  assert.equal(partialAppNameOpen, null, "plain app opens must not match cached notifications by partial app-name terms");
+  const exactAppNameOpen = resolveAndroidNotificationFollowUp("Open Google Play Services", [
+    { app: "Google Play Services", pkg: "com.google.android.gms", title: "Account action", text: "Review settings", ts: Date.now() },
+  ]);
+  assert.equal(exactAppNameOpen?.kind, "open", "plain app opens may use cached context when the full app name matches");
 
   const metaQuestion = resolveAndroidNotificationFollowUp("What are notifications?", followUpNotifications);
   assert.equal(metaQuestion, null, "generic notification meta questions must not reveal current notifications");

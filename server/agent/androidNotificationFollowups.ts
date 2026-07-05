@@ -32,10 +32,6 @@ function clauseIsNegated(clause: string): boolean {
   return /\b(?:don't|dont|do not|never|stop|didn't|did not|not|no)\b/i.test(clause);
 }
 
-function notificationReferenceTerms(value: string): Set<string> {
-  return new Set(value.toLowerCase().split(/[^a-z0-9]+/i).filter(Boolean));
-}
-
 function escapedNotificationReference(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -49,9 +45,7 @@ function notificationReferenceNamesApp(transcript: string, notification: Android
   const appName = compactText(notification.app).toLowerCase();
   if (!appName) return false;
   const normalizedTranscript = transcript.toLowerCase();
-  if (notificationReferenceHasPhrase(normalizedTranscript, appName)) return true;
-  const transcriptTerms = notificationReferenceTerms(transcript);
-  return Array.from(notificationReferenceTerms(appName)).some((term) => transcriptTerms.has(term));
+  return notificationReferenceHasPhrase(normalizedTranscript, appName);
 }
 
 function hasNotificationReferent(transcript: string): boolean {
