@@ -218,6 +218,51 @@ async function testNotificationReferenceOpensMatchingApp() {
   console.log("OK: notification references resolve to the matching app action");
 }
 
+async function testSingleNotificationPronounReferencesUseWorkingContext() {
+  const first = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read my notifications",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "tool_call", name: "android_read_notifications", arguments: {} },
+    ]),
+    androidEvents: [{
+      type: "notification",
+      notifications: [
+        { app: "Calendar", title: "Team sync", text: "Starts in 5 minutes" },
+      ],
+    }],
+    now: new Date("2026-07-04T12:00:00.000Z"),
+  });
+
+  const read = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Read it",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "I cannot read that." },
+    ]),
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:01:00.000Z"),
+  });
+
+  assert.equal(read.diagnostics.outcome, "notification_reference_read");
+  assert.match(read.canonicalResponse, /Calendar: Team sync/);
+
+  const open = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Open that",
+    gemma: new ScriptedFakeLocalGemmaProvider([
+      { type: "final", text: "I cannot open that." },
+    ]),
+    androidEvents: [{ type: "app_control", appName: "Calendar", action: "open", success: true }],
+    workingContext: first.workingContext,
+    now: new Date("2026-07-04T12:02:00.000Z"),
+  });
+
+  assert.equal(open.diagnostics.outcome, "notification_reference_opened");
+  assert.match(open.canonicalResponse, /opened Calendar/i);
+  console.log("OK: single-notification pronoun references use stored working context");
+}
+
 async function testNotificationReferenceUsesStoredAppNames() {
   const teamsEvents: LocalVoiceAndroidEvent[] = [{
     type: "notification",
@@ -999,6 +1044,7 @@ async function main() {
   await testNotificationReadAllWinsOverSpecificReference();
   await testNotificationToolCallFollowUpUsesWorkingContext();
   await testNotificationReferenceOpensMatchingApp();
+  await testSingleNotificationPronounReferencesUseWorkingContext();
   await testNotificationReferenceUsesStoredAppNames();
   testOrdinalNotificationReferencesSelectWithinMatches();
   testShortAppNameNotificationReferencesResolve();

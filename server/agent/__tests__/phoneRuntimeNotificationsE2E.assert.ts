@@ -176,6 +176,17 @@ async function main() {
   assert.equal(unrelatedItQuestion, null, "generic tell-me-about-it questions must not dump cached notifications");
   const notificationSummaryAgain = resolveAndroidNotificationFollowUp("Summarize those again", followUpNotifications);
   assert.equal(notificationSummaryAgain?.kind, "summary", "pronoun-anchored notification summaries should still work");
+  const soleNotification = [
+    { app: "Calendar", pkg: "com.google.android.calendar", title: "Team sync", text: "Starts in 5 minutes", ts: Date.now() },
+  ];
+  const soleNotificationRead = resolveAndroidNotificationFollowUp("Read it", soleNotification);
+  assert.equal(soleNotificationRead?.kind, "read", "single-notification pronoun reads should resolve deterministically");
+  const soleNotificationOpen = resolveAndroidNotificationFollowUp("Open that", soleNotification);
+  assert.equal(soleNotificationOpen?.kind, "open", "single-notification pronoun opens should resolve deterministically");
+  const soleGenericOneAppOpen = resolveAndroidNotificationFollowUp("Open one app", soleNotification);
+  assert.equal(soleGenericOneAppOpen, null, "generic one-app requests must not target the sole notification");
+  const solePluralNotificationOpen = resolveAndroidNotificationFollowUp("Open my notifications", soleNotification);
+  assert.equal(solePluralNotificationOpen, null, "plural notification-shade requests must not target the sole notification");
   const emptyObservedNotifications = resolveAndroidNotificationFollowUp("Read all of them", []);
   assert.equal(emptyObservedNotifications?.kind, "read_all", "empty observations must remain valid follow-up context");
   assert.match(emptyObservedNotifications?.response ?? "", /no current notifications/i);

@@ -154,6 +154,12 @@ function scoreNotificationReference(entry: AndroidNotificationSummaryEntry, quer
   return score;
 }
 
+function referencesSoleNotification(query: string): boolean {
+  if (!/\b(?:read|repeat|open|launch|show|tap|go to)\b/i.test(query)) return false;
+  return /\b(?:it|that|this)\b/i.test(query) ||
+    /\b(?:the|that|this)\s+(?:notification|alert|one)\b/i.test(query);
+}
+
 export function resolveAndroidNotificationReference(
   notifications: unknown[],
   query: string,
@@ -178,6 +184,10 @@ export function resolveAndroidNotificationReference(
 
   const best = scored[0];
   if (best) return { notification: best.notification, index: best.index };
+
+  if (entries.length === 1 && referencesSoleNotification(query)) {
+    return { notification: entries[0], index: 0 };
+  }
 
   return null;
 }
