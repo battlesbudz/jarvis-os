@@ -18,8 +18,7 @@ function compactText(value: unknown): string {
 function wantsOrderedNotificationRead(transcript: string): boolean {
   return /\b(?:read|list|show)\b\s+(?:me\s+)?(?:all|everything|each|every one)(?:\s+of)?\s+(?:them|those|these|(?:my\s+)?notifications?|(?:my\s+)?alerts?)\b/i.test(transcript) ||
     /\b(?:read|list|show)\b\s+(?:me\s+)?(?:the\s+)?rest\b/i.test(transcript) ||
-    /\b(?:read|list|show)\b\s+(?:me\s+)?them\s+all\b/i.test(transcript) ||
-    /\b(?:all|every|each)\s+(?:notifications?|alerts?)\b/i.test(transcript);
+    /\b(?:read|list|show)\b\s+(?:me\s+)?them\s+all\b/i.test(transcript);
 }
 
 function notificationWorkingContextClauses(transcript: string): string[] {
@@ -56,7 +55,7 @@ function notificationReferenceNamesApp(transcript: string, notification: Android
 }
 
 function hasNotificationReferent(transcript: string): boolean {
-  return /\b(?:one|ones|notification|notifications|alert|alerts)\b/i.test(transcript) ||
+  return /\b(?:it|that|this|those|these|them|one|ones|notification|notifications|alert|alerts)\b/i.test(transcript) ||
     /\b(?:first|1st|second|2nd|third|3rd|last)\b/i.test(transcript);
 }
 
@@ -69,6 +68,7 @@ function wantsNotificationReferenceOpen(transcript: string, notifications: unkno
 
 function wantsNotificationReferenceRead(transcript: string, notifications: unknown[]): boolean {
   return /\b(?:read|repeat)\b/i.test(transcript) &&
+    hasNotificationReferent(transcript) &&
     resolveAndroidNotificationReference(notifications, transcript) !== null;
 }
 

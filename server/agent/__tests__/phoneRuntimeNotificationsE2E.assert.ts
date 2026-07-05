@@ -148,6 +148,16 @@ async function main() {
   ]);
   assert.equal(allHandsSpecificRead?.kind, "read", "specific notification titles containing All must not trigger read-all");
   assert.match(allHandsSpecificRead?.response ?? "", /Calendar: All Hands/);
+  const bareAllNotificationsQuestion = resolveAndroidNotificationFollowUp("Are all notifications enabled?", followUpNotifications);
+  assert.equal(bareAllNotificationsQuestion, null, "bare all-notifications questions must not dump cached notifications");
+  const latestNewsRequest = resolveAndroidNotificationFollowUp("Read me the latest news", [
+    { app: "News", pkg: "com.google.android.apps.magazines", title: "Markets rally", text: "Stocks rose today", ts: Date.now() },
+  ]);
+  assert.equal(latestNewsRequest, null, "content requests without a notification referent must fall through");
+  const newsNotificationRequest = resolveAndroidNotificationFollowUp("Read the News notification", [
+    { app: "News", pkg: "com.google.android.apps.magazines", title: "Markets rally", text: "Stocks rose today", ts: Date.now() },
+  ]);
+  assert.equal(newsNotificationRequest?.kind, "read", "explicit notification reads should still use cached context");
   const emptyObservedNotifications = resolveAndroidNotificationFollowUp("Read all of them", []);
   assert.equal(emptyObservedNotifications?.kind, "read_all", "empty observations must remain valid follow-up context");
   assert.match(emptyObservedNotifications?.response ?? "", /no current notifications/i);
