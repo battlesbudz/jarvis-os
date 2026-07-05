@@ -246,13 +246,37 @@ async function processDaemonNotificationFollowUp(userId: string, utterance: stri
     : `I found the ${followUp.notification.app} notification, but I could not open ${followUp.notification.app} yet.`;
 }
 
+async function persistDaemonVoiceExchange(userId: string, utterance: string, responseText: string): Promise<void> {
+  try {
+    const { persistFastCoachExchange } = await import("../channels/coachAgent");
+    const { getCoachAgentSessionAgentId } = await import("../channels/coachAgentSession");
+    const storedSessionId = await _getCoachSession(userId, "Voice");
+    const sdkSessionId = await persistFastCoachExchange({
+      userId,
+      channelName: "Voice",
+      channelLower: "voice",
+      userText: utterance,
+      reply: responseText,
+      coachSessionAgentId: getCoachAgentSessionAgentId(userId),
+      sdkSessionId: storedSessionId,
+    });
+    if (sdkSessionId) {
+      _setCoachSession(userId, "Voice", sdkSessionId);
+    }
+  } catch (err) {
+    console.error("[daemon] deterministic voice exchange persist failed:", err);
+  }
+}
+
 async function processDaemonUtterance(userId: string, utterance: string): Promise<void> {
   try {
     console.log(`[daemon] talk: processing utterance for userId=${userId}: "${utterance.slice(0, 60)}"`);
     const { textToSpeech } = await import("../integrations/audioClient");
 
     let responseText = await processDaemonNotificationFollowUp(userId, utterance);
-    if (!responseText) {
+    if (responseText) {
+      await persistDaemonVoiceExchange(userId, utterance, responseText);
+    } else {
       const { runCoachAgent } = await import("../channels/coachAgent");
       const storedSessionId = await _getCoachSession(userId, "Voice");
       const result = await runCoachAgent({

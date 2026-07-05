@@ -7,10 +7,14 @@ process.env.DATABASE_URL ||= "postgres://test:test@localhost:5432/test";
 async function main() {
   const runtimeSource = fs.readFileSync(path.resolve("server/agent/tools/androidAppRuntime.ts"), "utf8");
   const daemonToolSource = fs.readFileSync(path.resolve("server/agent/tools/daemon.ts"), "utf8");
+  const daemonBridgeSource = fs.readFileSync(path.resolve("server/daemon/bridge.ts"), "utf8");
   assert.match(runtimeSource, /checkAndIncrementScreenshotBudget/);
   assert.match(runtimeSource, /runAndroidCaptureScreen\(args,\s*ctx\.userId,\s*ctx\)/);
   assert.match(runtimeSource, /normalizedQuery\.length > 2 && normalizedCandidate\.includes\(normalizedQuery\)/);
   assert.match(daemonToolSource, /clearVoiceNotificationObservation/);
+  assert.match(daemonBridgeSource, /persistDaemonVoiceExchange/);
+  assert.match(daemonBridgeSource, /persistFastCoachExchange/);
+  assert.match(daemonBridgeSource, /if \(responseText\) \{\s*await persistDaemonVoiceExchange\(userId, utterance, responseText\);/);
   assert.doesNotMatch(
     daemonToolSource,
     /const count = rawNotifications\.length;\s*recordVoiceNotificationObservation\(ctx\.userId, rawNotifications\);/,
