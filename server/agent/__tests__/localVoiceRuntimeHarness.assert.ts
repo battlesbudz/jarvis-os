@@ -535,13 +535,20 @@ async function testEarlierPositiveNotificationClauseSurvivesLaterNegation() {
 }
 
 async function testLaterPronounNegationCancelsNotificationAction() {
+  const pronounTrapNotificationEvents: LocalVoiceAndroidEvent[] = [{
+    type: "notification",
+    notifications: [
+      { app: "Reddit", title: "vivecoding thread is trending", text: "New replies in r/vivecoding" },
+      { app: "Gmail", title: "Kit update", text: "It shipped this morning" },
+    ],
+  }];
   const first = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
     transcript: "Read my notifications",
     gemma: new ScriptedFakeLocalGemmaProvider([
       { type: "tool_call", name: "android_read_notifications", arguments: {} },
     ]),
-    androidEvents: notificationEvents,
+    androidEvents: pronounTrapNotificationEvents,
     now: new Date("2026-07-04T12:00:00.000Z"),
   });
 

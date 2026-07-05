@@ -109,6 +109,7 @@ const REFERENCE_STOPWORDS = new Set([
   "previous",
   "that",
   "this",
+  "it",
   "open",
   "read",
   "show",
