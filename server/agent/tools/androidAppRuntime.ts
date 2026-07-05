@@ -1,5 +1,6 @@
 import type { AgentTool, ToolArgs, ToolResult } from "../types";
 import {
+  clearVoiceNotificationObservation,
   isAndroidDaemonActionAllowed,
   isAndroidDaemonActive,
   recordVoiceNotificationObservation,
@@ -41,6 +42,7 @@ type AndroidRuntimeDeps = {
   sendDaemonOp: typeof sendDaemonOp;
   recordLocalRuntimeObservation: typeof recordLocalRuntimeObservation;
   recordVoiceNotificationObservation: typeof recordVoiceNotificationObservation;
+  clearVoiceNotificationObservation: typeof clearVoiceNotificationObservation;
 };
 
 let androidRuntimeDepsForTesting: Partial<AndroidRuntimeDeps> | null = null;
@@ -79,6 +81,14 @@ async function recordAndroidRuntimeObservation(input: LocalRuntimeObservationInp
 function recordAndroidVoiceNotificationObservation(userId: string, notifications: unknown[]): void {
   try {
     (androidRuntimeDepsForTesting?.recordVoiceNotificationObservation ?? recordVoiceNotificationObservation)(userId, notifications);
+  } catch {
+    // Voice follow-up context should never make the Android action itself fail.
+  }
+}
+
+function clearAndroidVoiceNotificationObservation(userId: string): void {
+  try {
+    (androidRuntimeDepsForTesting?.clearVoiceNotificationObservation ?? clearVoiceNotificationObservation)(userId);
   } catch {
     // Voice follow-up context should never make the Android action itself fail.
   }
@@ -601,6 +611,7 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
       await recordAndroidOutcomeObservation(userId, "notifications", outcome);
       return outcome;
     }
+    clearAndroidVoiceNotificationObservation(userId);
   }
 
   const readPermissionError = await permissionDenied(userId, "android_read_screen");

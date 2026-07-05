@@ -142,6 +142,12 @@ async function main() {
     { app: "Reddit", pkg: "com.reddit.frontpage", title: "Older thread", text: "Still visible", ts: Date.now() - 60 * 60 * 1000 },
   ]);
   assert.equal(olderVisibleNotification?.kind, "read_all", "observed notification context must not depend on post age");
+  const allHandsSpecificRead = resolveAndroidNotificationFollowUp("Read the All Hands notification", [
+    { app: "Calendar", pkg: "com.google.android.calendar", title: "All Hands", text: "Starts at 3 PM", ts: Date.now() },
+    { app: "Reddit", pkg: "com.reddit.frontpage", title: "Local models thread", text: "New replies", ts: Date.now() },
+  ]);
+  assert.equal(allHandsSpecificRead?.kind, "read", "specific notification titles containing All must not trigger read-all");
+  assert.match(allHandsSpecificRead?.response ?? "", /Calendar: All Hands/);
   const emptyObservedNotifications = resolveAndroidNotificationFollowUp("Read all of them", []);
   assert.equal(emptyObservedNotifications?.kind, "read_all", "empty observations must remain valid follow-up context");
   assert.match(emptyObservedNotifications?.response ?? "", /no current notifications/i);

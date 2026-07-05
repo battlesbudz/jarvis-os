@@ -126,6 +126,10 @@ export function recordVoiceNotificationObservation(userId: string, notifications
   });
 }
 
+export function clearVoiceNotificationObservation(userId: string): void {
+  userVoiceNotificationContexts.delete(userId);
+}
+
 function getRecentVoiceNotificationContext(userId: string, limit = 20): PhoneNotification[] | null {
   const context = userVoiceNotificationContexts.get(userId);
   if (!context || Date.now() - context.observedAt > VOICE_NOTIFICATION_FOLLOWUP_TTL_MS) return null;

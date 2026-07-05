@@ -214,6 +214,7 @@ async function main() {
     const accessibilityOps: string[] = [];
     const accessibilityObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];
     const accessibilityVoiceNotificationObservations: unknown[][] = [];
+    const accessibilityVoiceNotificationClears: string[] = [];
     _setAndroidAppRuntimeDepsForTesting({
       isAndroidDaemonActive: () => true,
       isAndroidDaemonActionAllowed: async () => true,
@@ -223,6 +224,9 @@ async function main() {
       },
       recordVoiceNotificationObservation: (_userId, notifications) => {
         accessibilityVoiceNotificationObservations.push(notifications);
+      },
+      clearVoiceNotificationObservation: (userId) => {
+        accessibilityVoiceNotificationClears.push(userId);
       },
       sendDaemonOp: async (_userId, op) => {
         accessibilityOps.push(op.type);
@@ -263,6 +267,7 @@ async function main() {
     assert.equal(accessibilityObservations[0]?.kind, "notifications");
     assert.match(accessibilityObservations[0]?.detail ?? "", /Codex/);
     assert.deepEqual(accessibilityVoiceNotificationObservations, []);
+    assert.deepEqual(accessibilityVoiceNotificationClears, ["user-phone"]);
 
     const youtubeOps: string[] = [];
     const youtubeObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];

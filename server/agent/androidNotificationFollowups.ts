@@ -16,8 +16,10 @@ function compactText(value: unknown): string {
 }
 
 function wantsOrderedNotificationRead(transcript: string): boolean {
-  return /\b(?:read|list|show)\b[\s\S]{0,32}\b(?:all|rest|each|everything|every one|them)\b/i.test(transcript) ||
-    /\b(?:all|rest|each|everything|every one)\b[\s\S]{0,32}\bnotifications?\b/i.test(transcript);
+  return /\b(?:read|list|show)\b\s+(?:me\s+)?(?:all|everything|each|every one)(?:\s+of)?\s+(?:them|those|these|(?:my\s+)?notifications?|(?:my\s+)?alerts?)\b/i.test(transcript) ||
+    /\b(?:read|list|show)\b\s+(?:me\s+)?(?:the\s+)?rest\b/i.test(transcript) ||
+    /\b(?:read|list|show)\b\s+(?:me\s+)?them\s+all\b/i.test(transcript) ||
+    /\b(?:all|every|each)\s+(?:notifications?|alerts?)\b/i.test(transcript);
 }
 
 function notificationWorkingContextClauses(transcript: string): string[] {
