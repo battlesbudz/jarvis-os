@@ -920,6 +920,7 @@ export default function InsightsScreen() {
   const streamingAssistantIdRef = useRef<string | null>(null);
   const isSpeakingRef = useRef(false);
   const lastNativeVoiceInterruptAtRef = useRef(0);
+  const nativeVoiceStateSyncHeldRef = useRef(false);
   const isTranscribingRef = useRef(false);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
   const webChunksRef = useRef<Blob[]>([]);
@@ -1337,8 +1338,10 @@ export default function InsightsScreen() {
     if (Platform.OS !== 'android') return;
     if (!talkModeEnabled) {
       outsideAppVoiceStateRef.current = null;
+      nativeVoiceStateSyncHeldRef.current = false;
       return;
     }
+    if (nativeVoiceStateSyncHeldRef.current) return;
     const nextState = isSpeaking
       ? 'speaking'
       : isTranscribing || isStreaming || isWorkingOnPhone
@@ -1420,16 +1423,31 @@ export default function InsightsScreen() {
     const subscription = addAndroidOutsideAppVoiceControlListener((event) => {
       const action = String(event?.action ?? '').toLowerCase();
       if (action === 'interrupt') {
+        nativeVoiceStateSyncHeldRef.current = false;
         lastNativeVoiceInterruptAtRef.current = Date.now();
         interruptSpeakingAndListen();
         return;
       }
-      if (action === 'pause' || action === 'paused' || action === 'end') {
+      if (action === 'pause' || action === 'paused') {
+        nativeVoiceStateSyncHeldRef.current = true;
+        outsideAppVoiceStateRef.current = 'paused';
         stopSpeaking();
         stopRecordingSilentlyRef.current().catch(() => {});
         return;
       }
+      if (action === 'end') {
+        nativeVoiceStateSyncHeldRef.current = false;
+        outsideAppVoiceStateRef.current = null;
+        talkModeRef.current = false;
+        setTalkModeEnabled(false);
+        setTalkModeActive(false);
+        stopSpeaking();
+        stopRecordingSilentlyRef.current().catch(() => {});
+        apiRequest('PUT', '/api/voice/wake-settings', { talkModeEnabled: false }).catch(() => {});
+        return;
+      }
       if (action === 'resume' || action === 'listening') {
+        nativeVoiceStateSyncHeldRef.current = false;
         if (action === 'listening' && Date.now() - lastNativeVoiceInterruptAtRef.current < 1000) return;
         if (talkModeRef.current && !isSpeakingRef.current && !isRecordingRef.current) {
           setTimeout(() => startRecordingRef.current(), 0);
@@ -1437,7 +1455,7 @@ export default function InsightsScreen() {
       }
     });
     return () => subscription.remove();
-  }, [interruptSpeakingAndListen, stopSpeaking]);
+  }, [interruptSpeakingAndListen, setTalkModeActive, stopSpeaking]);
 
   const speakText = useCallback(async (text: string, assistantId?: string) => {
     if (isSpeaking && speakingTextRef.current === text) {
