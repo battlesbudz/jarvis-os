@@ -1406,6 +1406,23 @@ export default function InsightsScreen() {
     setIsTTSLoading(false);
   }, []);
 
+  const scheduleTalkModeRecordingStart = useCallback((delayMs = 0) => {
+    const startSeq = talkModeStartSeqRef.current;
+    setTimeout(() => {
+      if (
+        !talkModeRef.current ||
+        talkModeStartSeqRef.current !== startSeq ||
+        isStreamingRef.current ||
+        isSpeakingRef.current ||
+        isRecordingRef.current ||
+        isTranscribingRef.current
+      ) {
+        return;
+      }
+      startRecordingRef.current();
+    }, delayMs);
+  }, []);
+
   const interruptSpeakingAndListen = useCallback(() => {
     const shouldResumeTalkMode = talkModeRef.current;
     if (shouldResumeTalkMode) {
@@ -1413,9 +1430,9 @@ export default function InsightsScreen() {
     }
     stopSpeaking();
     if (shouldResumeTalkMode) {
-      setTimeout(() => startRecordingRef.current(), 0);
+      scheduleTalkModeRecordingStart();
     }
-  }, [markAssistantSpeechStopped, stopSpeaking]);
+  }, [markAssistantSpeechStopped, scheduleTalkModeRecordingStart, stopSpeaking]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -1430,6 +1447,7 @@ export default function InsightsScreen() {
       }
       if (action === 'pause' || action === 'paused') {
         nativeVoiceStateSyncHeldRef.current = true;
+        talkModeStartSeqRef.current += 1;
         outsideAppVoiceStateRef.current = 'paused';
         stopSpeaking();
         stopRecordingSilentlyRef.current().catch(() => {});
@@ -1453,12 +1471,12 @@ export default function InsightsScreen() {
           return;
         }
         if (talkModeRef.current && !isSpeakingRef.current && !isRecordingRef.current) {
-          setTimeout(() => startRecordingRef.current(), 0);
+          scheduleTalkModeRecordingStart();
         }
       }
     });
     return () => subscription.remove();
-  }, [interruptSpeakingAndListen, setTalkModeActive, stopSpeaking]);
+  }, [interruptSpeakingAndListen, scheduleTalkModeRecordingStart, setTalkModeActive, stopSpeaking]);
 
   const speakText = useCallback(async (text: string, assistantId?: string) => {
     if (isSpeaking && speakingTextRef.current === text) {
@@ -1487,7 +1505,7 @@ export default function InsightsScreen() {
       setIsTTSLoading(false);
       apiRequest('POST', '/api/voice/tts-done').catch(() => {});
       if (talkModeRef.current) {
-        setTimeout(() => startRecordingRef.current(), 400);
+        scheduleTalkModeRecordingStart(400);
       }
     };
 
@@ -1832,7 +1850,7 @@ export default function InsightsScreen() {
         onError();
       }
     }
-  }, [interruptSpeakingAndListen, isSpeaking, stopSpeaking]);
+  }, [interruptSpeakingAndListen, isSpeaking, scheduleTalkModeRecordingStart, stopSpeaking]);
 
   speakTextRef.current = speakText;
 
