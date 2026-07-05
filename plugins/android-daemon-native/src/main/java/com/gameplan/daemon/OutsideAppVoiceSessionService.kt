@@ -12,7 +12,9 @@ import android.graphics.Color
 import android.graphics.PixelFormat
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
@@ -100,11 +102,11 @@ class OutsideAppVoiceSessionService : Service() {
         fun currentState(): OutsideAppVoiceState = instance?.state ?: OutsideAppVoiceState.IDLE
 
         fun markPlaybackSpeaking() {
-            instance?.takeIf { it.sessionActive }?.setState(OutsideAppVoiceState.SPEAKING)
+            instance?.setStateFromAnyThread(OutsideAppVoiceState.SPEAKING)
         }
 
         fun markPlaybackListening() {
-            instance?.takeIf { it.sessionActive }?.setState(OutsideAppVoiceState.LISTENING)
+            instance?.setStateFromAnyThread(OutsideAppVoiceState.LISTENING)
         }
 
         fun startIntent(context: Context): Intent {
@@ -128,6 +130,7 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private val overlayController by lazy { OutsideAppVoiceOverlayController(this) }
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var state: OutsideAppVoiceState = OutsideAppVoiceState.IDLE
     private var sessionActive = false
 
@@ -189,6 +192,16 @@ class OutsideAppVoiceSessionService : Service() {
     fun stateForTest(): OutsideAppVoiceState = state
 
     fun sessionActiveForTest(): Boolean = sessionActive
+
+    private fun setStateFromAnyThread(nextState: OutsideAppVoiceState) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            if (sessionActive) setState(nextState)
+            return
+        }
+        mainHandler.post {
+            if (sessionActive) setState(nextState)
+        }
+    }
 
     internal fun onOverlayTapped() {
         when (OutsideAppVoiceSessionStateMachine.overlayTapAction(state)) {

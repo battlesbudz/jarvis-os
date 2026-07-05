@@ -411,6 +411,10 @@ for (const [contents, source] of [
   assertIncludes(contents, "private fun openJarvisIntent()", source);
   assertIncludes(contents, "fun markPlaybackSpeaking()", source);
   assertIncludes(contents, "fun markPlaybackListening()", source);
+  assertIncludes(contents, "private val mainHandler = Handler(Looper.getMainLooper())", source);
+  assertIncludes(contents, "private fun setStateFromAnyThread(nextState: OutsideAppVoiceState)", source);
+  assertIncludes(contents, "instance?.setStateFromAnyThread(OutsideAppVoiceState.SPEAKING)", source);
+  assertIncludes(contents, "instance?.setStateFromAnyThread(OutsideAppVoiceState.LISTENING)", source);
 }
 for (const [contents, source] of [
   [opHandler, "OpHandler.kt"],
