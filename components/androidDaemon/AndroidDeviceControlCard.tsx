@@ -142,12 +142,19 @@ export function AndroidDeviceControlCard({
       action: () => AndroidDaemonNative?.requestMicrophonePermission() ?? Promise.resolve(),
     },
     {
+      key: "voice-overlay",
+      label: "Voice Overlay",
+      detail: "Floating mic while JARVIS listens outside the app.",
+      enabled: status?.voiceOverlayPermission,
+      action: () => AndroidDaemonNative?.openOverlayPermissionSettings?.() ?? Promise.resolve(),
+    },
+    {
       key: "screen-recording",
       label: "Screen Recording",
       detail: "Unavailable until the foreground Android system prompt flow is wired.",
       disabled: true,
     },
-  ], [status?.accessibilityEnabled, status?.notificationListenerActive]);
+  ], [status?.accessibilityEnabled, status?.notificationListenerActive, status?.voiceOverlayPermission]);
 
   const runPermissionAction = useCallback(async (row: PermissionRow) => {
     if (!nativeAvailable || anyBusy || row.disabled || !row.action) return;

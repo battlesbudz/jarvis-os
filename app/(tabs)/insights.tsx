@@ -68,6 +68,11 @@ import { getApiUrl, queryClient, apiRequest } from '@/lib/query-client';
 import { authFetch, getAuthToken } from '@/lib/auth-context';
 import { useWakeWord } from '@/lib/wake-word-context';
 import {
+  endAndroidOutsideAppVoiceSession,
+  setAndroidOutsideAppVoiceSessionState,
+  startAndroidOutsideAppVoiceSession,
+} from '@/lib/android-daemon-native';
+import {
   buildTurnDiagnosticBundle,
   getActionableDiagnosticRecords,
   inferRuntimeIntent,
@@ -891,6 +896,7 @@ export default function InsightsScreen() {
   const [talkModeEnabled, setTalkModeEnabled] = useState(false);
   const talkModeRef = useRef(false);
   const talkModeStartSeqRef = useRef(0);
+  const outsideAppVoiceStateRef = useRef<string | null>(null);
   const isStreamingRef = useRef(false);
   const startRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const stopRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
@@ -1322,7 +1328,28 @@ export default function InsightsScreen() {
   useEffect(() => { talkModeRef.current = talkModeEnabled; }, [talkModeEnabled]);
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
   useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
+  useEffect(() => { isSpeakingRef.current = isSpeaking; }, [isSpeaking]);
   useEffect(() => { isTranscribingRef.current = isTranscribing; }, [isTranscribing]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    if (!talkModeEnabled) {
+      outsideAppVoiceStateRef.current = null;
+      return;
+    }
+    const nextState = isSpeaking
+      ? 'speaking'
+      : isTranscribing || isStreaming || isWorkingOnPhone
+        ? 'working'
+        : isRecording
+          ? 'listening'
+          : 'idle';
+    if (outsideAppVoiceStateRef.current === nextState) return;
+    outsideAppVoiceStateRef.current = nextState;
+    setAndroidOutsideAppVoiceSessionState(nextState).catch((err) => {
+      console.warn('[voice] outside-app state sync failed:', err);
+    });
+  }, [isRecording, isSpeaking, isStreaming, isTranscribing, isWorkingOnPhone, talkModeEnabled]);
 
   // App-level wake word events — fired by WakeWordContext even when insights is not focused
   const { pendingWakeEvent, clearWakeEvent, setTalkModeActive } = useWakeWord();
@@ -2091,6 +2118,11 @@ export default function InsightsScreen() {
       const enabled = d?.talkModeEnabled ?? false;
       setTalkModeEnabled(enabled);
       talkModeRef.current = enabled;
+      if (Platform.OS === 'android' && enabled) {
+        startAndroidOutsideAppVoiceSession().catch((err) => {
+          console.warn('[voice] outside-app session restore failed:', err);
+        });
+      }
     }).catch(() => {});
 
     // Cleanup on blur: cancel queued Talk Mode starts and stop any active in-app capture.
@@ -2891,7 +2923,7 @@ export default function InsightsScreen() {
           recentMessages,
         },
         offeredTools: [tool],
-        rawToolCalls: [{ token, tool, preview: msg.pendingConfirm.preview }],
+        rawToolCalls: [{ token, tool, preview: msg.pendingConfirm?.preview }],
         normalizedToolCalls: input.executedActions.map((action) => ({
           tool: action.tool,
           result: action.result,
@@ -3408,6 +3440,12 @@ export default function InsightsScreen() {
             setTalkModeEnabled(next);
             talkModeRef.current = next;
             talkModeStartSeqRef.current += 1;
+            if (Platform.OS === 'android') {
+              const action = next ? startAndroidOutsideAppVoiceSession : endAndroidOutsideAppVoiceSession;
+              action().catch((err) => {
+                console.warn('[voice] outside-app session toggle failed:', err);
+              });
+            }
             if (!next) {
               clearSilencePoll();
             }

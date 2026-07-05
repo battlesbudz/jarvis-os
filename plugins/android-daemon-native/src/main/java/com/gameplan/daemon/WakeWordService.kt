@@ -269,8 +269,10 @@ class WakeWordService : Service() {
     }
 
     private fun onWakeWordDetected(phrase: String, fullTranscript: String) {
-        // Bring the Jarvis mobile app to the foreground
-        bringJarvisToForeground()
+        // Talk Mode owns the turn through the daemon; keep the user's current app in focus.
+        if (!talkModeEnabled) {
+            bringJarvisToForeground()
+        }
 
         val event = JSONObject().apply {
             put("type", "wake_word_triggered")
@@ -280,8 +282,8 @@ class WakeWordService : Service() {
             // When true, the app should NOT start its own mic session to avoid competing pipelines.
             put("daemonHandling", talkModeEnabled)
         }
-        // Small delay so the app has time to come to the foreground before the event fires
-        mainHandler.postDelayed({ WebSocketService.sendEvent(event.toString()) }, 400L)
+        val eventDelayMs = if (talkModeEnabled) 0L else 400L
+        mainHandler.postDelayed({ WebSocketService.sendEvent(event.toString()) }, eventDelayMs)
 
         if (talkModeEnabled) {
             // Talk Mode: keep the recognizer running to immediately capture the next utterance.

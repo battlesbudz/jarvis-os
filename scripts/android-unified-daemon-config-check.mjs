@@ -13,6 +13,14 @@ const jarvisVoiceInteractionPath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/JarvisVoiceInteraction.kt",
 );
+const wakeWordServicePath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/WakeWordService.kt",
+);
+const outsideAppVoiceSessionPath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/OutsideAppVoiceSessionService.kt",
+);
 const nativeWrapperPath = path.join(projectRoot, "lib/android-daemon-native.ts");
 const androidControlCardPath = path.join(projectRoot, "components/androidDaemon/AndroidDeviceControlCard.tsx");
 const jarvisDaemonModulePath = path.join(
@@ -63,6 +71,14 @@ const pluginTemplateJarvisDaemonModulePath = path.join(
 const pluginTemplateJarvisVoiceInteractionPath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisVoiceInteraction.kt",
+);
+const pluginTemplateWakeWordPath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/WakeWordService.kt",
+);
+const pluginTemplateOutsideAppVoiceSessionPath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OutsideAppVoiceSessionService.kt",
 );
 const pluginTemplateScreenRecordPath = path.join(
   projectRoot,
@@ -123,6 +139,7 @@ const requiredPermissions = [
   "android.permission.ACCESS_COARSE_LOCATION",
   "android.permission.ACCESS_BACKGROUND_LOCATION",
   "android.permission.SEND_SMS",
+  "android.permission.SYSTEM_ALERT_WINDOW",
   "android.permission.FOREGROUND_SERVICE_CAMERA",
   "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
 ];
@@ -133,6 +150,7 @@ const requiredManifestSnippets = [
   'android:foregroundServiceType="dataSync"',
   'android:name=".daemon.WakeWordService"',
   'android:foregroundServiceType="microphone"',
+  'android:name=".daemon.OutsideAppVoiceSessionService"',
   'android:name=".daemon.JarvisVoiceInteractionService"',
   "android.service.voice.VoiceInteractionService",
   'android:name="android.voice_interaction"',
@@ -211,6 +229,8 @@ const [
   mainApplication,
   mainActivity,
   jarvisVoiceInteraction,
+  wakeWordService,
+  outsideAppVoiceSession,
   nativeWrapper,
   androidControlCard,
   jarvisDaemonModule,
@@ -226,6 +246,8 @@ const [
   pluginTemplateWebSocket,
   pluginTemplateJarvisDaemonModule,
   pluginTemplateJarvisVoiceInteraction,
+  pluginTemplateWakeWord,
+  pluginTemplateOutsideAppVoiceSession,
   pluginTemplateScreenRecord,
   pluginTemplateCamera,
   pluginTemplateAccessibility,
@@ -245,6 +267,8 @@ const [
   readFile(mainApplicationPath, "utf8"),
   readFile(mainActivityPath, "utf8"),
   readFile(jarvisVoiceInteractionPath, "utf8"),
+  readFile(wakeWordServicePath, "utf8"),
+  readFile(outsideAppVoiceSessionPath, "utf8"),
   readFile(nativeWrapperPath, "utf8"),
   readFile(androidControlCardPath, "utf8"),
   readFile(jarvisDaemonModulePath, "utf8"),
@@ -260,6 +284,8 @@ const [
   readFile(pluginTemplateWebSocketPath, "utf8"),
   readFile(pluginTemplateJarvisDaemonModulePath, "utf8"),
   readFile(pluginTemplateJarvisVoiceInteractionPath, "utf8"),
+  readFile(pluginTemplateWakeWordPath, "utf8"),
+  readFile(pluginTemplateOutsideAppVoiceSessionPath, "utf8"),
   readFile(pluginTemplateScreenRecordPath, "utf8"),
   readFile(pluginTemplateCameraPath, "utf8"),
   readFile(pluginTemplateAccessibilityPath, "utf8"),
@@ -355,6 +381,19 @@ assertIncludes(jarvisVoiceInteraction, "EXTRA_SHOW_WHEN_LOCKED_TOKEN", "JarvisVo
 assertIncludes(jarvisVoiceInteraction, "UUID.randomUUID()", "JarvisVoiceInteraction.kt");
 assertIncludes(jarvisVoiceInteraction, "fun shouldShowWhenLocked(context: Context, intent: Intent?)", "JarvisVoiceInteraction.kt");
 assertIncludes(jarvisVoiceInteraction, "suppliedToken != expectedToken", "JarvisVoiceInteraction.kt");
+for (const [contents, source] of [
+  [outsideAppVoiceSession, "OutsideAppVoiceSessionService.kt"],
+  [pluginTemplateOutsideAppVoiceSession, "plugins/android-daemon-native/OutsideAppVoiceSessionService.kt"],
+]) {
+  assertIncludes(contents, "class OutsideAppVoiceSessionService : Service()", source);
+  assertIncludes(contents, "OutsideAppVoiceSessionStateMachine", source);
+  assertIncludes(contents, "ACTION_PAUSE", source);
+  assertIncludes(contents, "ACTION_RESUME", source);
+  assertIncludes(contents, "ACTION_END", source);
+  assertIncludes(contents, "ACTION_OPEN", source);
+  assertIncludes(contents, "TYPE_APPLICATION_OVERLAY", source);
+  assertIncludes(contents, "START_NOT_STICKY", source);
+}
 assertIncludes(pluginTemplateJarvisVoiceInteraction, "EXTRA_SHOW_WHEN_LOCKED_TOKEN", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");
 assertIncludes(pluginTemplateJarvisVoiceInteraction, "UUID.randomUUID()", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");
 assertIncludes(
@@ -381,6 +420,9 @@ assertIncludes(plugin, "setShowWhenLocked(showWhenLocked)", "plugins/withJarvisA
 assertIncludes(nativeWrapper, "enable(serverUrl: string, bootstrapToken: string)", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "openAssistantSettings", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "refreshAssistantStatus", "lib/android-daemon-native.ts");
+assertIncludes(nativeWrapper, "startAndroidOutsideAppVoiceSession", "lib/android-daemon-native.ts");
+assertIncludes(nativeWrapper, "endAndroidOutsideAppVoiceSession", "lib/android-daemon-native.ts");
+assertIncludes(nativeWrapper, "setAndroidOutsideAppVoiceSessionState", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "getAndroidLocalGemmaStatus", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "validateAndroidLocalGemmaModel", "lib/android-daemon-native.ts");
 assertExcludes(nativeWrapper, "connect(serverUrl: string, pairCode: string)", "lib/android-daemon-native.ts");
@@ -393,15 +435,31 @@ assertExcludes(androidControlCard, "pairCode", "AndroidDeviceControlCard.tsx");
 assertIncludes(jarvisDaemonModule, "fun enable(serverUrl: String, bootstrapToken: String", "JarvisDaemonModule.kt");
 assertIncludes(jarvisDaemonModule, "E_JARVIS_DAEMON_START", "JarvisDaemonModule.kt");
 assertIncludes(jarvisDaemonModule, "private fun startServiceCompat(intent: Intent, promise: Promise): Boolean", "JarvisDaemonModule.kt");
+assertIncludes(jarvisDaemonModule, "fun startOutsideAppVoiceSession(promise: Promise)", "JarvisDaemonModule.kt");
+assertIncludes(jarvisDaemonModule, "fun endOutsideAppVoiceSession(promise: Promise)", "JarvisDaemonModule.kt");
+assertIncludes(jarvisDaemonModule, "fun setOutsideAppVoiceSessionState(state: String, promise: Promise)", "JarvisDaemonModule.kt");
+assertIncludes(jarvisDaemonModule, "voiceOverlayPermission", "JarvisDaemonModule.kt");
 assertIncludes(jarvisDaemonModule, "fun getLocalGemmaStatus(model: String, promise: Promise)", "JarvisDaemonModule.kt");
 assertIncludes(jarvisDaemonModule, "fun validateLocalGemmaModel(model: String, promise: Promise)", "JarvisDaemonModule.kt");
 assertExcludes(jarvisDaemonModule, "fun connect(serverUrl: String, pairCode: String", "JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "fun enable(serverUrl: String, bootstrapToken: String", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "E_JARVIS_DAEMON_START", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "private fun startServiceCompat(intent: Intent, promise: Promise): Boolean", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+assertIncludes(pluginTemplateJarvisDaemonModule, "fun startOutsideAppVoiceSession(promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+assertIncludes(pluginTemplateJarvisDaemonModule, "fun endOutsideAppVoiceSession(promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+assertIncludes(pluginTemplateJarvisDaemonModule, "fun setOutsideAppVoiceSessionState(state: String, promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+assertIncludes(pluginTemplateJarvisDaemonModule, "voiceOverlayPermission", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "fun getLocalGemmaStatus(model: String, promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "fun validateLocalGemmaModel(model: String, promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertExcludes(pluginTemplateJarvisDaemonModule, "fun connect(serverUrl: String, pairCode: String", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+for (const [contents, source] of [
+  [wakeWordService, "WakeWordService.kt"],
+  [pluginTemplateWakeWord, "plugins/android-daemon-native/WakeWordService.kt"],
+]) {
+  assertIncludes(contents, "if (!talkModeEnabled) {", source);
+  assertIncludes(contents, "bringJarvisToForeground()", source);
+  assertIncludes(contents, "val eventDelayMs = if (talkModeEnabled) 0L else 400L", source);
+}
 assertIncludes(webSocketService, "private fun startForegroundCompat(): Boolean", "WebSocketService.kt");
 assertIncludes(webSocketService, "Failed to start foreground daemon service", "WebSocketService.kt");
 assertIncludes(webSocketService, "return START_NOT_STICKY", "WebSocketService.kt");

@@ -1,5 +1,6 @@
 package com.gameplan.daemon
 
+import android.app.Service
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import org.json.JSONObject
@@ -8,6 +9,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import java.io.File
 
@@ -132,5 +134,89 @@ class UnifiedDaemonContractTest {
         } finally {
             modelFile.parentFile?.deleteRecursively()
         }
+    }
+
+    @Test
+    fun outsideAppVoiceSessionNotificationControlsStayStable() {
+        val actions = OutsideAppVoiceSessionStateMachine.notificationActions()
+
+        assertEquals(listOf("Pause", "Resume", "End", "Open"), actions.map { it.label })
+        assertEquals(
+            listOf(
+                OutsideAppVoiceSessionService.ACTION_PAUSE,
+                OutsideAppVoiceSessionService.ACTION_RESUME,
+                OutsideAppVoiceSessionService.ACTION_END,
+                OutsideAppVoiceSessionService.ACTION_OPEN,
+            ),
+            actions.map { it.action },
+        )
+    }
+
+    @Test
+    fun outsideAppVoiceOverlayTapInterruptsSpeechAndOpensControlsOtherwise() {
+        assertEquals(
+            OutsideAppVoiceOverlayTapAction.INTERRUPT_AND_LISTEN,
+            OutsideAppVoiceSessionStateMachine.overlayTapAction(OutsideAppVoiceState.SPEAKING),
+        )
+        for (state in listOf(
+            OutsideAppVoiceState.IDLE,
+            OutsideAppVoiceState.LISTENING,
+            OutsideAppVoiceState.WORKING,
+            OutsideAppVoiceState.APPROVAL,
+            OutsideAppVoiceState.PAUSED,
+        )) {
+            assertEquals(
+                "Unexpected overlay tap action for $state",
+                OutsideAppVoiceOverlayTapAction.OPEN_CONTROLS,
+                OutsideAppVoiceSessionStateMachine.overlayTapAction(state),
+            )
+        }
+    }
+
+    @Test
+    fun outsideAppVoiceServiceDoesNotAutoResumeFromNullRestart() {
+        val controller = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()
+        val service = controller.get()
+
+        val result = service.onStartCommand(null, 0, 1)
+
+        assertEquals(Service.START_NOT_STICKY, result)
+        assertFalse(service.sessionActiveForTest())
+        assertEquals(OutsideAppVoiceState.IDLE, service.stateForTest())
+        controller.destroy()
+    }
+
+    @Test
+    fun outsideAppVoiceServiceTracksPauseResumeAndEnd() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val controller = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()
+        val service = controller.get()
+
+        service.onStartCommand(OutsideAppVoiceSessionService.startIntent(context), 0, 1)
+        assertTrue(service.sessionActiveForTest())
+        assertEquals(OutsideAppVoiceState.LISTENING, service.stateForTest())
+
+        service.onStartCommand(
+            OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_PAUSE),
+            0,
+            2,
+        )
+        assertEquals(OutsideAppVoiceState.PAUSED, service.stateForTest())
+
+        service.onStartCommand(
+            OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_RESUME),
+            0,
+            3,
+        )
+        assertEquals(OutsideAppVoiceState.LISTENING, service.stateForTest())
+
+        service.onStartCommand(
+            OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_END),
+            0,
+            4,
+        )
+        assertFalse(service.sessionActiveForTest())
+        assertEquals(OutsideAppVoiceState.IDLE, service.stateForTest())
+        controller.destroy()
     }
 }

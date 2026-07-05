@@ -42,6 +42,21 @@ function adbShell(command, options = {}) {
   return adb(["shell", command], options);
 }
 
+function voiceE2eBroadcast(command, extras = {}) {
+  const extraArgs = Object.entries(extras)
+    .map(([key, value]) => `--es ${key} ${String(value)}`)
+    .join(" ");
+  adbShell(
+    [
+      "am broadcast",
+      `-n ${PACKAGE_NAME}/.daemon.DaemonE2eReceiver`,
+      "-a com.gameplan.daemon.E2E_VOICE_SESSION",
+      `--es command ${command}`,
+      extraArgs,
+    ].filter(Boolean).join(" "),
+  );
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -90,6 +105,90 @@ function collectLogcat() {
   } catch (err) {
     return `Unable to collect logcat: ${err instanceof Error ? err.message : String(err)}`;
   }
+}
+
+function parseVoiceE2eStatus(logcat, token) {
+  const lines = logcat.split(/\r?\n/).filter((line) => line.includes("JarvisVoiceE2E") && line.includes(`token=${token}`));
+  const line = lines.at(-1);
+  if (!line) return null;
+  const match = line.match(/active=(true|false)\s+state=([a-z_]+)\s+overlayTap=([A-Z_]+)\s+actions=([^\r\n]+)/);
+  if (!match) return null;
+  return {
+    active: match[1] === "true",
+    state: match[2],
+    overlayTap: match[3],
+    actions: match[4].split(",").map((action) => action.trim()).filter(Boolean),
+    raw: line,
+  };
+}
+
+async function waitForVoiceE2eStatus(label, predicate, timeoutMs = 10000) {
+  const started = Date.now();
+  let lastStatus = null;
+  let attempts = 0;
+  while (Date.now() - started < timeoutMs) {
+    const token = `voice_${Date.now()}_${++attempts}`;
+    voiceE2eBroadcast("status", { token });
+    await sleep(350);
+    const status = parseVoiceE2eStatus(collectLogcat(), token);
+    if (status) {
+      lastStatus = status;
+      if (predicate(status)) return status;
+    }
+    await sleep(250);
+  }
+  throw new Error(`Timed out waiting for voice E2E status: ${label}; lastStatus=${JSON.stringify(lastStatus)}`);
+}
+
+async function runOutsideAppVoiceFakeLocalGemmaSmoke() {
+  adbShell(`appops set ${PACKAGE_NAME} SYSTEM_ALERT_WINDOW allow || true`);
+
+  voiceE2eBroadcast("start", { token: "voice_start" });
+  const listening = await waitForVoiceE2eStatus(
+    "voice session listening with notification controls",
+    (status) => (
+      status.active &&
+      status.state === "listening" &&
+      ["Pause", "Resume", "End", "Open"].every((action) => status.actions.includes(action))
+    ),
+  );
+
+  const notificationDump = adbShell("dumpsys notification --noredact", { capture: true });
+  if (!/jarvis_voice_session|Jarvis voice/i.test(notificationDump)) {
+    throw new Error("Outside-app voice session notification was not visible in dumpsys notification output.");
+  }
+
+  voiceE2eBroadcast("set_state", { token: "voice_set_speaking", state: "speaking" });
+  const speaking = await waitForVoiceE2eStatus(
+    "speaking overlay tap should interrupt and listen",
+    (status) => status.active && status.state === "speaking" && status.overlayTap === "INTERRUPT_AND_LISTEN",
+  );
+
+  voiceE2eBroadcast("overlay_tap", { token: "voice_overlay_tap" });
+  const interrupted = await waitForVoiceE2eStatus(
+    "overlay tap should move speaking session back to listening",
+    (status) => status.active && status.state === "listening",
+  );
+
+  voiceE2eBroadcast("pause", { token: "voice_pause" });
+  const paused = await waitForVoiceE2eStatus(
+    "paused overlay tap should open controls",
+    (status) => status.active && status.state === "paused" && status.overlayTap === "OPEN_CONTROLS",
+  );
+
+  voiceE2eBroadcast("resume", { token: "voice_resume" });
+  const resumed = await waitForVoiceE2eStatus(
+    "resume should return to listening",
+    (status) => status.active && status.state === "listening",
+  );
+
+  voiceE2eBroadcast("end", { token: "voice_end" });
+  const ended = await waitForVoiceE2eStatus(
+    "end should clear active voice session",
+    (status) => !status.active && status.state === "idle",
+  );
+
+  return { listening, speaking, interrupted, paused, resumed, ended };
 }
 
 function findUsefulElement(snapshot) {
@@ -378,6 +477,7 @@ async function main() {
   adbShell(`pm grant ${PACKAGE_NAME} android.permission.POST_NOTIFICATIONS || true`);
   adbShell(`monkey -p ${PACKAGE_NAME} -c android.intent.category.LAUNCHER 1`);
   await sleep(3000);
+  const outsideAppVoice = await runOutsideAppVoiceFakeLocalGemmaSmoke();
   enableAccessibilityService();
   await waitForAccessibilityService();
 
@@ -436,6 +536,14 @@ async function main() {
     screenContextElementCount: elements.length,
     tappedElementId: usefulElement.id,
     readScreenTextCount: readText.length,
+    outsideAppVoice: {
+      startState: outsideAppVoice.listening.state,
+      speakingOverlayTap: outsideAppVoice.speaking.overlayTap,
+      interruptedState: outsideAppVoice.interrupted.state,
+      pausedState: outsideAppVoice.paused.state,
+      resumedState: outsideAppVoice.resumed.state,
+      endedActive: outsideAppVoice.ended.active,
+    },
   }, null, 2));
 
   await bridge.close();
