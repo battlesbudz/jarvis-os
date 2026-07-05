@@ -28,6 +28,7 @@ export type LocalVoiceToolName =
   | "android_read_screen_context"
   | "android_capture_screen"
   | "android_open_app_by_name"
+  | "android_youtube_search"
   | "android_copy_to_clipboard"
   | "runtime_request_approval"
   | "runtime_scheduler_status"
@@ -70,7 +71,7 @@ export interface LocalVoiceNotification {
 export type LocalVoiceAndroidEvent =
   | { type: "notification"; notifications: LocalVoiceNotification[] }
   | { type: "screen"; activeApp: string; title?: string; text: string; elements?: string[] }
-  | { type: "app_control"; appName: string; action: "open" | "search" | "tap" | "type"; success?: boolean; detail?: string }
+  | { type: "app_control"; appName: string; action: "open" | "search" | "tap" | "type"; query?: string; success?: boolean; detail?: string }
   | { type: "clipboard"; text: string }
   | { type: "approval"; action: string; approved: boolean }
   | { type: "scheduler"; activeJobs: string[]; pausedJobs?: string[] }
@@ -151,6 +152,8 @@ const TOOL_ALIASES: Record<string, LocalVoiceToolName> = {
   android_read_screen_context: "android_read_screen_context",
   android_open_app: "android_open_app_by_name",
   android_open_app_by_name: "android_open_app_by_name",
+  android_youtube_search: "android_youtube_search",
+  youtube_search: "android_youtube_search",
   android_copy_to_clipboard: "android_copy_to_clipboard",
   copy_to_clipboard: "android_copy_to_clipboard",
   runtime_request_approval: "runtime_request_approval",
@@ -198,6 +201,238 @@ function capabilityToolName(capability: LocalVoiceCapability): LocalVoiceToolNam
   }
 }
 
+const YOUTUBE_APP_NAME_PATTERN = String.raw`(?:youtube|you\s*tube|yt)`;
+const YOUTUBE_SEARCH_VERB_PATTERN = String.raw`(?:search|find|look\s+up|look\s+for)`;
+const YOUTUBE_APP_NAME_REGEX = new RegExp(String.raw`\b${YOUTUBE_APP_NAME_PATTERN}\b`, "i");
+const YOUTUBE_SEARCH_VERB_REGEX = new RegExp(String.raw`\b${YOUTUBE_SEARCH_VERB_PATTERN}\b`, "i");
+const ANY_ACTION_COMMAND_WORDS = String.raw`(?:open|launch|start|read|show|check|copy|approve|confirm|request|take|capture|search|find|look\s+up|look\s+for)`;
+const OPEN_STYLE_ACTION_COMMAND_WORDS = String.raw`(?:open|launch|start|read|show|check|copy|approve|confirm|request|take|capture)`;
+const SEARCH_TARGET_ACTION_PATTERN = String.raw`${YOUTUBE_SEARCH_VERB_PATTERN}\s+(?:on\s+)?(?:${YOUTUBE_APP_NAME_PATTERN}|google|chrome|browser|web)\b`;
+const TARGETLESS_SEARCH_ACTION_PATTERN = String.raw`${YOUTUBE_SEARCH_VERB_PATTERN}\s+(?:for\s+|me\s+)?[a-z0-9]`;
+const NEGATED_ACTION_WORDS = String.raw`(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)`;
+const OPTIONAL_FILLER_PREFIX = String.raw`(?:(?:actually|wait|sorry|hold\s+on|hang\s+on|nevermind|never\s+mind)\s+)?`;
+const OPTIONAL_NEGATED_ACTION_WORDS = String.raw`(?:${NEGATED_ACTION_WORDS}\s+)?`;
+const ACTION_CLAUSE_SPLIT_PATTERN = new RegExp(
+  String.raw`[.!?;,]\s*(?:and\s+)?(?=${OPTIONAL_FILLER_PREFIX}${OPTIONAL_NEGATED_ACTION_WORDS}${ANY_ACTION_COMMAND_WORDS}\b)|\band\s+then\s+(?=${OPTIONAL_FILLER_PREFIX}${OPTIONAL_NEGATED_ACTION_WORDS}${ANY_ACTION_COMMAND_WORDS}\b)|\b(?:but|then)\s+(?=${OPTIONAL_FILLER_PREFIX}${OPTIONAL_NEGATED_ACTION_WORDS}${ANY_ACTION_COMMAND_WORDS}\b)|\band\s+(?=${OPTIONAL_FILLER_PREFIX}${NEGATED_ACTION_WORDS}\s+${ANY_ACTION_COMMAND_WORDS}\b)|\band\s+(?=${OPTIONAL_FILLER_PREFIX}${OPTIONAL_NEGATED_ACTION_WORDS}${SEARCH_TARGET_ACTION_PATTERN})|\band\s+(?=${OPTIONAL_FILLER_PREFIX}${OPTIONAL_NEGATED_ACTION_WORDS}${TARGETLESS_SEARCH_ACTION_PATTERN})|\band\s+(?=${OPTIONAL_FILLER_PREFIX}${OPTIONAL_NEGATED_ACTION_WORDS}${OPEN_STYLE_ACTION_COMMAND_WORDS}\b)`,
+  "i",
+);
+
+function transcriptActionClauses(transcript: string): string[] {
+  return compactText(transcript)
+    .split(ACTION_CLAUSE_SPLIT_PATTERN)
+    .map((clause) => clause.trim().replace(/[,:;]+$/, "").trim())
+    .filter(Boolean);
+}
+
+const NEGATED_ACTION_PREFIX_PATTERN = /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\b/i;
+
+function isNegatedActionClause(clause: string): boolean {
+  const match = clause.match(capabilityRequestPattern("app_control"));
+  const commandPrefix = clause.slice(0, match?.index ?? 0);
+  return !!match && NEGATED_ACTION_PREFIX_PATTERN.test(commandPrefix);
+}
+
+type AppControlActionFamily = "open" | "search";
+
+function appControlPronounCancellationAction(clause: string): AppControlActionFamily | null {
+  if (/\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+(?:open|launch|start)\s+(?:it|that|this)\b/i.test(clause)) {
+    return "open";
+  }
+  if (/\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+(?:search|find|look\s+up|look\s+for)\s+(?:for\s+)?(?:it|that|this)\b/i.test(clause)) {
+    return "search";
+  }
+  return null;
+}
+
+function positiveClauseFromNegation(clause: string): string {
+  return clause
+    .replace(/^\s*(?:(?:actually|wait|sorry|hold\s+on|hang\s+on|nevermind|never\s+mind)\s+)?(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+/i, "")
+    .trim();
+}
+
+function hasEarlierPositiveOpenRequestForApp(clauses: string[], beforeIndex: number, appName: string): boolean {
+  const canceledApp = compactText(appName).toLowerCase();
+  if (!canceledApp) return false;
+
+  for (let index = beforeIndex; index >= 0; index -= 1) {
+    const clause = clauses[index];
+    if (isNegatedActionClause(clause)) continue;
+    if (inferRequestedAppName(clause).toLowerCase() === canceledApp) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasEarlierPositiveYoutubeSearchQuery(clauses: string[], beforeIndex: number, query: string): boolean {
+  const canceledQuery = compactText(query).toLowerCase();
+  if (!canceledQuery) return false;
+
+  for (let index = beforeIndex; index >= 0; index -= 1) {
+    const clause = clauses[index];
+    if (isNegatedActionClause(clause)) continue;
+    const explicitYoutubeQuery = inferYoutubeSearchQuery(clause);
+    const targetlessYoutubeQuery =
+      !explicitYoutubeQuery && isYoutubeAppName(inferLatestRequestedAppName(clauses, index - 1))
+        ? inferSearchQueryFromClause(clause)
+        : "";
+    if (compactText(explicitYoutubeQuery || targetlessYoutubeQuery).toLowerCase() === canceledQuery) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasEarlierPositiveYoutubeSearchRequest(clauses: string[], beforeIndex: number): boolean {
+  for (let index = beforeIndex; index >= 0; index -= 1) {
+    const clause = clauses[index];
+    if (isNegatedActionClause(clause)) continue;
+    if (inferYoutubeSearchQuery(clause)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasEarlierPositiveAppControlRequestForAction(
+  clauses: string[],
+  beforeIndex: number,
+  action: AppControlActionFamily,
+): boolean {
+  for (let index = beforeIndex; index >= 0; index -= 1) {
+    const clause = clauses[index];
+    if (isNegatedActionClause(clause)) continue;
+    if (action === "open" && inferRequestedAppName(clause)) {
+      return true;
+    }
+    if (action === "search" && (inferYoutubeSearchQuery(clause) || inferSearchQueryFromClause(clause))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function cleanYoutubeSearchQuery(query: string | undefined, options: { stripIndirectObject?: boolean } = {}): string {
+  let cleaned = stripTrailingRequestSuffixes(query ?? "");
+  if (options.stripIndirectObject) {
+    cleaned = cleaned.replace(/^me\s+/i, "").trim();
+  }
+  return cleaned;
+}
+
+function stripTrailingRequestSuffixes(query: string): string {
+  let cleaned = compactText(query);
+  for (let index = 0; index < 3; index += 1) {
+    const withoutInstead = cleaned.replace(/\s+instead$/i, "").trim();
+    if (withoutInstead !== cleaned) {
+      cleaned = withoutInstead.replace(/[,:;]+$/, "").trim();
+      continue;
+    }
+
+    const withoutPlease = cleaned.match(/^(.*)\s+please$/i);
+    if (withoutPlease?.[1] && !/\bplease$/i.test(withoutPlease[1])) {
+      cleaned = withoutPlease[1].replace(/[,:;]+$/, "").trim();
+      continue;
+    }
+
+    const withoutForMe = cleaned.match(/^(.*)\s+for me$/);
+    if (withoutForMe?.[1] && !/\bdo it$/i.test(withoutForMe[1])) {
+      cleaned = withoutForMe[1].replace(/[,:;]+$/, "").trim();
+      continue;
+    }
+
+    break;
+  }
+  return cleaned;
+}
+
+function youtubeQueriesMatch(requestedQuery: string, eventQuery: string): boolean {
+  const requested = compactText(requestedQuery).toLowerCase();
+  const event = compactText(eventQuery).toLowerCase();
+  return !!requested && !!event && requested === event;
+}
+
+function isYoutubeAppName(appName: string): boolean {
+  return /^(?:youtube|you tube|yt)$/i.test(compactText(appName));
+}
+
+function normalizeKnownSearchTarget(target: string | undefined): string {
+  const normalized = compactText(target)
+    .replace(/^the\s+/i, "")
+    .replace(/\s+app$/i, "")
+    .trim();
+  if (isYoutubeAppName(normalized) || /^(?:google|chrome|browser|web)$/i.test(normalized)) {
+    return normalized;
+  }
+  return "";
+}
+
+function inferExplicitSearchTarget(clause: string): string {
+  const trailingTargetMatch = clause.match(
+    new RegExp(String.raw`\b${YOUTUBE_SEARCH_VERB_PATTERN}\s+(?:for\s+)?.+?\s+(?:on|in)\s+([a-z0-9][a-z0-9 ._-]*?)\s*[.!?]*$`, "i"),
+  );
+  const trailingTarget = normalizeKnownSearchTarget(trailingTargetMatch?.[1]);
+  if (trailingTarget) return trailingTarget;
+
+  const leadingTargetMatch = clause.match(
+    new RegExp(String.raw`\b${YOUTUBE_SEARCH_VERB_PATTERN}\s+(?:(?:on|in)\s+)?(?!for\b)([a-z0-9][a-z0-9 ._-]*?)\s+for\b`, "i"),
+  );
+  return normalizeKnownSearchTarget(leadingTargetMatch?.[1]);
+}
+
+function inferYoutubeSearchQuery(transcript: string): string {
+  const patterns = [
+    new RegExp(
+      String.raw`\b(?:open|launch|start)(?:\s+up)?\s+(?:the\s+)?${YOUTUBE_APP_NAME_PATTERN}(?:\s+app)?\s+(?:and|then)?\s*${YOUTUBE_SEARCH_VERB_PATTERN}\s+(?:for\s+)?(.+?)\s*[.!?]*$`,
+      "i",
+    ),
+    new RegExp(
+      String.raw`\b${YOUTUBE_SEARCH_VERB_PATTERN}\s+(?:on\s+)?${YOUTUBE_APP_NAME_PATTERN}\s+(?:for\s+)?(.+?)\s*[.!?]*$`,
+      "i",
+    ),
+    new RegExp(
+      String.raw`\b${YOUTUBE_SEARCH_VERB_PATTERN}\s+(?:for\s+)?(.+?)\s+(?:on|in)\s+${YOUTUBE_APP_NAME_PATTERN}\s*[.!?]*$`,
+      "i",
+    ),
+  ];
+
+  const clauses = transcriptActionClauses(transcript);
+
+  for (let index = clauses.length - 1; index >= 0; index -= 1) {
+    const clause = clauses[index];
+    if (!YOUTUBE_APP_NAME_REGEX.test(clause) || !YOUTUBE_SEARCH_VERB_REGEX.test(clause)) {
+      continue;
+    }
+
+    for (const pattern of patterns) {
+      const match = clause.match(pattern);
+      const commandPrefix = clause.slice(0, match?.index ?? 0);
+      if (NEGATED_ACTION_PREFIX_PATTERN.test(commandPrefix)) continue;
+      const query = cleanYoutubeSearchQuery(match?.[1], {
+        stripIndirectObject: /\b(?:find|look\s+up|look\s+for)\s+me\b/i.test(clause),
+      });
+      if (query) return query;
+    }
+  }
+
+  return "";
+}
+
+function inferSearchQueryFromClause(clause: string): string {
+  const match = clause.match(
+    new RegExp(String.raw`\b${YOUTUBE_SEARCH_VERB_PATTERN}\s+(?:for\s+)?(.+?)\s*[.!?]*$`, "i"),
+  );
+  const commandPrefix = clause.slice(0, match?.index ?? 0);
+  if (NEGATED_ACTION_PREFIX_PATTERN.test(commandPrefix)) return "";
+  return cleanYoutubeSearchQuery(match?.[1], {
+    stripIndirectObject: /\b(?:find|look\s+up|look\s+for)\s+me\b/i.test(clause),
+  });
+}
+
 function inferRequestedAppName(transcript: string): string {
   const matches = [
     ...transcript.matchAll(
@@ -210,13 +445,93 @@ function inferRequestedAppName(transcript: string): string {
     const matchIndex = match.index ?? 0;
     const prefix = transcript.slice(Math.max(0, matchIndex - 48), matchIndex);
     const clausePrefix = prefix.split(/[.!?;,]|\b(?:but|and|then)\b/i).at(-1) ?? prefix;
-    if (/\b(?:don't|dont|do not|never|stop|didn't|did not|not|no)\b/i.test(clausePrefix)) {
+    if (NEGATED_ACTION_PREFIX_PATTERN.test(clausePrefix)) {
       continue;
     }
 
     const appName = compactText(match[1])
       .replace(/\s+app$/i, "")
       .trim();
+    if (appName) return appName;
+  }
+
+  return "";
+}
+
+function inferRecoveredAppControlRequest(
+  transcript: string,
+): { toolName: LocalVoiceToolName; args: Record<string, unknown> } | null {
+  const clauses = transcriptActionClauses(transcript);
+
+  for (let index = clauses.length - 1; index >= 0; index -= 1) {
+    const clause = clauses[index];
+    if (!capabilityRequestPattern("app_control").test(clause)) continue;
+    if (isNegatedActionClause(clause)) {
+      const positiveClause = positiveClauseFromNegation(clause);
+      const canceledAppName = inferRequestedAppName(positiveClause);
+      if (canceledAppName && hasEarlierPositiveOpenRequestForApp(clauses, index - 1, canceledAppName)) {
+        return null;
+      }
+
+      const explicitCanceledYoutubeQuery = inferYoutubeSearchQuery(positiveClause);
+      const targetlessCanceledYoutubeQuery =
+        !explicitCanceledYoutubeQuery &&
+        !YOUTUBE_APP_NAME_REGEX.test(positiveClause) &&
+        isYoutubeAppName(inferLatestRequestedAppName(clauses, index - 1))
+          ? inferSearchQueryFromClause(positiveClause)
+          : "";
+      const canceledYoutubeQuery = explicitCanceledYoutubeQuery || targetlessCanceledYoutubeQuery;
+      if (canceledYoutubeQuery && hasEarlierPositiveYoutubeSearchQuery(clauses, index - 1, canceledYoutubeQuery)) {
+        return null;
+      }
+      if (
+        !canceledYoutubeQuery &&
+        YOUTUBE_APP_NAME_REGEX.test(positiveClause) &&
+        YOUTUBE_SEARCH_VERB_REGEX.test(positiveClause) &&
+        hasEarlierPositiveYoutubeSearchRequest(clauses, index - 1)
+      ) {
+        return null;
+      }
+
+      const cancellationAction = appControlPronounCancellationAction(clause);
+      if (
+        cancellationAction &&
+        hasEarlierPositiveAppControlRequestForAction(clauses, index - 1, cancellationAction)
+      ) {
+        return null;
+      }
+      continue;
+    }
+
+    const explicitSearchTarget = inferExplicitSearchTarget(clause);
+    if (explicitSearchTarget && !isYoutubeAppName(explicitSearchTarget)) {
+      return null;
+    }
+
+    const youtubeQuery = inferYoutubeSearchQuery(clause);
+    if (youtubeQuery) {
+      return { toolName: "android_youtube_search", args: { query: youtubeQuery } };
+    }
+
+    const searchQuery = inferSearchQueryFromClause(clause);
+    const previousAppName = searchQuery ? inferLatestRequestedAppName(clauses, index - 1) : "";
+    if (searchQuery && isYoutubeAppName(previousAppName)) {
+      return { toolName: "android_youtube_search", args: { query: searchQuery } };
+    }
+
+    const appName = inferRequestedAppName(clause);
+    if (appName) {
+      return { toolName: "android_open_app_by_name", args: { appName } };
+    }
+  }
+
+  return null;
+}
+
+function inferLatestRequestedAppName(clauses: string[], startIndex: number): string {
+  for (let index = startIndex; index >= 0; index -= 1) {
+    if (inferYoutubeSearchQuery(clauses[index])) return "YouTube";
+    const appName = inferRequestedAppName(clauses[index]);
     if (appName) return appName;
   }
 
@@ -230,6 +545,9 @@ function argsForRecoveredCapability(
 ): Record<string, unknown> {
   if (capability !== "app_control") return {};
 
+  const youtubeQuery = inferYoutubeSearchQuery(transcript);
+  if (youtubeQuery) return { query: youtubeQuery };
+
   const appName = inferRequestedAppName(transcript);
   return appName ? { appName } : {};
 }
@@ -241,7 +559,7 @@ function capabilityRequestPattern(capability: LocalVoiceCapability): RegExp {
     case "screen":
       return /\b(?:screen|screenshot|screen grab|display)\b/i;
     case "app_control":
-      return /\b(?:open|launch|start)\b/i;
+      return /\b(?:open|launch|start|search|find|look\s+up|look\s+for)\b/i;
     case "clipboard":
       return /\b(?:clipboard|copy)\b/i;
     case "approval":
@@ -253,17 +571,43 @@ function capabilityRequestPattern(capability: LocalVoiceCapability): RegExp {
   }
 }
 
+function capabilityPronounCancellationPattern(capability: LocalVoiceCapability): RegExp | null {
+  switch (capability) {
+    case "notifications":
+      return /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+(?:read|show|check)\s+(?:it|them|that|this)\b/i;
+    case "screen":
+      return /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+(?:read|show|check|take|capture)\s+(?:it|that|this)\b/i;
+    case "clipboard":
+      return /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+copy\s+(?:it|them|that|this)\b/i;
+    case "approval":
+      return /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+(?:approve|confirm|request)\s+(?:it|that|this)\b/i;
+    case "scheduler":
+      return /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+(?:read|show|check)\s+(?:it|them|that|this)\b/i;
+    case "service":
+      return /\b(?:don't|dont|do not|never|stop|didn't|did not|could\s+you\s+not|can\s+you\s+not|please\s+don't|please\s+dont|please\s+do\s+not|not|no)\s+(?:read|show|check)\s+(?:it|that|this)\b/i;
+    case "app_control":
+      return null;
+  }
+}
+
 function hasNegatedCapabilityRequest(capability: LocalVoiceCapability, transcript: string): boolean {
   const requestPattern = capabilityRequestPattern(capability);
-  const clauses = compactText(transcript)
-    .split(/[.!?;,]|\b(?:but|then)\b|\band\s+(?=(?:open|launch|start|read|show|check|copy|approve|confirm|request|take|capture)\b)/i)
-    .map((clause) => clause.trim())
-    .filter(Boolean);
+  const cancellationPattern = capabilityPronounCancellationPattern(capability);
+  const clauses = transcriptActionClauses(transcript);
 
   for (let index = clauses.length - 1; index >= 0; index -= 1) {
     const clause = clauses[index];
-    if (!requestPattern.test(clause)) continue;
-    return /\b(?:don't|dont|do not|never|stop|didn't|did not|not|no)\b/i.test(clause);
+    if (
+      cancellationPattern &&
+      cancellationPattern.test(clause) &&
+      requestPattern.test(clauses.slice(0, index).join(" "))
+    ) {
+      return true;
+    }
+    const requestMatch = clause.match(requestPattern);
+    if (!requestMatch) continue;
+    const commandPrefix = clause.slice(0, requestMatch.index ?? 0);
+    return NEGATED_ACTION_PREFIX_PATTERN.test(commandPrefix);
   }
 
   return false;
@@ -336,7 +680,9 @@ export class FakeAndroidVoiceRuntime {
       }
       case "android_open_app_by_name": {
         const requestedApp = compactText(args.appName) || compactText(args.app) || "requested app";
-        const event = latestEvent(this.events, "app_control");
+        const event = [...this.events].reverse().find((candidate): candidate is Extract<LocalVoiceAndroidEvent, { type: "app_control" }> =>
+          candidate.type === "app_control" && candidate.action === "open",
+        );
         const requestedAppKey = requestedApp.toLowerCase();
         const eventAppKey = compactText(event?.appName).toLowerCase();
         const ok = !!event && event.action === "open" && eventAppKey === requestedAppKey && event.success !== false;
@@ -344,6 +690,26 @@ export class FakeAndroidVoiceRuntime {
           toolName,
           ok,
           label: ok ? `Opened ${event.appName}` : `Could not open ${requestedApp}`,
+          detail: event?.detail ?? "",
+        };
+        break;
+      }
+      case "android_youtube_search": {
+        const query = compactText(args.query) || compactText(args.searchQuery) || compactText(args.search_query) || compactText(args.text);
+        const event = [...this.events].reverse().find((candidate): candidate is Extract<LocalVoiceAndroidEvent, { type: "app_control" }> =>
+          candidate.type === "app_control" &&
+          candidate.action === "search" &&
+          isYoutubeAppName(candidate.appName) &&
+          youtubeQueriesMatch(query, compactText(candidate.query)),
+        );
+        const eventQuery = compactText(event?.query);
+        const ok = !!event && event.success !== false;
+        execution = {
+          toolName,
+          ok,
+          label: ok
+            ? `Searched YouTube for ${eventQuery || query}`
+            : `Could not search YouTube${query ? ` for ${query}` : ""}`,
           detail: event?.detail ?? "",
         };
         break;
@@ -492,6 +858,8 @@ function summarizeExecution(execution: FakeAndroidExecution): string {
       return execution.detail ? `Here is what is on your screen:\n${execution.detail}` : "I could not read anything useful from the screen.";
     case "android_open_app_by_name":
       return execution.detail ? `${execution.label}. ${execution.detail}` : `${execution.label}.`;
+    case "android_youtube_search":
+      return execution.detail ? `${execution.label}. ${execution.detail}` : `${execution.label}.`;
     case "android_copy_to_clipboard":
       return "I copied those details to your clipboard.";
     case "runtime_request_approval":
@@ -624,10 +992,14 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
       workingContext = workingContextResponse.workingContext;
       diagnostics = { outcome: workingContextResponse.outcome, modelOutputType: modelOutput.type };
     } else {
-      const recoveredToolName = capabilityToolName(modelOutput.capability);
-      const recoveredArgs = argsForRecoveredCapability(modelOutput.capability, transcript, input.androidEvents ?? []);
-      const recoveryBlocked = recoveredToolName === "android_open_app_by_name"
-        ? !compactText(recoveredArgs.appName)
+      const recoveredAppControlRequest = modelOutput.capability === "app_control"
+        ? inferRecoveredAppControlRequest(transcript)
+        : null;
+      const recoveredToolName = recoveredAppControlRequest?.toolName ?? capabilityToolName(modelOutput.capability);
+      const recoveredArgs = recoveredAppControlRequest?.args
+        ?? argsForRecoveredCapability(modelOutput.capability, transcript, input.androidEvents ?? []);
+      const recoveryBlocked = modelOutput.capability === "app_control"
+        ? !recoveredAppControlRequest
         : hasNegatedCapabilityRequest(modelOutput.capability, transcript);
       if (recoveryBlocked) {
         canonicalResponse = finalResponseForModelProblem("tool_recovery_blocked");
