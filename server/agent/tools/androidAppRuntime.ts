@@ -2,6 +2,7 @@ import type { AgentTool, ToolArgs, ToolResult } from "../types";
 import {
   isAndroidDaemonActionAllowed,
   isAndroidDaemonActive,
+  recordVoiceNotificationObservation,
   sendDaemonOp,
 } from "../../daemon/bridge";
 import type { DaemonOp } from "../../daemon/bridge";
@@ -39,6 +40,7 @@ type AndroidRuntimeDeps = {
   isAndroidDaemonActive: typeof isAndroidDaemonActive;
   sendDaemonOp: typeof sendDaemonOp;
   recordLocalRuntimeObservation: typeof recordLocalRuntimeObservation;
+  recordVoiceNotificationObservation: typeof recordVoiceNotificationObservation;
 };
 
 let androidRuntimeDepsForTesting: Partial<AndroidRuntimeDeps> | null = null;
@@ -71,6 +73,14 @@ async function recordAndroidRuntimeObservation(input: LocalRuntimeObservationInp
     await (androidRuntimeDepsForTesting?.recordLocalRuntimeObservation ?? recordLocalRuntimeObservation)(input);
   } catch {
     // Working context should never make the Android action itself fail.
+  }
+}
+
+function recordAndroidVoiceNotificationObservation(userId: string, notifications: unknown[]): void {
+  try {
+    (androidRuntimeDepsForTesting?.recordVoiceNotificationObservation ?? recordVoiceNotificationObservation)(userId, notifications);
+  } catch {
+    // Voice follow-up context should never make the Android action itself fail.
   }
 }
 
@@ -564,6 +574,7 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
     const data = jsonObject(notificationResult.data);
     const notifications = Array.isArray(data.notifications) ? data.notifications : [];
     if (data.listenerEnabled && notifications.length === 0) {
+      recordAndroidVoiceNotificationObservation(userId, []);
       const outcome = {
         ok: true,
         label: "No notifications",
@@ -577,6 +588,7 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
       return outcome;
     }
     if (notifications.length > 0) {
+      recordAndroidVoiceNotificationObservation(userId, notifications);
       const detail = { notifications, source: "notification_listener" };
       const outcome = {
         ok: true,

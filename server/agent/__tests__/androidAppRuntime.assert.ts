@@ -152,12 +152,16 @@ async function main() {
   try {
     const listenerOps: string[] = [];
     const listenerObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];
+    const listenerVoiceNotificationObservations: unknown[][] = [];
     _setAndroidAppRuntimeDepsForTesting({
       isAndroidDaemonActive: () => true,
       isAndroidDaemonActionAllowed: async () => true,
       recordLocalRuntimeObservation: async (input) => {
         listenerObservations.push(input);
         return {} as never;
+      },
+      recordVoiceNotificationObservation: (_userId, notifications) => {
+        listenerVoiceNotificationObservations.push(notifications);
       },
       sendDaemonOp: async (_userId, op) => {
         listenerOps.push(op.type);
@@ -186,15 +190,39 @@ async function main() {
     assert.equal(listenerObservations.length, 1);
     assert.equal(listenerObservations[0]?.kind, "notifications");
     assert.match(listenerObservations[0]?.summary ?? "", /Gmail/);
+    assert.equal(listenerVoiceNotificationObservations.length, 1);
+    assert.match(JSON.stringify(listenerVoiceNotificationObservations[0]), /Budget alert/);
+
+    const emptyListenerVoiceNotificationObservations: unknown[][] = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      recordLocalRuntimeObservation: async () => ({} as never),
+      recordVoiceNotificationObservation: (_userId, notifications) => {
+        emptyListenerVoiceNotificationObservations.push(notifications);
+      },
+      sendDaemonOp: async (_userId, op) => {
+        assert.equal(op.type, "android_notifications_list");
+        return { ok: true, data: { listenerEnabled: true, notifications: [] } };
+      },
+    });
+    const emptyListenerResult = await runAndroidReadNotifications({}, "user-phone");
+    assert.equal(emptyListenerResult.ok, true);
+    assert.equal(emptyListenerResult.label, "No notifications");
+    assert.deepEqual(emptyListenerVoiceNotificationObservations, [[]]);
 
     const accessibilityOps: string[] = [];
     const accessibilityObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];
+    const accessibilityVoiceNotificationObservations: unknown[][] = [];
     _setAndroidAppRuntimeDepsForTesting({
       isAndroidDaemonActive: () => true,
       isAndroidDaemonActionAllowed: async () => true,
       recordLocalRuntimeObservation: async (input) => {
         accessibilityObservations.push(input);
         return {} as never;
+      },
+      recordVoiceNotificationObservation: (_userId, notifications) => {
+        accessibilityVoiceNotificationObservations.push(notifications);
       },
       sendDaemonOp: async (_userId, op) => {
         accessibilityOps.push(op.type);
@@ -234,6 +262,7 @@ async function main() {
     assert.equal(accessibilityObservations.length, 1);
     assert.equal(accessibilityObservations[0]?.kind, "notifications");
     assert.match(accessibilityObservations[0]?.detail ?? "", /Codex/);
+    assert.deepEqual(accessibilityVoiceNotificationObservations, []);
 
     const youtubeOps: string[] = [];
     const youtubeObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];
