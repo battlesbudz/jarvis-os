@@ -252,7 +252,7 @@ class OutsideAppVoiceSessionService : Service() {
 
     private fun endSession() {
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
-        stopWakeCapture()
+        endTalkModeCapture()
         sendVoiceSessionEvent("end")
         state = OutsideAppVoiceState.IDLE
         sessionActive = false
@@ -262,16 +262,9 @@ class OutsideAppVoiceSessionService : Service() {
         stopSelf()
     }
 
-    private fun stopWakeCapture() {
+    private fun endTalkModeCapture() {
         if (WakeWordService.instance == null) return
-        runCatching {
-            startService(Intent(this, WakeWordService::class.java).apply {
-                action = WakeWordService.ACTION_STOP
-            })
-            stopService(Intent(this, WakeWordService::class.java))
-        }.onFailure {
-            DaemonLog.add("outside_app_voice: failed to stop wake capture: ${it.message}")
-        }
+        WakeWordService.endTalkModeForUserControl()
     }
 
     private fun startForegroundCompat() {

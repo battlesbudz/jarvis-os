@@ -398,8 +398,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "START_NOT_STICKY", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = true)", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)", source);
-  assertIncludes(contents, "WakeWordService.ACTION_STOP", source);
-  assertIncludes(contents, "private fun stopWakeCapture()", source);
+  assertIncludes(contents, "WakeWordService.endTalkModeForUserControl()", source);
+  assertIncludes(contents, "private fun endTalkModeCapture()", source);
   assertIncludes(contents, "private fun pauseWakeCapture()", source);
   assertIncludes(contents, "private fun resumeWakeCapture()", source);
   assertIncludes(contents, "WakeWordService.pauseForUserControl()", source);
@@ -415,6 +415,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "private fun setStateFromAnyThread(nextState: OutsideAppVoiceState)", source);
   assertIncludes(contents, "instance?.setStateFromAnyThread(OutsideAppVoiceState.SPEAKING)", source);
   assertIncludes(contents, "instance?.setStateFromAnyThread(OutsideAppVoiceState.LISTENING)", source);
+  assertExcludes(contents, "WakeWordService.ACTION_STOP", source);
 }
 for (const [contents, source] of [
   [opHandler, "OpHandler.kt"],
@@ -502,6 +503,9 @@ for (const [contents, source] of [
   assertIncludes(contents, "val eventDelayMs = if (talkModeEnabled) 0L else 400L", source);
   assertIncludes(contents, "fun pauseForUserControl()", source);
   assertIncludes(contents, "private fun handlePauseForUserControl()", source);
+  assertIncludes(contents, "fun endTalkModeForUserControl()", source);
+  assertIncludes(contents, "private fun handleEndTalkModeForUserControl()", source);
+  assertIncludes(contents, "talkModeEnabled = false", source);
   assertIncludes(contents, "speechRecognizer?.cancel()", source);
   assertIncludes(contents, "if (!active && !capturingUtterance) return", source);
 }

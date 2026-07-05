@@ -1423,7 +1423,9 @@ export default function InsightsScreen() {
       const action = String(event?.action ?? '').toLowerCase();
       if (action === 'interrupt') {
         nativeVoiceStateSyncHeldRef.current = false;
-        interruptSpeakingAndListen();
+        if (isSpeakingRef.current) {
+          interruptSpeakingAndListen();
+        }
         return;
       }
       if (action === 'pause' || action === 'paused') {

@@ -66,6 +66,10 @@ class WakeWordService : Service() {
             instance?.handlePauseForUserControl()
         }
 
+        fun endTalkModeForUserControl() {
+            instance?.handleEndTalkModeForUserControl()
+        }
+
         /**
          * Called by OpHandler when TTS audio finishes playing.
          * Re-arms the microphone when Talk Mode is on.
@@ -386,6 +390,24 @@ class WakeWordService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "handlePauseForUserControl error", e)
             }
+        }
+    }
+
+    private fun handleEndTalkModeForUserControl() {
+        if (!talkModeEnabled && !capturingUtterance) return
+        DaemonLog.add("wake: ending talk mode capture")
+        talkModeEnabled = false
+        capturingUtterance = false
+        active = false
+        mainHandler.post {
+            try {
+                speechRecognizer?.cancel()
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+            } catch (e: Exception) {
+                Log.e(TAG, "handleEndTalkModeForUserControl error", e)
+            }
+            startListening()
         }
     }
 
