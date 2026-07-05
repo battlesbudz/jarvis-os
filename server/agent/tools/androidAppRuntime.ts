@@ -1,7 +1,9 @@
 import type { AgentTool, ToolArgs, ToolResult } from "../types";
 import {
+  clearVoiceNotificationObservation,
   isAndroidDaemonActionAllowed,
   isAndroidDaemonActive,
+  recordVoiceNotificationObservation,
   sendDaemonOp,
 } from "../../daemon/bridge";
 import type { DaemonOp } from "../../daemon/bridge";
@@ -14,7 +16,10 @@ import {
 import {
   ANDROID_PHONE_RUNTIME_TOOL_NAMES,
 } from "../androidPhoneRuntimeToolNames";
-import { summarizeAndroidNotificationDetail } from "../androidNotificationSummary";
+import {
+  formatAndroidNotificationsInOrder,
+  summarizeAndroidNotificationDetail,
+} from "../androidNotificationSummary";
 import { checkAndIncrementScreenshotBudget } from "./androidDaemonToolHelpers";
 import {
   recordLocalRuntimeObservation,
@@ -36,6 +41,8 @@ type AndroidRuntimeDeps = {
   isAndroidDaemonActive: typeof isAndroidDaemonActive;
   sendDaemonOp: typeof sendDaemonOp;
   recordLocalRuntimeObservation: typeof recordLocalRuntimeObservation;
+  recordVoiceNotificationObservation: typeof recordVoiceNotificationObservation;
+  clearVoiceNotificationObservation: typeof clearVoiceNotificationObservation;
 };
 
 let androidRuntimeDepsForTesting: Partial<AndroidRuntimeDeps> | null = null;
@@ -71,6 +78,22 @@ async function recordAndroidRuntimeObservation(input: LocalRuntimeObservationInp
   }
 }
 
+function recordAndroidVoiceNotificationObservation(userId: string, notifications: unknown[]): void {
+  try {
+    (androidRuntimeDepsForTesting?.recordVoiceNotificationObservation ?? recordVoiceNotificationObservation)(userId, notifications);
+  } catch {
+    // Voice follow-up context should never make the Android action itself fail.
+  }
+}
+
+function clearAndroidVoiceNotificationObservation(userId: string): void {
+  try {
+    (androidRuntimeDepsForTesting?.clearVoiceNotificationObservation ?? clearVoiceNotificationObservation)(userId);
+  } catch {
+    // Voice follow-up context should never make the Android action itself fail.
+  }
+}
+
 function compactRuntimeObservationText(value: unknown, maxChars = 5_000): string {
   if (typeof value === "string") return value.replace(/\s+/g, " ").trim().slice(0, maxChars);
   if (value === null || value === undefined) return "";
@@ -85,7 +108,7 @@ function observationDetailFromOutcome(outcome: RuntimeOutcome): string {
   const userSummary = compactRuntimeObservationText(outcome.detail.userFacingSummary, 1_500);
   const screenContext = compactRuntimeObservationText(outcome.detail.screenContext, 3_500);
   const notifications = Array.isArray(outcome.detail.notifications)
-    ? compactRuntimeObservationText(outcome.detail.notifications, 3_500)
+    ? compactRuntimeObservationText(formatAndroidNotificationsInOrder(outcome.detail.notifications), 3_500)
     : "";
   const screenshotUrl = compactRuntimeObservationText(outcome.detail.screenshotUrl, 500);
   return [userSummary, screenContext, notifications, screenshotUrl].filter(Boolean).join("\n");
@@ -561,6 +584,7 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
     const data = jsonObject(notificationResult.data);
     const notifications = Array.isArray(data.notifications) ? data.notifications : [];
     if (data.listenerEnabled && notifications.length === 0) {
+      recordAndroidVoiceNotificationObservation(userId, []);
       const outcome = {
         ok: true,
         label: "No notifications",
@@ -574,6 +598,7 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
       return outcome;
     }
     if (notifications.length > 0) {
+      recordAndroidVoiceNotificationObservation(userId, notifications);
       const detail = { notifications, source: "notification_listener" };
       const outcome = {
         ok: true,
@@ -586,6 +611,9 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
       await recordAndroidOutcomeObservation(userId, "notifications", outcome);
       return outcome;
     }
+    clearAndroidVoiceNotificationObservation(userId);
+  } else {
+    clearAndroidVoiceNotificationObservation(userId);
   }
 
   const readPermissionError = await permissionDenied(userId, "android_read_screen");

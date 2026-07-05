@@ -6,6 +6,8 @@ import {
   isAndroidDaemonActionAllowed,
   isAndroidDaemonActive,
   isDesktopDaemonActive,
+  clearVoiceNotificationObservation,
+  recordVoiceNotificationObservation,
   type DaemonAction,
   type AndroidDaemonAction,
   type DaemonOp,
@@ -301,6 +303,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
           const count = rawNotifications.length;
 
           if (listenerEnabled && count > 0) {
+            recordVoiceNotificationObservation(ctx.userId, rawNotifications);
             const relativeTime = (tsMs: number): string => {
               const diffMs = Date.now() - tsMs;
               const diffMins = Math.round(diffMs / 60000);
@@ -347,6 +350,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
           }
 
           if (listenerEnabled && count === 0) {
+            recordVoiceNotificationObservation(ctx.userId, []);
             return {
               ok: true,
               content: JSON.stringify({
@@ -359,6 +363,10 @@ Always confirm with the user before tap/type/swipe actions and before android_no
               }),
             };
           }
+
+          clearVoiceNotificationObservation(ctx.userId);
+        } else {
+          clearVoiceNotificationObservation(ctx.userId);
         }
 
         const [canTapType, canReadScreen] = await Promise.all([

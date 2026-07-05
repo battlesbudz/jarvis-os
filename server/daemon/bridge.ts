@@ -5,6 +5,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { channelLinks, channelLinkCodes, userPreferences } from "@shared/schema";
 import { randomBytes, createHash } from "crypto";
 import { getSession as _getCoachSession, setSession as _setCoachSession } from "../channels/sessionStore";
+import { resolveAndroidNotificationFollowUp } from "../agent/androidNotificationFollowups";
 
 type DaemonClientKind = "unified_android_app" | "standalone_android_daemon" | "desktop_daemon";
 type AndroidDaemonClientKind = "unified_android_app" | "standalone_android_daemon";
@@ -88,12 +89,51 @@ export interface PhoneNotification {
 
 // In-memory notification cache per user (newest first, max 60 per user)
 const userNotifications = new Map<string, PhoneNotification[]>();
+const userVoiceNotificationContexts = new Map<string, { notifications: PhoneNotification[]; observedAt: number }>();
 
 const MAX_NOTIFS_PER_USER = 60;
+const VOICE_NOTIFICATION_FOLLOWUP_TTL_MS = 5 * 60 * 1000;
 
 export function getRecentPhoneNotifications(userId: string, limit = 20): PhoneNotification[] {
   const arr = userNotifications.get(userId) || [];
   return arr.slice(0, limit);
+}
+
+function normalizePhoneNotification(data: unknown): PhoneNotification | null {
+  if (!data || typeof data !== "object") return null;
+  const item = data as Record<string, unknown>;
+  const app = String(item.app || item.pkg || "Unknown").trim();
+  const pkg = String(item.pkg || "").trim();
+  return {
+    pkg,
+    app,
+    title: String(item.title || "").trim(),
+    text: String(item.text || "").trim(),
+    ts: typeof item.ts === "number" && Number.isFinite(item.ts) ? item.ts : Date.now(),
+    key: String(item.key || item.notificationKey || "").trim(),
+    hasReplyAction: item.hasReplyAction === true,
+  };
+}
+
+export function recordVoiceNotificationObservation(userId: string, notifications: unknown[]): void {
+  const normalized = notifications
+    .map(normalizePhoneNotification)
+    .filter((notification): notification is PhoneNotification => notification !== null)
+    .slice(0, 20);
+  userVoiceNotificationContexts.set(userId, {
+    notifications: normalized,
+    observedAt: Date.now(),
+  });
+}
+
+export function clearVoiceNotificationObservation(userId: string): void {
+  userVoiceNotificationContexts.delete(userId);
+}
+
+function getRecentVoiceNotificationContext(userId: string, limit = 20): PhoneNotification[] | null {
+  const context = userVoiceNotificationContexts.get(userId);
+  if (!context || Date.now() - context.observedAt > VOICE_NOTIFICATION_FOLLOWUP_TTL_MS) return null;
+  return context.notifications.slice(0, limit);
 }
 
 interface PendingOp {
@@ -180,24 +220,77 @@ export function subscribeWakeWordTrigger(
  * After getting the reply text, converts to speech and sends voice_speak_audio
  * back to the daemon so the phone plays it immediately (hands-free loop).
  */
+async function processDaemonNotificationFollowUp(userId: string, utterance: string): Promise<string | null> {
+  const notifications = getRecentVoiceNotificationContext(userId);
+  if (!notifications) return null;
+
+  const followUp = resolveAndroidNotificationFollowUp(utterance, notifications);
+  if (!followUp) return null;
+
+  if (followUp.kind === "read_all" || followUp.kind === "read" || followUp.kind === "summary") {
+    return followUp.response;
+  }
+
+  const notification = notifications[followUp.index];
+  const packageName = typeof notification?.pkg === "string" ? notification.pkg.trim() : "";
+  if (!packageName) {
+    return `I found the ${followUp.notification.app} notification, but I could not identify the app package to open yet.`;
+  }
+  if (!(await isAndroidDaemonActionAllowed(userId, "android_open_app"))) {
+    return `I found the ${followUp.notification.app} notification, but Android app opening is not enabled.`;
+  }
+
+  const result = await sendDaemonOp(userId, { type: "android_open_app", packageName }, 10_000);
+  return result.ok
+    ? `I found the ${followUp.notification.app} notification and opened ${followUp.notification.app}.`
+    : `I found the ${followUp.notification.app} notification, but I could not open ${followUp.notification.app} yet.`;
+}
+
+async function persistDaemonVoiceExchange(userId: string, utterance: string, responseText: string): Promise<void> {
+  try {
+    const { persistFastCoachExchange } = await import("../channels/coachAgent");
+    const { getCoachAgentSessionAgentId } = await import("../channels/coachAgentSession");
+    const storedSessionId = await _getCoachSession(userId, "Voice");
+    const sdkSessionId = await persistFastCoachExchange({
+      userId,
+      channelName: "Voice",
+      channelLower: "voice",
+      userText: utterance,
+      reply: responseText,
+      coachSessionAgentId: getCoachAgentSessionAgentId(userId),
+      sdkSessionId: storedSessionId,
+    });
+    if (sdkSessionId) {
+      _setCoachSession(userId, "Voice", sdkSessionId);
+    }
+  } catch (err) {
+    console.error("[daemon] deterministic voice exchange persist failed:", err);
+  }
+}
+
 async function processDaemonUtterance(userId: string, utterance: string): Promise<void> {
   try {
     console.log(`[daemon] talk: processing utterance for userId=${userId}: "${utterance.slice(0, 60)}"`);
-    const { runCoachAgent } = await import("../channels/coachAgent");
     const { textToSpeech } = await import("../integrations/audioClient");
 
-    const storedSessionId = await _getCoachSession(userId, "Voice");
-    const result = await runCoachAgent({
-      userId,
-      userText: utterance,
-      channelName: "Voice",
-      sdkSessionId: storedSessionId,
-    });
-    if (result.sdkSessionId) {
-      _setCoachSession(userId, "Voice", result.sdkSessionId);
+    let responseText = await processDaemonNotificationFollowUp(userId, utterance);
+    if (responseText) {
+      await persistDaemonVoiceExchange(userId, utterance, responseText);
+    } else {
+      const { runCoachAgent } = await import("../channels/coachAgent");
+      const storedSessionId = await _getCoachSession(userId, "Voice");
+      const result = await runCoachAgent({
+        userId,
+        userText: utterance,
+        channelName: "Voice",
+        sdkSessionId: storedSessionId,
+      });
+      if (result.sdkSessionId) {
+        _setCoachSession(userId, "Voice", result.sdkSessionId);
+      }
+      responseText = result.reply.trim() || "I'm not sure how to help with that.";
     }
 
-    const responseText = result.reply.trim() || "I'm not sure how to help with that.";
     console.log(`[daemon] talk: Jarvis reply: "${responseText.slice(0, 80)}"`);
 
     const audioBuffer = await textToSpeech(responseText, "alloy", "mp3");

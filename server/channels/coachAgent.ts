@@ -122,7 +122,7 @@ function logTelegramE2eReply(probeId: string | null, reply: string): void {
 // Channel-agnostic coach pipeline shared by Telegram / WhatsApp / Slack /
 // daemon adapters. Returns { reply, attachments } — the caller is
 // responsible for delivery and post-send bookkeeping.
-async function persistFastCoachExchange(input: {
+export async function persistFastCoachExchange(input: {
   userId: string;
   channelName: string;
   channelLower: string;

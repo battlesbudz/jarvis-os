@@ -6,9 +6,23 @@ process.env.DATABASE_URL ||= "postgres://test:test@localhost:5432/test";
 
 async function main() {
   const runtimeSource = fs.readFileSync(path.resolve("server/agent/tools/androidAppRuntime.ts"), "utf8");
+  const daemonToolSource = fs.readFileSync(path.resolve("server/agent/tools/daemon.ts"), "utf8");
+  const daemonBridgeSource = fs.readFileSync(path.resolve("server/daemon/bridge.ts"), "utf8");
   assert.match(runtimeSource, /checkAndIncrementScreenshotBudget/);
   assert.match(runtimeSource, /runAndroidCaptureScreen\(args,\s*ctx\.userId,\s*ctx\)/);
   assert.match(runtimeSource, /normalizedQuery\.length > 2 && normalizedCandidate\.includes\(normalizedQuery\)/);
+  assert.match(daemonToolSource, /clearVoiceNotificationObservation/);
+  assert.match(daemonBridgeSource, /persistDaemonVoiceExchange/);
+  assert.match(daemonBridgeSource, /persistFastCoachExchange/);
+  assert.match(daemonBridgeSource, /if \(responseText\) \{\s*await persistDaemonVoiceExchange\(userId, utterance, responseText\);/);
+  assert.doesNotMatch(
+    daemonToolSource,
+    /const count = rawNotifications\.length;\s*recordVoiceNotificationObservation\(ctx\.userId, rawNotifications\);/,
+  );
+  assert.match(
+    daemonToolSource,
+    /if \(listenerEnabled && count === 0\) \{\s*recordVoiceNotificationObservation\(ctx\.userId, \[\]\);/,
+  );
 
   const {
     ANDROID_PHONE_RUNTIME_TOOL_NAMES,
@@ -152,12 +166,16 @@ async function main() {
   try {
     const listenerOps: string[] = [];
     const listenerObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];
+    const listenerVoiceNotificationObservations: unknown[][] = [];
     _setAndroidAppRuntimeDepsForTesting({
       isAndroidDaemonActive: () => true,
       isAndroidDaemonActionAllowed: async () => true,
       recordLocalRuntimeObservation: async (input) => {
         listenerObservations.push(input);
         return {} as never;
+      },
+      recordVoiceNotificationObservation: (_userId, notifications) => {
+        listenerVoiceNotificationObservations.push(notifications);
       },
       sendDaemonOp: async (_userId, op) => {
         listenerOps.push(op.type);
@@ -186,15 +204,43 @@ async function main() {
     assert.equal(listenerObservations.length, 1);
     assert.equal(listenerObservations[0]?.kind, "notifications");
     assert.match(listenerObservations[0]?.summary ?? "", /Gmail/);
+    assert.equal(listenerVoiceNotificationObservations.length, 1);
+    assert.match(JSON.stringify(listenerVoiceNotificationObservations[0]), /Budget alert/);
+
+    const emptyListenerVoiceNotificationObservations: unknown[][] = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      recordLocalRuntimeObservation: async () => ({} as never),
+      recordVoiceNotificationObservation: (_userId, notifications) => {
+        emptyListenerVoiceNotificationObservations.push(notifications);
+      },
+      sendDaemonOp: async (_userId, op) => {
+        assert.equal(op.type, "android_notifications_list");
+        return { ok: true, data: { listenerEnabled: true, notifications: [] } };
+      },
+    });
+    const emptyListenerResult = await runAndroidReadNotifications({}, "user-phone");
+    assert.equal(emptyListenerResult.ok, true);
+    assert.equal(emptyListenerResult.label, "No notifications");
+    assert.deepEqual(emptyListenerVoiceNotificationObservations, [[]]);
 
     const accessibilityOps: string[] = [];
     const accessibilityObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];
+    const accessibilityVoiceNotificationObservations: unknown[][] = [];
+    const accessibilityVoiceNotificationClears: string[] = [];
     _setAndroidAppRuntimeDepsForTesting({
       isAndroidDaemonActive: () => true,
       isAndroidDaemonActionAllowed: async () => true,
       recordLocalRuntimeObservation: async (input) => {
         accessibilityObservations.push(input);
         return {} as never;
+      },
+      recordVoiceNotificationObservation: (_userId, notifications) => {
+        accessibilityVoiceNotificationObservations.push(notifications);
+      },
+      clearVoiceNotificationObservation: (userId) => {
+        accessibilityVoiceNotificationClears.push(userId);
       },
       sendDaemonOp: async (_userId, op) => {
         accessibilityOps.push(op.type);
@@ -234,6 +280,49 @@ async function main() {
     assert.equal(accessibilityObservations.length, 1);
     assert.equal(accessibilityObservations[0]?.kind, "notifications");
     assert.match(accessibilityObservations[0]?.detail ?? "", /Codex/);
+    assert.deepEqual(accessibilityVoiceNotificationObservations, []);
+    assert.deepEqual(accessibilityVoiceNotificationClears, ["user-phone"]);
+
+    const failedListenerOps: string[] = [];
+    const failedListenerVoiceNotificationClears: string[] = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      recordLocalRuntimeObservation: async () => ({} as never),
+      clearVoiceNotificationObservation: (userId) => {
+        failedListenerVoiceNotificationClears.push(userId);
+      },
+      sendDaemonOp: async (_userId, op) => {
+        failedListenerOps.push(op.type);
+        if (op.type === "android_notifications_list") {
+          return { ok: false, error: "listener unavailable" };
+        }
+        if (op.type === "android_swipe") return { ok: true, data: { swiped: true } };
+        if (op.type === "android_read_screen") {
+          return {
+            ok: true,
+            data: {
+              visibleText: [
+                "Notifications",
+                "Bank - Card charge approved",
+              ],
+            },
+          };
+        }
+        if (op.type === "android_press_key") return { ok: true, data: { pressed: "back" } };
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const failedListenerResult = await runAndroidReadNotifications({}, "user-phone");
+    assert.equal(failedListenerResult.ok, true);
+    assert.equal(failedListenerResult.detail.source, "notification_shade_accessibility_tree");
+    assert.deepEqual(failedListenerVoiceNotificationClears, ["user-phone"]);
+    assert.deepEqual(failedListenerOps.slice(0, 4), [
+      "android_notifications_list",
+      "android_swipe",
+      "android_read_screen",
+      "android_press_key",
+    ]);
 
     const youtubeOps: string[] = [];
     const youtubeObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];

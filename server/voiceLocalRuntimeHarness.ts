@@ -1,3 +1,10 @@
+import {
+  formatAndroidNotificationsInOrder,
+  summarizeAndroidNotifications,
+} from "./agent/androidNotificationSummary";
+import { resolveAndroidNotificationFollowUp } from "./agent/androidNotificationFollowups";
+import { LOCAL_RUNTIME_WORKING_CONTEXT_TTL_MS } from "./state/runtimeWorkingContext";
+
 export type LocalVoiceModelCallKind = "local_gemma" | "cloud_model" | "secondary_llm";
 
 export interface LocalVoiceModelCall {
@@ -74,6 +81,21 @@ export interface FakeAndroidExecution {
   ok: boolean;
   label: string;
   detail: string;
+  data?: {
+    notifications?: LocalVoiceNotification[];
+  };
+}
+
+export interface LocalVoiceNotificationWorkingContext {
+  notifications: LocalVoiceNotification[];
+  summary: string;
+  orderedDetail: string;
+  recordedAt: string;
+  expiresAt: string;
+}
+
+export interface LocalVoiceWorkingContext {
+  notifications?: LocalVoiceNotificationWorkingContext;
 }
 
 export interface LocalVoiceHarnessDiagnostics {
@@ -92,6 +114,7 @@ export interface LocalVoiceHarnessResult {
   responseCount: number;
   modelCalls: LocalVoiceModelCall[];
   androidExecutions: FakeAndroidExecution[];
+  workingContext: LocalVoiceWorkingContext;
   diagnostics: LocalVoiceHarnessDiagnostics;
 }
 
@@ -100,6 +123,8 @@ export interface LocalVoiceHarnessInput {
   transcript: string;
   gemma: ScriptedFakeLocalGemmaProvider;
   androidEvents?: LocalVoiceAndroidEvent[];
+  workingContext?: LocalVoiceWorkingContext;
+  now?: Date;
   simulateCloudRoute?: boolean;
   simulateSecondaryLlmRoute?: boolean;
 }
@@ -244,14 +269,34 @@ function hasNegatedCapabilityRequest(capability: LocalVoiceCapability, transcrip
   return false;
 }
 
-function contextPacketFromEvents(events: LocalVoiceAndroidEvent[]): string {
+function notificationWorkingContextActive(
+  workingContext: LocalVoiceWorkingContext | undefined,
+  now: Date,
+): LocalVoiceNotificationWorkingContext | null {
+  const notifications = workingContext?.notifications;
+  if (!notifications) return null;
+  const expiresAt = Date.parse(notifications.expiresAt);
+  return Number.isFinite(expiresAt) && expiresAt > now.getTime() ? notifications : null;
+}
+
+function contextPacketFromEvents(
+  events: LocalVoiceAndroidEvent[],
+  transcript: string,
+  workingContext: LocalVoiceWorkingContext | undefined,
+  now: Date,
+): string {
   const eventTypes = [...new Set(events.map((event) => event.type))].join(", ") || "none";
-  return [
+  const packet = [
     "Assistant: JARVIS",
     "Mode: Local",
     "Model: Gemma",
     `Available phone event fixtures: ${eventTypes}`,
-  ].join("\n");
+  ];
+  const recentNotifications = notificationWorkingContextActive(workingContext, now);
+  if (recentNotifications && resolveAndroidNotificationFollowUp(transcript, recentNotifications.notifications)) {
+    packet.push(`Recent notifications: ${recentNotifications.summary}`);
+  }
+  return packet.join("\n");
 }
 
 export class FakeAndroidVoiceRuntime {
@@ -273,9 +318,8 @@ export class FakeAndroidVoiceRuntime {
           toolName,
           ok: !!event,
           label: notifications.length ? `${notifications.length} notification${notifications.length === 1 ? "" : "s"}` : "No notifications available",
-          detail: notifications
-            .map((notification) => `${notification.app}: ${notification.title}${notification.text ? ` - ${notification.text}` : ""}`)
-            .join("\n"),
+          detail: notifications.length ? formatAndroidNotificationsInOrder(notifications) : "",
+          data: { notifications },
         };
         break;
       }
@@ -362,6 +406,79 @@ function parseToolArguments(value: Record<string, unknown> | string | undefined)
   }
 }
 
+function workingContextFromNotificationExecution(
+  execution: FakeAndroidExecution,
+  now: Date,
+): LocalVoiceWorkingContext | null {
+  if (execution.toolName !== "android_read_notifications" || !execution.ok) return null;
+  const notifications = execution.data?.notifications ?? [];
+  const recordedAt = now.toISOString();
+  return {
+    notifications: {
+      notifications,
+      summary: summarizeAndroidNotifications(notifications),
+      orderedDetail: formatAndroidNotificationsInOrder(notifications),
+      recordedAt,
+      expiresAt: new Date(now.getTime() + LOCAL_RUNTIME_WORKING_CONTEXT_TTL_MS).toISOString(),
+    },
+  };
+}
+
+function mergeWorkingContext(
+  current: LocalVoiceWorkingContext | undefined,
+  next: LocalVoiceWorkingContext | null,
+): LocalVoiceWorkingContext {
+  return {
+    ...(current ?? {}),
+    ...(next ?? {}),
+  };
+}
+
+function responseFromNotificationWorkingContext(
+  transcript: string,
+  workingContext: LocalVoiceWorkingContext | undefined,
+  now: Date,
+  androidRuntime: FakeAndroidVoiceRuntime,
+): { response: string; outcome: string; workingContext: LocalVoiceWorkingContext } | null {
+  const recentNotifications = notificationWorkingContextActive(workingContext, now);
+  if (!recentNotifications) return null;
+  const followUp = resolveAndroidNotificationFollowUp(transcript, recentNotifications.notifications);
+  if (!followUp) return null;
+
+  if (followUp.kind === "open") {
+    const execution = androidRuntime.execute("android_open_app_by_name", { appName: followUp.notification.app });
+    return {
+      response: execution.ok
+        ? `I found the ${followUp.notification.app} notification and opened ${followUp.notification.app}.`
+        : `I found the ${followUp.notification.app} notification, but I could not open ${followUp.notification.app} yet.`,
+      outcome: "notification_reference_opened",
+      workingContext: workingContext ?? {},
+    };
+  }
+
+  if (followUp.kind === "read_all") {
+    return {
+      response: followUp.response,
+      outcome: "notification_context_read_all",
+      workingContext: workingContext ?? {},
+    };
+  }
+
+  if (followUp.kind === "read") {
+    return {
+      response: followUp.response,
+      outcome: "notification_reference_read",
+      workingContext: workingContext ?? {},
+    };
+  }
+
+  return {
+    response: followUp.response,
+    outcome: "notification_context_summary",
+    workingContext: workingContext ?? {},
+  };
+}
+
 function summarizeExecution(execution: FakeAndroidExecution): string {
   if (!execution.ok) {
     return `I could not complete that phone action yet. ${execution.label}.`;
@@ -369,7 +486,7 @@ function summarizeExecution(execution: FakeAndroidExecution): string {
 
   switch (execution.toolName) {
     case "android_read_notifications":
-      return execution.detail ? `Here are your current notifications:\n${execution.detail}` : "You do not have visible notifications right now.";
+      return summarizeAndroidNotifications(execution.data?.notifications ?? []);
     case "android_read_screen_context":
     case "android_capture_screen":
       return execution.detail ? `Here is what is on your screen:\n${execution.detail}` : "I could not read anything useful from the screen.";
@@ -419,6 +536,7 @@ function recordModelCall(modelCalls: LocalVoiceModelCall[], call: LocalVoiceMode
 export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessInput): Promise<LocalVoiceHarnessResult> {
   const userId = compactText(input.userId);
   const transcript = compactText(input.transcript);
+  const now = input.now ?? new Date();
   if (!userId) {
     throw new LocalVoiceRuntimeHarnessError("LOCAL_VOICE_MISSING_USER", "A user is required.", []);
   }
@@ -454,15 +572,23 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
   const androidRuntime = new FakeAndroidVoiceRuntime(input.androidEvents ?? []);
   const modelOutput = await input.gemma.generate({
     transcript,
-    contextPacket: contextPacketFromEvents(input.androidEvents ?? []),
+    contextPacket: contextPacketFromEvents(input.androidEvents ?? [], transcript, input.workingContext, now),
   });
 
   let canonicalResponse = "";
+  let workingContext = mergeWorkingContext(input.workingContext, null);
   let diagnostics: LocalVoiceHarnessDiagnostics;
 
   if (modelOutput.type === "final") {
-    canonicalResponse = compactText(modelOutput.text) || finalResponseForModelProblem("blank_model_response");
-    diagnostics = { outcome: "final", modelOutputType: modelOutput.type };
+    const workingContextResponse = responseFromNotificationWorkingContext(transcript, workingContext, now, androidRuntime);
+    if (workingContextResponse) {
+      canonicalResponse = workingContextResponse.response;
+      workingContext = workingContextResponse.workingContext;
+      diagnostics = { outcome: workingContextResponse.outcome, modelOutputType: modelOutput.type };
+    } else {
+      canonicalResponse = compactText(modelOutput.text) || finalResponseForModelProblem("blank_model_response");
+      diagnostics = { outcome: "final", modelOutputType: modelOutput.type };
+    }
   } else if (modelOutput.type === "tool_call" || modelOutput.type === "invalid_tool_call") {
     const normalizedToolName = normalizeLocalVoiceToolName(modelOutput.name);
     if (!normalizedToolName) {
@@ -473,37 +599,53 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
         modelOutputType: modelOutput.type,
       };
     } else {
-      const execution = androidRuntime.execute(normalizedToolName, parseToolArguments(modelOutput.arguments));
-      canonicalResponse = summarizeExecution(execution);
-      diagnostics = {
-        outcome: modelOutput.type === "invalid_tool_call" ? "tool_call_recovered" : "tool_call_executed",
-        requestedToolName: modelOutput.name,
-        executedToolName: normalizedToolName,
-        recoveredToolName: modelOutput.name === normalizedToolName ? undefined : normalizedToolName,
-        modelOutputType: modelOutput.type,
-      };
+      const workingContextResponse = responseFromNotificationWorkingContext(transcript, workingContext, now, androidRuntime);
+      if (workingContextResponse) {
+        canonicalResponse = workingContextResponse.response;
+        workingContext = workingContextResponse.workingContext;
+        diagnostics = { outcome: workingContextResponse.outcome, modelOutputType: modelOutput.type };
+      } else {
+        const execution = androidRuntime.execute(normalizedToolName, parseToolArguments(modelOutput.arguments));
+        canonicalResponse = summarizeExecution(execution);
+        workingContext = mergeWorkingContext(workingContext, workingContextFromNotificationExecution(execution, now));
+        diagnostics = {
+          outcome: modelOutput.type === "invalid_tool_call" ? "tool_call_recovered" : "tool_call_executed",
+          requestedToolName: modelOutput.name,
+          executedToolName: normalizedToolName,
+          recoveredToolName: modelOutput.name === normalizedToolName ? undefined : normalizedToolName,
+          modelOutputType: modelOutput.type,
+        };
+      }
     }
   } else if (modelOutput.type === "false_denial") {
-    const recoveredToolName = capabilityToolName(modelOutput.capability);
-    const recoveredArgs = argsForRecoveredCapability(modelOutput.capability, transcript, input.androidEvents ?? []);
-    const recoveryBlocked = recoveredToolName === "android_open_app_by_name"
-      ? !compactText(recoveredArgs.appName)
-      : hasNegatedCapabilityRequest(modelOutput.capability, transcript);
-    if (recoveryBlocked) {
-      canonicalResponse = finalResponseForModelProblem("tool_recovery_blocked");
-      diagnostics = {
-        outcome: "tool_recovery_blocked",
-        executedToolName: recoveredToolName,
-        modelOutputType: modelOutput.type,
-      };
+    const workingContextResponse = responseFromNotificationWorkingContext(transcript, workingContext, now, androidRuntime);
+    if (workingContextResponse) {
+      canonicalResponse = workingContextResponse.response;
+      workingContext = workingContextResponse.workingContext;
+      diagnostics = { outcome: workingContextResponse.outcome, modelOutputType: modelOutput.type };
     } else {
-      const execution = androidRuntime.execute(recoveredToolName, recoveredArgs);
-      canonicalResponse = summarizeExecution(execution);
-      diagnostics = {
-        outcome: "tool_executed_after_false_denial",
-        executedToolName: recoveredToolName,
-        modelOutputType: modelOutput.type,
-      };
+      const recoveredToolName = capabilityToolName(modelOutput.capability);
+      const recoveredArgs = argsForRecoveredCapability(modelOutput.capability, transcript, input.androidEvents ?? []);
+      const recoveryBlocked = recoveredToolName === "android_open_app_by_name"
+        ? !compactText(recoveredArgs.appName)
+        : hasNegatedCapabilityRequest(modelOutput.capability, transcript);
+      if (recoveryBlocked) {
+        canonicalResponse = finalResponseForModelProblem("tool_recovery_blocked");
+        diagnostics = {
+          outcome: "tool_recovery_blocked",
+          executedToolName: recoveredToolName,
+          modelOutputType: modelOutput.type,
+        };
+      } else {
+        const execution = androidRuntime.execute(recoveredToolName, recoveredArgs);
+        canonicalResponse = summarizeExecution(execution);
+        workingContext = mergeWorkingContext(workingContext, workingContextFromNotificationExecution(execution, now));
+        diagnostics = {
+          outcome: "tool_executed_after_false_denial",
+          executedToolName: recoveredToolName,
+          modelOutputType: modelOutput.type,
+        };
+      }
     }
   } else if (modelOutput.type === "false_completion") {
     canonicalResponse = finalResponseForModelProblem("false_completion_blocked");
@@ -533,6 +675,7 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
     responseCount: 1,
     modelCalls,
     androidExecutions: [...androidRuntime.executions],
+    workingContext,
     diagnostics,
   };
 
