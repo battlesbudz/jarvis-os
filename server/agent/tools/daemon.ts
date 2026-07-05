@@ -365,6 +365,8 @@ Always confirm with the user before tap/type/swipe actions and before android_no
           }
 
           clearVoiceNotificationObservation(ctx.userId);
+        } else {
+          clearVoiceNotificationObservation(ctx.userId);
         }
 
         const [canTapType, canReadScreen] = await Promise.all([

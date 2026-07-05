@@ -279,6 +279,47 @@ async function main() {
     assert.deepEqual(accessibilityVoiceNotificationObservations, []);
     assert.deepEqual(accessibilityVoiceNotificationClears, ["user-phone"]);
 
+    const failedListenerOps: string[] = [];
+    const failedListenerVoiceNotificationClears: string[] = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      recordLocalRuntimeObservation: async () => ({} as never),
+      clearVoiceNotificationObservation: (userId) => {
+        failedListenerVoiceNotificationClears.push(userId);
+      },
+      sendDaemonOp: async (_userId, op) => {
+        failedListenerOps.push(op.type);
+        if (op.type === "android_notifications_list") {
+          return { ok: false, error: "listener unavailable" };
+        }
+        if (op.type === "android_swipe") return { ok: true, data: { swiped: true } };
+        if (op.type === "android_read_screen") {
+          return {
+            ok: true,
+            data: {
+              visibleText: [
+                "Notifications",
+                "Bank - Card charge approved",
+              ],
+            },
+          };
+        }
+        if (op.type === "android_press_key") return { ok: true, data: { pressed: "back" } };
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const failedListenerResult = await runAndroidReadNotifications({}, "user-phone");
+    assert.equal(failedListenerResult.ok, true);
+    assert.equal(failedListenerResult.detail.source, "notification_shade_accessibility_tree");
+    assert.deepEqual(failedListenerVoiceNotificationClears, ["user-phone"]);
+    assert.deepEqual(failedListenerOps.slice(0, 4), [
+      "android_notifications_list",
+      "android_swipe",
+      "android_read_screen",
+      "android_press_key",
+    ]);
+
     const youtubeOps: string[] = [];
     const youtubeObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];
     _setAndroidAppRuntimeDepsForTesting({

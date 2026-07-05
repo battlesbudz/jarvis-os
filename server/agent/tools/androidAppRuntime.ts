@@ -612,6 +612,8 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
       return outcome;
     }
     clearAndroidVoiceNotificationObservation(userId);
+  } else {
+    clearAndroidVoiceNotificationObservation(userId);
   }
 
   const readPermissionError = await permissionDenied(userId, "android_read_screen");

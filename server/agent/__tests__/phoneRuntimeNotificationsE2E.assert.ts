@@ -166,6 +166,10 @@ async function main() {
   assert.equal(ordinalNotificationRead?.kind, "read", "ordinal notification referents should still work when anchored by one");
   const unrelatedLastSummary = resolveAndroidNotificationFollowUp("Tell me about the last budget meeting", followUpNotifications);
   assert.equal(unrelatedLastSummary, null, "generic last/previous summary questions must not dump cached notifications");
+  const unrelatedPronounQuestion = resolveAndroidNotificationFollowUp("What are those shoes?", followUpNotifications);
+  assert.equal(unrelatedPronounQuestion, null, "bare pronoun questions must not dump cached notifications");
+  const unrelatedItQuestion = resolveAndroidNotificationFollowUp("Tell me about it", followUpNotifications);
+  assert.equal(unrelatedItQuestion, null, "generic tell-me-about-it questions must not dump cached notifications");
   const notificationSummaryAgain = resolveAndroidNotificationFollowUp("Summarize those again", followUpNotifications);
   assert.equal(notificationSummaryAgain?.kind, "summary", "pronoun-anchored notification summaries should still work");
   const emptyObservedNotifications = resolveAndroidNotificationFollowUp("Read all of them", []);
