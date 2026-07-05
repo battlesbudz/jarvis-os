@@ -30,26 +30,36 @@ class DaemonE2eReceiver : BroadcastReceiver() {
     }
 
     private fun handleVoiceSessionCommand(context: Context, intent: Intent) {
-        when (intent.getStringExtra(EXTRA_COMMAND)) {
-            "start" -> startVoiceService(context, OutsideAppVoiceSessionService.startIntent(context))
-            "pause" -> startVoiceService(
-                context,
-                OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_PAUSE),
-            )
-            "resume" -> startVoiceService(
-                context,
-                OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_RESUME),
-            )
-            "end" -> context.startService(
-                OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_END),
-            )
-            "set_state" -> {
-                val state = OutsideAppVoiceState.fromWireName(intent.getStringExtra(OutsideAppVoiceSessionService.EXTRA_STATE))
-                startVoiceService(context, OutsideAppVoiceSessionService.setStateIntent(context, state))
+        val command = intent.getStringExtra(EXTRA_COMMAND)
+        val token = intent.getStringExtra(EXTRA_TOKEN) ?: "none"
+        Log.i(TAG, "received command=$command token=$token")
+        try {
+            when (command) {
+                "start" -> startVoiceService(context, OutsideAppVoiceSessionService.startIntent(context))
+                "pause" -> startVoiceService(
+                    context,
+                    OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_PAUSE),
+                )
+                "resume" -> startVoiceService(
+                    context,
+                    OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_RESUME),
+                )
+                "end" -> context.startService(
+                    OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_END),
+                )
+                "set_state" -> {
+                    val state = OutsideAppVoiceState.fromWireName(intent.getStringExtra(OutsideAppVoiceSessionService.EXTRA_STATE))
+                    startVoiceService(context, OutsideAppVoiceSessionService.setStateIntent(context, state))
+                }
+                "overlay_tap" -> OutsideAppVoiceSessionService.instance?.onOverlayTapped()
+                "status" -> Unit
+                else -> Log.w(TAG, "unknown command=$command token=$token")
             }
-            "overlay_tap" -> OutsideAppVoiceSessionService.instance?.onOverlayTapped()
+        } catch (throwable: Throwable) {
+            Log.e(TAG, "command failed command=$command token=$token", throwable)
+        } finally {
+            logVoiceSessionStatus(token)
         }
-        logVoiceSessionStatus(intent.getStringExtra(EXTRA_TOKEN) ?: "none")
     }
 
     private fun startVoiceService(context: Context, intent: Intent) {

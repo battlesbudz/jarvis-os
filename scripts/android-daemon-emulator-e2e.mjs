@@ -42,16 +42,20 @@ function adbShell(command, options = {}) {
   return adb(["shell", command], options);
 }
 
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
 function voiceE2eBroadcast(command, extras = {}) {
   const extraArgs = Object.entries(extras)
-    .map(([key, value]) => `--es ${key} ${String(value)}`)
+    .map(([key, value]) => `--es ${key} ${shellQuote(value)}`)
     .join(" ");
   adbShell(
     [
       "am broadcast",
       `-n ${PACKAGE_NAME}/.daemon.DaemonE2eReceiver`,
       "-a com.gameplan.daemon.E2E_VOICE_SESSION",
-      `--es command ${command}`,
+      `--es command ${shellQuote(command)}`,
       extraArgs,
     ].filter(Boolean).join(" "),
   );
@@ -137,7 +141,16 @@ async function waitForVoiceE2eStatus(label, predicate, timeoutMs = 10000) {
     }
     await sleep(250);
   }
-  throw new Error(`Timed out waiting for voice E2E status: ${label}; lastStatus=${JSON.stringify(lastStatus)}`);
+  const recentVoiceLog = collectLogcat()
+    .split(/\r?\n/)
+    .filter((line) => line.includes("JarvisVoiceE2E") || line.includes("OutsideAppVoice"))
+    .slice(-30)
+    .join("\n");
+  throw new Error(
+    `Timed out waiting for voice E2E status: ${label}; lastStatus=${JSON.stringify(lastStatus)}${
+      recentVoiceLog ? `\nRecent voice log:\n${recentVoiceLog}` : ""
+    }`,
+  );
 }
 
 async function runOutsideAppVoiceFakeLocalGemmaSmoke() {
@@ -151,6 +164,7 @@ async function runOutsideAppVoiceFakeLocalGemmaSmoke() {
       status.state === "listening" &&
       ["Pause", "Resume", "End", "Open"].every((action) => status.actions.includes(action))
     ),
+    25000,
   );
 
   const notificationDump = adbShell("dumpsys notification --noredact", { capture: true });

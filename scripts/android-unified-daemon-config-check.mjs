@@ -393,6 +393,19 @@ for (const [contents, source] of [
   assertIncludes(contents, "ACTION_OPEN", source);
   assertIncludes(contents, "TYPE_APPLICATION_OVERLAY", source);
   assertIncludes(contents, "START_NOT_STICKY", source);
+  assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = true)", source);
+  assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)", source);
+  assertIncludes(contents, "WakeWordService.ACTION_STOP", source);
+  assertIncludes(contents, "private fun stopWakeCapture()", source);
+}
+for (const [contents, source] of [
+  [opHandler, "OpHandler.kt"],
+  [pluginTemplateOpHandler, "plugins/android-daemon-native/OpHandler.kt"],
+]) {
+  assertIncludes(contents, "object JarvisVoicePlaybackController", source);
+  assertIncludes(contents, "fun stopActivePlayback(rearmTalkMode: Boolean = true)", source);
+  assertIncludes(contents, "JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)", source);
+  assertIncludes(contents, "JarvisVoicePlaybackController.completePlayback(mp, playbackFile)", source);
 }
 assertIncludes(pluginTemplateJarvisVoiceInteraction, "EXTRA_SHOW_WHEN_LOCKED_TOKEN", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");
 assertIncludes(pluginTemplateJarvisVoiceInteraction, "UUID.randomUUID()", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");

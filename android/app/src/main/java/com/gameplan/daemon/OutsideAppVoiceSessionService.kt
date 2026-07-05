@@ -183,6 +183,7 @@ class OutsideAppVoiceSessionService : Service() {
     internal fun onOverlayTapped() {
         when (OutsideAppVoiceSessionStateMachine.overlayTapAction(state)) {
             OutsideAppVoiceOverlayTapAction.INTERRUPT_AND_LISTEN -> {
+                JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = true)
                 sendVoiceSessionEvent("interrupt")
                 setState(OutsideAppVoiceState.LISTENING)
             }
@@ -214,6 +215,8 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private fun endSession() {
+        JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
+        stopWakeCapture()
         sendVoiceSessionEvent("end")
         state = OutsideAppVoiceState.IDLE
         sessionActive = false
@@ -221,6 +224,18 @@ class OutsideAppVoiceSessionService : Service() {
         @Suppress("DEPRECATION")
         stopForeground(true)
         stopSelf()
+    }
+
+    private fun stopWakeCapture() {
+        if (WakeWordService.instance == null) return
+        runCatching {
+            startService(Intent(this, WakeWordService::class.java).apply {
+                action = WakeWordService.ACTION_STOP
+            })
+            stopService(Intent(this, WakeWordService::class.java))
+        }.onFailure {
+            DaemonLog.add("outside_app_voice: failed to stop wake capture: ${it.message}")
+        }
     }
 
     private fun startForegroundCompat() {

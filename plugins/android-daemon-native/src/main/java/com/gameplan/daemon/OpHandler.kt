@@ -34,6 +34,57 @@ import java.util.concurrent.TimeUnit
 
 data class OpResult(val ok: Boolean, val data: Any? = null, val error: String? = null)
 
+object JarvisVoicePlaybackController {
+    private const val TAG = "JarvisVoicePlayback"
+
+    @Volatile private var currentPlayer: android.media.MediaPlayer? = null
+    @Volatile private var currentFile: File? = null
+
+    @Synchronized
+    fun register(player: android.media.MediaPlayer, file: File) {
+        stopActivePlayback(rearmTalkMode = false)
+        currentPlayer = player
+        currentFile = file
+    }
+
+    @Synchronized
+    fun completePlayback(player: android.media.MediaPlayer, file: File, rearmTalkMode: Boolean = true) {
+        if (currentPlayer !== player) return
+        currentPlayer = null
+        currentFile = null
+        releasePlayer(player)
+        file.delete()
+        if (rearmTalkMode) {
+            WakeWordService.onTtsFinished()
+        }
+    }
+
+    @Synchronized
+    fun stopActivePlayback(rearmTalkMode: Boolean = true): Boolean {
+        val player = currentPlayer ?: return false
+        val file = currentFile
+        currentPlayer = null
+        currentFile = null
+        runCatching {
+            if (player.isPlaying) player.stop()
+        }.onFailure { Log.w(TAG, "Failed to stop active voice playback", it) }
+        releasePlayer(player)
+        file?.delete()
+        if (rearmTalkMode) {
+            WakeWordService.onTtsFinished()
+        }
+        DaemonLog.add("voice_speak_audio: playback stopped")
+        return true
+    }
+
+    fun hasActivePlaybackForTest(): Boolean = currentPlayer != null
+
+    private fun releasePlayer(player: android.media.MediaPlayer) {
+        runCatching { player.release() }
+            .onFailure { Log.w(TAG, "Failed to release voice playback", it) }
+    }
+}
+
 object OpHandler {
 
     private const val TAG = "JarvisOp"
@@ -1391,28 +1442,32 @@ object OpHandler {
         val audioBase64 = op.optString("audioBase64", "")
         if (audioBase64.isEmpty()) return OpResult(false, error = "audioBase64 missing")
 
+        var tmpFile: File? = null
+        var player: android.media.MediaPlayer? = null
         return try {
             val bytes = Base64.decode(audioBase64, Base64.DEFAULT)
-            val tmpFile = java.io.File(context.cacheDir, "jarvis_tts_${System.currentTimeMillis()}.mp3")
-            tmpFile.writeBytes(bytes)
+            val playbackFile = File(context.cacheDir, "jarvis_tts_${System.currentTimeMillis()}.mp3")
+            tmpFile = playbackFile
+            playbackFile.writeBytes(bytes)
 
             // Pause the wake-word microphone so the speaker audio isn't captured
             WakeWordService.pauseForPlayback()
 
-            val player = android.media.MediaPlayer()
-            player.setDataSource(tmpFile.absolutePath)
-            player.prepare()
-            player.setOnCompletionListener { mp ->
-                mp.release()
-                tmpFile.delete()
-                // Notify WakeWordService so Talk Mode can re-arm the mic
-                WakeWordService.onTtsFinished()
+            val mediaPlayer = android.media.MediaPlayer()
+            player = mediaPlayer
+            mediaPlayer.setDataSource(playbackFile.absolutePath)
+            mediaPlayer.prepare()
+            mediaPlayer.setOnCompletionListener { mp ->
+                JarvisVoicePlaybackController.completePlayback(mp, playbackFile)
                 DaemonLog.add("voice_speak_audio: playback complete — talk mode re-armed")
             }
-            player.start()
+            JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)
+            mediaPlayer.start()
             DaemonLog.add("voice_speak_audio: playing ${bytes.size} bytes")
             OpResult(true, data = JSONObject().put("playing", true).put("bytes", bytes.size))
         } catch (e: Exception) {
+            runCatching { player?.release() }
+            tmpFile?.delete()
             Log.e(TAG, "handleSpeakAudio failed", e)
             OpResult(false, error = e.message ?: "playback failed")
         }
