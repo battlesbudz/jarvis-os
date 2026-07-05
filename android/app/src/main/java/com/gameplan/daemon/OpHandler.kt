@@ -1446,6 +1446,7 @@ object OpHandler {
 
         var tmpFile: File? = null
         var player: android.media.MediaPlayer? = null
+        var pausedForPlayback = false
         return try {
             val bytes = Base64.decode(audioBase64, Base64.DEFAULT)
             val playbackFile = File(context.cacheDir, "jarvis_tts_${System.currentTimeMillis()}.mp3")
@@ -1454,6 +1455,7 @@ object OpHandler {
 
             // Pause the wake-word microphone so the speaker audio isn't captured
             WakeWordService.pauseForPlayback()
+            pausedForPlayback = true
 
             val mediaPlayer = android.media.MediaPlayer()
             player = mediaPlayer
@@ -1471,6 +1473,11 @@ object OpHandler {
         } catch (e: Exception) {
             runCatching { player?.release() }
             tmpFile?.delete()
+            if (pausedForPlayback) {
+                WakeWordService.onTtsFinished()
+                OutsideAppVoiceSessionService.markPlaybackListening()
+                DaemonLog.add("voice_speak_audio: playback failed — talk mode re-armed")
+            }
             Log.e(TAG, "handleSpeakAudio failed", e)
             OpResult(false, error = e.message ?: "playback failed")
         }
