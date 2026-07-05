@@ -919,7 +919,6 @@ export default function InsightsScreen() {
   const sdkSessionIdRef = useRef<string | null>(null);
   const streamingAssistantIdRef = useRef<string | null>(null);
   const isSpeakingRef = useRef(false);
-  const lastNativeVoiceInterruptAtRef = useRef(0);
   const nativeVoiceStateSyncHeldRef = useRef(false);
   const isTranscribingRef = useRef(false);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
@@ -1424,7 +1423,6 @@ export default function InsightsScreen() {
       const action = String(event?.action ?? '').toLowerCase();
       if (action === 'interrupt') {
         nativeVoiceStateSyncHeldRef.current = false;
-        lastNativeVoiceInterruptAtRef.current = Date.now();
         interruptSpeakingAndListen();
         return;
       }
@@ -1448,7 +1446,10 @@ export default function InsightsScreen() {
       }
       if (action === 'resume' || action === 'listening') {
         nativeVoiceStateSyncHeldRef.current = false;
-        if (action === 'listening' && Date.now() - lastNativeVoiceInterruptAtRef.current < 1000) return;
+        if (action === 'listening') {
+          outsideAppVoiceStateRef.current = 'listening';
+          return;
+        }
         if (talkModeRef.current && !isSpeakingRef.current && !isRecordingRef.current) {
           setTimeout(() => startRecordingRef.current(), 0);
         }
