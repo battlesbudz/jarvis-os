@@ -56,6 +56,7 @@ object JarvisVoicePlaybackController {
         file.delete()
         if (rearmTalkMode) {
             WakeWordService.onTtsFinished()
+            OutsideAppVoiceSessionService.markPlaybackListening()
         }
     }
 
@@ -72,6 +73,7 @@ object JarvisVoicePlaybackController {
         file?.delete()
         if (rearmTalkMode) {
             WakeWordService.onTtsFinished()
+            OutsideAppVoiceSessionService.markPlaybackListening()
         }
         DaemonLog.add("voice_speak_audio: playback stopped")
         return true
@@ -1462,6 +1464,7 @@ object OpHandler {
                 DaemonLog.add("voice_speak_audio: playback complete — talk mode re-armed")
             }
             JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)
+            OutsideAppVoiceSessionService.markPlaybackSpeaking()
             mediaPlayer.start()
             DaemonLog.add("voice_speak_audio: playing ${bytes.size} bytes")
             OpResult(true, data = JSONObject().put("playing", true).put("bytes", bytes.size))

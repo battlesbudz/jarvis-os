@@ -401,6 +401,11 @@ for (const [contents, source] of [
   assertIncludes(contents, "private fun resumeWakeCapture()", source);
   assertIncludes(contents, "WakeWordService.pauseForPlayback()", source);
   assertIncludes(contents, "WakeWordService.onTtsFinished()", source);
+  assertIncludes(contents, "PendingIntent.getActivity", source);
+  assertIncludes(contents, "private fun notificationActionPendingIntent", source);
+  assertIncludes(contents, "private fun openJarvisIntent()", source);
+  assertIncludes(contents, "fun markPlaybackSpeaking()", source);
+  assertIncludes(contents, "fun markPlaybackListening()", source);
 }
 for (const [contents, source] of [
   [opHandler, "OpHandler.kt"],
@@ -410,6 +415,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "fun stopActivePlayback(rearmTalkMode: Boolean = true)", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.completePlayback(mp, playbackFile)", source);
+  assertIncludes(contents, "OutsideAppVoiceSessionService.markPlaybackSpeaking()", source);
+  assertIncludes(contents, "OutsideAppVoiceSessionService.markPlaybackListening()", source);
 }
 assertIncludes(pluginTemplateJarvisVoiceInteraction, "EXTRA_SHOW_WHEN_LOCKED_TOKEN", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");
 assertIncludes(pluginTemplateJarvisVoiceInteraction, "UUID.randomUUID()", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");

@@ -99,6 +99,14 @@ class OutsideAppVoiceSessionService : Service() {
 
         fun currentState(): OutsideAppVoiceState = instance?.state ?: OutsideAppVoiceState.IDLE
 
+        fun markPlaybackSpeaking() {
+            instance?.takeIf { it.sessionActive }?.setState(OutsideAppVoiceState.SPEAKING)
+        }
+
+        fun markPlaybackListening() {
+            instance?.takeIf { it.sessionActive }?.setState(OutsideAppVoiceState.LISTENING)
+        }
+
         fun startIntent(context: Context): Intent {
             return Intent(context, OutsideAppVoiceSessionService::class.java).apply {
                 action = ACTION_START
@@ -280,10 +288,10 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private fun buildNotification(): Notification {
-        val openPendingIntent = PendingIntent.getService(
+        val openPendingIntent = PendingIntent.getActivity(
             this,
             40,
-            controlIntent(this, ACTION_OPEN),
+            openJarvisIntent(),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -299,24 +307,42 @@ class OutsideAppVoiceSessionService : Service() {
             builder.addAction(
                 0,
                 actionItem.label,
-                PendingIntent.getService(
-                    this,
-                    50 + index,
-                    controlIntent(this, actionItem.action),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-                ),
+                notificationActionPendingIntent(actionItem, 50 + index),
             )
         }
         return builder.build()
     }
 
-    private fun openJarvis() {
-        val intent = Intent(this, MainActivity::class.java).apply {
+    private fun notificationActionPendingIntent(
+        actionItem: OutsideAppVoiceNotificationAction,
+        requestCode: Int,
+    ): PendingIntent {
+        if (actionItem.action == ACTION_OPEN) {
+            return PendingIntent.getActivity(
+                this,
+                requestCode,
+                openJarvisIntent(),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        }
+        return PendingIntent.getService(
+            this,
+            requestCode,
+            controlIntent(this, actionItem.action),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    private fun openJarvisIntent(): Intent {
+        return Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             data = Uri.parse("jarvis://voice-realtime?source=outside_app")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
-        startActivity(intent)
+    }
+
+    private fun openJarvis() {
+        startActivity(openJarvisIntent())
     }
 
     private fun sendVoiceSessionEvent(actionName: String) {
