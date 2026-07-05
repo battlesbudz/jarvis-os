@@ -302,6 +302,9 @@ const [
 ]);
 
 assertIncludes(serverBridge, 'android_local_model_smoke_test: "android_local_model"', "server/daemon/bridge.ts");
+assertIncludes(serverBridge, 'interface VoiceSessionControlMsg { type: "voice_session_control"', "server/daemon/bridge.ts");
+assertIncludes(serverBridge, 'persistDaemonTalkModeEnabled(pairedUserId, false)', "server/daemon/bridge.ts");
+assertIncludes(serverBridge, 'const action = String(control.action || "").trim().toLowerCase()', "server/daemon/bridge.ts");
 
 for (const permission of requiredPermissions) {
   assertIncludes(manifest, `android:name="${permission}"`, "AndroidManifest.xml");
@@ -399,7 +402,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "private fun stopWakeCapture()", source);
   assertIncludes(contents, "private fun pauseWakeCapture()", source);
   assertIncludes(contents, "private fun resumeWakeCapture()", source);
-  assertIncludes(contents, "WakeWordService.pauseForPlayback()", source);
+  assertIncludes(contents, "WakeWordService.pauseForUserControl()", source);
   assertIncludes(contents, "WakeWordService.onTtsFinished()", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)", source);
   assertIncludes(contents, "JarvisDaemonModule.emitVoiceSessionControl(actionName, state.wireName)", source);
@@ -493,6 +496,10 @@ for (const [contents, source] of [
   assertIncludes(contents, "if (!talkModeEnabled) {", source);
   assertIncludes(contents, "bringJarvisToForeground()", source);
   assertIncludes(contents, "val eventDelayMs = if (talkModeEnabled) 0L else 400L", source);
+  assertIncludes(contents, "fun pauseForUserControl()", source);
+  assertIncludes(contents, "private fun handlePauseForUserControl()", source);
+  assertIncludes(contents, "speechRecognizer?.cancel()", source);
+  assertIncludes(contents, "if (!active && !capturingUtterance) return", source);
 }
 assertIncludes(webSocketService, "private fun startForegroundCompat(): Boolean", "WebSocketService.kt");
 assertIncludes(webSocketService, "Failed to start foreground daemon service", "WebSocketService.kt");

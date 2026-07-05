@@ -58,6 +58,15 @@ class WakeWordService : Service() {
         }
 
         /**
+         * Called by user-facing voice controls such as Pause. Unlike TTS playback
+         * pause, this must discard any partial utterance so no final result is sent
+         * after the user has paused the session.
+         */
+        fun pauseForUserControl() {
+            instance?.handlePauseForUserControl()
+        }
+
+        /**
          * Called by OpHandler when TTS audio finishes playing.
          * Re-arms the microphone when Talk Mode is on.
          */
@@ -221,6 +230,7 @@ class WakeWordService : Service() {
         }
 
         override fun onResults(results: Bundle?) {
+            if (!active && !capturingUtterance) return
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: emptyList<String>()
             if (capturingUtterance) {
                 // Talk Mode: send the captured utterance to the server for AI processing
@@ -247,6 +257,7 @@ class WakeWordService : Service() {
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
+            if (!active) return
             val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: emptyList<String>()
             if (!capturingUtterance) checkForWakeWord(matches)
         }
@@ -360,6 +371,22 @@ class WakeWordService : Service() {
         }
         // Set active=false so startListening() in handleTtsFinished() is not a no-op
         active = false
+    }
+
+    private fun handlePauseForUserControl() {
+        if (!talkModeEnabled) return
+        DaemonLog.add("wake: pausing user capture")
+        capturingUtterance = false
+        active = false
+        mainHandler.post {
+            try {
+                speechRecognizer?.cancel()
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+            } catch (e: Exception) {
+                Log.e(TAG, "handlePauseForUserControl error", e)
+            }
+        }
     }
 
     private fun handleTtsFinished() {

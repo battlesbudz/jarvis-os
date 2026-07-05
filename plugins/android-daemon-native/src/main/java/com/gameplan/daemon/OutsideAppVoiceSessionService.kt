@@ -221,7 +221,7 @@ class OutsideAppVoiceSessionService : Service() {
 
     private fun pauseWakeCapture() {
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
-        WakeWordService.pauseForPlayback()
+        WakeWordService.pauseForUserControl()
         DaemonLog.add("outside_app_voice: wake capture paused")
     }
 

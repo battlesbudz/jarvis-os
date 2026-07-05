@@ -18,6 +18,7 @@ interface ResultMsg { type: "result"; id: string; ok: boolean; data?: unknown; e
 interface HelloMsg { type: "hello"; ok: boolean; userId?: string; error?: string }
 interface PingMsg { type: "ping" }
 interface NotificationEventMsg { type: "notification_event"; notification: PhoneNotification }
+interface VoiceSessionControlMsg { type: "voice_session_control"; action?: string; state?: string; outsideApp?: boolean }
 
 export type DaemonOp =
   | { type: "ping" }
@@ -329,6 +330,21 @@ async function syncWakeSettingsToDaemon(userId: string): Promise<void> {
     console.log(`[daemon] wake settings synced on connect: userId=${userId} enabled=${wakeWordEnabled} talkMode=${talkModeEnabled} softwareFallback=${softwareWakeWordFallbackEnabled}`);
   } catch (e) {
     console.error("[daemon] wake settings sync failed:", e);
+  }
+}
+
+async function persistDaemonTalkModeEnabled(userId: string, enabled: boolean): Promise<void> {
+  try {
+    const rows = await db.select({ data: userPreferences.data })
+      .from(userPreferences).where(eq(userPreferences.userId, userId));
+    const existing = (rows[0]?.data ?? {}) as Record<string, any>;
+    const updated = { ...existing, talkModeEnabled: enabled };
+    await db.insert(userPreferences)
+      .values({ userId, data: updated })
+      .onConflictDoUpdate({ target: userPreferences.userId, set: { data: updated } });
+    console.log(`[daemon] persisted talk mode ${enabled ? "enabled" : "disabled"} from voice session control: userId=${userId}`);
+  } catch (err) {
+    console.error("[daemon] failed to persist voice session control:", err);
   }
 }
 
@@ -1280,6 +1296,17 @@ export function startDaemonBridge(server: HttpServer): void {
             elementLabel: tm.elementLabel ?? waiter.label,
             screenshotBase64: tm.screenshot,
           });
+        }
+        return;
+      }
+
+      // Outside-app voice controls can fire when React is inactive. Persist
+      // End server-side so opening the app later does not restart Talk Mode.
+      if ((m.type as string) === "voice_session_control" && pairedUserId) {
+        const control = m as VoiceSessionControlMsg;
+        const action = String(control.action || "").trim().toLowerCase();
+        if (action === "end") {
+          await persistDaemonTalkModeEnabled(pairedUserId, false);
         }
         return;
       }
