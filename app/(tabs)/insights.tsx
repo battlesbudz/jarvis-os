@@ -890,6 +890,8 @@ export default function InsightsScreen() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [talkModeEnabled, setTalkModeEnabled] = useState(false);
   const talkModeRef = useRef(false);
+  const talkModeStartSeqRef = useRef(0);
+  const isStreamingRef = useRef(false);
   const startRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const stopRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const stopRecordingSilentlyRef = useRef<() => Promise<void>>(() => Promise.resolve());
@@ -910,6 +912,7 @@ export default function InsightsScreen() {
   const sdkSessionIdRef = useRef<string | null>(null);
   const streamingAssistantIdRef = useRef<string | null>(null);
   const isSpeakingRef = useRef(false);
+  const isTranscribingRef = useRef(false);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
   const webChunksRef = useRef<Blob[]>([]);
   const sendMessageRef = useRef<(text: string, origin?: SendMessageOrigin) => void>(() => {});
@@ -1130,9 +1133,24 @@ export default function InsightsScreen() {
   }, []);
 
   const startRecording = useCallback(async () => {
+    const startedForTalkMode = talkModeRef.current;
+    const talkModeStartSeq = talkModeStartSeqRef.current;
+    const shouldCancelTalkModeStart = () =>
+      startedForTalkMode && (
+        !talkModeRef.current ||
+        talkModeStartSeqRef.current !== talkModeStartSeq ||
+        isStreamingRef.current ||
+        isSpeakingRef.current ||
+        isTranscribingRef.current
+      );
+
     try {
       if (Platform.OS === 'web') {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        if (shouldCancelTalkModeStart()) {
+          stream.getTracks().forEach(t => t.stop());
+          return;
+        }
         const recorder = new MediaRecorder(stream);
         webChunksRef.current = [];
         recorder.ondataavailable = (e) => {
@@ -1179,14 +1197,27 @@ export default function InsightsScreen() {
           Alert.alert('Permission Required', 'Microphone access is needed to use voice input.');
           return;
         }
+        if (shouldCancelTalkModeStart()) return;
         if (soundRef.current) {
           soundRef.current.pause();
           soundRef.current.remove();
           soundRef.current = null;
         }
         await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+        if (shouldCancelTalkModeStart()) {
+          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+          return;
+        }
         await audioRecorder.prepareToRecordAsync();
+        if (shouldCancelTalkModeStart()) {
+          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+          return;
+        }
         audioRecorder.record();
+        if (shouldCancelTalkModeStart()) {
+          stopRecordingSilentlyRef.current().catch(() => {});
+          return;
+        }
         setIsRecording(true);
 
         // Native Talk Mode: poll metering and auto-submit after sustained silence
@@ -1290,6 +1321,8 @@ export default function InsightsScreen() {
   stopRecordingRef.current = stopRecordingAndSend;
   useEffect(() => { talkModeRef.current = talkModeEnabled; }, [talkModeEnabled]);
   useEffect(() => { isRecordingRef.current = isRecording; }, [isRecording]);
+  useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
+  useEffect(() => { isTranscribingRef.current = isTranscribing; }, [isTranscribing]);
 
   // App-level wake word events — fired by WakeWordContext even when insights is not focused
   const { pendingWakeEvent, clearWakeEvent, setTalkModeActive } = useWakeWord();
@@ -2060,24 +2093,15 @@ export default function InsightsScreen() {
       talkModeRef.current = enabled;
     }).catch(() => {});
 
-    // Cleanup on blur: stop recording if Talk Mode was active and mic is open
+    // Cleanup on blur: cancel queued Talk Mode starts and stop any active in-app capture.
     return () => {
+      talkModeStartSeqRef.current += 1;
       if (silencePollRef.current) {
         clearInterval(silencePollRef.current);
         silencePollRef.current = null;
       }
       if (talkModeRef.current && isRecordingRef.current) {
-        // Cancel the in-progress recording without sending it (user navigated away)
-        setIsRecording(false);
-        if (Platform.OS !== 'web') {
-          if (audioRecorder.isRecording) {
-            audioRecorder.stop().catch(() => {});
-          }
-          setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
-        } else {
-          webRecorderRef.current?.stop();
-          webRecorderRef.current = null;
-        }
+        stopRecordingSilentlyRef.current().catch(() => {});
       }
     };
   }, []));
@@ -3383,12 +3407,21 @@ export default function InsightsScreen() {
             }
             setTalkModeEnabled(next);
             talkModeRef.current = next;
+            talkModeStartSeqRef.current += 1;
             if (!next) {
               clearSilencePoll();
             }
             if (!next && isRecordingRef.current) {
               // Immediately disarm the active loop
               stopRecordingSilentlyRef.current().catch(() => {});
+            }
+            if (next && !isRecordingRef.current && !isSpeakingRef.current && !isStreamingRef.current && !isTranscribing) {
+              // Starting Talk Mode should begin the in-app voice loop without a second mic tap.
+              const startSeq = talkModeStartSeqRef.current;
+              setTimeout(() => {
+                if (!talkModeRef.current || talkModeStartSeqRef.current !== startSeq || isStreamingRef.current) return;
+                startRecordingRef.current();
+              }, 0);
             }
             apiRequest('PUT', '/api/voice/wake-settings', { talkModeEnabled: next }).catch(() => {});
           }}

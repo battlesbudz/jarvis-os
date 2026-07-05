@@ -69,6 +69,36 @@ assert.match(
 
 assert.match(
   insights,
+  /if\s*\(next && !isRecordingRef\.current && !isSpeakingRef\.current && !isStreamingRef\.current && !isTranscribing\)\s*\{[\s\S]*?startRecordingRef\.current\(\)/,
+  "Enabling Talk Mode should start the in-app voice loop without requiring a second mic tap",
+);
+
+assert.match(
+  insights,
+  /isStreamingRef\.current = isStreaming;[\s\S]*?isStreamingRef\.current\) return;[\s\S]*?startRecordingRef\.current\(\)/,
+  "Talk Mode should not start recording while an assistant response is still streaming",
+);
+
+assert.match(
+  insights,
+  /talkModeStartSeqRef\.current \+= 1;[\s\S]*?const startSeq = talkModeStartSeqRef\.current;[\s\S]*?!talkModeRef\.current \|\| talkModeStartSeqRef\.current !== startSeq/,
+  "Queued Talk Mode mic starts should be canceled if Talk Mode is disabled before the timeout fires",
+);
+
+assert.match(
+  insights,
+  /Cleanup on blur: cancel queued Talk Mode starts[\s\S]*?return \(\) => \{[\s\S]*?talkModeStartSeqRef\.current \+= 1;[\s\S]*?stopRecordingSilentlyRef\.current\(\)/,
+  "Leaving the JARVIS tab should cancel pending Talk Mode starts and stop active capture",
+);
+
+assert.match(
+  insights,
+  /const shouldCancelTalkModeStart = \(\) =>[\s\S]*?talkModeStartSeqRef\.current !== talkModeStartSeq[\s\S]*?isStreamingRef\.current[\s\S]*?isSpeakingRef\.current[\s\S]*?isTranscribingRef\.current[\s\S]*?if \(shouldCancelTalkModeStart\(\)\)/,
+  "Async Talk Mode recorder setup should recheck cancellation and busy state before opening the mic",
+);
+
+assert.match(
+  insights,
   /onPress=\{interruptSpeakingAndListen\}/,
   "The speaking stop control should interrupt and return to listening",
 );
