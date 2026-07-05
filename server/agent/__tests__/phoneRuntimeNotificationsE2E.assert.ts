@@ -146,6 +146,12 @@ async function main() {
     { app: "Reddit", pkg: "com.reddit.frontpage", title: "Older thread", text: "Still visible", ts: Date.now() - 60 * 60 * 1000 },
   ]);
   assert.equal(olderVisibleNotification?.kind, "read_all", "observed notification context must not depend on post age");
+  const explicitReadAllCurrentNotifications = resolveAndroidNotificationFollowUp("Read all my notifications", followUpNotifications);
+  assert.equal(explicitReadAllCurrentNotifications, null, "explicit current all-notification requests must refresh from Android");
+  const explicitShowAllCurrentNotifications = resolveAndroidNotificationFollowUp("Show every notification", followUpNotifications);
+  assert.equal(explicitShowAllCurrentNotifications, null, "explicit all-notification requests must not use stale context");
+  const pronounReadAllNotifications = resolveAndroidNotificationFollowUp("Show every one of these", followUpNotifications);
+  assert.equal(pronounReadAllNotifications?.kind, "read_all", "pronoun all-notification follow-ups should still use cached context");
   const allHandsSpecificRead = resolveAndroidNotificationFollowUp("Read the All Hands notification", [
     { app: "Calendar", pkg: "com.google.android.calendar", title: "All Hands", text: "Starts at 3 PM", ts: Date.now() },
     { app: "Reddit", pkg: "com.reddit.frontpage", title: "Local models thread", text: "New replies", ts: Date.now() },

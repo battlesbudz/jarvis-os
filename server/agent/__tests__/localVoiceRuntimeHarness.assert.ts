@@ -385,6 +385,7 @@ async function testNotificationWorkingContextIsNotInjectedIntoMetaQuestions() {
     "What are notifications?",
     "Summarize how Android notifications work",
     "What are my current notifications?",
+    "Read all my notifications",
   ]) {
     const gemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "I can explain notifications generally." }]);
     const result = await runLocalVoiceRuntimeHarnessTurn({

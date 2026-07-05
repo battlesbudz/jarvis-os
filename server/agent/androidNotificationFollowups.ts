@@ -16,7 +16,7 @@ function compactText(value: unknown): string {
 }
 
 function wantsOrderedNotificationRead(transcript: string): boolean {
-  return /\b(?:read|list|show)\b\s+(?:me\s+)?(?:all|everything|each|every one)(?:\s+of)?\s+(?:them|those|these|(?:my\s+)?notifications?|(?:my\s+)?alerts?)\b/i.test(transcript) ||
+  return /\b(?:read|list|show)\b\s+(?:me\s+)?(?:all|everything|each|every one)(?:\s+of)?\s+(?:them|those|these)\b/i.test(transcript) ||
     /\b(?:read|list|show)\b\s+(?:me\s+)?(?:the\s+)?rest\b/i.test(transcript) ||
     /\b(?:read|list|show)\b\s+(?:me\s+)?them\s+all\b/i.test(transcript);
 }
