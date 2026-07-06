@@ -163,6 +163,13 @@ class JarvisDaemonModule(
     }
 
     @ReactMethod
+    fun setOutsideAppVoiceApproval(prompt: String, promise: Promise) {
+        val intent = OutsideAppVoiceSessionService.setApprovalIntent(reactApplicationContext, prompt)
+        if (!startVoiceSessionServiceCompat(intent, promise)) return
+        promise.resolve(buildStatusMap())
+    }
+
+    @ReactMethod
     fun openOverlayPermissionSettings(promise: Promise) {
         val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Intent(

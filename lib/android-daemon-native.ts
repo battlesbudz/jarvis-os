@@ -58,6 +58,7 @@ const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
       resumeOutsideAppVoiceSession?(): Promise<AndroidDaemonStatus>;
       endOutsideAppVoiceSession?(): Promise<AndroidDaemonStatus>;
       setOutsideAppVoiceSessionState?(state: string): Promise<AndroidDaemonStatus>;
+      setOutsideAppVoiceApproval?(prompt: string): Promise<AndroidDaemonStatus>;
       openOverlayPermissionSettings?(): Promise<void>;
       openAllFilesAccessSettings(): Promise<void>;
       requestCameraPermission(): Promise<void>;
@@ -139,6 +140,15 @@ export async function setAndroidOutsideAppVoiceSessionState(
     return null;
   }
   return NativeJarvisDaemon.setOutsideAppVoiceSessionState(state);
+}
+
+export async function setAndroidOutsideAppVoiceApproval(
+  prompt: string,
+): Promise<AndroidDaemonStatus | null> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.setOutsideAppVoiceApproval) {
+    return null;
+  }
+  return NativeJarvisDaemon.setOutsideAppVoiceApproval(prompt);
 }
 
 export function addAndroidOutsideAppVoiceControlListener(

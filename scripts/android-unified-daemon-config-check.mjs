@@ -396,6 +396,11 @@ for (const [contents, source] of [
   assertIncludes(contents, "ACTION_RESUME", source);
   assertIncludes(contents, "ACTION_END", source);
   assertIncludes(contents, "ACTION_OPEN", source);
+  assertIncludes(contents, "ACTION_SET_APPROVAL", source);
+  assertIncludes(contents, "ACTION_APPROVE", source);
+  assertIncludes(contents, "ACTION_DENY", source);
+  assertIncludes(contents, "Approve", source);
+  assertIncludes(contents, "Deny", source);
   assertIncludes(contents, "TYPE_APPLICATION_OVERLAY", source);
   assertIncludes(contents, "START_NOT_STICKY", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = true)", source);
@@ -481,6 +486,7 @@ assertIncludes(nativeWrapper, "refreshAssistantStatus", "lib/android-daemon-nati
 assertIncludes(nativeWrapper, "startAndroidOutsideAppVoiceSession", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "endAndroidOutsideAppVoiceSession", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "setAndroidOutsideAppVoiceSessionState", "lib/android-daemon-native.ts");
+assertIncludes(nativeWrapper, "setAndroidOutsideAppVoiceApproval", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "getAndroidLocalGemmaStatus", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "validateAndroidLocalGemmaModel", "lib/android-daemon-native.ts");
 assertExcludes(nativeWrapper, "connect(serverUrl: string, pairCode: string)", "lib/android-daemon-native.ts");
@@ -500,6 +506,7 @@ assertIncludes(jarvisDaemonModule, "fun emitVoiceSessionControl(actionName: Stri
 assertIncludes(jarvisDaemonModule, "DeviceEventManagerModule.RCTDeviceEventEmitter", "JarvisDaemonModule.kt");
 assertIncludes(jarvisDaemonModule, "fun addListener(eventName: String)", "JarvisDaemonModule.kt");
 assertIncludes(jarvisDaemonModule, "fun removeListeners(count: Int)", "JarvisDaemonModule.kt");
+assertIncludes(jarvisDaemonModule, "fun setOutsideAppVoiceApproval(prompt: String, promise: Promise)", "JarvisDaemonModule.kt");
 assertIncludes(jarvisDaemonModule, "voiceOverlayPermission", "JarvisDaemonModule.kt");
 assertIncludes(jarvisDaemonModule, "fun getLocalGemmaStatus(model: String, promise: Promise)", "JarvisDaemonModule.kt");
 assertIncludes(jarvisDaemonModule, "fun validateLocalGemmaModel(model: String, promise: Promise)", "JarvisDaemonModule.kt");
@@ -514,6 +521,7 @@ assertIncludes(pluginTemplateJarvisDaemonModule, "fun emitVoiceSessionControl(ac
 assertIncludes(pluginTemplateJarvisDaemonModule, "DeviceEventManagerModule.RCTDeviceEventEmitter", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "fun addListener(eventName: String)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "fun removeListeners(count: Int)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+assertIncludes(pluginTemplateJarvisDaemonModule, "fun setOutsideAppVoiceApproval(prompt: String, promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "voiceOverlayPermission", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "fun getLocalGemmaStatus(model: String, promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "fun validateLocalGemmaModel(model: String, promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");

@@ -115,13 +115,16 @@ function parseVoiceE2eStatus(logcat, token) {
   const lines = logcat.split(/\r?\n/).filter((line) => line.includes("JarvisVoiceE2E") && line.includes(`token=${token}`));
   const line = lines.at(-1);
   if (!line) return null;
-  const match = line.match(/active=(true|false)\s+state=([a-z_]+)\s+overlayTap=([A-Z_]+)\s+actions=([^\r\n]+)/);
+  const match = line.match(/active=(true|false)\s+state=([a-z_]+)\s+approvalPrompt="([^"]*)"\s+overlayTap=([A-Z_]+)\s+actions=([^\r\n]+)/)
+    ?? line.match(/active=(true|false)\s+state=([a-z_]+)\s+overlayTap=([A-Z_]+)\s+actions=([^\r\n]+)/);
   if (!match) return null;
+  const hasApprovalPrompt = match.length === 6;
   return {
     active: match[1] === "true",
     state: match[2],
-    overlayTap: match[3],
-    actions: match[4].split(",").map((action) => action.trim()).filter(Boolean),
+    approvalPrompt: hasApprovalPrompt ? match[3] : "",
+    overlayTap: hasApprovalPrompt ? match[4] : match[3],
+    actions: (hasApprovalPrompt ? match[5] : match[4]).split(",").map((action) => action.trim()).filter(Boolean),
     raw: line,
   };
 }
@@ -196,13 +199,48 @@ async function runOutsideAppVoiceFakeLocalGemmaSmoke() {
     (status) => status.active && status.state === "listening",
   );
 
+  voiceE2eBroadcast("set_approval", {
+    token: "voice_set_approval",
+    approval_prompt: "Approve sending this email?",
+  });
+  const approval = await waitForVoiceE2eStatus(
+    "approval overlay should show prompt and stay in approval state",
+    (status) => (
+      status.active &&
+      status.state === "approval" &&
+      status.overlayTap === "OPEN_CONTROLS" &&
+      status.approvalPrompt === "Approve sending this email?"
+    ),
+  );
+
+  voiceE2eBroadcast("deny", { token: "voice_approval_deny" });
+  const denied = await waitForVoiceE2eStatus(
+    "approval deny should return to listening",
+    (status) => status.active && status.state === "listening" && status.approvalPrompt === "",
+  );
+
+  voiceE2eBroadcast("set_approval", {
+    token: "voice_set_approval_again",
+    approval_prompt: "Approve running this command?",
+  });
+  await waitForVoiceE2eStatus(
+    "approval overlay should accept a second prompt",
+    (status) => status.active && status.state === "approval" && status.approvalPrompt === "Approve running this command?",
+  );
+
+  voiceE2eBroadcast("approve", { token: "voice_approval_approve" });
+  const approved = await waitForVoiceE2eStatus(
+    "approval approve should move to working",
+    (status) => status.active && status.state === "working" && status.approvalPrompt === "",
+  );
+
   voiceE2eBroadcast("end", { token: "voice_end" });
   const ended = await waitForVoiceE2eStatus(
     "end should clear active voice session",
     (status) => !status.active && status.state === "idle",
   );
 
-  return { listening, speaking, interrupted, paused, resumed, ended };
+  return { listening, speaking, interrupted, paused, resumed, approval, denied, approved, ended };
 }
 
 function findUsefulElement(snapshot) {
@@ -557,6 +595,10 @@ async function main() {
       interruptedState: outsideAppVoice.interrupted.state,
       pausedState: outsideAppVoice.paused.state,
       resumedState: outsideAppVoice.resumed.state,
+      approvalState: outsideAppVoice.approval.state,
+      approvalPrompt: outsideAppVoice.approval.approvalPrompt,
+      approvalDenyState: outsideAppVoice.denied.state,
+      approvalApproveState: outsideAppVoice.approved.state,
       endedActive: outsideAppVoice.ended.active,
     },
   }, null, 2));

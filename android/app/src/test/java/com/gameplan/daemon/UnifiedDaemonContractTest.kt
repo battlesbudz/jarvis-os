@@ -341,4 +341,41 @@ class UnifiedDaemonContractTest {
         )
         controller.destroy()
     }
+
+    @Test
+    fun outsideAppVoiceServiceShowsApprovalPromptAndHandlesOverlayChoice() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val controller = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()
+        val service = controller.get()
+
+        service.onStartCommand(
+            OutsideAppVoiceSessionService.setApprovalIntent(
+                context,
+                "Approve sending this email to test@example.com?",
+            ),
+            0,
+            1,
+        )
+
+        assertTrue(service.sessionActiveForTest())
+        assertEquals(OutsideAppVoiceState.APPROVAL, service.stateForTest())
+        assertEquals(
+            "Approve sending this email to test@example.com?",
+            OutsideAppVoiceSessionService.currentApprovalPrompt(),
+        )
+
+        service.onOverlayDeny()
+        assertEquals(OutsideAppVoiceState.LISTENING, service.stateForTest())
+        assertEquals("", OutsideAppVoiceSessionService.currentApprovalPrompt())
+
+        service.onStartCommand(
+            OutsideAppVoiceSessionService.setApprovalIntent(context, "Approve this action?"),
+            0,
+            2,
+        )
+        service.onOverlayApprove()
+        assertEquals(OutsideAppVoiceState.WORKING, service.stateForTest())
+        assertEquals("", OutsideAppVoiceSessionService.currentApprovalPrompt())
+        controller.destroy()
+    }
 }
