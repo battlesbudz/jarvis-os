@@ -39,7 +39,7 @@
     <meta-data android:name="expo.modules.updates.EXPO_UPDATES_LAUNCH_WAIT_MS" android:value="0"/>
     <service android:name=".daemon.WebSocketService" android:enabled="true" android:exported="false" android:foregroundServiceType="dataSync"/>
     <service android:name=".daemon.WakeWordService" android:enabled="true" android:exported="false" android:foregroundServiceType="microphone"/>
-    <service android:name=".daemon.OutsideAppVoiceSessionService" android:enabled="true" android:exported="false" android:foregroundServiceType="microphone"/>
+    <service android:name=".daemon.OutsideAppVoiceSessionService" android:enabled="true" android:exported="false" android:foregroundServiceType="dataSync"/>
     <service android:name=".daemon.JarvisVoiceInteractionService" android:enabled="true" android:exported="true" android:label="@string/assistant_service_label" android:permission="android.permission.BIND_VOICE_INTERACTION">
       <intent-filter>
         <action android:name="android.service.voice.VoiceInteractionService"/>

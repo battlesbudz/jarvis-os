@@ -408,6 +408,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "WakeWordService.pauseForUserControl()", source);
   assertIncludes(contents, "WakeWordService.onTtsFinished()", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)", source);
+  assertIncludes(contents, "ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC", source);
+  assertExcludes(contents, "ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE", source);
   assertIncludes(contents, "setState(OutsideAppVoiceState.LISTENING, \"resume\")", source);
   assertIncludes(contents, "JarvisDaemonModule.emitVoiceSessionControl(actionName, state.wireName)", source);
   assertIncludes(contents, "PendingIntent.getActivity", source);
