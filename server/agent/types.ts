@@ -1,3 +1,4 @@
+import type { ApprovalReceipt } from "./approvalReceipt";
 
 /** Pending artifact that a tool has produced and that the calling channel
  * (e.g. Telegram) should deliver to the user after the agent finishes. */
@@ -56,6 +57,7 @@ export interface ToolContext {
   originChannelId?: string;
   /** Background worker job ID, when this tool run belongs to an agent_jobs worker. */
   jobId?: string;
+  approvalReceipt?: ApprovalReceipt;
   /** AbortSignal that fires when the user presses Stop. Tools should propagate it to long-running operations. */
   signal?: AbortSignal;
   /** Discord guild (server) ID — set when the message originates from a Discord guild channel */

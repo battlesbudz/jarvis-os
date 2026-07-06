@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 
 import { withApprovalMarkerForTool } from "../approvalMarkers";
-import { requiresApproval, STRICTLY_IRREVERSIBLE_TOOLS } from "../approvalToolRisk";
+import { requiresApproval, requiresHumanApproval, STRICTLY_IRREVERSIBLE_TOOLS } from "../approvalToolRisk";
 import { classifyToolAwareRoute } from "../toolAwareRouting";
 import {
   connectedAccountsExecuteTool,
@@ -13,6 +13,18 @@ import {
 async function main(): Promise<void> {
   assert.equal(requiresApproval("connected_accounts_execute"), true);
   assert.equal(STRICTLY_IRREVERSIBLE_TOOLS.has("connected_accounts_execute"), true);
+  assert.equal(requiresHumanApproval("queue_background_job", { task_scoped_cloud: true }), false);
+  assert.equal(
+    requiresHumanApproval("queue_background_job", {
+      agent_type: "research",
+      task_scoped_cloud: true,
+      cloud_provider_id: "google",
+      cloud_provider_auth_type: "api_key",
+      cloud_budget_usd: 1,
+    }),
+    true,
+  );
+  assert.equal(requiresHumanApproval("queue_background_job", { prompt: "Normal background task" }), false);
   assert.deepEqual(
     withApprovalMarkerForTool("connected_accounts_execute", { tool_slug: "GMAIL_SEND_EMAIL" }),
     { tool_slug: "GMAIL_SEND_EMAIL", approved: true, _approved: true },

@@ -3,6 +3,15 @@ import { submitAgentJob, type AgentJobType } from "../jobQueue";
 import { SUB_AGENT_TYPES } from "../subagents";
 import { getProtectedEntityNames, findEntityNearMatch } from "../../memory/protectedEntities";
 import { buildQueueBackgroundJobInput } from "./queueBackgroundJobInput";
+import {
+  CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD,
+  buildCloudBackgroundJobInput,
+  isCloudBackgroundApprovalReady,
+  type CloudBackgroundProviderOption,
+} from "../cloudBackgroundEscalation";
+import { toolCallHooks, HOOK_PRIORITY } from "../toolCallHooks";
+import { getProviderStatus } from "../providers/modelProviderAuthProfiles";
+import { getModelProvider } from "@shared/modelProviderCatalog";
 
 interface QueueJobArgs {
   agent_type?: string;
@@ -10,6 +19,13 @@ interface QueueJobArgs {
   title?: string;
   skip_entity_check?: boolean;
   skip_location_check?: boolean;
+  task_scoped_cloud?: boolean;
+  cloud_provider_id?: string;
+  cloud_provider_label?: string;
+  cloud_provider_auth_type?: "api_key" | "oauth";
+  cloud_budget_usd?: number;
+  _approved_cloud_background?: boolean;
+  _approval_gate_id?: string;
 }
 
 /**
@@ -17,6 +33,55 @@ interface QueueJobArgs {
  * "deep_research" and "app_project" types beyond the core SubAgentType set.
  */
 const QUEUEABLE_AGENT_TYPES: readonly string[] = [...SUB_AGENT_TYPES, "deep_research", "app_project", "ephemeral_agent_task"];
+const CLOUD_BACKGROUND_AGENT_TYPES = new Set<string>(SUB_AGENT_TYPES);
+
+function catalogProviderLabel(providerId: string): string {
+  const provider = getModelProvider(providerId);
+  return provider?.shortLabel || provider?.label || providerId || "the selected cloud provider";
+}
+
+function providerLabelFromStatus(
+  providerId: string,
+  providerStatus: Awaited<ReturnType<typeof getProviderStatus>> | null,
+): string {
+  const statusLabel = providerStatus?.providers[providerId]?.label;
+  return String(statusLabel || catalogProviderLabel(providerId)).trim();
+}
+
+toolCallHooks.register(async (ctx) => {
+  if (ctx.toolName !== "queue_background_job" || ctx.params.task_scoped_cloud !== true) return undefined;
+  const providerId = String(ctx.params.cloud_provider_id || "").trim();
+  if (!providerId) return undefined;
+  const providerStatus = ctx.userId
+    ? await getProviderStatus({ userId: ctx.userId }).catch(() => null)
+    : null;
+  return {
+    params: {
+      ...ctx.params,
+      cloud_provider_label: providerLabelFromStatus(providerId, providerStatus),
+    },
+  };
+}, { priority: HOOK_PRIORITY.APPROVAL + 20, critical: true });
+
+toolCallHooks.register((ctx) => {
+  if (ctx.toolName !== "queue_background_job" || ctx.params.task_scoped_cloud !== true) return undefined;
+  if (!isCloudBackgroundApprovalReady(ctx.params)) return undefined;
+  const providerId = String(ctx.params.cloud_provider_id || "").trim();
+  const providerLabel = catalogProviderLabel(providerId);
+  const authType = ctx.params.cloud_provider_auth_type === "api_key" ? "API key" : "subscription";
+  const budget = Number(ctx.params.cloud_budget_usd);
+  const budgetText = Number.isFinite(budget) && budget > 0 ? ` Budget: $${(Math.round(budget * 100) / 100).toFixed(2)}.` : "";
+  return {
+    requireApproval: {
+      title: "Approve cloud background task",
+      description:
+        `Use ${providerLabel} via ${authType} for this separate cloud background job.${budgetText} ` +
+        "The live chat model stays unchanged. The cloud worker cannot directly control the phone or write MemoryOS.",
+      severity: "warning",
+      timeoutMs: 10 * 60 * 1000,
+    },
+  };
+}, { priority: HOOK_PRIORITY.APPROVAL + 10, critical: true });
 
 /**
  * Commonly confused US city names — bare city name (lower-cased) → list of states.
@@ -212,6 +277,28 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
         description:
           "Set to true ONLY after the user has confirmed the specific city and state (e.g. 'Watertown, NY'). Update the prompt to include the confirmed city+state before re-calling. Default: false.",
       },
+      task_scoped_cloud: {
+        type: "boolean",
+        description:
+          "Set to true only after the user explicitly approved using a connected cloud provider for this background job. This never switches the live chat model.",
+      },
+      cloud_provider_id: {
+        type: "string",
+        description: "Approved cloud provider id for task-scoped cloud work, such as openai, anthropic, or google.",
+      },
+      cloud_provider_label: {
+        type: "string",
+        description: "Short user-facing provider label that was approved, such as OpenAI, Claude, or Gemini.",
+      },
+      cloud_provider_auth_type: {
+        type: "string",
+        enum: ["api_key", "oauth"],
+        description: "Auth route approved for the provider. API-key routes require cloud_budget_usd.",
+      },
+      cloud_budget_usd: {
+        type: "number",
+        description: "Required per-job budget in USD for API-key cloud providers. Not used for OAuth subscription providers.",
+      },
     },
     required: ["agent_type", "prompt"],
   },
@@ -221,6 +308,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     const prompt = String(a.prompt || "").trim();
     const skipEntityCheck = Boolean(a.skip_entity_check);
     const skipLocationCheck = Boolean(a.skip_location_check);
+    const taskScopedCloud = a.task_scoped_cloud === true;
 
     if (!QUEUEABLE_AGENT_TYPES.includes(agentType)) {
       return {
@@ -231,6 +319,89 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     }
     if (!prompt) {
       return { ok: false, content: "prompt is required.", label: "Missing prompt" };
+    }
+
+    let extraJobInput: Record<string, unknown> | undefined;
+    if (taskScopedCloud) {
+      if (!CLOUD_BACKGROUND_AGENT_TYPES.has(agentType)) {
+        return {
+          ok: true,
+          content:
+            "Task-scoped cloud background work currently supports research, writing, planning, and email jobs. Use one of those job types so the approved provider and budget can be enforced.",
+          label: "Cloud background job type unsupported",
+        };
+      }
+      const providerId = String(a.cloud_provider_id || "").trim();
+      const authType = a.cloud_provider_auth_type;
+      const approvalGateId = String(a._approval_gate_id || "").trim();
+      if (!providerId || (authType !== "api_key" && authType !== "oauth")) {
+        return {
+          ok: true,
+          content:
+            "Cloud background tasks need an approved provider before I can queue them. Ask which connected cloud provider to use, or open Settings if none are connected.",
+          label: "Cloud provider approval needed",
+        };
+      }
+      if (a._approved_cloud_background !== true || !approvalGateId) {
+        return {
+          ok: true,
+          content: "Cloud background tasks need approval before I can queue them.",
+          label: "Cloud provider approval needed",
+        };
+      }
+      const providerStatus = await getProviderStatus({ userId: ctx.userId }).catch(() => null);
+      const providerLabel = providerLabelFromStatus(providerId, providerStatus);
+      if (authType === "oauth" && providerId !== "openai") {
+        return {
+          ok: true,
+          content:
+            `${providerLabel} cloud background jobs need an API-key budget; OAuth/subscription background routing is only supported for OpenAI right now.`,
+          label: "Cloud budget approval needed",
+        };
+      }
+      const budgetUsd = Number(a.cloud_budget_usd);
+      const roundedBudgetUsd = Math.round(budgetUsd * 100) / 100;
+      if (authType === "api_key" && (!Number.isFinite(roundedBudgetUsd) || roundedBudgetUsd <= 0)) {
+        return {
+          ok: true,
+          content:
+            `${providerLabel} uses an API key for cloud work, so I need a per-job budget before queueing it.`,
+          label: "Cloud budget approval needed",
+        };
+      }
+      if (authType === "api_key" && roundedBudgetUsd < CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD) {
+        return {
+          ok: true,
+          content:
+            `${providerLabel} cloud background jobs need at least ` +
+            `$${CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD.toFixed(2)} so the first model request can run.`,
+          label: "Cloud budget approval needed",
+        };
+      }
+      const approvedProviderStatus = providerStatus?.providers[providerId];
+      if (!approvedProviderStatus?.authTypes[authType]?.connected) {
+        return {
+          ok: true,
+          content:
+            `${providerLabel} is not connected with the approved ${authType === "api_key" ? "API key" : "subscription"} route. Open Settings to connect it before starting this cloud background task.`,
+          label: "Cloud provider not connected",
+        };
+      }
+      const provider: CloudBackgroundProviderOption = {
+        id: providerId,
+        label: providerLabel,
+        authType,
+        requiresBudget: authType === "api_key",
+        hint: authType === "api_key"
+          ? `${providerLabel} API key, budget required`
+          : `${providerLabel} subscription, no token budget needed`,
+      };
+      extraJobInput = buildCloudBackgroundJobInput({
+        prompt,
+        provider,
+        budgetUsd: authType === "api_key" ? roundedBudgetUsd : null,
+        approvalGateId,
+      });
     }
 
     const title = String(a.title || "").trim() || deriveTitle(agentType, prompt);
@@ -340,7 +511,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
       // Inject per-type model routing so the job queue uses the appropriate
       // GPT mini for each sub-agent workload (research/planning → gpt-4.1-mini,
       // writing/email → gpt-4o-mini).
-      const jobInput = buildQueueBackgroundJobInput(agentType as AgentJobType, ctx);
+      const jobInput = buildQueueBackgroundJobInput(agentType as AgentJobType, ctx, extraJobInput);
       const { id: jobId, isDuplicate } = await submitAgentJob({
         userId: ctx.userId,
         agentType,

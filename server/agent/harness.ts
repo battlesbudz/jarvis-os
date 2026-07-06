@@ -4,7 +4,7 @@ import type { AgentTool, AgentToolCallRecord, ToolContext } from "./types";
 import type { ActivationPlan } from "./activationPlanner";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { getProvider, accumulateTurn, queryWithFallback, getGlobalFallbackChain, DEFAULT_PROVIDER_MODELS } from "./providers";
-import type { ProviderName, FallbackChainEntry } from "./providers";
+import type { ProviderName, FallbackChainEntry, ProviderQueryParams, ProviderTurnResult } from "./providers";
 import { resolveRuntimeAgentModel } from "./runtimeModel";
 import { checkResponseQuality, APOLOGY_PHRASES } from "./responseQuality";
 import { estimateModelUsage, recordModelUsage } from "./modelUsage";
@@ -43,8 +43,79 @@ function resolveProviderName(model: string): ProviderName {
   return "openai";
 }
 
+const DEFAULT_CLOUD_BUDGET_USD_PER_1K_TOKENS = 0.05;
+
+function roundCloudBudgetUsd(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.ceil(value * 100) / 100;
+}
+
+function estimateCloudBudgetUsdForTokens(tokens: number, usdPer1kTokens: number): number {
+  const safeTokens = Math.max(0, Math.ceil(tokens));
+  const safeRate = Number.isFinite(usdPer1kTokens) && usdPer1kTokens > 0
+    ? usdPer1kTokens
+    : DEFAULT_CLOUD_BUDGET_USD_PER_1K_TOKENS;
+  return roundCloudBudgetUsd((safeTokens / 1000) * safeRate);
+}
+
+function compactCloudBudgetPartialText(value: string, maxChars = 600): string {
+  const compacted = value.replace(/\s+/g, " ").trim();
+  if (compacted.length <= maxChars) return compacted;
+  return `${compacted.slice(0, maxChars - 3).trimEnd()}...`;
+}
+
+function messageContentToText(
+  content: OpenAI.Chat.Completions.ChatCompletionMessageParam["content"],
+): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (!part || typeof part !== "object") return "";
+      const text = (part as { text?: unknown }).text;
+      return typeof text === "string" ? text : "";
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+function summarizeCloudBudgetPartialMessages(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): string {
+  const entries: string[] = [];
+  for (const message of messages) {
+    if (message.role !== "assistant" && message.role !== "tool") continue;
+    const text = compactCloudBudgetPartialText(messageContentToText(message.content));
+    if (!text) continue;
+    entries.push(`${message.role === "tool" ? "Tool result" : "Assistant draft"}: ${text}`);
+  }
+  const recent = entries.slice(-6);
+  if (recent.length === 0) return "";
+  return [
+    "Partial work already gathered:",
+    ...recent.map((entry, index) => `${index + 1}. ${entry}`),
+  ].join("\n");
+}
+
 export interface RunAgentOptions {
   model?: string;
+  /**
+   * Use opts.model as an explicit executor choice even when the user has a
+   * global selected model. This is reserved for task-scoped approvals where
+   * the user approved a specific provider for one background job.
+   */
+  forceModel?: boolean;
+  /** Restrict provider credential selection for one approved run. */
+  preferredAuthType?: ProviderQueryParams["preferredAuthType"];
+  /** Scoped receipt from a runtime-owned user approval. */
+  approvalReceipt?: ToolContext["approvalReceipt"];
+  /** Optional per-job cloud budget guard for forced task-scoped cloud runs. */
+  cloudBudget?: {
+    budgetUsd: number | null;
+    spentUsd: number;
+    usdPer1kTokens?: number;
+    onSpend?: (spentUsd: number) => Promise<void> | void;
+  };
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
   tools: AgentTool[];
   context: ToolContext;
@@ -251,6 +322,10 @@ function toOpenAITool(t: AgentTool): OpenAI.Chat.Completions.ChatCompletionTool 
 export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const {
     model: modelOpt,
+    forceModel,
+    preferredAuthType,
+    approvalReceipt,
+    cloudBudget,
     tools: initialTools,
     context,
     maxTurns = 6,
@@ -279,11 +354,17 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const toolToIntegrationKey = new Map<string, string[]>();
 
   const { getModel, getSelectedModelPreference } = await import("../lib/modelPrefs");
-  const selectedModel = await getSelectedModelPreference(context.userId);
+  const selectedModel = forceModel ? null : await getSelectedModelPreference(context.userId);
   const model = resolveRuntimeAgentModel(selectedModel ?? modelOpt ?? (await getModel(context.userId, "chat")));
 
   const channel = context.channel || "Agent";
   const harnessStartedAt = Date.now();
+  const activeCloudBudget =
+    cloudBudget && typeof cloudBudget.budgetUsd === "number" && cloudBudget.budgetUsd > 0
+      ? cloudBudget
+      : null;
+  const cloudBudgetUsdPer1kTokens = activeCloudBudget?.usdPer1kTokens ?? DEFAULT_CLOUD_BUDGET_USD_PER_1K_TOKENS;
+  let cloudBudgetSpentUsd = roundCloudBudgetUsd(activeCloudBudget?.spentUsd ?? 0);
   const harnessContextLoaded = new Set<string>(["always_on_kernel"]);
 
   // ── Inject workspace context into system prompt ────────────────────────────
@@ -937,6 +1018,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // Each entry carries its own model string so cross-provider fallback always
   // sends a model ID the receiving provider understands.
   const effectiveFallbackChain: FallbackChainEntry[] | null = (() => {
+    if (forceModel) return null;
     if (primaryProviderName === "chatgpt-codex-oauth") return null;
     if (primaryProviderName === "android-local-gemma") return null;
 
@@ -980,7 +1062,40 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
    */
   const runProviderQuery = async (
     queryParams: Parameters<typeof provider.query>[0],
-  ) => {
+  ): Promise<ProviderTurnResult> => {
+    if (activeCloudBudget) {
+      const promptUsage = estimateModelUsage({
+        messages: queryParams.messages,
+        tools: queryParams.tools,
+        textContent: "",
+        toolCallList: [],
+      });
+      const estimatedRequestUsd = estimateCloudBudgetUsdForTokens(
+        promptUsage.promptTokens + queryParams.maxCompletionTokens,
+        cloudBudgetUsdPer1kTokens,
+      );
+      if (cloudBudgetSpentUsd + estimatedRequestUsd > activeCloudBudget.budgetUsd) {
+        const remainingUsd = Math.max(
+          0,
+          Math.round((activeCloudBudget.budgetUsd - cloudBudgetSpentUsd) * 100) / 100,
+        );
+        const partialSummary = summarizeCloudBudgetPartialMessages(queryParams.messages);
+        const message =
+          `Cloud background task stopped before the next model request because the estimated request cost ($${estimatedRequestUsd.toFixed(2)}) would exceed the approved budget. ` +
+          `Estimated remaining budget: $${remainingUsd.toFixed(2)}.` +
+          (partialSummary ? `\n\n${partialSummary}` : "\n\nNo partial worker output was available before the budget stop.");
+        return {
+          textContent: message,
+          textChunks: [message],
+          toolCallList: [],
+          finishReason: "budget_stopped",
+          providerName: primaryProviderName,
+          model: queryParams.model,
+          fallbackUsed: false,
+        };
+      }
+    }
+
     const startedAt = Date.now();
     try {
       const result = effectiveFallbackChain
@@ -994,13 +1109,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             return plainResult;
           })();
 
+      const usage = estimateModelUsage({
+        messages: queryParams.messages,
+        tools: queryParams.tools,
+        textContent: result.textContent,
+        toolCallList: result.toolCallList,
+      });
       if (context.userId) {
-        const usage = estimateModelUsage({
-          messages: queryParams.messages,
-          tools: queryParams.tools,
-          textContent: result.textContent,
-          toolCallList: result.toolCallList,
-        });
         void recordModelUsage({
           userId: context.userId,
           provider: result.providerName ?? primaryProviderName,
@@ -1015,6 +1130,17 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             fallbackUsed: Boolean(result.fallbackUsed),
           },
         });
+      }
+      if (activeCloudBudget) {
+        const estimatedSpendUsd = estimateCloudBudgetUsdForTokens(
+          Math.max(usage.totalTokens, 1),
+          cloudBudgetUsdPer1kTokens,
+        );
+        cloudBudgetSpentUsd = Math.min(
+          activeCloudBudget.budgetUsd,
+          roundCloudBudgetUsd(cloudBudgetSpentUsd + estimatedSpendUsd),
+        );
+        await activeCloudBudget.onSpend?.(cloudBudgetSpentUsd);
       }
 
       return result;
@@ -1128,6 +1254,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       tools: openAITools,
       toolChoice,
       maxCompletionTokens,
+      preferredAuthType,
       stream: !!onToken,
       userId: context.userId,
       signal,
@@ -1277,7 +1404,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           }
 
           try {
-            const result = await tool.execute(effectiveArgs, context);
+            const result = await tool.execute(
+              effectiveArgs,
+              approvalReceipt ? { ...context, approvalReceipt } : context,
+            );
             toolCalls.push({
               name: tc.function.name,
               args: parsedArgs,
@@ -1568,6 +1698,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       tools: undefined, // no tools — force text reply
       toolChoice: "none",
       maxCompletionTokens,
+      preferredAuthType,
       stream: !!onToken,
       userId: context.userId,
       signal,

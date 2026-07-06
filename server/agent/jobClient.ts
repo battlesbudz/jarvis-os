@@ -9,13 +9,28 @@ import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { findDuplicateJob } from "./tools/jobDuplicateGuard";
 import { buildInitialWorkerRuntime } from "./workerRuntime";
-import { RESOURCE_PAUSED_STATUS, isLocalHeavyBackgroundJob } from "./voiceRuntimeResourceCore";
+import {
+  RESOURCE_PAUSED_STATUS,
+  isLocalHeavyBackgroundJob,
+} from "./voiceRuntimeResourceCore";
 import {
   buildVoiceResourcePausedJobInput,
   isVoiceRuntimeResourceActiveForUser,
 } from "./voiceRuntimeResourceScheduler";
 
-export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern" | "named_agent_task" | "ephemeral_agent_task" | "general" | "morning_brief" | "custom_agent" | "project_session" | "build_feature" | "deep_research" | "app_project";
+export type AgentJobType =
+  | SubAgentType
+  | "goal_decompose"
+  | "weekly_pattern"
+  | "named_agent_task"
+  | "ephemeral_agent_task"
+  | "general"
+  | "morning_brief"
+  | "custom_agent"
+  | "project_session"
+  | "build_feature"
+  | "deep_research"
+  | "app_project";
 
 export interface SubmitJobInput {
   userId: string;
@@ -76,7 +91,9 @@ export const SUB_AGENT_MODEL_ROUTING: Partial<Record<AgentJobType, string>> = {
  * undefined for job types that handle their own model resolution
  * (e.g. weekly_pattern, goal_decompose, named_agent_task).
  */
-export function getModelForJobType(agentType: AgentJobType): string | undefined {
+export function getModelForJobType(
+  agentType: AgentJobType,
+): string | undefined {
   return SUB_AGENT_MODEL_ROUTING[agentType];
 }
 
@@ -135,27 +152,48 @@ export interface SubmitJobResult {
  * @returns `{ id, isDuplicate }` — `isDuplicate` is `true` when an existing
  *   job was reused, `false` when a fresh job was inserted.
  */
-export async function submitAgentJob(input: SubmitJobInput, deps: SubmitJobDeps = {}): Promise<SubmitJobResult> {
+export async function submitAgentJob(
+  input: SubmitJobInput,
+  deps: SubmitJobDeps = {},
+): Promise<SubmitJobResult> {
   const guardFn = deps.findDuplicate ?? findDuplicateJob;
   const insertFn = deps.insertJob ?? realInsertJob;
+  const callerInput = (input.input || {}) as Record<string, unknown>;
+  const cloudBackgroundTask = callerInput.cloudBackgroundTask;
+  const isCloudBackgroundJob =
+    !!cloudBackgroundTask &&
+    typeof cloudBackgroundTask === "object" &&
+    !Array.isArray(cloudBackgroundTask);
 
   // ── Deduplication check ────────────────────────────────────────────────────
-  try {
-    const existing = await guardFn(input.userId, input.agentType, input.title);
-    if (existing) {
-      console.log(
-        `[JobQueue] duplicate suppressed — returning existing job=${existing.id} type=${input.agentType} user=${input.userId} title="${input.title.slice(0, 60)}"`,
+  if (!isCloudBackgroundJob) {
+    try {
+      const existing = await guardFn(
+        input.userId,
+        input.agentType,
+        input.title,
       );
-      return { id: existing.id, isDuplicate: true };
+      if (existing) {
+        console.log(
+          `[JobQueue] duplicate suppressed — returning existing job=${existing.id} type=${input.agentType} user=${input.userId} title="${input.title.slice(0, 60)}"`,
+        );
+        return { id: existing.id, isDuplicate: true };
+      }
+    } catch (dupErr) {
+      // Non-fatal — log and proceed to insert normally so the system stays
+      // available even if the duplicate-check query fails transiently.
+      console.warn(
+        "[JobQueue] duplicate-check failed (proceeding with insert):",
+        dupErr,
+      );
     }
-  } catch (dupErr) {
-    // Non-fatal — log and proceed to insert normally so the system stays
-    // available even if the duplicate-check query fails transiently.
-    console.warn("[JobQueue] duplicate-check failed (proceeding with insert):", dupErr);
+  } else {
+    console.log(
+      `[JobQueue] duplicate guard bypassed for approved cloud background job type=${input.agentType} user=${input.userId} title="${input.title.slice(0, 60)}"`,
+    );
   }
 
   // Auto-inject the routed model when the caller has not provided one.
-  const callerInput = (input.input || {}) as Record<string, unknown>;
   const routedModel = getModelForJobType(input.agentType);
   const mergedInput: Record<string, unknown> =
     callerInput.model !== undefined || routedModel === undefined
@@ -172,11 +210,13 @@ export async function submitAgentJob(input: SubmitJobInput, deps: SubmitJobDeps 
     workerRuntime,
   };
   const voiceResourceActive = isVoiceRuntimeResourceActiveForUser(input.userId);
-  const shouldPauseForVoice = voiceResourceActive && isLocalHeavyBackgroundJob({
-    agentType: input.agentType,
-    input: runtimeInput,
-    status: "queued",
-  });
+  const shouldPauseForVoice =
+    voiceResourceActive &&
+    isLocalHeavyBackgroundJob({
+      agentType: input.agentType,
+      input: runtimeInput,
+      status: "queued",
+    });
   const insertedAt = new Date().toISOString();
   const insertInput = shouldPauseForVoice
     ? buildVoiceResourcePausedJobInput({
@@ -219,17 +259,29 @@ export interface CancelAllResult {
  * - `running` jobs → `cancelling`  (the worker loop honours this flag and aborts)
  * - `active` / `paused_waiting` workflows → `paused`
  */
-export async function cancelAllForUser(userId: string): Promise<CancelAllResult> {
+export async function cancelAllForUser(
+  userId: string,
+): Promise<CancelAllResult> {
   const cancelled = await db
     .update(schema.agentJobs)
     .set({ status: "cancelled", completedAt: new Date() })
-    .where(and(eq(schema.agentJobs.userId, userId), inArray(schema.agentJobs.status, ["queued", RESOURCE_PAUSED_STATUS])))
+    .where(
+      and(
+        eq(schema.agentJobs.userId, userId),
+        inArray(schema.agentJobs.status, ["queued", RESOURCE_PAUSED_STATUS]),
+      ),
+    )
     .returning({ id: schema.agentJobs.id });
 
   const cancelling = await db
     .update(schema.agentJobs)
     .set({ status: "cancelling" })
-    .where(and(eq(schema.agentJobs.userId, userId), eq(schema.agentJobs.status, "running")))
+    .where(
+      and(
+        eq(schema.agentJobs.userId, userId),
+        eq(schema.agentJobs.status, "running"),
+      ),
+    )
     .returning({ id: schema.agentJobs.id });
 
   const paused = await db

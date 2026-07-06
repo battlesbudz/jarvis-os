@@ -50,18 +50,72 @@ async function main(): Promise<void> {
   assert.deepEqual(safeResult.params, { date: "2026-05-28" });
   assert.equal(requests.length, 0);
 
+  const normalQueueResult = await onBeforeTool("queue_background_job", {
+    agent_type: "research",
+    prompt: "Research this.",
+  });
+  assert.equal(normalQueueResult.allowed, true);
+  assert.equal(requests.length, 0);
+
+  const missingProviderCloudQueueResult = await onBeforeTool("queue_background_job", {
+    agent_type: "research",
+    prompt: "Research this with cloud.",
+    task_scoped_cloud: true,
+  });
+  assert.equal(missingProviderCloudQueueResult.allowed, true);
+  assert.equal(missingProviderCloudQueueResult.params?._approved_cloud_background, undefined);
+  assert.equal(requests.length, 0);
+
+  const missingBudgetCloudQueueResult = await onBeforeTool("queue_background_job", {
+    agent_type: "research",
+    prompt: "Research this with cloud.",
+    task_scoped_cloud: true,
+    cloud_provider_id: "google",
+    cloud_provider_auth_type: "api_key",
+  });
+  assert.equal(missingBudgetCloudQueueResult.allowed, true);
+  assert.equal(missingBudgetCloudQueueResult.params?._approved_cloud_background, undefined);
+  assert.equal(requests.length, 0);
+
+  const unsupportedOAuthCloudQueueResult = await onBeforeTool("queue_background_job", {
+    agent_type: "research",
+    prompt: "Research this with cloud.",
+    task_scoped_cloud: true,
+    cloud_provider_id: "google",
+    cloud_provider_auth_type: "oauth",
+  });
+  assert.equal(unsupportedOAuthCloudQueueResult.allowed, true);
+  assert.equal(unsupportedOAuthCloudQueueResult.params?._approved_cloud_background, undefined);
+  assert.equal(requests.length, 0);
+
+  const cloudQueueResult = await onBeforeTool("queue_background_job", {
+    agent_type: "research",
+    prompt: "Research this with cloud.",
+    task_scoped_cloud: true,
+    cloud_provider_id: "google",
+    cloud_provider_label: "Gemini",
+    cloud_provider_auth_type: "api_key",
+    cloud_budget_usd: 1,
+  });
+  assert.equal(cloudQueueResult.allowed, true);
+  assert.equal(cloudQueueResult.params?._approved_cloud_background, true);
+  assert.equal(cloudQueueResult.params?._approval_gate_id, "gate_1");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].toolName, "queue_background_job");
+  assert.match(String(requests[0].description), /Gemini/);
+
   const gatedResult = await onBeforeTool("send_email", { to: "sam@example.com" });
   assert.equal(gatedResult.allowed, true);
   assert.deepEqual(gatedResult.params, { to: "sam@example.com" });
-  assert.equal(requests.length, 1);
-  assert.equal(requests[0].agentId, "coach_app:user_1");
-  assert.equal(requests[0].userId, "user_1");
-  assert.equal(requests[0].toolName, "send_email");
-  assert.equal(requests[0].initiatedBy, "user");
-  assert.equal(awaitCalls, 1);
-  assert.equal(notifications.length, 1);
-  assert.equal(notifications[0].gateId, "gate_1");
-  assert.equal(notifications[0].platform, "Gateway");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].agentId, "coach_app:user_1");
+  assert.equal(requests[1].userId, "user_1");
+  assert.equal(requests[1].toolName, "send_email");
+  assert.equal(requests[1].initiatedBy, "user");
+  assert.equal(awaitCalls, 2);
+  assert.equal(notifications.length, 2);
+  assert.equal(notifications[1].gateId, "gate_1");
+  assert.equal(notifications[1].platform, "Gateway");
 
   const connectedAccountGate = createSystemApprovalOnBeforeTool({
     agentId: "coach_app:user_1",

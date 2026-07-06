@@ -16,9 +16,16 @@
  * Run with: tsx server/agent/__tests__/jobClient.test.ts
  */
 
-import { submitAgentJob, type SubmitJobInput, type SubmitJobDeps } from "../jobClient";
+import {
+  submitAgentJob,
+  type SubmitJobInput,
+  type SubmitJobDeps,
+} from "../jobClient";
 import type { findDuplicateJob } from "../tools/jobDuplicateGuard";
-import { RESOURCE_PAUSED_STATUS, resourcePauseMetadata } from "../voiceRuntimeResourceCore";
+import {
+  RESOURCE_PAUSED_STATUS,
+  resourcePauseMetadata,
+} from "../voiceRuntimeResourceCore";
 import { setVoiceRuntimeResourceActive } from "../voiceRuntimeResourceScheduler";
 
 // ── Test bookkeeping ──────────────────────────────────────────────────────────
@@ -78,7 +85,8 @@ function makeInsertStub(returnId = "job-new-001"): {
 } {
   const stub = {
     calls: 0,
-    lastValues: null as Parameters<NonNullable<SubmitJobDeps["insertJob"]>>[0] | null,
+    lastValues: null as
+      Parameters<NonNullable<SubmitJobDeps["insertJob"]>>[0] | null,
     fn: null as unknown as NonNullable<SubmitJobDeps["insertJob"]>,
   };
   stub.fn = async (values) => {
@@ -92,12 +100,13 @@ function makeInsertStub(returnId = "job-new-001"): {
 // ── Test suites ───────────────────────────────────────────────────────────────
 
 async function run(): Promise<void> {
-
   // ─────────────────────────────────────────────────────────────────────────
   // Suite 1: Duplicate found — { id: existingId, isDuplicate: true }; insert never called
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 1 — Duplicate found: isDuplicate:true returned, insert skipped\n");
+  console.log(
+    "\nSuite 1 — Duplicate found: isDuplicate:true returned, insert skipped\n",
+  );
 
   {
     const insertStub = makeInsertStub("job-never");
@@ -108,16 +117,30 @@ async function run(): Promise<void> {
 
     const result = await submitAgentJob(makeInput(), deps);
 
-    assertEquals(result.id, "job-old-001", "DUP-1: result.id is the existing job id when a duplicate is found");
-    assertEquals(result.isDuplicate, true, "DUP-2: result.isDuplicate is true when an existing job is reused");
-    assertEquals(insertStub.calls, 0, "DUP-3: insertJob is never called when a duplicate is found");
+    assertEquals(
+      result.id,
+      "job-old-001",
+      "DUP-1: result.id is the existing job id when a duplicate is found",
+    );
+    assertEquals(
+      result.isDuplicate,
+      true,
+      "DUP-2: result.isDuplicate is true when an existing job is reused",
+    );
+    assertEquals(
+      insertStub.calls,
+      0,
+      "DUP-3: insertJob is never called when a duplicate is found",
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Suite 2: No duplicate — { id: newId, isDuplicate: false }; insert called once
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 2 — No duplicate: isDuplicate:false returned, insertJob called once\n");
+  console.log(
+    "\nSuite 2 — No duplicate: isDuplicate:false returned, insertJob called once\n",
+  );
 
   {
     const insertStub = makeInsertStub("job-new-555");
@@ -128,9 +151,21 @@ async function run(): Promise<void> {
 
     const result = await submitAgentJob(makeInput(), deps);
 
-    assertEquals(result.id, "job-new-555", "ND-1: result.id is the id provided by insertJob");
-    assertEquals(result.isDuplicate, false, "ND-2: result.isDuplicate is false when a new job is inserted");
-    assertEquals(insertStub.calls, 1, "ND-3: insertJob is called exactly once when no duplicate exists");
+    assertEquals(
+      result.id,
+      "job-new-555",
+      "ND-1: result.id is the id provided by insertJob",
+    );
+    assertEquals(
+      result.isDuplicate,
+      false,
+      "ND-2: result.isDuplicate is false when a new job is inserted",
+    );
+    assertEquals(
+      insertStub.calls,
+      1,
+      "ND-3: insertJob is called exactly once when no duplicate exists",
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -157,9 +192,21 @@ async function run(): Promise<void> {
 
     const v = insertStub.lastValues!;
     assertEquals(v.userId, "u-xyz", "IV-1: userId is forwarded to insertJob");
-    assertEquals(v.agentType, "planning", "IV-2: agentType is forwarded to insertJob");
-    assertEquals(v.title, "Plan Q3 roadmap", "IV-3: title is forwarded to insertJob");
-    assertEquals(v.prompt, "Draft a Q3 roadmap.", "IV-4: prompt is forwarded to insertJob");
+    assertEquals(
+      v.agentType,
+      "planning",
+      "IV-2: agentType is forwarded to insertJob",
+    );
+    assertEquals(
+      v.title,
+      "Plan Q3 roadmap",
+      "IV-3: title is forwarded to insertJob",
+    );
+    assertEquals(
+      v.prompt,
+      "Draft a Q3 roadmap.",
+      "IV-4: prompt is forwarded to insertJob",
+    );
     assertEquals(v.status, "queued", "IV-5: status is set to 'queued'");
   }
 
@@ -208,7 +255,10 @@ async function run(): Promise<void> {
       insertJob: insertStub.fn,
     };
 
-    await submitAgentJob(makeInput({ agentType: "research", input: { model: "custom-model" } }), deps);
+    await submitAgentJob(
+      makeInput({ agentType: "research", input: { model: "custom-model" } }),
+      deps,
+    );
 
     assertEquals(
       (insertStub.lastValues!.input as Record<string, unknown>).model,
@@ -229,19 +279,27 @@ async function run(): Promise<void> {
       action: "working",
       state: "working",
       now: new Date("2026-07-06T11:00:00.000Z"),
+      ttlMs: null,
     });
     try {
-      await submitAgentJob(makeInput({
-        userId: "u-voice",
-        agentType: "app_project",
-        title: "Build local app",
-        prompt: "Build a local app.",
-      }), deps);
+      await submitAgentJob(
+        makeInput({
+          userId: "u-voice",
+          agentType: "app_project",
+          title: "Build local app",
+          prompt: "Build a local app.",
+        }),
+        deps,
+      );
     } finally {
       setVoiceRuntimeResourceActive("u-voice", false);
     }
 
-    assertEquals(insertStub.lastValues!.status, RESOURCE_PAUSED_STATUS, "MR-4: local-heavy jobs inserted during active voice are resource-paused");
+    assertEquals(
+      insertStub.lastValues!.status,
+      RESOURCE_PAUSED_STATUS,
+      "MR-4: local-heavy jobs inserted during active voice are resource-paused",
+    );
     assert(
       !!resourcePauseMetadata(insertStub.lastValues!.input),
       "MR-5: resource-paused voice jobs include deterministic resourcePause metadata",
@@ -251,7 +309,9 @@ async function run(): Promise<void> {
   // Suite 5: Guard errors are non-fatal — insert proceeds; isDuplicate:false
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 5 — Guard error is swallowed; insertJob is still called; isDuplicate:false\n");
+  console.log(
+    "\nSuite 5 — Guard error is swallowed; insertJob is still called; isDuplicate:false\n",
+  );
 
   {
     const insertStub = makeInsertStub("job-after-guard-error");
@@ -265,20 +325,39 @@ async function run(): Promise<void> {
 
     const result = await submitAgentJob(makeInput(), deps);
 
-    assertEquals(insertStub.calls, 1, "GE-1: insertJob is called once after the guard error");
-    assertEquals(result.id, "job-after-guard-error", "GE-2: result.id comes from insertJob after the guard error");
-    assertEquals(result.isDuplicate, false, "GE-3: isDuplicate is false when the guard fails (treated as fresh job)");
+    assertEquals(
+      insertStub.calls,
+      1,
+      "GE-1: insertJob is called once after the guard error",
+    );
+    assertEquals(
+      result.id,
+      "job-after-guard-error",
+      "GE-2: result.id comes from insertJob after the guard error",
+    );
+    assertEquals(
+      result.isDuplicate,
+      false,
+      "GE-3: isDuplicate is false when the guard fails (treated as fresh job)",
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Suite 6: Guard receives the correct arguments
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 6 — Guard receives correct userId, agentType, and title\n");
+  console.log(
+    "\nSuite 6 — Guard receives correct userId, agentType, and title\n",
+  );
 
   {
-    const calls: Array<{ userId: string; agentType: string; title: string }> = [];
-    const capturingGuard: typeof findDuplicateJob = async (userId, agentType, title) => {
+    const calls: Array<{ userId: string; agentType: string; title: string }> =
+      [];
+    const capturingGuard: typeof findDuplicateJob = async (
+      userId,
+      agentType,
+      title,
+    ) => {
       calls.push({ userId, agentType, title });
       return null;
     };
@@ -287,19 +366,40 @@ async function run(): Promise<void> {
       insertJob: makeInsertStub("job-guard-args").fn,
     };
 
-    await submitAgentJob(makeInput({ userId: "u-test", agentType: "planning", title: "Plan Q3 roadmap" }), deps);
+    await submitAgentJob(
+      makeInput({
+        userId: "u-test",
+        agentType: "planning",
+        title: "Plan Q3 roadmap",
+      }),
+      deps,
+    );
 
     assertEquals(calls.length, 1, "GA-1: findDuplicate is called exactly once");
-    assertEquals(calls[0]?.userId, "u-test", "GA-2: userId is forwarded correctly");
-    assertEquals(calls[0]?.agentType, "planning", "GA-3: agentType is forwarded correctly");
-    assertEquals(calls[0]?.title, "Plan Q3 roadmap", "GA-4: title is forwarded correctly");
+    assertEquals(
+      calls[0]?.userId,
+      "u-test",
+      "GA-2: userId is forwarded correctly",
+    );
+    assertEquals(
+      calls[0]?.agentType,
+      "planning",
+      "GA-3: agentType is forwarded correctly",
+    );
+    assertEquals(
+      calls[0]?.title,
+      "Plan Q3 roadmap",
+      "GA-4: title is forwarded correctly",
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────
   // Suite 7: Two sequential submissions — second sees the first as duplicate
   // ─────────────────────────────────────────────────────────────────────────
 
-  console.log("\nSuite 7 — Sequential identical submissions: second returns isDuplicate:true\n");
+  console.log(
+    "\nSuite 7 — Sequential identical submissions: second returns isDuplicate:true\n",
+  );
 
   {
     const insertStub = makeInsertStub("job-first");
@@ -319,11 +419,89 @@ async function run(): Promise<void> {
     const first = await submitAgentJob(makeInput(), deps);
     const second = await submitAgentJob(makeInput(), deps);
 
-    assertEquals(first.id, "job-first", "RC-1: first submission returns the inserted job id");
-    assertEquals(first.isDuplicate, false, "RC-2: first submission has isDuplicate:false (new job)");
-    assertEquals(second.id, "job-first", "RC-3: second submission returns the same (existing) job id");
-    assertEquals(second.isDuplicate, true, "RC-4: second submission has isDuplicate:true (duplicate detected)");
-    assertEquals(insertStub.calls, 1, "RC-5: insertJob is called exactly once across both submissions");
+    assertEquals(
+      first.id,
+      "job-first",
+      "RC-1: first submission returns the inserted job id",
+    );
+    assertEquals(
+      first.isDuplicate,
+      false,
+      "RC-2: first submission has isDuplicate:false (new job)",
+    );
+    assertEquals(
+      second.id,
+      "job-first",
+      "RC-3: second submission returns the same (existing) job id",
+    );
+    assertEquals(
+      second.isDuplicate,
+      true,
+      "RC-4: second submission has isDuplicate:true (duplicate detected)",
+    );
+    assertEquals(
+      insertStub.calls,
+      1,
+      "RC-5: insertJob is called exactly once across both submissions",
+    );
+  }
+
+  console.log(
+    "\nSuite 8 - Cloud background jobs bypass duplicate suppression\n",
+  );
+
+  {
+    const insertStub = makeInsertStub("job-cloud-new");
+    let duplicateCalls = 0;
+    const duplicateGuard: typeof findDuplicateJob = async () => {
+      duplicateCalls++;
+      return { id: "job-normal-existing", title: "Research: competitor" };
+    };
+    const deps: SubmitJobDeps = {
+      findDuplicate: duplicateGuard,
+      insertJob: insertStub.fn,
+    };
+
+    const result = await submitAgentJob(
+      makeInput({
+        agentType: "research",
+        title: "Research: competitor",
+        prompt: "Research this competitor.",
+        input: {
+          model: "google/gemini-2.5-flash",
+          cloudBackgroundTask: {
+            providerId: "google",
+            providerLabel: "Gemini",
+            providerAuthType: "api_key",
+            approvedModel: "google/gemini-2.5-flash",
+            approvalGateId: "gate_cloud_approved",
+            budgetUsd: 3,
+          },
+        },
+      }),
+      deps,
+    );
+
+    assertEquals(
+      duplicateCalls,
+      0,
+      "CB-1: duplicate guard is not called for approved cloud background jobs",
+    );
+    assertEquals(
+      insertStub.calls,
+      1,
+      "CB-2: approved cloud background job inserts a fresh row",
+    );
+    assertEquals(
+      result.id,
+      "job-cloud-new",
+      "CB-3: approved cloud background result returns the new job id",
+    );
+    assertEquals(
+      result.isDuplicate,
+      false,
+      "CB-4: approved cloud background result is not marked duplicate",
+    );
   }
 }
 

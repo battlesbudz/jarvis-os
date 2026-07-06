@@ -1,8 +1,14 @@
 import { db } from "../db";
 import { eq, and, sql, gte, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import type { SubAgentType } from "./subagents";
+import type { SubAgentResult, SubAgentType } from "./subagents";
 import { runSubAgent, BUILD_FEATURE_WORKER_SYSTEM_PROMPT } from "./subagents";
+import {
+  buildCompactCloudBackgroundResultPacket,
+  maxCloudBackgroundModelTurnsForBudget,
+  type ValidatedCloudBackgroundJobInput,
+  validateCloudBackgroundJobInput,
+} from "./cloudBackgroundEscalation";
 import { runGoalDecomposition } from "./goalDecomposer";
 import { runNamedAgent } from "./runNamedAgent";
 import { runEphemeralAgentSession, type EphemeralAgentKind } from "./ephemeralAgents";
@@ -29,6 +35,7 @@ import { createDriveBinaryFile } from "../integrations/googleDrive";
 import { normalizeApprovalReceipt } from "./approvalReceipt";
 import { decideJobFailureRecovery } from "./jobObservability";
 import { buildWorkerRuntimeEvent, resolveWorkerType, withWorkerRuntimeEvent } from "./workerRuntime";
+import { getProviderStatus } from "./providers/modelProviderAuthProfiles";
 import {
   buildFeatureProgressLabel,
   buildFeatureProgressPercent,
@@ -652,6 +659,7 @@ async function notifySubAgentJobComplete(
 const TICK_MS = 15 * 1000;
 const MAX_JOB_DURATION_MS = 5 * 60 * 1000;
 const RESOURCE_PAUSE_RECOVERY_POLL_MS = 5 * 60 * 1000;
+const QUEUE_BACKGROUND_JOB_TOOL = "queue_background_job";
 
 let workerRunning = false;
 let workerStarted = false;
@@ -660,6 +668,84 @@ let resourcePauseRecoveryTimer: ReturnType<typeof setInterval> | null = null;
 
 function jobInputOf(job: { input: unknown }): Record<string, unknown> {
   return (job.input && typeof job.input === "object" ? job.input : {}) as Record<string, unknown>;
+}
+
+function cloudBackgroundEstimatedSpendOf(jobInput: Record<string, unknown>): number {
+  const task = jobInput.cloudBackgroundTask;
+  if (!task || typeof task !== "object" || Array.isArray(task)) return 0;
+  const value = (task as Record<string, unknown>).estimatedSpentUsd;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.round(value * 100) / 100
+    : 0;
+}
+
+function withCloudBackgroundEstimatedSpend(
+  jobInput: Record<string, unknown>,
+  estimatedSpentUsd: number,
+): Record<string, unknown> {
+  const task = jobInput.cloudBackgroundTask;
+  if (!task || typeof task !== "object" || Array.isArray(task)) return jobInput;
+  return {
+    ...jobInput,
+    cloudBackgroundTask: {
+      ...(task as Record<string, unknown>),
+      estimatedSpentUsd,
+    },
+  };
+}
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function budgetCents(value: unknown): number | null {
+  if (value == null) return null;
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? Math.round(numberValue * 100) : null;
+}
+
+async function cloudBackgroundApprovalGateMatches(opts: {
+  userId: string;
+  agentType: string;
+  prompt: string;
+  task: ValidatedCloudBackgroundJobInput["task"];
+}): Promise<boolean> {
+  const [gate] = await db
+    .select({
+      toolArgs: schema.agentApprovalGates.toolArgs,
+      resolvedAt: schema.agentApprovalGates.resolvedAt,
+      expiresAt: schema.agentApprovalGates.expiresAt,
+    })
+    .from(schema.agentApprovalGates)
+    .where(and(
+      eq(schema.agentApprovalGates.id, opts.task.approvalGateId),
+      eq(schema.agentApprovalGates.userId, opts.userId),
+      eq(schema.agentApprovalGates.toolName, QUEUE_BACKGROUND_JOB_TOOL),
+      eq(schema.agentApprovalGates.status, "approved"),
+    ))
+    .limit(1);
+
+  const gateArgs = recordOf(gate?.toolArgs);
+  if (!gateArgs || gateArgs.task_scoped_cloud !== true) return false;
+  if (!(gate.resolvedAt instanceof Date) || !(gate.expiresAt instanceof Date)) return false;
+  if (gate.resolvedAt.getTime() > gate.expiresAt.getTime()) return false;
+
+  const budgetMatches = opts.task.providerAuthType !== "api_key"
+    || budgetCents(gateArgs.cloud_budget_usd) === budgetCents(opts.task.budgetUsd);
+
+  return (
+    stringField(gateArgs.agent_type) === opts.agentType &&
+    stringField(gateArgs.prompt) === opts.prompt.trim() &&
+    stringField(gateArgs.cloud_provider_id) === opts.task.providerId &&
+    stringField(gateArgs.cloud_provider_auth_type) === opts.task.providerAuthType &&
+    budgetMatches
+  );
 }
 
 async function appendWorkerEventToJob(opts: {
@@ -899,10 +985,12 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
     console.warn(`[JobQueue] job ${job.id} exceeded ${MAX_JOB_DURATION_MS}ms (still running)`);
   }, MAX_JOB_DURATION_MS);
 
+  let latestJobInput = jobInputOf(job);
+
   try {
     // Extract origin channel stored at queue time — used to route the completion
     // notification back to the right channel rather than spamming all channels.
-    let jobInput = jobInputOf(job);
+    let jobInput = latestJobInput;
     jobInput = await appendWorkerEventToJob({
       jobId: job.id,
       agentType: job.agentType,
@@ -916,6 +1004,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       console.warn(`[JobQueue] worker start event failed for ${job.id}:`, err);
       return jobInput;
     });
+    latestJobInput = jobInput;
     const originChannel = typeof jobInput.originChannel === "string" ? jobInput.originChannel : undefined;
     const originChannelId = typeof jobInput.originChannelId === "string" ? jobInput.originChannelId : undefined;
     const originDiscordChannelId = typeof jobInput.originDiscordChannelId === "string" ? jobInput.originDiscordChannelId : undefined;
@@ -937,6 +1026,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
           requiredFor: typeof jobInput.approvalToolName === "string" ? jobInput.approvalToolName : job.agentType,
         },
       }).catch(() => jobInput);
+      latestJobInput = jobInput;
     }
 
     // Helper: fire the workflow hook if this job belongs to a workflow step.
@@ -1068,6 +1158,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         console.warn(`[JobQueue] ephemeral_agent_task progress append failed for ${job.id}:`, err);
         return jobInput;
       });
+      latestJobInput = jobInput;
 
       jobInput = await appendWorkerProgressToJob({
         jobId: job.id,
@@ -1081,6 +1172,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         console.warn(`[JobQueue] ephemeral_agent_task running progress append failed for ${job.id}:`, err);
         return jobInput;
       });
+      latestJobInput = jobInput;
 
       const result = await runEphemeralAgentSession({
         userId: job.userId,
@@ -1107,6 +1199,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         console.warn(`[JobQueue] ephemeral_agent_task deliverable progress append failed for ${job.id}:`, err);
         return jobInput;
       });
+      latestJobInput = jobInput;
 
       const [deliverable] = await db
         .insert(schema.deliverables)
@@ -1126,6 +1219,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         console.warn(`[JobQueue] ephemeral_agent_task review progress append failed for ${job.id}:`, err);
         return jobInput;
       });
+      latestJobInput = jobInput;
 
       await completeJob(job.id, {
         result: {
@@ -1586,6 +1680,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
           console.warn(`[JobQueue] build_feature progress append failed for ${job.id}:`, err);
           return jobInput;
         });
+        latestJobInput = jobInput;
       };
 
       const baseFeatureDescription = String(jobInput.feature_description ?? job.prompt);
@@ -2418,11 +2513,124 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
     };
 
+    const cloudBackgroundValidation = validateCloudBackgroundJobInput(jobInput);
+    if (cloudBackgroundValidation?.ok === false) {
+      await failJob(job.id, cloudBackgroundValidation.message, job.userId);
+      await notifyJobComplete(
+        job.userId,
+        job.agentType,
+        job.title,
+        cloudBackgroundValidation.message,
+        originChannel,
+        originDiscordChannelId,
+      );
+      return;
+    }
+    if (cloudBackgroundValidation?.ok) {
+      const approvalGateVerified = await cloudBackgroundApprovalGateMatches({
+        userId: job.userId,
+        agentType: job.agentType,
+        prompt: job.prompt || "",
+        task: cloudBackgroundValidation.task,
+      }).catch((err) => {
+        console.warn(`[JobQueue] cloud background approval gate verification failed for ${job.id}:`, err);
+        return false;
+      });
+      if (!approvalGateVerified) {
+        const message = "Cloud background task approval could not be verified. Please approve it again before restarting this cloud task.";
+        await failJob(job.id, message, job.userId);
+        await notifyJobComplete(
+          job.userId,
+          job.agentType,
+          job.title,
+          message,
+          originChannel,
+          originDiscordChannelId,
+        );
+        return;
+      }
+      const providerStatus = await getProviderStatus({ userId: job.userId }).catch(() => null);
+      const approvedAuthStatus =
+        providerStatus?.providers[cloudBackgroundValidation.task.providerId]
+          ?.authTypes[cloudBackgroundValidation.task.providerAuthType];
+      if (!approvedAuthStatus?.connected) {
+        const message =
+          `${cloudBackgroundValidation.task.providerLabel} is no longer connected with the approved ` +
+          `${cloudBackgroundValidation.task.providerAuthType === "api_key" ? "API-key" : "subscription"} route. ` +
+          "Reconnect it in Settings before restarting this cloud background task.";
+        await failJob(job.id, message, job.userId);
+        await notifyJobComplete(
+          job.userId,
+          job.agentType,
+          job.title,
+          message,
+          originChannel,
+          originDiscordChannelId,
+        );
+        return;
+      }
+    }
+    const cloudBackgroundMaxTurns = cloudBackgroundValidation?.ok
+      ? maxCloudBackgroundModelTurnsForBudget(cloudBackgroundValidation.task.budgetUsd, 6)
+      : undefined;
+    let cloudBackgroundEstimatedSpentUsd = cloudBackgroundEstimatedSpendOf(jobInput);
+    const persistCloudBackgroundEstimatedSpend = async (spentUsd: number) => {
+      cloudBackgroundEstimatedSpentUsd = Math.round(Math.max(0, spentUsd) * 100) / 100;
+      jobInput = withCloudBackgroundEstimatedSpend(jobInput, cloudBackgroundEstimatedSpentUsd);
+      latestJobInput = jobInput;
+      await db
+        .update(schema.agentJobs)
+        .set({ input: jobInput })
+        .where(eq(schema.agentJobs.id, job.id));
+    };
+    const cloudBackgroundBudgetGuardForRun = () =>
+      cloudBackgroundValidation?.ok && cloudBackgroundValidation.task.providerAuthType === "api_key"
+        ? {
+            budgetUsd: cloudBackgroundValidation.task.budgetUsd,
+            spentUsd: cloudBackgroundEstimatedSpentUsd,
+            onSpend: persistCloudBackgroundEstimatedSpend,
+          }
+        : undefined;
+    const markCloudBackgroundBudgetStopped = (result: SubAgentResult) => {
+      if (!cloudBackgroundValidation?.ok) return;
+      const summary = result.summary || "Cloud background task stopped before exceeding the approved budget.";
+      const packet = buildCompactCloudBackgroundResultPacket({
+        jobId: job.id,
+        providerId: cloudBackgroundValidation.task.providerId,
+        status: "budget_stopped",
+        summary,
+        actions: ["Preserved the partial worker result before another model request could exceed budget."],
+        partial: true,
+        spentUsd: cloudBackgroundEstimatedSpentUsd,
+        budgetUsd: cloudBackgroundValidation.task.budgetUsd,
+      });
+      result.meta.cloudBackgroundBudgetStopped = true;
+      result.meta.cloudBackgroundBudgetPacket = packet;
+      result.meta.cloudBackgroundPartial = true;
+      result.summary = summary.toLowerCase().startsWith("partial ")
+        ? summary
+        : `Partial cloud background result - ${summary}`;
+      if (!/^## Partial cloud background result\b/i.test(result.body)) {
+        result.body =
+          `## Partial cloud background result\n\n` +
+          `The approved cloud budget stopped this job before another model request. Partial work was preserved below.\n\n` +
+          result.body;
+      }
+    };
+
     // Per-type model routing is handled at orchestrator-controlled spawn points
     // (queue_background_job, spawn_subagent) via getModelForJobType(). The model
     // arrives here via job.input.model. Other callers that omit input.model
     // preserve the original resolution path inside runSubAgent.
-    const subAgentModelOverride = typeof jobInput.model === "string" ? jobInput.model : undefined;
+    const subAgentModelOverride = cloudBackgroundValidation?.ok
+      ? cloudBackgroundValidation.model
+      : typeof jobInput.model === "string"
+        ? jobInput.model
+        : undefined;
+    const cloudBackgroundPreferredAuthType =
+      cloudBackgroundValidation?.ok && cloudBackgroundValidation.task.providerId === "openai"
+        ? cloudBackgroundValidation.task.providerAuthType
+        : undefined;
 
     // Prior-context injection: deep_research Phase 2 jobs carry priorContext in
     // their input so Phase 1 findings can be injected into the system prompt.
@@ -2431,15 +2639,30 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       ? `## Context from prior research phase\n${priorContextRaw}\n\nUse the above as background. Do not re-research topics already covered there — build on them.`
       : undefined;
 
+    const cloudBackgroundInstructionsBlock = cloudBackgroundValidation?.ok
+      ? `## Task-scoped cloud output contract\n${cloudBackgroundValidation.task.compactVerifiedPacketInstructions}`
+      : undefined;
+    const subAgentExtraSystemPrompt = [
+      priorContextBlock,
+      cloudBackgroundInstructionsBlock,
+    ].filter((value): value is string => Boolean(value && value.trim())).join("\n\n") || undefined;
+
     let sub = await runSubAgent({
       agentType: job.agentType as SubAgentType,
       prompt: job.prompt,
       defaultTitle: job.title,
       context: ctx,
       model: subAgentModelOverride,
-      extraSystemPrompt: priorContextBlock,
+      forceModel: cloudBackgroundValidation?.ok === true,
+      preferredAuthType: cloudBackgroundPreferredAuthType,
+      cloudBudget: cloudBackgroundBudgetGuardForRun(),
+      maxTurns: cloudBackgroundMaxTurns,
+      extraSystemPrompt: subAgentExtraSystemPrompt,
       approvalReceipt,
     });
+    if (cloudBackgroundValidation?.ok && sub.finishReason === "budget_stopped") {
+      markCloudBackgroundBudgetStopped(sub);
+    }
 
     // ── Codex OAuth verification loop ─────────────────────────────────────────
     // Applies to user-facing deliverable types only. Skipped for system jobs
@@ -2449,8 +2672,17 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     const MAX_JOB_VERIFY_RETRIES = 2;
     let verificationPassed: boolean | null = null;
     let verificationRetries = 0;
+    let verificationReason: string | undefined;
+    const skipVerifierForTaskScopedCloudJob = cloudBackgroundValidation?.ok === true;
 
-    if (VERIFY_AGENT_TYPES.includes(job.agentType)) {
+    if (skipVerifierForTaskScopedCloudJob) {
+      verificationReason = sub.finishReason === "budget_stopped"
+        ? "budget_stopped"
+        : "task_scoped_cloud_approved_route_guard";
+      console.log(
+        `[JobQueue] skipped verifier for task-scoped cloud job ${job.id}; verifier is outside the approved provider/auth route`,
+      );
+    } else if (VERIFY_AGENT_TYPES.includes(job.agentType)) {
       const { getModel } = await import("../lib/modelPrefs");
       const orchModel = await getModel(job.userId, "orchestrator");
       let correctionContext: string | undefined;
@@ -2482,6 +2714,16 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         // passed === false: content rejected — retry if attempts remain
         correctionContext = verification.reason;
         if (attempt < MAX_JOB_VERIFY_RETRIES) {
+          if (cloudBackgroundValidation?.ok && /stopped before the next model request/i.test(sub.body)) {
+            verificationPassed = null;
+            sub.meta.cloudBackgroundBudgetStopped = true;
+            sub.meta.cloudBackgroundBudgetPacket = null;
+            sub.summary = `Partial cloud background result — ${sub.summary}`;
+            console.log(
+              `[JobQueue] cloud budget stopped retry for job ${job.id} after estimated spend $${cloudBackgroundEstimatedSpentUsd.toFixed(2)}`,
+            );
+            break;
+          }
           verificationRetries++;
           console.log(
             `[JobQueue] verify retry ${attempt + 1}/${MAX_JOB_VERIFY_RETRIES} for job ${job.id} (${job.agentType}): ${verification.reason}`,
@@ -2495,8 +2737,15 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             defaultTitle: job.title,
             context: ctx,
             model: subAgentModelOverride,
+            forceModel: cloudBackgroundValidation?.ok === true,
+            preferredAuthType: cloudBackgroundPreferredAuthType,
+            cloudBudget: cloudBackgroundBudgetGuardForRun(),
+            maxTurns: cloudBackgroundMaxTurns,
             approvalReceipt,
           });
+          if (cloudBackgroundValidation?.ok && sub.finishReason === "budget_stopped") {
+            markCloudBackgroundBudgetStopped(sub);
+          }
         } else {
           verificationPassed = false;
           console.log(
@@ -2509,6 +2758,18 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     // Attach verification outcome to meta so the UI can surface a badge.
     sub.meta.verificationPassed = verificationPassed;
     sub.meta.verificationRetries = verificationRetries;
+    if (verificationReason) {
+      sub.meta.verificationReason = verificationReason;
+    }
+    if (cloudBackgroundValidation?.ok) {
+      sub.meta.cloudBackgroundTask = {
+        ...cloudBackgroundValidation.task,
+        liveModelSwitch: false,
+        estimatedSpentUsd: cloudBackgroundEstimatedSpentUsd,
+        status: sub.meta.cloudBackgroundBudgetStopped ? "budget_stopped" : "complete",
+        partial: Boolean(sub.meta.cloudBackgroundPartial),
+      };
+    }
     // ─────────────────────────────────────────────────────────────────────────
 
     if (job.agentType === "research" && !researchHasSourceUrls(sub.body)) {
@@ -2635,7 +2896,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[JobQueue] job ${job.id} failed:`, err);
 
-    const jobInput = (job.input as Record<string, unknown>) ?? {};
+    const jobInput = latestJobInput;
     const MAX_RETRIES = 2;
     const recovery = decideJobFailureRecovery({
       input: jobInput,

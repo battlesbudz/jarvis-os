@@ -27,6 +27,7 @@ export interface SubAgentResult {
   summary: string;
   body: string;
   meta: Record<string, unknown>;
+  finishReason?: string | null;
   turns: number;
   toolCallsCount: number;
 }
@@ -210,6 +211,22 @@ export interface RunSubAgentOptions {
    */
   model?: string;
   /**
+   * Force the model override even when the user has a global selected model.
+   * Used for task-scoped cloud approvals.
+   */
+  forceModel?: boolean;
+  /** Restrict provider credential selection for one approved run. */
+  preferredAuthType?: "api_key" | "oauth";
+  /** Optional per-job cloud budget guard for forced task-scoped cloud runs. */
+  cloudBudget?: {
+    budgetUsd: number | null;
+    spentUsd: number;
+    usdPer1kTokens?: number;
+    onSpend?: (spentUsd: number) => Promise<void> | void;
+  };
+  /** Optional caller cap for model/tool turns. Clamped to the agent spec max. */
+  maxTurns?: number;
+  /**
    * Additional system prompt text appended after the base agent prompt.
    * Used by custom user-defined agents to inject specialization context
    * without replacing the base prompt.
@@ -277,7 +294,7 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
       console.error(`[subagents/email] people enrichment failed for ${opts.context.userId}:`, err);
     }
     if (enrich.length > 0) {
-      systemPrompt = `${spec.systemPrompt}\n\n--- CONTEXT ---\n${enrich.join("\n\n")}`;
+      systemPrompt = `${systemPrompt}\n\n--- CONTEXT ---\n${enrich.join("\n\n")}`;
     }
   }
 
@@ -288,13 +305,17 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
 
   const result = await runAgent({
     model: subAgentModel,
+    forceModel: opts.forceModel,
+    preferredAuthType: opts.preferredAuthType,
+    approvalReceipt: opts.approvalReceipt,
+    cloudBudget: opts.cloudBudget,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: opts.prompt },
     ],
     tools,
     context: opts.context,
-    maxTurns: spec.maxTurns,
+    maxTurns: opts.maxTurns ? Math.max(1, Math.min(opts.maxTurns, spec.maxTurns)) : spec.maxTurns,
     maxCompletionTokens: 1200,
     onBeforeTool: async (toolName, toolArgs) => {
       const result = await toolCallHooks.run({
@@ -323,7 +344,7 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
   const summary = summarize(body, opts.defaultTitle);
 
   const meta: Record<string, unknown> = {};
-  if (spec.deliverableType === "email_draft") {
+  if (spec.deliverableType === "email_draft" && result.finishReason !== "budget_stopped") {
     const parsed = parseEmailDraft(body);
     if (!parsed) {
       throw new Error("Email sub-agent did not return a parsable ---EMAIL DRAFT--- block");
@@ -332,6 +353,9 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
     meta.subject = parsed.subject;
     meta.emailBody = parsed.emailBody;
   }
+  if (result.finishReason) {
+    meta.finishReason = result.finishReason;
+  }
 
   return {
     type: spec.deliverableType,
@@ -339,6 +363,7 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
     summary,
     body,
     meta,
+    finishReason: result.finishReason,
     turns: result.turns,
     toolCallsCount: result.toolCalls.length,
   };

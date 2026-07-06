@@ -48,6 +48,8 @@ const tests = [
   { file: "server/agent/__tests__/telegramVoiceTranscription.assert.ts" },
   { file: "server/agent/__tests__/ephemeralAgents.test.ts" },
   { file: "server/agent/__tests__/queueBackgroundJob.test.ts" },
+  { file: "server/agent/__tests__/cloudBackgroundEscalation.assert.ts" },
+  { file: "server/agent/__tests__/cloudBudgetPartialHarness.assert.ts" },
   { file: "server/agent/__tests__/ephemeralWorkerDeliverable.test.ts" },
   { file: "server/agent/__tests__/jobObservability.test.ts" },
   { file: "server/agent/__tests__/workerRuntime.test.ts" },
