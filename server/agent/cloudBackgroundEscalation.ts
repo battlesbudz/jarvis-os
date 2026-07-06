@@ -116,6 +116,7 @@ export interface ValidatedCloudBackgroundJobInput {
   approvedModel: string;
   approvalGateId: string;
   budgetUsd: number | null;
+  compactVerifiedPacketInstructions: string;
 }
 
 export type CloudBackgroundJobInputValidation =
@@ -191,6 +192,8 @@ const CLOUD_ESCALATION_REASONS = new Set([
 const LOCAL_PROVIDER_IDS = new Set(["local-llama", "android-local-gemma"]);
 export const CLOUD_BACKGROUND_MODEL_STEP_ESTIMATE_USD = 0.05;
 export const CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD = 0.25;
+export const CLOUD_BACKGROUND_COMPACT_PACKET_INSTRUCTIONS =
+  "Return a compact verified packet with status, summary, actions taken, partial flag, spend, and budget. Do not write MemoryOS or directly control the phone.";
 
 const CLOUD_BACKGROUND_APPROVAL_AGENT_TYPES = new Set(["research", "writing", "planning", "email"]);
 
@@ -452,8 +455,7 @@ export function buildCloudBackgroundJobInput(input: BuildCloudBackgroundJobInput
       budgetUsd: input.provider.requiresBudget ? budgetValue(input.budgetUsd) : null,
       liveModelSwitch: false,
       disallowedCapabilities: ["phone_control", "memory_write"],
-      compactVerifiedPacketInstructions:
-        "Return a compact verified packet with status, summary, actions taken, partial flag, spend, and budget. Do not write MemoryOS or directly control the phone.",
+      compactVerifiedPacketInstructions: CLOUD_BACKGROUND_COMPACT_PACKET_INSTRUCTIONS,
       originalPrompt: compact(input.prompt),
     },
   };
@@ -470,6 +472,7 @@ export function validateCloudBackgroundJobInput(input: Record<string, unknown>):
   const approvalGateId = compact(recordValue(rawTask, "approvalGateId"));
   const model = compact(input.model);
   const budgetUsd = budgetValue(recordValue(rawTask, "budgetUsd"));
+  const compactVerifiedPacketInstructions = compact(recordValue(rawTask, "compactVerifiedPacketInstructions"));
 
   if (!providerId || !providerAuthType) {
     return { ok: false, message: "Cloud background task is missing its approved provider." };
@@ -501,6 +504,9 @@ export function validateCloudBackgroundJobInput(input: Record<string, unknown>):
   if (providerAuthType === "api_key" && budgetUsd === null) {
     return { ok: false, message: "Cloud background task is missing its approved per-job budget." };
   }
+  if (!compactVerifiedPacketInstructions) {
+    return { ok: false, message: "Cloud background task is missing its compact result packet contract." };
+  }
   if (
     providerAuthType === "api_key" &&
     budgetUsd !== null &&
@@ -519,6 +525,7 @@ export function validateCloudBackgroundJobInput(input: Record<string, unknown>):
       approvedModel,
       approvalGateId,
       budgetUsd: providerAuthType === "api_key" ? budgetUsd : null,
+      compactVerifiedPacketInstructions,
     },
   };
 }

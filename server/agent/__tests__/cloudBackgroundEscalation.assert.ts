@@ -8,6 +8,7 @@ import {
   buildCloudBackgroundJobInput,
   buildCompactCloudBackgroundResultPacket,
   checkCloudBackgroundBudget,
+  CLOUD_BACKGROUND_COMPACT_PACKET_INSTRUCTIONS,
   CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD,
   getDefaultCloudBackgroundModel,
   maxCloudBackgroundModelTurnsForBudget,
@@ -228,6 +229,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
       approvedModel: "anthropic/claude-sonnet-4-5",
       approvalGateId: "gate_cloud_anthropic",
       budgetUsd: 4,
+      compactVerifiedPacketInstructions: CLOUD_BACKGROUND_COMPACT_PACKET_INSTRUCTIONS,
     },
   });
   assert.match(input.cloudBackgroundTask.compactVerifiedPacketInstructions, /compact verified packet/i);
