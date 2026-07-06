@@ -3,7 +3,11 @@ import { submitAgentJob, type AgentJobType } from "../jobQueue";
 import { SUB_AGENT_TYPES } from "../subagents";
 import { getProtectedEntityNames, findEntityNearMatch } from "../../memory/protectedEntities";
 import { buildQueueBackgroundJobInput } from "./queueBackgroundJobInput";
-import { buildCloudBackgroundJobInput, type CloudBackgroundProviderOption } from "../cloudBackgroundEscalation";
+import {
+  CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD,
+  buildCloudBackgroundJobInput,
+  type CloudBackgroundProviderOption,
+} from "../cloudBackgroundEscalation";
 import { toolCallHooks, HOOK_PRIORITY } from "../toolCallHooks";
 import { getProviderStatus } from "../providers/modelProviderAuthProfiles";
 import { getModelProvider } from "@shared/modelProviderCatalog";
@@ -350,6 +354,15 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
           ok: true,
           content:
             `${providerLabel} uses an API key for cloud work, so I need a per-job budget before queueing it.`,
+          label: "Cloud budget approval needed",
+        };
+      }
+      if (authType === "api_key" && roundedBudgetUsd < CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD) {
+        return {
+          ok: true,
+          content:
+            `${providerLabel} cloud background jobs need at least ` +
+            `$${CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD.toFixed(2)} so the first model request can run.`,
           label: "Cloud budget approval needed",
         };
       }

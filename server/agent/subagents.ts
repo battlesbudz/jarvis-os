@@ -344,7 +344,7 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
   const summary = summarize(body, opts.defaultTitle);
 
   const meta: Record<string, unknown> = {};
-  if (spec.deliverableType === "email_draft") {
+  if (spec.deliverableType === "email_draft" && result.finishReason !== "budget_stopped") {
     const parsed = parseEmailDraft(body);
     if (!parsed) {
       throw new Error("Email sub-agent did not return a parsable ---EMAIL DRAFT--- block");

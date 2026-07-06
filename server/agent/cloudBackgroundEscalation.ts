@@ -186,6 +186,7 @@ const CLOUD_ESCALATION_REASONS = new Set([
 
 const LOCAL_PROVIDER_IDS = new Set(["local-llama", "android-local-gemma"]);
 export const CLOUD_BACKGROUND_MODEL_STEP_ESTIMATE_USD = 0.05;
+export const CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD = 0.25;
 
 function compact(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -371,6 +372,21 @@ export function buildCloudBackgroundEscalationDecision(
       message: `${selectedProvider.label} uses an API key for cloud work. What per-job budget should I stay under?`,
     };
   }
+  if (
+    selectedProvider.requiresBudget &&
+    approvedBudgetUsd !== null &&
+    approvedBudgetUsd < CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD
+  ) {
+    return {
+      kind: "request_budget",
+      liveModelSwitch: false,
+      connectedProviders,
+      provider: selectedProvider,
+      message:
+        `${selectedProvider.label} cloud background jobs need at least ` +
+        `$${CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD.toFixed(2)} so the first model request can run.`,
+    };
+  }
 
   return {
     kind: "queue_job",
@@ -444,6 +460,13 @@ export function validateCloudBackgroundJobInput(input: Record<string, unknown>):
 
   if (providerAuthType === "api_key" && budgetUsd === null) {
     return { ok: false, message: "Cloud background task is missing its approved per-job budget." };
+  }
+  if (
+    providerAuthType === "api_key" &&
+    budgetUsd !== null &&
+    budgetUsd < CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD
+  ) {
+    return { ok: false, message: "Cloud background task budget is below the minimum required to start." };
   }
 
   return {

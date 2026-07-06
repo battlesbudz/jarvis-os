@@ -126,10 +126,12 @@ async function main() {
     assert.match(queueToolSource, /Cloud provider not connected/);
     assert.match(queueToolSource, /Cloud background job type unsupported/);
     assert.match(queueToolSource, /OAuth\/subscription background routing is only supported for OpenAI/);
+    assert.match(queueToolSource, /CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD/);
     assert.match(subagentsSource, /forceModel: opts\.forceModel/);
     assert.match(subagentsSource, /preferredAuthType: opts\.preferredAuthType/);
     assert.match(subagentsSource, /approvalReceipt: opts\.approvalReceipt/);
     assert.match(subagentsSource, /finishReason: result\.finishReason/);
+    assert.match(subagentsSource, /result\.finishReason !== "budget_stopped"/);
     assert.match(harnessSource, /forceModel \? null : await getSelectedModelPreference/);
     assert.match(harnessSource, /preferredAuthType/);
     assert.match(harnessSource, /estimateCloudBudgetUsdForTokens/);

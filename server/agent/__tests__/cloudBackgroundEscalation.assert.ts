@@ -8,6 +8,7 @@ import {
   buildCloudBackgroundJobInput,
   buildCompactCloudBackgroundResultPacket,
   checkCloudBackgroundBudget,
+  CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD,
   getDefaultCloudBackgroundModel,
   maxCloudBackgroundModelTurnsForBudget,
   nextCloudBackgroundModelAttemptBudgetCheckpoint,
@@ -113,6 +114,22 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
   assert.equal(decision.liveModelSwitch, false);
   assert.match(decision.message, /budget/i);
   console.log("OK: pay-per-token cloud jobs require a per-job budget");
+}
+
+{
+  const decision = buildCloudBackgroundEscalationDecision({
+    requestText: "Research this company.",
+    reason: "weak_answer",
+    providers: status({
+      google: { connected: true, authType: "api_key" },
+    }),
+    selectedProviderId: "google",
+    approvedProvider: true,
+    approvedBudgetUsd: CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD - 0.01,
+  });
+  assert.equal(decision.kind, "request_budget");
+  assert.match(decision.message, /\$0\.25/);
+  console.log("OK: API-key cloud jobs reject budgets below the minimum first-request budget");
 }
 
 {
@@ -238,6 +255,20 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
     })),
     { ok: false, message: "Cloud background task is missing its approved per-job budget." },
   );
+  assert.deepEqual(
+    validateCloudBackgroundJobInput(buildCloudBackgroundJobInput({
+      prompt: "Research the competitor.",
+      provider: {
+        id: "google",
+        label: "Gemini",
+        authType: "api_key",
+        requiresBudget: true,
+        hint: "Gemini API key, budget required",
+      },
+      budgetUsd: CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD - 0.01,
+    })),
+    { ok: false, message: "Cloud background task budget is below the minimum required to start." },
+  );
   console.log("OK: worker validation rejects wrong-model or unbudgeted cloud jobs");
 }
 
@@ -251,7 +282,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
       requiresBudget: true,
       hint: "Gemini API key, budget required",
     },
-    budgetUsd: 0.05,
+    budgetUsd: CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD,
   });
   const validation = validateCloudBackgroundJobInput(input);
   assert.equal(validation?.ok, true);
@@ -268,7 +299,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
     nextCloudBackgroundModelStepBudgetCheckpoint({
       jobId: "job-budget-stop",
       task: validation.task,
-      spentUsd: 0.05,
+      spentUsd: CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD - 0.04,
       partialSummary: "Finished the first pass.",
     })?.shouldStopBeforeNextStep,
     true,
@@ -282,7 +313,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
       requiresBudget: true,
       hint: "Gemini API key, budget required",
     },
-    budgetUsd: 0.1,
+    budgetUsd: CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD,
   });
   const attemptValidation = validateCloudBackgroundJobInput(attemptInput);
   assert.equal(attemptValidation?.ok, true);
@@ -300,7 +331,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
     nextCloudBackgroundModelAttemptBudgetCheckpoint({
       jobId: "job-attempt-stop",
       task: attemptValidation.task,
-      spentUsd: 0.05,
+      spentUsd: CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD - 0.09,
       maxTurns: 1,
       partialSummary: "Finished the first pass.",
     })?.shouldStopBeforeNextStep,
