@@ -1,3 +1,5 @@
+import { RESOURCE_PAUSED_STATUS } from "./voiceRuntimeResourceCore";
+
 type JsonRecord = Record<string, unknown>;
 
 export interface ReviewLoopJobInput {
@@ -94,6 +96,19 @@ export function buildJobReviewState(job: ReviewLoopJobInput): JobReviewState {
       stage: "queued",
       label: "Queued",
       nextAction: "Wait or cancel",
+      canCancel: true,
+      canRetry: false,
+      preview,
+      originChannel,
+      autonomyPolicy,
+    };
+  }
+
+  if (job.status === RESOURCE_PAUSED_STATUS) {
+    return {
+      stage: "in_progress",
+      label: "Paused for voice",
+      nextAction: "Wait for voice to finish or cancel",
       canCancel: true,
       canRetry: false,
       preview,

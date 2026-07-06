@@ -50,6 +50,7 @@ import { agentMemories, agentJobs } from "@shared/schema";
 import { eq, sql, desc, and, or, inArray } from "drizzle-orm";
 import { getAgentMessages, getMessageStats } from "./agentBus";
 import { runNamedAgent } from "./runNamedAgent";
+import { RESOURCE_PAUSED_STATUS } from "./voiceRuntimeResourceCore";
 import { runCouncil } from "./council";
 import {
   listPendingGates,
@@ -231,7 +232,7 @@ export function registerAgentRoutes(app: Express): void {
         const agentJobs2 = recentJobs.filter(
           (j) => (j.input as Record<string, unknown>)?.namedAgentId === agent.id,
         );
-        const currentJob = agentJobs2.find((j) => ["queued", "running"].includes(j.status)) ?? null;
+        const currentJob = agentJobs2.find((j) => ["queued", "running", RESOURCE_PAUSED_STATUS].includes(j.status)) ?? null;
 
         return {
           ...agent,

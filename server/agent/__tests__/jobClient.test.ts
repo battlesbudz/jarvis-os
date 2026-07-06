@@ -18,6 +18,8 @@
 
 import { submitAgentJob, type SubmitJobInput, type SubmitJobDeps } from "../jobClient";
 import type { findDuplicateJob } from "../tools/jobDuplicateGuard";
+import { RESOURCE_PAUSED_STATUS, resourcePauseMetadata } from "../voiceRuntimeResourceCore";
+import { setVoiceRuntimeResourceActive } from "../voiceRuntimeResourceScheduler";
 
 // ── Test bookkeeping ──────────────────────────────────────────────────────────
 
@@ -216,6 +218,36 @@ async function run(): Promise<void> {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  {
+    const insertStub = makeInsertStub("job-paused-for-voice");
+    const deps: SubmitJobDeps = {
+      findDuplicate: noDuplicate,
+      insertJob: insertStub.fn,
+    };
+
+    setVoiceRuntimeResourceActive("u-voice", true, {
+      action: "working",
+      state: "working",
+      now: new Date("2026-07-06T11:00:00.000Z"),
+    });
+    try {
+      await submitAgentJob(makeInput({
+        userId: "u-voice",
+        agentType: "app_project",
+        title: "Build local app",
+        prompt: "Build a local app.",
+      }), deps);
+    } finally {
+      setVoiceRuntimeResourceActive("u-voice", false);
+    }
+
+    assertEquals(insertStub.lastValues!.status, RESOURCE_PAUSED_STATUS, "MR-4: local-heavy jobs inserted during active voice are resource-paused");
+    assert(
+      !!resourcePauseMetadata(insertStub.lastValues!.input),
+      "MR-5: resource-paused voice jobs include deterministic resourcePause metadata",
+    );
+  }
+
   // Suite 5: Guard errors are non-fatal — insert proceeds; isDuplicate:false
   // ─────────────────────────────────────────────────────────────────────────
 

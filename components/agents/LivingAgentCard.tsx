@@ -3,6 +3,7 @@ import { ActivityIndicator, Animated, StyleSheet, Text, TouchableOpacity, View }
 import { Ionicons } from "@expo/vector-icons";
 
 import Colors from "@/constants/colors";
+import { isActiveAgentJobStatus } from "@/lib/agents/rosterSections";
 import { ROLE_COLORS, ROLE_ICONS } from "@/lib/agents/roleMeta";
 
 interface IntegrationReadiness {
@@ -156,7 +157,7 @@ export function LivingAgentCard({
   const isActive = agent.isActive === 1;
   const statusColor = STATUS_COLORS[agent.status] || "#6b7280";
   const isPulsing = agent.status === "online";
-  const hasActiveJob = agent.currentJob && ["queued", "running"].includes(agent.currentJob.status);
+  const hasActiveJob = agent.currentJob && isActiveAgentJobStatus(agent.currentJob.status);
   const runtimeBadges = getRuntimeBadges(agent, integrations);
 
   return (

@@ -9,6 +9,11 @@ import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { findDuplicateJob } from "./tools/jobDuplicateGuard";
 import { buildInitialWorkerRuntime } from "./workerRuntime";
+import { RESOURCE_PAUSED_STATUS, isLocalHeavyBackgroundJob } from "./voiceRuntimeResourceCore";
+import {
+  buildVoiceResourcePausedJobInput,
+  isVoiceRuntimeResourceActiveForUser,
+} from "./voiceRuntimeResourceScheduler";
 
 export type AgentJobType = SubAgentType | "goal_decompose" | "weekly_pattern" | "named_agent_task" | "ephemeral_agent_task" | "general" | "morning_brief" | "custom_agent" | "project_session" | "build_feature" | "deep_research" | "app_project";
 
@@ -92,7 +97,7 @@ async function realInsertJob(values: {
       title: values.title,
       prompt: values.prompt,
       input: values.input,
-      status: "queued",
+      status: values.status,
     })
     .returning({ id: schema.agentJobs.id });
   return inserted[0]?.id ?? "";
@@ -166,19 +171,34 @@ export async function submitAgentJob(input: SubmitJobInput, deps: SubmitJobDeps 
     workerType: workerRuntime.workerType,
     workerRuntime,
   };
+  const voiceResourceActive = isVoiceRuntimeResourceActiveForUser(input.userId);
+  const shouldPauseForVoice = voiceResourceActive && isLocalHeavyBackgroundJob({
+    agentType: input.agentType,
+    input: runtimeInput,
+    status: "queued",
+  });
+  const insertedAt = new Date().toISOString();
+  const insertInput = shouldPauseForVoice
+    ? buildVoiceResourcePausedJobInput({
+        agentType: input.agentType,
+        input: runtimeInput,
+        pausedAt: insertedAt,
+      })
+    : runtimeInput;
+  const status = shouldPauseForVoice ? RESOURCE_PAUSED_STATUS : "queued";
 
   const id = await insertFn({
     userId: input.userId,
     agentType: input.agentType,
     title: input.title.slice(0, 200),
     prompt: input.prompt,
-    input: runtimeInput,
-    status: "queued",
+    input: insertInput,
+    status,
   });
 
-  const model = runtimeInput.model ?? "agent-default";
+  const model = insertInput.model ?? "agent-default";
   console.log(
-    `[JobQueue] queued job ${id} type=${input.agentType} model=${model} user=${input.userId} title="${input.title.slice(0, 60)}"`,
+    `[JobQueue] ${status === RESOURCE_PAUSED_STATUS ? "resource-paused" : "queued"} job ${id} type=${input.agentType} model=${model} user=${input.userId} title="${input.title.slice(0, 60)}"`,
   );
   return { id, isDuplicate: false };
 }
@@ -192,10 +212,10 @@ export interface CancelAllResult {
 }
 
 /**
- * Cancel every queued and running job for the given user, and pause any active
+ * Cancel every queued, resource-paused, and running job for the given user, and pause any active
  * or paused_waiting workflows. Used by the /stop slash command.
  *
- * - `queued` jobs → `cancelled` immediately (no worker has picked them up yet)
+ * - `queued` / `resource_paused` jobs → `cancelled` immediately (no worker has picked them up yet)
  * - `running` jobs → `cancelling`  (the worker loop honours this flag and aborts)
  * - `active` / `paused_waiting` workflows → `paused`
  */
@@ -203,7 +223,7 @@ export async function cancelAllForUser(userId: string): Promise<CancelAllResult>
   const cancelled = await db
     .update(schema.agentJobs)
     .set({ status: "cancelled", completedAt: new Date() })
-    .where(and(eq(schema.agentJobs.userId, userId), eq(schema.agentJobs.status, "queued")))
+    .where(and(eq(schema.agentJobs.userId, userId), inArray(schema.agentJobs.status, ["queued", RESOURCE_PAUSED_STATUS])))
     .returning({ id: schema.agentJobs.id });
 
   const cancelling = await db

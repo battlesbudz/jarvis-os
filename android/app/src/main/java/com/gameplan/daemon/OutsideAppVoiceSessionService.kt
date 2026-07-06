@@ -168,6 +168,7 @@ class OutsideAppVoiceSessionService : Service() {
     @Volatile private var sessionActive = false
     @Volatile private var approvalPrompt = ""
     @Volatile private var approvalToken = ""
+    @Volatile private var expectedStop = false
 
     override fun onCreate() {
         super.onCreate()
@@ -178,6 +179,7 @@ class OutsideAppVoiceSessionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
+                expectedStop = false
                 endedSessionBlocksPlayback = false
                 if (sessionActive && state != OutsideAppVoiceState.IDLE) {
                     startForegroundCompat()
@@ -228,6 +230,7 @@ class OutsideAppVoiceSessionService : Service() {
                 endSession()
             }
             else -> {
+                expectedStop = true
                 state = OutsideAppVoiceState.IDLE
                 sessionActive = false
                 overlayController.remove()
@@ -241,6 +244,10 @@ class OutsideAppVoiceSessionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        if (!expectedStop && sessionActive && state != OutsideAppVoiceState.IDLE) {
+            sendVoiceSessionEvent("crash")
+            endedSessionBlocksPlayback = true
+        }
         overlayController.remove()
         if (instance === this) instance = null
         super.onDestroy()
@@ -312,6 +319,9 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private fun setState(nextState: OutsideAppVoiceState, actionName: String = nextState.wireName) {
+        if (nextState != OutsideAppVoiceState.IDLE) {
+            expectedStop = false
+        }
         if (nextState != OutsideAppVoiceState.APPROVAL) {
             approvalPrompt = ""
             approvalToken = ""
@@ -323,6 +333,7 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private fun endSession() {
+        expectedStop = true
         endedSessionBlocksPlayback = true
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         endTalkModeCapture()

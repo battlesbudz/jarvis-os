@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { userPreferences } from "@shared/schema";
 import { db } from "../db";
+import type { VoiceRuntimeIncidentBundle } from "../agent/voiceRuntimeResourceCore";
 
 type ScreenshotEntry = {
   data: Buffer;
@@ -17,6 +18,12 @@ type PendingCoachResponseExecutedAction = {
 type PendingCoachResponseOptions = {
   clearPendingConfirmationToken?: string;
   executedAction?: PendingCoachResponseExecutedAction;
+  voiceRestore?: {
+    incidentId: string;
+    prompt: string;
+    recap: string;
+    createdAt?: number;
+  };
 };
 
 const screenshotStore = new Map<string, ScreenshotEntry>();
@@ -50,6 +57,7 @@ export async function savePendingCoachResponse(
   if (screenshotUrl) payload.screenshotUrl = screenshotUrl;
   if (options.clearPendingConfirmationToken) payload.clearPendingConfirmationToken = options.clearPendingConfirmationToken;
   if (options.executedAction) payload.executedAction = options.executedAction;
+  if (options.voiceRestore) payload.voiceRestore = options.voiceRestore;
   await db.insert(userPreferences).values({ userId, data: { ...prefs, pendingResponse: payload } })
     .onConflictDoUpdate({ target: userPreferences.userId, set: { data: { ...prefs, pendingResponse: payload } } });
 }
@@ -60,6 +68,12 @@ export async function consumePendingCoachResponse(userId: string): Promise<{
   screenshotUrl?: string | null;
   clearPendingConfirmationToken?: string | null;
   executedAction?: PendingCoachResponseExecutedAction | null;
+  voiceRestore?: {
+    incidentId: string;
+    prompt: string;
+    recap: string;
+    createdAt?: number;
+  } | null;
 }> {
   const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq(userPreferences.userId, userId));
   const prefs = (rows[0]?.data as any) || {};
@@ -74,7 +88,22 @@ export async function consumePendingCoachResponse(userId: string): Promise<{
       screenshotUrl: pending.screenshotUrl || null,
       clearPendingConfirmationToken: pending.clearPendingConfirmationToken || null,
       executedAction: pending.executedAction || null,
+      voiceRestore: pending.voiceRestore || null,
     };
   }
   return { text: null };
+}
+
+export function buildPendingVoiceRestorePayload(input: {
+  incident: VoiceRuntimeIncidentBundle;
+  prompt: string;
+  recap: string;
+  createdAt?: number;
+}): NonNullable<PendingCoachResponseOptions["voiceRestore"]> {
+  return {
+    incidentId: input.incident.id,
+    prompt: input.prompt,
+    recap: input.recap,
+    createdAt: input.createdAt ?? Date.now(),
+  };
 }

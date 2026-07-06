@@ -31,6 +31,7 @@ import {
 import { listGatewayEvents, onGatewayEvent, recordGatewayEvent } from "./eventBus";
 import { listGatewayNodes, routeCapability } from "./nodeRegistry";
 import * as schema from "@shared/schema";
+import { cancellationStatusForAgentJobStatus } from "../agent/voiceRuntimeResourceCore";
 
 type RpcId = string | number | null;
 type RpcParams = Record<string, unknown>;
@@ -299,8 +300,8 @@ async function jobCancel(userId: string, params: RpcParams) {
     .where(and(eq(schema.agentJobs.id, jobId), eq(schema.agentJobs.userId, userId)))
     .limit(1);
   if (!row) throw new Error("Job not found");
-  if (!["queued", "running"].includes(row.status)) throw new Error(`Job is already ${row.status}`);
-  const nextStatus = row.status === "running" ? "cancelling" : "cancelled";
+  const nextStatus = cancellationStatusForAgentJobStatus(row.status);
+  if (!nextStatus) throw new Error(`Job is already ${row.status}`);
   const [updated] = await db.update(schema.agentJobs)
     .set({ status: nextStatus, ...(nextStatus === "cancelled" ? { completedAt: new Date() } : {}) })
     .where(and(eq(schema.agentJobs.id, jobId), eq(schema.agentJobs.userId, userId)))

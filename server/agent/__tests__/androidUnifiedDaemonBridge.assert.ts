@@ -137,8 +137,31 @@ assert.match(
 
 assert.match(
   bridgeSource,
-  /if \(action === "pause" \|\| action === "paused" \|\| action === "end"\) \{\s*cancelDaemonVoiceTurns\(pairedUserId\);[\s\S]*?if \(action === "end"\) \{\s*await persistDaemonTalkModeEnabled\(pairedUserId, false\)/,
-  "Outside-app voice Pause and End should cancel in-flight daemon voice turns, while only End persists Talk Mode off.",
+  /action === "pause"[\s\S]*?action === "paused"[\s\S]*?action === "end"[\s\S]*?action === "crash"[\s\S]*?action === "unexpected_end"[\s\S]*?cancelDaemonVoiceTurns\(voiceControlUserId\);[\s\S]*?if \(action === "end"\) \{\s*await persistDaemonTalkModeEnabled\(voiceControlUserId, false\)/,
+  "Outside-app voice Pause, End, Crash, and Unexpected End should cancel in-flight daemon voice turns, while only End persists Talk Mode off in this message handler.",
+);
+
+assert.match(
+  bridgeSource,
+  /if \(action === "pause" \|\| action === "paused"\) \{\s*setVoiceRuntimeResourceActive\(userId, true, \{ action, state, ttlMs: null \}\);[\s\S]*?pauseQueuedLocalHeavyJobsForVoice\(userId,\s*\{\s*notifyWaitingUser: false,\s*\}\)/,
+  "Outside-app voice Pause and Paused should keep voice-resource-paused jobs paused until the resumable voice session ends.",
+);
+
+assert.match(
+  bridgeSource,
+  /isVoiceRuntimeResourceActiveForUser\(pairedUserId\)[\s\S]*?cancelDaemonVoiceTurns\(pairedUserId\);[\s\S]*?handleVoiceRuntimeResourceState\(pairedUserId, "unexpected_end", "daemon_disconnected"\)/,
+  "Android daemon disconnect should release active voice-resource locks as an unexpected voice end.",
+);
+
+assert.match(
+  bridgeSource,
+  /if \(action === "crash" \|\| action === "unexpected_end"\) \{[\s\S]*?await recordUnexpectedVoiceSessionEnd\([\s\S]*?await persistDaemonTalkModeEnabled\(userId, false\)\.catch[\s\S]*?\}/,
+  "Crash restore recording and Talk Mode preference writes should be serialized so one preference update cannot clobber the other.",
+);
+assert.doesNotMatch(
+  bridgeSource,
+  /Promise\.allSettled\(\[[\s\S]*?recordUnexpectedVoiceSessionEnd[\s\S]*?persistDaemonTalkModeEnabled/,
+  "Crash preference writes should not run in parallel.",
 );
 
 assert.match(
@@ -161,7 +184,7 @@ assert.match(
 
 assert.match(
   bridgeSource,
-  /control\.reactActive === true && consumeDaemonVoiceApprovalAck\(pairedUserId, confirmationToken\)/,
+  /control\.reactActive === true && consumeDaemonVoiceApprovalAck\(voiceControlUserId, confirmationToken\)/,
   "Daemon approval fallback should skip tokens acknowledged by the foreground app.",
 );
 

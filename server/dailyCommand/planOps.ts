@@ -348,7 +348,7 @@ export function buildDailyCommandStatusReasons(input: DailyCommandStatusInput): 
     reasons.push({
       state: "working",
       label: "Jarvis is working",
-      detail: `${activeJobs} background ${activeJobs === 1 ? "job is" : "jobs are"} queued or running.`,
+      detail: `${activeJobs} background ${activeJobs === 1 ? "job is" : "jobs are"} active.`,
       severity: "info",
       action: "wait",
     });

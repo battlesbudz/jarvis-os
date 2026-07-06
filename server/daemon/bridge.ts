@@ -6,6 +6,13 @@ import { channelLinks, channelLinkCodes, userPreferences } from "@shared/schema"
 import { randomBytes, createHash } from "crypto";
 import { getSession as _getCoachSession, setSession as _setCoachSession } from "../channels/sessionStore";
 import { resolveAndroidNotificationFollowUp } from "../agent/androidNotificationFollowups";
+import {
+  isVoiceRuntimeResourceActiveForUser,
+  pauseQueuedLocalHeavyJobsForVoice,
+  recordUnexpectedVoiceSessionEnd,
+  resumeResourcePausedJobsAfterVoice,
+  setVoiceRuntimeResourceActive,
+} from "../agent/voiceRuntimeResourceScheduler";
 
 type DaemonClientKind = "unified_android_app" | "standalone_android_daemon" | "desktop_daemon";
 type AndroidDaemonClientKind = "unified_android_app" | "standalone_android_daemon";
@@ -417,6 +424,67 @@ async function persistDaemonTalkModeEnabled(userId: string, enabled: boolean): P
     console.log(`[daemon] persisted talk mode ${enabled ? "enabled" : "disabled"} from voice session control: userId=${userId}`);
   } catch (err) {
     console.error("[daemon] failed to persist voice session control:", err);
+  }
+}
+
+function isVoiceRuntimeActiveAction(action: string): boolean {
+  return action === "listening" ||
+    action === "speaking" ||
+    action === "working" ||
+    action === "approval" ||
+    action === "resume" ||
+    action === "approval_approve" ||
+    action === "approval_deny";
+}
+
+async function handleVoiceRuntimeResourceState(
+  userId: string,
+  action: string,
+  state?: string,
+): Promise<void> {
+  if (isVoiceRuntimeActiveAction(action)) {
+    setVoiceRuntimeResourceActive(userId, true, { action, state });
+    await pauseQueuedLocalHeavyJobsForVoice(userId, {
+      notifyWaitingUser: action === "working",
+    }).catch((err) => {
+      console.warn(`[daemon] voice resource pause failed userId=${userId}:`, err);
+    });
+    return;
+  }
+
+  if (action === "pause" || action === "paused") {
+    setVoiceRuntimeResourceActive(userId, true, { action, state, ttlMs: null });
+    await pauseQueuedLocalHeavyJobsForVoice(userId, {
+      notifyWaitingUser: false,
+    }).catch((err) => {
+      console.warn(`[daemon] voice resource pause failed userId=${userId}:`, err);
+    });
+    return;
+  }
+
+  if (action === "end") {
+    setVoiceRuntimeResourceActive(userId, false);
+    await resumeResourcePausedJobsAfterVoice(userId).catch((err) => {
+      console.warn(`[daemon] voice resource resume failed userId=${userId}:`, err);
+    });
+    return;
+  }
+
+  if (action === "crash" || action === "unexpected_end") {
+    setVoiceRuntimeResourceActive(userId, false);
+    await resumeResourcePausedJobsAfterVoice(userId).catch((err) => {
+      console.warn(`[daemon] voice resource resume failed userId=${userId}:`, err);
+    });
+    await recordUnexpectedVoiceSessionEnd({
+      userId,
+      lastState: state,
+      lastAction: action,
+    }).catch((err) => {
+      console.warn(`[daemon] voice crash restore recording failed userId=${userId}:`, err);
+    });
+    await persistDaemonTalkModeEnabled(userId, false).catch((err) => {
+      console.warn(`[daemon] failed to persist Talk Mode off after voice crash userId=${userId}:`, err);
+    });
   }
 }
 
@@ -1375,7 +1443,8 @@ export function startDaemonBridge(server: HttpServer): void {
       // Outside-app voice controls can fire when React is inactive. Persist
       // End server-side so opening the app later does not restart Talk Mode.
       if ((m.type as string) === "voice_session_control" && pairedUserId) {
-        const control = m as VoiceSessionControlMsg;
+        const voiceControlUserId = pairedUserId;
+        const control = m as unknown as VoiceSessionControlMsg;
         const action = String(control.action || "").trim().toLowerCase();
         const confirmationToken = String(control.confirmationToken || "").trim();
         if (
@@ -1384,16 +1453,16 @@ export function startDaemonBridge(server: HttpServer): void {
           daemonVoiceApprovalHandler
         ) {
           const runApprovalFallback = () => {
-            if (control.reactActive === true && consumeDaemonVoiceApprovalAck(pairedUserId, confirmationToken)) {
+            if (control.reactActive === true && consumeDaemonVoiceApprovalAck(voiceControlUserId, confirmationToken)) {
               return;
             }
             daemonVoiceApprovalHandler?.({
-              userId: pairedUserId,
+              userId: voiceControlUserId,
               token: confirmationToken,
               action,
               approved: action === "approval_approve",
             }).catch((err) => {
-              console.error(`[daemon] outside-app voice approval failed userId=${pairedUserId}:`, err);
+              console.error(`[daemon] outside-app voice approval failed userId=${voiceControlUserId}:`, err);
             });
           };
           if (control.reactActive === true) {
@@ -1403,11 +1472,18 @@ export function startDaemonBridge(server: HttpServer): void {
             runApprovalFallback();
           }
         }
-        if (action === "pause" || action === "paused" || action === "end") {
-          cancelDaemonVoiceTurns(pairedUserId);
+        if (
+          action === "pause" ||
+          action === "paused" ||
+          action === "end" ||
+          action === "crash" ||
+          action === "unexpected_end"
+        ) {
+          cancelDaemonVoiceTurns(voiceControlUserId);
         }
+        await handleVoiceRuntimeResourceState(voiceControlUserId, action, control.state);
         if (action === "end") {
-          await persistDaemonTalkModeEnabled(pairedUserId, false);
+          await persistDaemonTalkModeEnabled(voiceControlUserId, false);
         }
         return;
       }
@@ -1473,6 +1549,12 @@ export function startDaemonBridge(server: HttpServer): void {
         if (wasRegisteredSocket) {
           userSockets.delete(key);
           console.log(`[daemon] disconnected userId=${pairedUserId} platform=${pairedPlatform}`);
+          if (pairedPlatform === "android" && isVoiceRuntimeResourceActiveForUser(pairedUserId)) {
+            cancelDaemonVoiceTurns(pairedUserId);
+            handleVoiceRuntimeResourceState(pairedUserId, "unexpected_end", "daemon_disconnected").catch((err) => {
+              console.warn(`[daemon] voice resource disconnect recovery failed userId=${pairedUserId}:`, err);
+            });
+          }
         }
         // Reject pending ops only for this platform's socket (not the other daemon)
         const pendingKey = socketKey(pairedUserId, pairedPlatform);

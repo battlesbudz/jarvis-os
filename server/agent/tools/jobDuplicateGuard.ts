@@ -1,6 +1,7 @@
 import { db } from "../../db";
-import { eq, and, gte, inArray } from "drizzle-orm";
+import { eq, and, gte, inArray, or } from "drizzle-orm";
 import * as schema from "@shared/schema";
+import { RESOURCE_PAUSED_STATUS } from "../voiceRuntimeResourceCore";
 
 /** Lowercase, strip punctuation, collapse whitespace for comparison. */
 export function normalizeTitle(title: string): string {
@@ -37,7 +38,7 @@ export function titlesAreSimilar(a: string, b: string): boolean {
 }
 
 /**
- * Query the DB for an active (queued or running) job belonging to `userId`
+ * Query the DB for an active (queued, resource-paused, or running) job belonging to `userId`
  * with the same `agentType` and a title similar to `title`, created within
  * the last `windowMs` milliseconds (default 10 minutes).
  *
@@ -58,8 +59,11 @@ export async function findDuplicateJob(
       and(
         eq(schema.agentJobs.userId, userId),
         eq(schema.agentJobs.agentType, agentType),
-        inArray(schema.agentJobs.status, ["queued", "running"]),
-        gte(schema.agentJobs.createdAt, since),
+        inArray(schema.agentJobs.status, ["queued", "running", RESOURCE_PAUSED_STATUS]),
+        or(
+          eq(schema.agentJobs.status, RESOURCE_PAUSED_STATUS),
+          gte(schema.agentJobs.createdAt, since),
+        ),
       ),
     );
 

@@ -243,6 +243,47 @@ class UnifiedDaemonContractTest {
     }
 
     @Test
+    fun outsideAppVoiceUnexpectedDestroyRecordsCrashAndBlocksPlayback() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val controller = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()
+        val service = controller.get()
+
+        service.onStartCommand(OutsideAppVoiceSessionService.startIntent(context), 0, 1)
+        assertTrue(service.sessionActiveForTest())
+        assertEquals(OutsideAppVoiceState.LISTENING, service.stateForTest())
+
+        controller.destroy()
+
+        assertFalse(OutsideAppVoiceSessionService.isActive())
+        assertFalse(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
+        assertTrue(DaemonLog.getAll().any { it.contains("voice_session: crash state=listening") })
+    }
+
+    @Test
+    fun outsideAppVoiceRestartResetsExpectedStopBeforeUnexpectedDestroy() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val controller = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()
+        val service = controller.get()
+
+        service.onStartCommand(OutsideAppVoiceSessionService.startIntent(context), 0, 1)
+        service.onStartCommand(
+            OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_END),
+            0,
+            2,
+        )
+        val crashCountBeforeRestart = DaemonLog.getAll().count { it.contains("voice_session: crash state=listening") }
+
+        service.onStartCommand(OutsideAppVoiceSessionService.startIntent(context), 0, 3)
+        assertTrue(service.sessionActiveForTest())
+        assertEquals(OutsideAppVoiceState.LISTENING, service.stateForTest())
+
+        controller.destroy()
+
+        val crashCountAfterRestart = DaemonLog.getAll().count { it.contains("voice_session: crash state=listening") }
+        assertTrue(crashCountAfterRestart > crashCountBeforeRestart)
+    }
+
+    @Test
     fun outsideAppVoiceStartPreservesActiveNonIdleState() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val controller = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()

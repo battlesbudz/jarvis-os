@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { and, eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { db } from "../db";
+import { cancellationStatusForAgentJobStatus } from "../agent/voiceRuntimeResourceCore";
 
 const paramValue = (value: string | string[]): string => Array.isArray(value) ? (value[0] ?? "") : value;
 
@@ -55,7 +56,10 @@ export function registerAgentJobMutationRoutes(app: Express): void {
       if (job.status === "cancelled" || job.status === "cancelling") {
         return res.json({ ok: true, status: job.status });
       }
-      const newStatus = job.status === "queued" ? "cancelled" : "cancelling";
+      const newStatus = cancellationStatusForAgentJobStatus(job.status);
+      if (!newStatus) {
+        return res.status(400).json({ error: "Job is already finished" });
+      }
       await db
         .update(schema.agentJobs)
         .set({ status: newStatus, completedAt: newStatus === "cancelled" ? new Date() : undefined })

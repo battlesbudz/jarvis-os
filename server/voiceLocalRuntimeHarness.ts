@@ -4,6 +4,7 @@ import {
 } from "./agent/androidNotificationSummary";
 import { resolveAndroidNotificationFollowUp } from "./agent/androidNotificationFollowups";
 import { LOCAL_RUNTIME_WORKING_CONTEXT_TTL_MS } from "./state/runtimeWorkingContext";
+import { normalizeVoiceRestoreReply } from "@shared/voiceApprovalGates";
 
 export type LocalVoiceModelCallKind = "local_gemma" | "cloud_model" | "secondary_llm";
 
@@ -114,7 +115,7 @@ export interface LocalVoiceScreenWorkingContext {
   source: LocalVoiceScreenSource;
   activeApp: string;
   title?: string;
-  text: string;
+  text?: string;
   elements: string[];
   recordedAt: string;
   expiresAt: string;
@@ -160,7 +161,7 @@ export interface LocalVoiceHarnessDiagnostics {
   requestedToolName?: string;
   executedToolName?: LocalVoiceToolName;
   recoveredToolName?: LocalVoiceToolName;
-  modelOutputType: ScriptedLocalGemmaStep["type"];
+  modelOutputType: ScriptedLocalGemmaStep["type"] | "runtime_direct";
   copiedDetails?: {
     capture?: {
       id: string;
@@ -1012,6 +1013,100 @@ function contextPacketFromEvents(
   return packet.join("\n");
 }
 
+function isRuntimeActivityStatusRequest(transcript: string): boolean {
+  const text = compactText(transcript).toLowerCase();
+  return /\bwhat(?:'s|\s+is|\s+are)\s+(?:you|jarvis)\s+(?:doing|working\s+on|running)\b/.test(text) ||
+    /\bwhat\s+are\s+you\s+doing\s+right\s+now\b/.test(text) ||
+    /\bwhat\s+is\s+running\s+right\s+now\b/.test(text);
+}
+
+function runtimeActivityStatusResponse(
+  transcript: string,
+  androidRuntime: FakeAndroidVoiceRuntime,
+): {
+  response: string;
+  diagnostics: LocalVoiceHarnessDiagnostics;
+} | null {
+  if (!isRuntimeActivityStatusRequest(transcript)) return null;
+
+  const scheduler = androidRuntime.execute("runtime_scheduler_status");
+  const service = androidRuntime.execute("runtime_service_status");
+  const lines: string[] = [];
+
+  if (scheduler.ok) {
+    lines.push(scheduler.detail ? `Scheduler: ${scheduler.label}:\n${scheduler.detail}` : `Scheduler: ${scheduler.label}.`);
+  } else {
+    lines.push("Scheduler: no active background work is visible to the local runtime.");
+  }
+
+  lines.push(service.ok ? "Voice runtime: no local crash is recorded." : `Voice runtime: ${service.label}. ${service.detail}`);
+
+  return {
+    response: lines.join("\n"),
+    diagnostics: {
+      outcome: "runtime_status_answer",
+      executedToolName: "runtime_scheduler_status",
+      modelOutputType: "runtime_direct",
+    },
+  };
+}
+
+function runtimeVoiceRestoreResponse(
+  transcript: string,
+  androidRuntime: FakeAndroidVoiceRuntime,
+): {
+  response: string;
+  diagnostics: LocalVoiceHarnessDiagnostics;
+} | null {
+  const hasInterruptedVoiceContext = androidRuntime.availableEventTypes.includes("crash");
+  const restoreReply = normalizeVoiceRestoreReply(transcript, { allowGenericReply: hasInterruptedVoiceContext });
+  if (restoreReply.intent === "dismiss" && hasInterruptedVoiceContext) {
+    const service = androidRuntime.execute("runtime_service_status");
+    return {
+      response: service.ok
+        ? "I do not have an interrupted local voice context waiting to restore."
+        : "Okay, I won't restore that interrupted voice context.",
+      diagnostics: {
+        outcome: service.ok ? "runtime_voice_restore_missing" : "runtime_voice_restore_dismissed",
+        executedToolName: "runtime_service_status",
+        modelOutputType: "runtime_direct",
+      },
+    };
+  }
+  if (restoreReply.intent !== "restore") return null;
+
+  const service = androidRuntime.execute("runtime_service_status");
+  if (service.ok) {
+    return {
+      response: "I do not have an interrupted local voice context waiting to restore.",
+      diagnostics: {
+        outcome: "runtime_voice_restore_missing",
+        executedToolName: "runtime_service_status",
+        modelOutputType: "runtime_direct",
+      },
+    };
+  }
+
+  const scheduler = androidRuntime.execute("runtime_scheduler_status");
+  const lines = [
+    "Here is the context I can safely restore:",
+    `- Voice runtime: ${service.label}. ${service.detail}`,
+  ];
+  if (scheduler.ok && scheduler.detail) {
+    lines.push(`- Background work:\n${scheduler.detail}`);
+  }
+  lines.push("The mic is still paused; tap Talk Mode when you want me listening again.");
+
+  return {
+    response: lines.join("\n"),
+    diagnostics: {
+      outcome: "runtime_voice_restore_recap",
+      executedToolName: "runtime_service_status",
+      modelOutputType: "runtime_direct",
+    },
+  };
+}
+
 export class FakeAndroidVoiceRuntime {
   readonly executions: FakeAndroidExecution[] = [];
 
@@ -1629,6 +1724,39 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
     });
   }
 
+  const androidRuntime = new FakeAndroidVoiceRuntime(input.androidEvents ?? []);
+  let workingContext = pruneExpiredWorkingContext(input.workingContext, now);
+  const runtimeRestore = runtimeVoiceRestoreResponse(transcript, androidRuntime);
+  if (runtimeRestore) {
+    const canonicalResponse = runtimeRestore.response;
+    return {
+      transcript,
+      canonicalResponse,
+      chatOutput: canonicalResponse,
+      ttsOutput: canonicalResponse,
+      responseCount: 1,
+      modelCalls,
+      androidExecutions: [...androidRuntime.executions],
+      workingContext,
+      diagnostics: runtimeRestore.diagnostics,
+    };
+  }
+  const runtimeStatus = runtimeActivityStatusResponse(transcript, androidRuntime);
+  if (runtimeStatus) {
+    const canonicalResponse = runtimeStatus.response;
+    return {
+      transcript,
+      canonicalResponse,
+      chatOutput: canonicalResponse,
+      ttsOutput: canonicalResponse,
+      responseCount: 1,
+      modelCalls,
+      androidExecutions: [...androidRuntime.executions],
+      workingContext,
+      diagnostics: runtimeStatus.diagnostics,
+    };
+  }
+
   recordModelCall(modelCalls, {
     kind: "local_gemma",
     provider: "android-local-gemma",
@@ -1636,8 +1764,6 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
     reason: "live local voice turn",
   });
 
-  const androidRuntime = new FakeAndroidVoiceRuntime(input.androidEvents ?? []);
-  let workingContext = pruneExpiredWorkingContext(input.workingContext, now);
   const modelOutput = await input.gemma.generate({
     transcript,
     contextPacket: contextPacketFromEvents(input.androidEvents ?? [], transcript, workingContext, now),

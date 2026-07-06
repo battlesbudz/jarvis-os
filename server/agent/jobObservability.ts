@@ -73,7 +73,7 @@ export interface JobRunnerObservabilityReport {
   }[];
 }
 
-const ACTIVE_STATUSES = new Set(["queued", "running", "cancelling"]);
+const ACTIVE_STATUSES = new Set(["queued", "running", "cancelling", "resource_paused"]);
 const RECENT_STATUSES = new Set(["complete", "failed", "cancelled", "delivered"]);
 const PREVIEW_LIMIT = 240;
 
