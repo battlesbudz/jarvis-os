@@ -1,4 +1,4 @@
-import type { ModelProviderId, ProviderCredentialKind } from "@shared/modelProviderCatalog";
+import { CODEX_OAUTH_MODEL, type ModelProviderId, type ProviderCredentialKind } from "@shared/modelProviderCatalog";
 
 export type CloudBackgroundEscalationReason =
   | "model_timeout"
@@ -223,6 +223,7 @@ function disallowsCloudTaskCapability(value: unknown, capability: "phone_control
 }
 
 export function getDefaultCloudBackgroundModel(provider: Pick<CloudBackgroundProviderOption, "id" | "authType">): string {
+  if (provider.id === "openai" && provider.authType === "oauth") return CODEX_OAUTH_MODEL;
   if (provider.id === "openai") return "openai/gpt-4.1-mini";
   if (provider.id === "anthropic") return "anthropic/claude-sonnet-4-5";
   if (provider.id === "google") return "google/gemini-2.5-flash";

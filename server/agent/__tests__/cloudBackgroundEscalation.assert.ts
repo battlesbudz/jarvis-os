@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import {
+  CODEX_OAUTH_MODEL,
+} from "@shared/modelProviderCatalog";
+import {
   buildCloudBackgroundTaskCard,
   buildCloudBackgroundEscalationDecision,
   buildCloudBackgroundJobInput,
@@ -166,7 +169,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
 }
 
 {
-  assert.equal(getDefaultCloudBackgroundModel({ id: "openai", authType: "oauth" }), "openai/gpt-4.1-mini");
+  assert.equal(getDefaultCloudBackgroundModel({ id: "openai", authType: "oauth" }), CODEX_OAUTH_MODEL);
   assert.equal(getDefaultCloudBackgroundModel({ id: "openai", authType: "api_key" }), "openai/gpt-4.1-mini");
   assert.equal(getDefaultCloudBackgroundModel({ id: "google", authType: "api_key" }), "google/gemini-2.5-flash");
   assert.equal(getDefaultCloudBackgroundModel({ id: "anthropic", authType: "api_key" }), "anthropic/claude-sonnet-4-5");
