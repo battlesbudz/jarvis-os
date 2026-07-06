@@ -436,7 +436,9 @@ for (const [contents, source] of [
   assertIncludes(contents, "object JarvisVoicePlaybackController", source);
   assertIncludes(contents, "fun stopActivePlayback(rearmTalkMode: Boolean = true)", source);
   assertIncludes(contents, "private fun startOutsideAppVoiceControls(context: Context)", source);
+  assertIncludes(contents, "private fun endOutsideAppVoiceControls(context: Context)", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.startIntent(context)", source);
+  assertIncludes(contents, "OutsideAppVoiceSessionService.ACTION_END", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.completePlayback(mp, playbackFile, rearmTalkMode = shouldRearm)", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()", source);

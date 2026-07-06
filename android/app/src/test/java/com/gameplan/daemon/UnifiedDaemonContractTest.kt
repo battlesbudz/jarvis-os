@@ -264,4 +264,31 @@ class UnifiedDaemonContractTest {
             }
         )
     }
+
+    @Test
+    fun talkModeDisableEndsOutsideAppVoiceControls() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val shadowApplication = shadowOf(context as Application)
+        val controller = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()
+        val service = controller.get()
+        service.onStartCommand(OutsideAppVoiceSessionService.startIntent(context), 0, 1)
+        shadowApplication.clearStartedServices()
+
+        val result = OpHandler.handle(
+            context,
+            JSONObject()
+                .put("type", "voice_set_talk_mode")
+                .put("enabled", false)
+        )
+
+        assertTrue(result.ok)
+        assertTrue(
+            "Expected Talk Mode disable to end outside-app voice controls",
+            shadowApplication.allStartedServices.any { intent ->
+                intent.action == OutsideAppVoiceSessionService.ACTION_END &&
+                    intent.component?.className == OutsideAppVoiceSessionService::class.java.name
+            }
+        )
+        controller.destroy()
+    }
 }

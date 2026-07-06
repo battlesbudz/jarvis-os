@@ -100,6 +100,16 @@ object OpHandler {
         }
     }
 
+    private fun endOutsideAppVoiceControls(context: Context) {
+        if (!OutsideAppVoiceSessionService.isActive()) return
+        context.startService(
+            OutsideAppVoiceSessionService.controlIntent(
+                context,
+                OutsideAppVoiceSessionService.ACTION_END
+            )
+        )
+    }
+
     fun handle(context: Context, op: JSONObject): OpResult {
         val type = op.optString("type")
         val startMs = SystemClock.elapsedRealtime()
@@ -1356,6 +1366,8 @@ object OpHandler {
         if (enabled && talkMode) {
             OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()
             startOutsideAppVoiceControls(context)
+        } else {
+            endOutsideAppVoiceControls(context)
         }
 
         if (enabled && !allowSoftwareWakeWordFallback) {
@@ -1423,6 +1435,8 @@ object OpHandler {
         if (enabled) {
             OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()
             startOutsideAppVoiceControls(context)
+        } else {
+            endOutsideAppVoiceControls(context)
         }
         val svc = WakeWordService.instance
         if (svc == null) {
