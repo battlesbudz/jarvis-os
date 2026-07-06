@@ -154,8 +154,20 @@ assert.match(
 
 assert.match(
   bridgeSource,
-  /confirmationToken[\s\S]*approvalFallbackDelayMs = control\.reactActive === true \? 1_500 : 0[\s\S]*daemonVoiceApprovalHandler/,
-  "Outside-app approval controls should keep a delayed server fallback even when React reports active.",
+  /export function ackDaemonVoiceApproval/,
+  "Daemon bridge should expose a React acknowledgement for foreground overlay approvals.",
+);
+
+assert.match(
+  bridgeSource,
+  /control\.reactActive === true && consumeDaemonVoiceApprovalAck\(pairedUserId, confirmationToken\)/,
+  "Daemon approval fallback should skip tokens acknowledged by the foreground app.",
+);
+
+assert.match(
+  bridgeSource,
+  /setTimeout\(runApprovalFallback, VOICE_APPROVAL_REACT_FALLBACK_DELAY_MS\)/,
+  "Outside-app approval controls should use an ack-gated server fallback when React reports active.",
 );
 
 assert.match(

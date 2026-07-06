@@ -1638,6 +1638,11 @@ export default function InsightsScreen() {
         nativeVoiceStateSyncHeldRef.current = false;
         setVoiceApprovalPrompt(null);
         setVoiceApprovalToken(null);
+        apiRequest('POST', '/api/coach/ack-voice-approval', {
+          token: pendingVoiceConfirmMessage.pendingConfirm.token,
+        }).catch((err) => {
+          console.warn('[voice] outside-app approval ack failed:', err);
+        });
         confirmActionRef.current(pendingVoiceConfirmMessage.id, approved, {
           source: 'voice',
           voiceTrace: {

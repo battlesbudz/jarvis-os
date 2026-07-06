@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import type OpenAI from "openai";
+import { ackDaemonVoiceApproval } from "../daemon/bridge";
 import { getTool } from "../agent/tools/index";
 import type { ToolContext } from "../agent/types";
 
@@ -91,6 +92,15 @@ export function registerCoachActionConfirmationRoutes(
   app: Express,
   { pendingConfirmations, executeCoachTool, openai }: CoachActionConfirmationDeps,
 ): void {
+  app.post("/api/coach/ack-voice-approval", async (req: Request, res: Response) => {
+    const userId = req.userId;
+    if (!userId) return res.status(401).json({ error: "Unauthorized" });
+    const token = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+    if (!token) return res.status(400).json({ error: "token is required" });
+    ackDaemonVoiceApproval(userId, token);
+    return res.json({ ok: true });
+  });
+
   app.post("/api/coach/execute-confirmed", async (req: Request, res: Response) => {
     try {
       const { token } = req.body;

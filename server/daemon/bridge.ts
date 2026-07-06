@@ -169,6 +169,8 @@ const userSockets = new Map<string, WebSocket>();
 const pendingByUser = new Map<string, Map<string, PendingOp>>();
 const daemonSocketReplacementLocks = new Set<string>();
 const ANDROID_DAEMON_BOOTSTRAP_TOKEN_PREFIX = "android_bootstrap_";
+const VOICE_APPROVAL_REACT_ACK_TTL_MS = 60_000;
+const VOICE_APPROVAL_REACT_FALLBACK_DELAY_MS = 10_000;
 let opCounter = 0;
 let daemonVoiceApprovalHandler: ((input: {
   userId: string;
@@ -176,11 +178,41 @@ let daemonVoiceApprovalHandler: ((input: {
   action: "approval_approve" | "approval_deny";
   approved: boolean;
 }) => Promise<void>) | null = null;
+const daemonVoiceApprovalReactAcks = new Map<string, number>();
+
+function daemonVoiceApprovalAckKey(userId: string, token: string): string {
+  return `${userId}:${token}`;
+}
+
+function cleanupDaemonVoiceApprovalAcks(now = Date.now()): void {
+  for (const [key, expiresAt] of daemonVoiceApprovalReactAcks.entries()) {
+    if (expiresAt < now) daemonVoiceApprovalReactAcks.delete(key);
+  }
+}
+
+function consumeDaemonVoiceApprovalAck(userId: string, token: string): boolean {
+  cleanupDaemonVoiceApprovalAcks();
+  const key = daemonVoiceApprovalAckKey(userId, token);
+  const expiresAt = daemonVoiceApprovalReactAcks.get(key);
+  if (!expiresAt) return false;
+  daemonVoiceApprovalReactAcks.delete(key);
+  return expiresAt >= Date.now();
+}
 
 export function setDaemonVoiceApprovalHandler(
   handler: typeof daemonVoiceApprovalHandler,
 ): void {
   daemonVoiceApprovalHandler = handler;
+}
+
+export function ackDaemonVoiceApproval(userId: string, token: string): void {
+  const normalizedToken = token.trim();
+  if (!userId || !normalizedToken) return;
+  cleanupDaemonVoiceApprovalAcks();
+  daemonVoiceApprovalReactAcks.set(
+    daemonVoiceApprovalAckKey(userId, normalizedToken),
+    Date.now() + VOICE_APPROVAL_REACT_ACK_TTL_MS,
+  );
 }
 
 // Wake word event subscriptions: userId → set of callbacks
@@ -1351,8 +1383,10 @@ export function startDaemonBridge(server: HttpServer): void {
           confirmationToken &&
           daemonVoiceApprovalHandler
         ) {
-          const approvalFallbackDelayMs = control.reactActive === true ? 1_500 : 0;
           const runApprovalFallback = () => {
+            if (control.reactActive === true && consumeDaemonVoiceApprovalAck(pairedUserId, confirmationToken)) {
+              return;
+            }
             daemonVoiceApprovalHandler?.({
               userId: pairedUserId,
               token: confirmationToken,
@@ -1362,8 +1396,8 @@ export function startDaemonBridge(server: HttpServer): void {
               console.error(`[daemon] outside-app voice approval failed userId=${pairedUserId}:`, err);
             });
           };
-          if (approvalFallbackDelayMs > 0) {
-            const timer = setTimeout(runApprovalFallback, approvalFallbackDelayMs);
+          if (control.reactActive === true) {
+            const timer = setTimeout(runApprovalFallback, VOICE_APPROVAL_REACT_FALLBACK_DELAY_MS);
             (timer as unknown as { unref?: () => void }).unref?.();
           } else {
             runApprovalFallback();

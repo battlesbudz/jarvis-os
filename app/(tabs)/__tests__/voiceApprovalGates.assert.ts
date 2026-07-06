@@ -25,6 +25,11 @@ assert.ok(
   "foreground overlay approval events should execute the pending confirmation handler",
 );
 assert.ok(
+  insightsSource.includes("/api/coach/ack-voice-approval") &&
+    insightsSource.includes("pendingVoiceConfirmMessage.pendingConfirm.token"),
+  "foreground overlay approval events should acknowledge handled tokens before executing",
+);
+assert.ok(
   insightsSource.includes("voiceConfirmationExecuting || isTranscribing || isStreaming || isWorkingOnPhone"),
   "outside-app overlay should stay in a working state while confirmed actions execute",
 );
