@@ -245,6 +245,7 @@ class OutsideAppVoiceSessionService : Service() {
 
     override fun onDestroy() {
         if (!expectedStop && sessionActive && state != OutsideAppVoiceState.IDLE) {
+            endTalkModeCapture()
             sendVoiceSessionEvent("crash")
             endedSessionBlocksPlayback = true
         }
