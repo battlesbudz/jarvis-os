@@ -91,6 +91,7 @@ export interface PhoneNotification {
 // In-memory notification cache per user (newest first, max 60 per user)
 const userNotifications = new Map<string, PhoneNotification[]>();
 const userVoiceNotificationContexts = new Map<string, { notifications: PhoneNotification[]; observedAt: number }>();
+const userVoiceTurnGenerations = new Map<string, number>();
 
 const MAX_NOTIFS_PER_USER = 60;
 const VOICE_NOTIFICATION_FOLLOWUP_TTL_MS = 5 * 60 * 1000;
@@ -129,6 +130,18 @@ export function recordVoiceNotificationObservation(userId: string, notifications
 
 export function clearVoiceNotificationObservation(userId: string): void {
   userVoiceNotificationContexts.delete(userId);
+}
+
+function currentVoiceTurnGeneration(userId: string): number {
+  return userVoiceTurnGenerations.get(userId) ?? 0;
+}
+
+function cancelDaemonVoiceTurns(userId: string): void {
+  userVoiceTurnGenerations.set(userId, currentVoiceTurnGeneration(userId) + 1);
+}
+
+function isDaemonVoiceTurnCancelled(userId: string, generation: number): boolean {
+  return currentVoiceTurnGeneration(userId) !== generation;
 }
 
 function getRecentVoiceNotificationContext(userId: string, limit = 20): PhoneNotification[] | null {
@@ -270,13 +283,17 @@ async function persistDaemonVoiceExchange(userId: string, utterance: string, res
 }
 
 async function processDaemonUtterance(userId: string, utterance: string): Promise<void> {
+  const voiceTurnGeneration = currentVoiceTurnGeneration(userId);
   try {
+    if (isDaemonVoiceTurnCancelled(userId, voiceTurnGeneration)) return;
     console.log(`[daemon] talk: processing utterance for userId=${userId}: "${utterance.slice(0, 60)}"`);
     const { textToSpeech } = await import("../integrations/audioClient");
 
     let responseText = await processDaemonNotificationFollowUp(userId, utterance);
+    if (isDaemonVoiceTurnCancelled(userId, voiceTurnGeneration)) return;
     if (responseText) {
       await persistDaemonVoiceExchange(userId, utterance, responseText);
+      if (isDaemonVoiceTurnCancelled(userId, voiceTurnGeneration)) return;
     } else {
       const { runCoachAgent } = await import("../channels/coachAgent");
       const storedSessionId = await _getCoachSession(userId, "Voice");
@@ -286,6 +303,7 @@ async function processDaemonUtterance(userId: string, utterance: string): Promis
         channelName: "Voice",
         sdkSessionId: storedSessionId,
       });
+      if (isDaemonVoiceTurnCancelled(userId, voiceTurnGeneration)) return;
       if (result.sdkSessionId) {
         _setCoachSession(userId, "Voice", result.sdkSessionId);
       }
@@ -295,11 +313,13 @@ async function processDaemonUtterance(userId: string, utterance: string): Promis
     console.log(`[daemon] talk: Jarvis reply: "${responseText.slice(0, 80)}"`);
 
     const audioBuffer = await textToSpeech(responseText, "alloy", "mp3");
+    if (isDaemonVoiceTurnCancelled(userId, voiceTurnGeneration)) return;
     const audioBase64 = audioBuffer.toString("base64");
 
     // Send audio to daemon — it plays it and then re-arms for the next wake word
     await sendDaemonOp(userId, { type: "voice_speak_audio", audioBase64, format: "mp3" }, 15_000);
   } catch (err) {
+    if (isDaemonVoiceTurnCancelled(userId, voiceTurnGeneration)) return;
     console.error("[daemon] processDaemonUtterance failed:", err);
     // Notify the user so they know something went wrong
     sendDaemonOp(userId, { type: "notify", title: "Jarvis", body: "Could not process your request — please try again." }, 5_000).catch(() => {});
@@ -1306,6 +1326,7 @@ export function startDaemonBridge(server: HttpServer): void {
         const control = m as VoiceSessionControlMsg;
         const action = String(control.action || "").trim().toLowerCase();
         if (action === "end") {
+          cancelDaemonVoiceTurns(pairedUserId);
           await persistDaemonTalkModeEnabled(pairedUserId, false);
         }
         return;

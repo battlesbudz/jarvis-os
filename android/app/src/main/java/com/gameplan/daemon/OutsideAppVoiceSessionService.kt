@@ -160,7 +160,7 @@ class OutsideAppVoiceSessionService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 endedSessionBlocksPlayback = false
-                if (sessionActive && state == OutsideAppVoiceState.PAUSED) {
+                if (sessionActive && state != OutsideAppVoiceState.IDLE) {
                     startForegroundCompat()
                     updateOverlay()
                 } else {

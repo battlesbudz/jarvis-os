@@ -130,6 +130,24 @@ assert.match(
 
 assert.match(
   bridgeSource,
+  /const userVoiceTurnGenerations = new Map<string, number>\(\)/,
+  "Daemon voice bridge should track per-user voice turn generations.",
+);
+
+assert.match(
+  bridgeSource,
+  /if \(action === "end"\) \{\s*cancelDaemonVoiceTurns\(pairedUserId\);[\s\S]*?persistDaemonTalkModeEnabled\(pairedUserId, false\)/,
+  "Outside-app voice End should cancel in-flight daemon voice turns before persisting Talk Mode off.",
+);
+
+assert.match(
+  bridgeSource,
+  /const voiceTurnGeneration = currentVoiceTurnGeneration\(userId\);[\s\S]*?isDaemonVoiceTurnCancelled\(userId, voiceTurnGeneration\)[\s\S]*?runCoachAgent[\s\S]*?isDaemonVoiceTurnCancelled\(userId, voiceTurnGeneration\)[\s\S]*?textToSpeech[\s\S]*?isDaemonVoiceTurnCancelled\(userId, voiceTurnGeneration\)[\s\S]*?voice_speak_audio/,
+  "Daemon voice processing should abandon cancelled turns before continuing to session persistence or TTS playback.",
+);
+
+assert.match(
+  bridgeSource,
   /bootstrapToken:\s*string/,
   "Android app bootstrap messages should carry a native-only bootstrap token.",
 );

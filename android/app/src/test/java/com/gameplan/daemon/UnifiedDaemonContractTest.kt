@@ -243,6 +243,25 @@ class UnifiedDaemonContractTest {
     }
 
     @Test
+    fun outsideAppVoiceStartPreservesActiveNonIdleState() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val controller = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()
+        val service = controller.get()
+
+        service.onStartCommand(
+            OutsideAppVoiceSessionService.setStateIntent(context, OutsideAppVoiceState.SPEAKING),
+            0,
+            1,
+        )
+        service.onStartCommand(OutsideAppVoiceSessionService.startIntent(context), 0, 2)
+
+        assertTrue(service.sessionActiveForTest())
+        assertEquals(OutsideAppVoiceState.SPEAKING, service.stateForTest())
+        assertTrue(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
+        controller.destroy()
+    }
+
+    @Test
     fun talkModeEnableStartsOutsideAppVoiceControls() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val shadowApplication = shadowOf(context as Application)

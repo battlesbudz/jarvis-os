@@ -419,7 +419,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "fun clearEndedPlaybackGateForTalkModeEnable()", source);
   assertIncludes(contents, "endedSessionBlocksPlayback = true", source);
   assertIncludes(contents, "endedSessionBlocksPlayback = false", source);
-  assertIncludes(contents, "if (sessionActive && state == OutsideAppVoiceState.PAUSED)", source);
+  assertIncludes(contents, "if (sessionActive && state != OutsideAppVoiceState.IDLE)", source);
   assertIncludes(contents, "service.state != OutsideAppVoiceState.PAUSED", source);
   assertIncludes(contents, "service.state != OutsideAppVoiceState.IDLE", source);
   assertIncludes(contents, "private val mainHandler = Handler(Looper.getMainLooper())", source);
