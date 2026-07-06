@@ -194,7 +194,8 @@ function compact(value: unknown): string {
 function budgetValue(value: unknown): number | null {
   const amount = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(amount) || amount <= 0) return null;
-  return Math.round(amount * 100) / 100;
+  const rounded = Math.round(amount * 100) / 100;
+  return rounded > 0 ? rounded : null;
 }
 
 function moneyValue(value: unknown): number {

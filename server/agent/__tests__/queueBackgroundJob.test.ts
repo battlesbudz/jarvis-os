@@ -113,8 +113,10 @@ async function main() {
     assert.match(jobQueueSource, /preferredAuthType: cloudBackgroundPreferredAuthType/);
     assert.match(jobQueueSource, /failJob\(job\.id, cloudBackgroundValidation\.message/);
     assert.match(queueToolSource, /CLOUD_BACKGROUND_AGENT_TYPES/);
-    assert.match(queueToolSource, /approvalReceiptCoversToolCall/);
-    assert.match(queueToolSource, /Cloud background approval needed/);
+    assert.match(queueToolSource, /toolCallHooks\.register/);
+    assert.match(queueToolSource, /Approve cloud background task/);
+    assert.match(queueToolSource, /getProviderStatus/);
+    assert.match(queueToolSource, /Cloud provider not connected/);
     assert.match(queueToolSource, /Cloud background job type unsupported/);
     assert.match(queueToolSource, /OAuth\/subscription background routing is only supported for OpenAI/);
     assert.match(subagentsSource, /forceModel: opts\.forceModel/);

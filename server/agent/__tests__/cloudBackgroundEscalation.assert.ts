@@ -205,6 +205,20 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
     }),
     { ok: false, message: "Cloud background task uses an unsupported provider authentication route." },
   );
+  assert.deepEqual(
+    validateCloudBackgroundJobInput(buildCloudBackgroundJobInput({
+      prompt: "Research the competitor.",
+      provider: {
+        id: "google",
+        label: "Gemini",
+        authType: "api_key",
+        requiresBudget: true,
+        hint: "Gemini API key, budget required",
+      },
+      budgetUsd: 0.004,
+    })),
+    { ok: false, message: "Cloud background task is missing its approved per-job budget." },
+  );
   console.log("OK: worker validation rejects wrong-model or unbudgeted cloud jobs");
 }
 

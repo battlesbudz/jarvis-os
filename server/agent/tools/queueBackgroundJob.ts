@@ -4,7 +4,8 @@ import { SUB_AGENT_TYPES } from "../subagents";
 import { getProtectedEntityNames, findEntityNearMatch } from "../../memory/protectedEntities";
 import { buildQueueBackgroundJobInput } from "./queueBackgroundJobInput";
 import { buildCloudBackgroundJobInput, type CloudBackgroundProviderOption } from "../cloudBackgroundEscalation";
-import { approvalReceiptCoversToolCall } from "../approvalReceipt";
+import { toolCallHooks, HOOK_PRIORITY } from "../toolCallHooks";
+import { getProviderStatus } from "../providers/modelProviderAuthProfiles";
 
 interface QueueJobArgs {
   agent_type?: string;
@@ -25,6 +26,24 @@ interface QueueJobArgs {
  */
 const QUEUEABLE_AGENT_TYPES: readonly string[] = [...SUB_AGENT_TYPES, "deep_research", "app_project", "ephemeral_agent_task"];
 const CLOUD_BACKGROUND_AGENT_TYPES = new Set<string>(SUB_AGENT_TYPES);
+
+toolCallHooks.register((ctx) => {
+  if (ctx.toolName !== "queue_background_job" || ctx.params.task_scoped_cloud !== true) return undefined;
+  const providerLabel = String(ctx.params.cloud_provider_label || ctx.params.cloud_provider_id || "the selected cloud provider").trim();
+  const authType = ctx.params.cloud_provider_auth_type === "api_key" ? "API key" : "subscription";
+  const budget = Number(ctx.params.cloud_budget_usd);
+  const budgetText = Number.isFinite(budget) && budget > 0 ? ` Budget: $${(Math.round(budget * 100) / 100).toFixed(2)}.` : "";
+  return {
+    requireApproval: {
+      title: "Approve cloud background task",
+      description:
+        `Use ${providerLabel} via ${authType} for this separate cloud background job.${budgetText} ` +
+        "The live chat model stays unchanged. The cloud worker cannot directly control the phone or write MemoryOS.",
+      severity: "warning",
+      timeoutMs: 10 * 60 * 1000,
+    },
+  };
+}, { priority: HOOK_PRIORITY.APPROVAL + 10, critical: true });
 
 /**
  * Commonly confused US city names — bare city name (lower-cased) → list of states.
@@ -251,7 +270,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     const prompt = String(a.prompt || "").trim();
     const skipEntityCheck = Boolean(a.skip_entity_check);
     const skipLocationCheck = Boolean(a.skip_location_check);
-    const taskScopedCloud = Boolean(a.task_scoped_cloud);
+    const taskScopedCloud = a.task_scoped_cloud === true;
 
     if (!QUEUEABLE_AGENT_TYPES.includes(agentType)) {
       return {
@@ -266,14 +285,6 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
 
     let extraJobInput: Record<string, unknown> | undefined;
     if (taskScopedCloud) {
-      if (!approvalReceiptCoversToolCall(ctx.approvalReceipt, { userId: ctx.userId, toolName: "queue_background_job" })) {
-        return {
-          ok: true,
-          content:
-            "Cloud background tasks need explicit approval before I can queue them. Ask the user to approve the provider and budget, then retry with the approved receipt.",
-          label: "Cloud background approval needed",
-        };
-      }
       if (!CLOUD_BACKGROUND_AGENT_TYPES.has(agentType)) {
         return {
           ok: true,
@@ -302,12 +313,23 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
         };
       }
       const budgetUsd = Number(a.cloud_budget_usd);
-      if (authType === "api_key" && (!Number.isFinite(budgetUsd) || budgetUsd <= 0)) {
+      const roundedBudgetUsd = Math.round(budgetUsd * 100) / 100;
+      if (authType === "api_key" && (!Number.isFinite(roundedBudgetUsd) || roundedBudgetUsd <= 0)) {
         return {
           ok: true,
           content:
             `${providerLabel} uses an API key for cloud work, so I need a per-job budget before queueing it.`,
           label: "Cloud budget approval needed",
+        };
+      }
+      const providerStatus = await getProviderStatus({ userId: ctx.userId }).catch(() => null);
+      const approvedProviderStatus = providerStatus?.providers[providerId];
+      if (!approvedProviderStatus?.authTypes[authType]?.connected) {
+        return {
+          ok: true,
+          content:
+            `${providerLabel} is not connected with the approved ${authType === "api_key" ? "API key" : "subscription"} route. Open Settings to connect it before starting this cloud background task.`,
+          label: "Cloud provider not connected",
         };
       }
       const provider: CloudBackgroundProviderOption = {
@@ -322,9 +344,8 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
       extraJobInput = buildCloudBackgroundJobInput({
         prompt,
         provider,
-        budgetUsd: authType === "api_key" ? budgetUsd : null,
+        budgetUsd: authType === "api_key" ? roundedBudgetUsd : null,
       });
-      extraJobInput.approvalReceipt = ctx.approvalReceipt;
     }
 
     const title = String(a.title || "").trim() || deriveTitle(agentType, prompt);
