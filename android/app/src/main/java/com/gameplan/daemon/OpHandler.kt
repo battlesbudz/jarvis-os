@@ -1363,7 +1363,7 @@ object OpHandler {
             arrayOf("hey jarvis", "jarvis", "computer")
         }
 
-        if (enabled && talkMode) {
+        if (talkMode) {
             OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()
             startOutsideAppVoiceControls(context)
         } else {

@@ -266,6 +266,37 @@ class UnifiedDaemonContractTest {
     }
 
     @Test
+    fun talkModeWakeSettingsStartControlsEvenWithoutSoftwareWakeWordFallback() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val shadowApplication = shadowOf(context as Application)
+        shadowApplication.clearStartedServices()
+
+        val result = OpHandler.handle(
+            context,
+            JSONObject()
+                .put("type", "voice_set_wake_words")
+                .put("enabled", false)
+                .put("talkMode", true)
+        )
+
+        assertTrue(result.ok)
+        assertTrue(
+            "Expected Talk Mode wake settings to start outside-app voice controls",
+            shadowApplication.allStartedServices.any { intent ->
+                intent.action == OutsideAppVoiceSessionService.ACTION_START &&
+                    intent.component?.className == OutsideAppVoiceSessionService::class.java.name
+            }
+        )
+        assertFalse(
+            "Talk Mode-only wake settings must not end outside-app voice controls",
+            shadowApplication.allStartedServices.any { intent ->
+                intent.action == OutsideAppVoiceSessionService.ACTION_END &&
+                    intent.component?.className == OutsideAppVoiceSessionService::class.java.name
+            }
+        )
+    }
+
+    @Test
     fun talkModeDisableEndsOutsideAppVoiceControls() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val shadowApplication = shadowOf(context as Application)
