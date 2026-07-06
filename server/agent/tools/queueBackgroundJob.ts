@@ -3,6 +3,7 @@ import { submitAgentJob, type AgentJobType } from "../jobQueue";
 import { SUB_AGENT_TYPES } from "../subagents";
 import { getProtectedEntityNames, findEntityNearMatch } from "../../memory/protectedEntities";
 import { buildQueueBackgroundJobInput } from "./queueBackgroundJobInput";
+import { buildCloudBackgroundJobInput, type CloudBackgroundProviderOption } from "../cloudBackgroundEscalation";
 
 interface QueueJobArgs {
   agent_type?: string;
@@ -10,6 +11,11 @@ interface QueueJobArgs {
   title?: string;
   skip_entity_check?: boolean;
   skip_location_check?: boolean;
+  task_scoped_cloud?: boolean;
+  cloud_provider_id?: string;
+  cloud_provider_label?: string;
+  cloud_provider_auth_type?: "api_key" | "oauth";
+  cloud_budget_usd?: number;
 }
 
 /**
@@ -212,6 +218,28 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
         description:
           "Set to true ONLY after the user has confirmed the specific city and state (e.g. 'Watertown, NY'). Update the prompt to include the confirmed city+state before re-calling. Default: false.",
       },
+      task_scoped_cloud: {
+        type: "boolean",
+        description:
+          "Set to true only after the user explicitly approved using a connected cloud provider for this background job. This never switches the live chat model.",
+      },
+      cloud_provider_id: {
+        type: "string",
+        description: "Approved cloud provider id for task-scoped cloud work, such as openai, anthropic, or google.",
+      },
+      cloud_provider_label: {
+        type: "string",
+        description: "Short user-facing provider label that was approved, such as OpenAI, Claude, or Gemini.",
+      },
+      cloud_provider_auth_type: {
+        type: "string",
+        enum: ["api_key", "oauth"],
+        description: "Auth route approved for the provider. API-key routes require cloud_budget_usd.",
+      },
+      cloud_budget_usd: {
+        type: "number",
+        description: "Required per-job budget in USD for API-key cloud providers. Not used for OAuth subscription providers.",
+      },
     },
     required: ["agent_type", "prompt"],
   },
@@ -221,6 +249,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     const prompt = String(a.prompt || "").trim();
     const skipEntityCheck = Boolean(a.skip_entity_check);
     const skipLocationCheck = Boolean(a.skip_location_check);
+    const taskScopedCloud = Boolean(a.task_scoped_cloud);
 
     if (!QUEUEABLE_AGENT_TYPES.includes(agentType)) {
       return {
@@ -231,6 +260,44 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
     }
     if (!prompt) {
       return { ok: false, content: "prompt is required.", label: "Missing prompt" };
+    }
+
+    let extraJobInput: Record<string, unknown> | undefined;
+    if (taskScopedCloud) {
+      const providerId = String(a.cloud_provider_id || "").trim();
+      const providerLabel = String(a.cloud_provider_label || providerId).trim();
+      const authType = a.cloud_provider_auth_type;
+      if (!providerId || !providerLabel || (authType !== "api_key" && authType !== "oauth")) {
+        return {
+          ok: true,
+          content:
+            "Cloud background tasks need an approved provider before I can queue them. Ask which connected cloud provider to use, or open Settings if none are connected.",
+          label: "Cloud provider approval needed",
+        };
+      }
+      const budgetUsd = Number(a.cloud_budget_usd);
+      if (authType === "api_key" && (!Number.isFinite(budgetUsd) || budgetUsd <= 0)) {
+        return {
+          ok: true,
+          content:
+            `${providerLabel} uses an API key for cloud work, so I need a per-job budget before queueing it.`,
+          label: "Cloud budget approval needed",
+        };
+      }
+      const provider: CloudBackgroundProviderOption = {
+        id: providerId,
+        label: providerLabel,
+        authType,
+        requiresBudget: authType === "api_key",
+        hint: authType === "api_key"
+          ? `${providerLabel} API key, budget required`
+          : `${providerLabel} subscription, no token budget needed`,
+      };
+      extraJobInput = buildCloudBackgroundJobInput({
+        prompt,
+        provider,
+        budgetUsd: authType === "api_key" ? budgetUsd : null,
+      });
     }
 
     const title = String(a.title || "").trim() || deriveTitle(agentType, prompt);
@@ -340,7 +407,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
       // Inject per-type model routing so the job queue uses the appropriate
       // GPT mini for each sub-agent workload (research/planning → gpt-4.1-mini,
       // writing/email → gpt-4o-mini).
-      const jobInput = buildQueueBackgroundJobInput(agentType as AgentJobType, ctx);
+      const jobInput = buildQueueBackgroundJobInput(agentType as AgentJobType, ctx, extraJobInput);
       const { id: jobId, isDuplicate } = await submitAgentJob({
         userId: ctx.userId,
         agentType,

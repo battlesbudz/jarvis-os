@@ -3498,6 +3498,28 @@ async function testLocalVoiceBlocksCloudAndSecondaryModels() {
   console.log("OK: local voice harness fails any live-turn cloud or secondary LLM route");
 }
 
+async function testLocalVoiceOffersCloudBackgroundTaskAfterLocalFailure() {
+  const result = await runLocalVoiceRuntimeHarnessTurn({
+    userId: "user-local-voice",
+    transcript: "Research this competitor and write a report.",
+    gemma: new ScriptedFakeLocalGemmaProvider([{ type: "blank_response" }]),
+    cloudEscalation: {
+      providers: [
+        { id: "openai", label: "OpenAI", connected: true, authType: "oauth" },
+        { id: "android-local-gemma", label: "Local", connected: true, authType: "local" },
+      ],
+    },
+  });
+
+  assert.equal(result.diagnostics.outcome, "blank_model_response");
+  assert.equal(result.diagnostics.cloudEscalation?.kind, "confirm_single_provider");
+  assert.equal(result.diagnostics.cloudEscalation?.liveModelSwitch, false);
+  assert.match(result.canonicalResponse, /Should I use OpenAI/i);
+  assert.deepEqual(result.modelCalls.map((call) => call.kind), ["local_gemma"]);
+  assert.equal(result.responseCount, 1);
+  console.log("OK: local voice can offer an explicit cloud background retry without using cloud live");
+}
+
 async function testCanonicalFinalResponseContract() {
   const result = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
@@ -3609,6 +3631,7 @@ async function main() {
   await testFalseDenialRecoveryBlocksNegatedNonAppCapabilities();
   await testScriptedFakeLocalGemmaVariants();
   testFakeAndroidRuntimeEventCoverage();
+  await testLocalVoiceOffersCloudBackgroundTaskAfterLocalFailure();
   await testLocalVoiceBlocksCloudAndSecondaryModels();
   await testCanonicalFinalResponseContract();
   console.log("\nAll Local Voice Runtime harness assertions passed.");

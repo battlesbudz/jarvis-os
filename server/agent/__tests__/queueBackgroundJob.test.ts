@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 process.env.DATABASE_URL ||= "postgres://test:test@localhost:5432/test";
 
 async function main() {
+  const { buildCloudBackgroundJobInput } = await import("../cloudBackgroundEscalation");
   const { buildQueueBackgroundJobInput } = await import("../tools/queueBackgroundJobInput");
   const queueToolSource = readFileSync(
     fileURLToPath(new URL("../tools/queueBackgroundJob.ts", import.meta.url).toString()),
@@ -51,6 +52,40 @@ async function main() {
     assert.equal(input.workerType, undefined);
     assert.equal(input.ephemeralAgent, undefined);
     console.log("OK: normal queued jobs keep model routing without ephemeral metadata");
+  }
+
+  {
+    const input = buildQueueBackgroundJobInput(
+      "research",
+      {
+        channel: "voice",
+        originChannelId: "voice-session-1",
+        discordChannelId: undefined,
+      },
+      buildCloudBackgroundJobInput({
+        prompt: "Research this competitor and write a report.",
+        provider: {
+          id: "google",
+          label: "Gemini",
+          authType: "api_key",
+          requiresBudget: true,
+          hint: "Gemini API key, budget required",
+        },
+        budgetUsd: 3,
+      }),
+    );
+
+    const task = input.cloudBackgroundTask as Record<string, unknown>;
+    assert.equal(input.model, "gpt-4.1-mini");
+    assert.equal(input.originChannel, "voice");
+    assert.equal(input.originChannelId, "voice-session-1");
+    assert.equal(task.providerId, "google");
+    assert.equal(task.providerLabel, "Gemini");
+    assert.equal(task.providerAuthType, "api_key");
+    assert.equal(task.budgetUsd, 3);
+    assert.equal(task.liveModelSwitch, false);
+    assert.deepEqual(task.disallowedCapabilities, ["phone_control", "memory_write"]);
+    console.log("OK: queue input preserves task-scoped cloud metadata without switching live chat");
   }
 
   console.log("\nAll queue background job assertions passed.");

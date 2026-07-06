@@ -5,6 +5,11 @@ import {
 import { resolveAndroidNotificationFollowUp } from "./agent/androidNotificationFollowups";
 import { LOCAL_RUNTIME_WORKING_CONTEXT_TTL_MS } from "./state/runtimeWorkingContext";
 import { normalizeVoiceRestoreReply } from "@shared/voiceApprovalGates";
+import {
+  buildCloudBackgroundEscalationDecision,
+  type CloudBackgroundEscalationDecision,
+  type CloudBackgroundProviderStatus,
+} from "./agent/cloudBackgroundEscalation";
 
 export type LocalVoiceModelCallKind = "local_gemma" | "cloud_model" | "secondary_llm";
 
@@ -162,6 +167,7 @@ export interface LocalVoiceHarnessDiagnostics {
   executedToolName?: LocalVoiceToolName;
   recoveredToolName?: LocalVoiceToolName;
   modelOutputType: ScriptedLocalGemmaStep["type"] | "runtime_direct";
+  cloudEscalation?: CloudBackgroundEscalationDecision;
   copiedDetails?: {
     capture?: {
       id: string;
@@ -185,12 +191,20 @@ export interface LocalVoiceHarnessResult {
   diagnostics: LocalVoiceHarnessDiagnostics;
 }
 
+export interface LocalVoiceCloudEscalationInput {
+  providers: CloudBackgroundProviderStatus[];
+  selectedProviderId?: string | null;
+  approvedProvider?: boolean;
+  approvedBudgetUsd?: number | null;
+}
+
 export interface LocalVoiceHarnessInput {
   userId: string;
   transcript: string;
   gemma: ScriptedFakeLocalGemmaProvider;
   androidEvents?: LocalVoiceAndroidEvent[];
   workingContext?: LocalVoiceWorkingContext;
+  cloudEscalation?: LocalVoiceCloudEscalationInput;
   now?: Date;
   simulateCloudRoute?: boolean;
   simulateSecondaryLlmRoute?: boolean;
@@ -1684,6 +1698,22 @@ function finalResponseForModelProblem(outcome: string): string {
   }
 }
 
+function cloudEscalationForModelProblem(
+  outcome: string,
+  transcript: string,
+  escalation: LocalVoiceCloudEscalationInput | undefined,
+): CloudBackgroundEscalationDecision | null {
+  if (!escalation) return null;
+  return buildCloudBackgroundEscalationDecision({
+    requestText: transcript,
+    reason: outcome,
+    providers: escalation.providers,
+    selectedProviderId: escalation.selectedProviderId,
+    approvedProvider: escalation.approvedProvider,
+    approvedBudgetUsd: escalation.approvedBudgetUsd,
+  });
+}
+
 function recordModelCall(modelCalls: LocalVoiceModelCall[], call: LocalVoiceModelCall): void {
   modelCalls.push(call);
   if (call.kind !== "local_gemma") {
@@ -1934,10 +1964,15 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
       : modelOutput.type === "blank_response"
         ? "blank_model_response"
         : "model_timeout";
-    canonicalResponse = finalResponseForModelProblem(outcome);
+    const cloudEscalation = cloudEscalationForModelProblem(outcome, transcript, input.cloudEscalation);
+    const localProblemResponse = finalResponseForModelProblem(outcome);
+    canonicalResponse = cloudEscalation && cloudEscalation.kind !== "not_offered"
+      ? `${localProblemResponse} ${cloudEscalation.message}`
+      : localProblemResponse;
     diagnostics = {
       outcome,
       modelOutputType: modelOutput.type,
+      ...(cloudEscalation ? { cloudEscalation } : {}),
     };
   }
 
