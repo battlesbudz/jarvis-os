@@ -11,6 +11,8 @@ on:
       - 'lib/**'
       - 'plugins/**'
       - 'scripts/android-daemon-emulator-e2e.mjs'
+      - 'scripts/voice-runtime-regression-gate.mjs'
+      - 'docs/apk-voice-runtime-regression-gate.md'
       - 'package.json'
       - 'package-lock.json'
 
@@ -26,6 +28,7 @@ jobs:
       EXPO_PUBLIC_DOMAIN: ${{ vars.JARVIS_PUBLIC_DOMAIN || 'https://gameplanjarvisai.up.railway.app' }}
       EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID: 464052645678-au43qstbkio1gc6foomqo1a40c9f5vpk.apps.googleusercontent.com
       ANDROID_APK_PATH: dist/e2e/app-debug.apk
+      JARVIS_ANDROID_E2E_FAKE_LOCAL_GEMMA: "1"
 
     steps:
       - name: Checkout repository

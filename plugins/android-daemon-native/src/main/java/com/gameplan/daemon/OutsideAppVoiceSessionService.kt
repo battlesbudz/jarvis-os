@@ -95,6 +95,7 @@ class OutsideAppVoiceSessionService : Service() {
         const val ACTION_SET_APPROVAL = "com.gameplan.daemon.VOICE_SESSION_SET_APPROVAL"
         const val ACTION_APPROVE = "com.gameplan.daemon.VOICE_SESSION_APPROVE"
         const val ACTION_DENY = "com.gameplan.daemon.VOICE_SESSION_DENY"
+        const val ACTION_E2E_SIMULATE_CRASH = "com.gameplan.daemon.VOICE_SESSION_E2E_SIMULATE_CRASH"
         const val EXTRA_STATE = "state"
         const val EXTRA_APPROVAL_PROMPT = "approval_prompt"
         const val EXTRA_APPROVAL_TOKEN = "approval_token"
@@ -160,6 +161,12 @@ class OutsideAppVoiceSessionService : Service() {
                 putExtra(EXTRA_APPROVAL_TOKEN, confirmationToken ?: "")
             }
         }
+
+        fun e2eCrashIntent(context: Context): Intent {
+            return Intent(context, OutsideAppVoiceSessionService::class.java).apply {
+                action = ACTION_E2E_SIMULATE_CRASH
+            }
+        }
     }
 
     private val overlayController by lazy { OutsideAppVoiceOverlayController(this) }
@@ -219,6 +226,10 @@ class OutsideAppVoiceSessionService : Service() {
                 approvalToken = ""
                 setState(OutsideAppVoiceState.LISTENING)
             }
+            ACTION_E2E_SIMULATE_CRASH -> {
+                simulateUnexpectedStopForE2e(startId)
+                return START_NOT_STICKY
+            }
             ACTION_OPEN -> {
                 if (sessionActive) {
                     startForegroundCompat()
@@ -257,6 +268,14 @@ class OutsideAppVoiceSessionService : Service() {
     fun stateForTest(): OutsideAppVoiceState = state
 
     fun sessionActiveForTest(): Boolean = sessionActive
+
+    private fun simulateUnexpectedStopForE2e(startId: Int) {
+        expectedStop = false
+        if (!sessionActive) sessionActive = true
+        if (state == OutsideAppVoiceState.IDLE) state = OutsideAppVoiceState.LISTENING
+        DaemonLog.add("outside_app_voice: e2e simulated crash")
+        stopSelf(startId)
+    }
 
     private fun setStateFromAnyThread(nextState: OutsideAppVoiceState) {
         if (Looper.myLooper() == Looper.getMainLooper()) {

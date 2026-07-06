@@ -38,6 +38,7 @@
     "jarvis:desktop-connector:build": "npm --prefix desktop-connector install && npm --prefix desktop-connector run build",
     "jarvis:qa:endpoints": "node scripts/deployed-jarvis-endpoint-qa.mjs",
     "jarvis:android-daemon:emulator-e2e": "node scripts/android-daemon-emulator-e2e.mjs",
+    "jarvis:voice-runtime:regression-gate": "node scripts/voice-runtime-regression-gate.mjs",
     "jarvis:qa:composio": "node scripts/composio-production-smoke.mjs",
     "jarvis:qa:agent-sdk-hitl": "tsx scripts/agent-sdk-hitl-smoke.ts",
     "jarvis:qa:agent-sdk-golden": "tsx scripts/agent-sdk-golden-workflows.ts",

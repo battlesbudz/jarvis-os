@@ -84,6 +84,7 @@ Use this map when deciding what to run:
 | Provider routing, model selection, OpenAI-compatible providers, or ChatGPT subscription path | `npx tsx server/agent/__tests__/providerEnv.assert.ts`, `npx tsx server/agent/__tests__/modelRouter.assert.ts`, plus the nearest provider-specific test |
 | OpenAI provider auth or hosted provider setup | `npx tsx server/agent/__tests__/openaiProviderAuthRoutes.assert.ts`, `npx tsx server/agent/__tests__/openaiProviderAuthRuntime.assert.ts` |
 | Android daemon permissions, update URLs, APK download behavior, or daemon pairing | `node scripts/__tests__/androidDaemonUpdateConfig.test.mjs` |
+| APK voice/runtime, Local Gemma phone control, outside-app voice, or Android tool routing | `npm run jarvis:voice-runtime:regression-gate`, `npm test`, and `npm run jarvis:android-daemon:emulator-e2e` or the Android Daemon Emulator E2E workflow |
 | Desktop connector permissions, sidecar launch, local shell/file access, or watchdog behavior | `node scripts/__tests__/desktopConnectorTauriConfig.test.mjs`, `node scripts/__tests__/desktopDaemonWatchdog.test.mjs` |
 | Settings UI provider controls, runtime diagnostics, or account/provider setup | `npx tsx server/agent/__tests__/webchatProviderSettings.assert.ts`, `npx tsx lib/__tests__/runtimeDiagnosticsUx.assert.ts` |
 | Storage helpers in `lib/storage.ts` | Add or update a focused `lib/__tests__/storage*.assert.ts` test before changing behavior, then run it directly. |

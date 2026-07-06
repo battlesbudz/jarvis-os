@@ -24,6 +24,7 @@ List commands run:
 
 - [ ] `npm run server:build`
 - [ ] `npm run jarvis:doctor`
+- [ ] `npm run jarvis:voice-runtime:regression-gate`
 - [ ] `npm test`
 - [ ] `npm run docs:audit`
 - [ ] Dashboard build, Android build, connector check, or other targeted test:
@@ -39,6 +40,7 @@ Check any area touched and list the targeted test or assertion that covers it:
 
 - [ ] Provider routing / ChatGPT subscription path:
 - [ ] Android daemon permissions or pairing:
+- [ ] APK voice/runtime or Local Gemma phone control:
 - [ ] Desktop connector permissions or local shell/file access:
 - [ ] Settings UI or account/provider controls:
 - [ ] Storage, memory, SOUL, or G-Brain behavior:
