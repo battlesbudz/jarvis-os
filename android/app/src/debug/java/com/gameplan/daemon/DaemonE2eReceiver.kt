@@ -51,6 +51,17 @@ class DaemonE2eReceiver : BroadcastReceiver() {
                     val state = OutsideAppVoiceState.fromWireName(intent.getStringExtra(OutsideAppVoiceSessionService.EXTRA_STATE))
                     startVoiceService(context, OutsideAppVoiceSessionService.setStateIntent(context, state))
                 }
+                "set_approval" -> startVoiceService(
+                    context,
+                    OutsideAppVoiceSessionService.setApprovalIntent(
+                        context,
+                        intent.getStringExtra(OutsideAppVoiceSessionService.EXTRA_APPROVAL_PROMPT)
+                            ?: "Approve this action?",
+                        intent.getStringExtra(OutsideAppVoiceSessionService.EXTRA_APPROVAL_TOKEN),
+                    ),
+                )
+                "approve" -> OutsideAppVoiceSessionService.instance?.onOverlayApprove()
+                "deny" -> OutsideAppVoiceSessionService.instance?.onOverlayDeny()
                 "overlay_tap" -> OutsideAppVoiceSessionService.instance?.onOverlayTapped()
                 "status" -> Unit
                 else -> Log.w(TAG, "unknown command=$command token=$token")
@@ -69,12 +80,13 @@ class DaemonE2eReceiver : BroadcastReceiver() {
     private fun logVoiceSessionStatus(token: String) {
         val active = OutsideAppVoiceSessionService.isActive()
         val state = OutsideAppVoiceSessionService.currentState()
+        val approvalPrompt = OutsideAppVoiceSessionService.currentApprovalPrompt()
         val overlayTapAction = OutsideAppVoiceSessionStateMachine.overlayTapAction(state)
         val notificationActions = OutsideAppVoiceSessionStateMachine.notificationActions()
             .joinToString(",") { it.label }
         Log.i(
             TAG,
-            "token=$token active=$active state=${state.wireName} overlayTap=$overlayTapAction actions=$notificationActions",
+            "token=$token active=$active state=${state.wireName} approvalPrompt=\"$approvalPrompt\" overlayTap=$overlayTapAction actions=$notificationActions",
         )
     }
 

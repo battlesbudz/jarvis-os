@@ -18,7 +18,14 @@ interface ResultMsg { type: "result"; id: string; ok: boolean; data?: unknown; e
 interface HelloMsg { type: "hello"; ok: boolean; userId?: string; error?: string }
 interface PingMsg { type: "ping" }
 interface NotificationEventMsg { type: "notification_event"; notification: PhoneNotification }
-interface VoiceSessionControlMsg { type: "voice_session_control"; action?: string; state?: string; outsideApp?: boolean }
+interface VoiceSessionControlMsg {
+  type: "voice_session_control";
+  action?: string;
+  state?: string;
+  outsideApp?: boolean;
+  confirmationToken?: string;
+  reactActive?: boolean;
+}
 
 export type DaemonOp =
   | { type: "ping" }
@@ -64,6 +71,7 @@ export type DaemonOp =
   | { type: "browser_mcp"; tool: string; args: Record<string, unknown> }
   | { type: "voice_set_wake_words"; enabled: boolean; words?: string[]; talkMode?: boolean; allowSoftwareWakeWordFallback?: boolean }
   | { type: "voice_set_talk_mode"; enabled: boolean }
+  | { type: "voice_set_outside_app_state"; state: "listening" | "speaking" | "working" | "approval" | "paused" | "idle" }
   | { type: "voice_tts_finished" }
   | { type: "voice_speak_audio"; audioBase64: string; format?: string }
   | { type: "android_camera_snap"; facing?: "front" | "back" | "both" }
@@ -161,7 +169,51 @@ const userSockets = new Map<string, WebSocket>();
 const pendingByUser = new Map<string, Map<string, PendingOp>>();
 const daemonSocketReplacementLocks = new Set<string>();
 const ANDROID_DAEMON_BOOTSTRAP_TOKEN_PREFIX = "android_bootstrap_";
+const VOICE_APPROVAL_REACT_ACK_TTL_MS = 60_000;
+const VOICE_APPROVAL_REACT_FALLBACK_DELAY_MS = 10_000;
 let opCounter = 0;
+let daemonVoiceApprovalHandler: ((input: {
+  userId: string;
+  token: string;
+  action: "approval_approve" | "approval_deny";
+  approved: boolean;
+}) => Promise<void>) | null = null;
+const daemonVoiceApprovalReactAcks = new Map<string, number>();
+
+function daemonVoiceApprovalAckKey(userId: string, token: string): string {
+  return `${userId}:${token}`;
+}
+
+function cleanupDaemonVoiceApprovalAcks(now = Date.now()): void {
+  for (const [key, expiresAt] of daemonVoiceApprovalReactAcks.entries()) {
+    if (expiresAt < now) daemonVoiceApprovalReactAcks.delete(key);
+  }
+}
+
+function consumeDaemonVoiceApprovalAck(userId: string, token: string): boolean {
+  cleanupDaemonVoiceApprovalAcks();
+  const key = daemonVoiceApprovalAckKey(userId, token);
+  const expiresAt = daemonVoiceApprovalReactAcks.get(key);
+  if (!expiresAt) return false;
+  daemonVoiceApprovalReactAcks.delete(key);
+  return expiresAt >= Date.now();
+}
+
+export function setDaemonVoiceApprovalHandler(
+  handler: typeof daemonVoiceApprovalHandler,
+): void {
+  daemonVoiceApprovalHandler = handler;
+}
+
+export function ackDaemonVoiceApproval(userId: string, token: string): void {
+  const normalizedToken = token.trim();
+  if (!userId || !normalizedToken) return;
+  cleanupDaemonVoiceApprovalAcks();
+  daemonVoiceApprovalReactAcks.set(
+    daemonVoiceApprovalAckKey(userId, normalizedToken),
+    Date.now() + VOICE_APPROVAL_REACT_ACK_TTL_MS,
+  );
+}
 
 // Wake word event subscriptions: userId → set of callbacks
 const wakeWordTriggerCallbacks = new Map<string, Set<(e: { phrase: string; transcript: string; daemonHandling: boolean }) => void>>();
@@ -1325,6 +1377,32 @@ export function startDaemonBridge(server: HttpServer): void {
       if ((m.type as string) === "voice_session_control" && pairedUserId) {
         const control = m as VoiceSessionControlMsg;
         const action = String(control.action || "").trim().toLowerCase();
+        const confirmationToken = String(control.confirmationToken || "").trim();
+        if (
+          (action === "approval_approve" || action === "approval_deny") &&
+          confirmationToken &&
+          daemonVoiceApprovalHandler
+        ) {
+          const runApprovalFallback = () => {
+            if (control.reactActive === true && consumeDaemonVoiceApprovalAck(pairedUserId, confirmationToken)) {
+              return;
+            }
+            daemonVoiceApprovalHandler?.({
+              userId: pairedUserId,
+              token: confirmationToken,
+              action,
+              approved: action === "approval_approve",
+            }).catch((err) => {
+              console.error(`[daemon] outside-app voice approval failed userId=${pairedUserId}:`, err);
+            });
+          };
+          if (control.reactActive === true) {
+            const timer = setTimeout(runApprovalFallback, VOICE_APPROVAL_REACT_FALLBACK_DELAY_MS);
+            (timer as unknown as { unref?: () => void }).unref?.();
+          } else {
+            runApprovalFallback();
+          }
+        }
         if (action === "pause" || action === "paused" || action === "end") {
           cancelDaemonVoiceTurns(pairedUserId);
         }

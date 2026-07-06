@@ -92,7 +92,12 @@ class OutsideAppVoiceSessionService : Service() {
         const val ACTION_END = "com.gameplan.daemon.VOICE_SESSION_END"
         const val ACTION_OPEN = "com.gameplan.daemon.VOICE_SESSION_OPEN"
         const val ACTION_SET_STATE = "com.gameplan.daemon.VOICE_SESSION_SET_STATE"
+        const val ACTION_SET_APPROVAL = "com.gameplan.daemon.VOICE_SESSION_SET_APPROVAL"
+        const val ACTION_APPROVE = "com.gameplan.daemon.VOICE_SESSION_APPROVE"
+        const val ACTION_DENY = "com.gameplan.daemon.VOICE_SESSION_DENY"
         const val EXTRA_STATE = "state"
+        const val EXTRA_APPROVAL_PROMPT = "approval_prompt"
+        const val EXTRA_APPROVAL_TOKEN = "approval_token"
 
         @Volatile var instance: OutsideAppVoiceSessionService? = null
             private set
@@ -125,6 +130,10 @@ class OutsideAppVoiceSessionService : Service() {
             instance?.setStateFromAnyThread(OutsideAppVoiceState.LISTENING)
         }
 
+        fun currentApprovalPrompt(): String = instance?.approvalPrompt ?: ""
+
+        fun currentApprovalToken(): String = instance?.approvalToken ?: ""
+
         fun startIntent(context: Context): Intent {
             return Intent(context, OutsideAppVoiceSessionService::class.java).apply {
                 action = ACTION_START
@@ -143,12 +152,22 @@ class OutsideAppVoiceSessionService : Service() {
                 putExtra(EXTRA_STATE, state.wireName)
             }
         }
+
+        fun setApprovalIntent(context: Context, prompt: String, confirmationToken: String? = null): Intent {
+            return Intent(context, OutsideAppVoiceSessionService::class.java).apply {
+                action = ACTION_SET_APPROVAL
+                putExtra(EXTRA_APPROVAL_PROMPT, prompt)
+                putExtra(EXTRA_APPROVAL_TOKEN, confirmationToken ?: "")
+            }
+        }
     }
 
     private val overlayController by lazy { OutsideAppVoiceOverlayController(this) }
     private val mainHandler = Handler(Looper.getMainLooper())
     @Volatile private var state: OutsideAppVoiceState = OutsideAppVoiceState.IDLE
     @Volatile private var sessionActive = false
+    @Volatile private var approvalPrompt = ""
+    @Volatile private var approvalToken = ""
 
     override fun onCreate() {
         super.onCreate()
@@ -181,6 +200,22 @@ class OutsideAppVoiceSessionService : Service() {
             ACTION_SET_STATE -> {
                 if (!sessionActive) sessionActive = true
                 setState(OutsideAppVoiceState.fromWireName(intent.getStringExtra(EXTRA_STATE)))
+            }
+            ACTION_SET_APPROVAL -> {
+                if (!sessionActive) sessionActive = true
+                approvalPrompt = sanitizeApprovalPrompt(intent.getStringExtra(EXTRA_APPROVAL_PROMPT))
+                approvalToken = sanitizeApprovalToken(intent.getStringExtra(EXTRA_APPROVAL_TOKEN))
+                setState(OutsideAppVoiceState.APPROVAL)
+            }
+            ACTION_APPROVE -> {
+                sendVoiceSessionEvent("approval_approve")
+                setState(OutsideAppVoiceState.WORKING)
+            }
+            ACTION_DENY -> {
+                sendVoiceSessionEvent("approval_deny")
+                approvalPrompt = ""
+                approvalToken = ""
+                setState(OutsideAppVoiceState.LISTENING)
             }
             ACTION_OPEN -> {
                 if (sessionActive) {
@@ -265,7 +300,22 @@ class OutsideAppVoiceSessionService : Service() {
         DaemonLog.add("outside_app_voice: wake capture resumed")
     }
 
+    internal fun onOverlayApprove() {
+        sendVoiceSessionEvent("approval_approve")
+        setState(OutsideAppVoiceState.WORKING)
+    }
+
+    internal fun onOverlayDeny() {
+        sendVoiceSessionEvent("approval_deny")
+        approvalPrompt = ""
+        setState(OutsideAppVoiceState.LISTENING)
+    }
+
     private fun setState(nextState: OutsideAppVoiceState, actionName: String = nextState.wireName) {
+        if (nextState != OutsideAppVoiceState.APPROVAL) {
+            approvalPrompt = ""
+            approvalToken = ""
+        }
         state = nextState
         startForegroundCompat()
         updateOverlay()
@@ -277,6 +327,8 @@ class OutsideAppVoiceSessionService : Service() {
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         endTalkModeCapture()
         sendVoiceSessionEvent("end")
+        approvalPrompt = ""
+        approvalToken = ""
         state = OutsideAppVoiceState.IDLE
         sessionActive = false
         overlayController.remove()
@@ -300,7 +352,23 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private fun updateOverlay() {
-        overlayController.render(state)
+        overlayController.render(state, approvalPrompt)
+    }
+
+    private fun sanitizeApprovalPrompt(prompt: String?): String {
+        return prompt
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            ?.take(120)
+            ?: ""
+    }
+
+    private fun sanitizeApprovalToken(token: String?): String {
+        return token
+            ?.replace(Regex("\\s+"), "")
+            ?.trim()
+            ?.take(200)
+            ?: ""
     }
 
     private fun createNotificationChannel() {
@@ -376,14 +444,23 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private fun sendVoiceSessionEvent(actionName: String) {
+        val confirmationToken = approvalToken
+        val reactActive = JarvisDaemonModule.emitVoiceSessionControl(
+            actionName,
+            state.wireName,
+            confirmationToken,
+        )
         val event = JSONObject().apply {
             put("type", "voice_session_control")
             put("action", actionName)
             put("state", state.wireName)
             put("outsideApp", true)
+            put("reactActive", reactActive)
+            if (confirmationToken.isNotBlank()) {
+                put("confirmationToken", confirmationToken)
+            }
         }
         WebSocketService.sendEvent(event.toString())
-        JarvisDaemonModule.emitVoiceSessionControl(actionName, state.wireName)
         DaemonLog.add("voice_session: $actionName state=${state.wireName}")
     }
 }
@@ -394,17 +471,21 @@ class OutsideAppVoiceOverlayController(
     private var windowManager: WindowManager? = null
     private var root: LinearLayout? = null
     private var controls: LinearLayout? = null
+    private var approvalPanel: LinearLayout? = null
+    private var approvalText: TextView? = null
 
-    fun render(state: OutsideAppVoiceState) {
+    fun render(state: OutsideAppVoiceState, approvalPrompt: String = "") {
         if (!canDrawOverlay()) {
             remove()
             return
         }
         val view = ensureView()
         updateMic(view, state)
+        updateApprovalPanel(state, approvalPrompt)
     }
 
     fun showControls() {
+        if ((root?.tag as? OutsideAppVoiceState) == OutsideAppVoiceState.APPROVAL) return
         controls?.visibility = View.VISIBLE
     }
 
@@ -416,6 +497,8 @@ class OutsideAppVoiceOverlayController(
         }
         root = null
         controls = null
+        approvalPanel = null
+        approvalText = null
         windowManager = null
     }
 
@@ -447,13 +530,38 @@ class OutsideAppVoiceOverlayController(
             gravity = Gravity.CENTER
             visibility = View.GONE
         }
+        val approvalRow = LinearLayout(service).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            visibility = View.GONE
+            contentDescription = "Jarvis approval controls"
+        }
+        val promptText = TextView(service).apply {
+            text = "Approve this action?"
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            setPadding(10, 6, 10, 4)
+            gravity = Gravity.CENTER
+            maxLines = 2
+        }
+        val approvalButtons = LinearLayout(service).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        approvalButtons.addView(controlButton("Approve") { service.onOverlayApprove() })
+        approvalButtons.addView(controlButton("Deny") { service.onOverlayDeny() })
+        approvalRow.addView(promptText)
+        approvalRow.addView(approvalButtons)
         actionRow.addView(controlButton("Pause") { service.onOverlayPause() })
         actionRow.addView(controlButton("Resume") { service.onOverlayResume() })
         actionRow.addView(controlButton("End") { service.onOverlayEnd() })
         actionRow.addView(controlButton("Open") { service.onOverlayOpen() })
         container.addView(mic)
+        container.addView(approvalRow)
         container.addView(actionRow)
         controls = actionRow
+        approvalPanel = approvalRow
+        approvalText = promptText
 
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -478,6 +586,7 @@ class OutsideAppVoiceOverlayController(
     }
 
     private fun updateMic(container: LinearLayout, state: OutsideAppVoiceState) {
+        container.tag = state
         val mic = container.getChildAt(0) as? TextView ?: return
         mic.contentDescription = "Jarvis voice ${state.wireName}"
         mic.setTextColor(
@@ -490,6 +599,14 @@ class OutsideAppVoiceOverlayController(
                 OutsideAppVoiceState.IDLE -> Color.WHITE
             },
         )
+    }
+
+    private fun updateApprovalPanel(state: OutsideAppVoiceState, approvalPrompt: String) {
+        val panel = approvalPanel ?: return
+        val isApproval = state == OutsideAppVoiceState.APPROVAL
+        panel.visibility = if (isApproval) View.VISIBLE else View.GONE
+        controls?.visibility = if (isApproval) View.GONE else controls?.visibility ?: View.GONE
+        approvalText?.text = if (approvalPrompt.isNotBlank()) approvalPrompt else "Approve this action?"
     }
 
     private fun controlButton(label: String, onClick: () -> Unit): TextView {

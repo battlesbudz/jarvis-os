@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import com.facebook.react.common.LifecycleState
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -23,16 +24,21 @@ class JarvisDaemonModule(
 
         @Volatile private var activeReactContext: ReactApplicationContext? = null
 
-        fun emitVoiceSessionControl(actionName: String, state: String) {
-            val context = activeReactContext ?: return
+        fun emitVoiceSessionControl(actionName: String, state: String, confirmationToken: String?): Boolean {
+            val context = activeReactContext ?: return false
+            if (context.lifecycleState != LifecycleState.RESUMED) return false
             val payload = Arguments.createMap().apply {
                 putString("action", actionName)
                 putString("state", state)
                 putBoolean("outsideApp", true)
+                if (!confirmationToken.isNullOrBlank()) {
+                    putString("confirmationToken", confirmationToken)
+                }
             }
             context
                 .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                 .emit(VOICE_SESSION_CONTROL_EVENT, payload)
+            return true
         }
     }
 
@@ -158,6 +164,17 @@ class JarvisDaemonModule(
     fun setOutsideAppVoiceSessionState(state: String, promise: Promise) {
         val nextState = OutsideAppVoiceState.fromWireName(state)
         val intent = OutsideAppVoiceSessionService.setStateIntent(reactApplicationContext, nextState)
+        if (!startVoiceSessionServiceCompat(intent, promise)) return
+        promise.resolve(buildStatusMap())
+    }
+
+    @ReactMethod
+    fun setOutsideAppVoiceApproval(prompt: String, confirmationToken: String, promise: Promise) {
+        val intent = OutsideAppVoiceSessionService.setApprovalIntent(
+            reactApplicationContext,
+            prompt,
+            confirmationToken,
+        )
         if (!startVoiceSessionServiceCompat(intent, promise)) return
         promise.resolve(buildStatusMap())
     }

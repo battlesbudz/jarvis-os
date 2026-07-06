@@ -56,7 +56,7 @@ import { registerDiscordConnectionRoutes } from "./routes/discordConnectionRoute
 import { registerGoalSummaryRoutes } from "./routes/goalSummaryRoutes";
 import { registerBrainDumpRoutes } from "./routes/brainDumpRoutes";
 import { registerCoachAudioRoutes } from "./routes/coachAudioRoutes";
-import { registerCoachActionConfirmationRoutes } from "./routes/coachActionConfirmationRoutes";
+import { executePendingCoachAction, registerCoachActionConfirmationRoutes } from "./routes/coachActionConfirmationRoutes";
 import { registerCoachInsightRoutes } from "./routes/coachInsightRoutes";
 import { registerCoachSessionRoutes } from "./routes/coachSessionRoutes";
 import { registerWebchatEventsRoutes } from "./routes/webchatEventsRoutes";
@@ -76,7 +76,7 @@ import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoul
 import { buildUntrustedSoulContext, BUDGET_PRESETS } from "./memory/contextBuilder";
 import { containsRawRestrictedContent } from "./memory/restrictedContent";
 import { listPeople, deletePerson } from "./memory/people";
-import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, type AndroidDaemonAction } from "./daemon/bridge";
+import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, setDaemonVoiceApprovalHandler, type AndroidDaemonAction } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
@@ -128,6 +128,10 @@ import {
   runCoachModelTurn,
   streamCoachModelTurn,
 } from "./services/aiCoachContextService";
+import {
+  buildAndroidSubmitConfirmationPreview,
+  isAndroidSubmitCapableAction,
+} from "./agent/voiceApprovalServerGate";
 
 const RESTRICTED_MEMORY_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
 
@@ -2216,6 +2220,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             if (tc.type !== 'function') continue;
             let args: any = {};
             try { args = JSON.parse(tc.function.arguments); } catch {}
+            const userRequestText = String([...messages].reverse().find((m: any) => m?.role === 'user')?.content ?? '');
 
             const connectedAccountPermission = tc.function.name === 'connected_accounts_execute'
               ? classifyComposioActionPermission(
@@ -2224,9 +2229,11 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                   JSON.stringify(args.arguments || args.input || {}).slice(0, 1000),
                 )
               : null;
+            const androidSubmitApprovalRequired = isAndroidSubmitCapableAction(tc.function.name, args, userRequestText);
             const isHighStakes = tc.function.name === 'send_email' ||
               (tc.function.name === 'connected_accounts_execute' && connectedAccountPermission?.approvalRequired === true && args.dry_run !== true) ||
-              (tc.function.name === 'daemon_action' && ['shell', 'file_write'].includes(String(args.action || '')));
+              (tc.function.name === 'daemon_action' && ['shell', 'file_write'].includes(String(args.action || ''))) ||
+              androidSubmitApprovalRequired;
 
             if (isHighStakes) {
               openCoachSse(res);
@@ -2242,6 +2249,8 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 preview.connection = String(args.account || args.connected_account_id || args.connectedAccountId || '');
                 preview.reason = connectedAccountPermission?.reason || 'This Composio action can change an external account.';
                 if (args.arguments) preview.data = typeof args.arguments === 'string' ? args.arguments : JSON.stringify(args.arguments).slice(0, 500);
+              } else if (androidSubmitApprovalRequired) {
+                Object.assign(preview, buildAndroidSubmitConfirmationPreview(tc.function.name, args, userRequestText));
               } else {
                 preview.action = String(args.action || '');
                 if (args.cmd) preview.cmd = String(args.cmd);
@@ -2821,6 +2830,78 @@ You can extend yourself by building new tools directly. Generate the complete Ty
   registerWebchatInviteRoutes(app, authMiddleware);
 
   registerCoachSessionRoutes(app, openai);
+
+  setDaemonVoiceApprovalHandler(async ({ userId, token, approved }) => {
+    let handledConfirmation = false;
+    const saveApprovalOutcome = async (text: string, executedAction?: { tool: string; result: "success" | "error"; label: string; detail?: string }) => {
+      await savePendingCoachResponse(userId, text, undefined, {
+        clearPendingConfirmationToken: token,
+        executedAction,
+      });
+    };
+    try {
+      if (approved) {
+        const pending = pendingConfirmations.get(token);
+        if (!pending || pending.userId !== userId) {
+          handledConfirmation = true;
+          await saveApprovalOutcome("That approval expired, so no phone action was taken.", {
+            tool: "confirmed_action",
+            result: "error",
+            label: "Approval expired",
+            detail: "No matching pending confirmation was found for the outside-app approval token.",
+          });
+          return;
+        }
+        handledConfirmation = true;
+        try {
+          const execResult = await executePendingCoachAction({
+            pendingConfirmations,
+            executeCoachTool,
+            userId,
+            token,
+          });
+          const resultText = execResult.result === "success"
+            ? `${execResult.label || "Action"} completed successfully.`
+            : `${execResult.label || "Action"} failed: ${execResult.detail || "Unknown error"}`;
+          await saveApprovalOutcome(resultText, {
+            tool: pending?.tool || "confirmed_action",
+            result: execResult.result === "success" ? "success" : "error",
+            label: execResult.label || (execResult.result === "success" ? "Done" : "Failed"),
+            detail: execResult.detail,
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          await saveApprovalOutcome("That action could not be completed. The approval may have expired.", {
+            tool: pending?.tool || "confirmed_action",
+            result: "error",
+            label: "Action failed",
+            detail,
+          });
+        }
+        return;
+      }
+      const pending = pendingConfirmations.get(token);
+      if (pending?.userId === userId) {
+        handledConfirmation = true;
+        pendingConfirmations.delete(token);
+        await saveApprovalOutcome("Got it - I won't proceed with that action.");
+      } else {
+        handledConfirmation = true;
+        await saveApprovalOutcome("That approval expired, so there was nothing left to cancel.", {
+          tool: "confirmed_action",
+          result: "error",
+          label: "Approval expired",
+          detail: "No matching pending confirmation was found for the outside-app denial token.",
+        });
+      }
+    } finally {
+      if (handledConfirmation) {
+        await sendDaemonOp(userId, { type: "voice_set_outside_app_state", state: "listening" }, 5000).catch((err) => {
+          console.warn(`[voice] failed to reset outside-app approval state userId=${userId}:`, err);
+        });
+      }
+    }
+  });
 
   registerCoachActionConfirmationRoutes(app, { pendingConfirmations, executeCoachTool, openai });
 

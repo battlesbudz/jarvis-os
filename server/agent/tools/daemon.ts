@@ -157,7 +157,7 @@ IN-APP SEARCH — IMPORTANT: If the user asks you to search for something inside
 
 RETRY AFTER PARTIAL FAILURE: When android_search_in_app returns ok=false, it always includes step_reached (the step number where the failure occurred) and error_at_step (a short label for the failure type). You can retry independently without restarting from scratch by calling android_search_in_app again with resume_from_step set to the step_reached value from the failure response. This skips the app-open and load-wait steps so recovery is fast. For example: if step_reached=3, call with resume_from_step: 3 to re-attempt only the search-bar tap. Only restart from step 1 (omit resume_from_step) if the app needs to be reopened (e.g. login wall, app crash). Always read the suggestion field in the failure response — it will tell you the right recovery action for the specific failure.
 
-Always confirm with the user before tap/type/swipe actions and before android_notification_reply, android_sms_send, android_camera_clip, and android_screen_record. Use android_read_screen or android_screenshot to understand context before acting. Require confirmation before any destructive shell or file_write actions. When an Android daemon is paired, prefer android_* actions. Returns the daemon's response or an error if not paired.`,
+Do not require confirmation for low-risk phone navigation and read-only control: opening apps, reading notifications, reading the screen, searching, tapping ordinary UI, scrolling, and typing into focused fields can run automatically. Require confirmation before external submit/send/save boundaries, android_notification_reply, android_sms_send, android_camera_clip, android_screen_record, destructive shell/file_write actions, deletes, payments, purchases, public posts, and account changes. Use android_read_screen or android_screenshot to understand context before acting. When an Android daemon is paired, prefer android_* actions. Returns the daemon's response or an error if not paired.`,
   parameters: {
     type: "object",
     properties: {
@@ -272,7 +272,7 @@ Always confirm with the user before tap/type/swipe actions and before android_no
         op = { type: "android_tap", x: args.x, y: args.y };
       } else if (rawAction === "android_type") {
         if (!args.text) return { ok: false, content: jsonErrorContent("text required") };
-        op = { type: "android_type", text: String(args.text) };
+        op = { type: "android_type", text: String(args.text), submit: args.submit === true };
       } else if (rawAction === "android_swipe") {
         if (typeof args.x1 !== "number" || typeof args.y1 !== "number" || typeof args.x2 !== "number" || typeof args.y2 !== "number") {
           return { ok: false, content: jsonErrorContent("x1, y1, x2, y2 required") };

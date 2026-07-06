@@ -140,6 +140,7 @@ object OpHandler {
                 "notify" -> handleNotify(context, op)
                 "voice_set_wake_words" -> handleSetWakeWords(context, op)
                 "voice_set_talk_mode" -> handleSetTalkMode(context, op)
+                "voice_set_outside_app_state" -> handleSetOutsideAppState(context, op)
                 "voice_tts_finished" -> handleTtsFinished()
                 "voice_speak_audio" -> handleSpeakAudio(context, op)
                 "android_camera_snap" -> CameraHandler.handleSnap(context, op)
@@ -1424,6 +1425,18 @@ object OpHandler {
                 .put("words", words.toList().toString())
                 .put("talkMode", talkMode)
         )
+    }
+
+    private fun handleSetOutsideAppState(context: Context, op: JSONObject): OpResult {
+        val state = OutsideAppVoiceState.fromWireName(op.optString("state", OutsideAppVoiceState.LISTENING.wireName))
+        val intent = OutsideAppVoiceSessionService.setStateIntent(context, state)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent)
+        } else {
+            context.startService(intent)
+        }
+        DaemonLog.add("voice_set_outside_app_state: state=${state.wireName}")
+        return OpResult(true, data = JSONObject().put("state", state.wireName))
     }
 
     /**

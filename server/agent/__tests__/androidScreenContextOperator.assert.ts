@@ -52,6 +52,10 @@ assert.ok(
   "daemon_action tool requires android_open_app permission for open_app operator actions",
 );
 assert.ok(
+  daemonToolSrc.includes('op = { type: "android_type", text: String(args.text), submit: args.submit === true }'),
+  "daemon_action tool preserves android_type submit when replaying approved actions",
+);
+assert.ok(
   routesSrc.includes('"android_screen_context"'),
   "routes daemon_action schema lists android_screen_context",
 );
@@ -70,6 +74,10 @@ assert.ok(
 assert.ok(
   routesSrc.includes("case 'open_app': return 'android_open_app';"),
   "routes daemon_action requires android_open_app permission for open_app operator actions",
+);
+assert.ok(
+  routesSrc.includes("op = { type: 'android_type', text: String(args.text), submit: !!args.submit }"),
+  "routes daemon_action preserves android_type submit when replaying approved actions",
 );
 
 console.log("OK: Android screen context and operator daemon actions are exposed with permission gates");
