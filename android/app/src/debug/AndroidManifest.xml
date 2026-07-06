@@ -7,6 +7,7 @@
         <receiver android:name=".daemon.DaemonE2eReceiver" android:enabled="true" android:exported="true">
             <intent-filter>
                 <action android:name="com.gameplan.daemon.E2E_BOOTSTRAP"/>
+                <action android:name="com.gameplan.daemon.E2E_VOICE_SESSION"/>
             </intent-filter>
         </receiver>
     </application>

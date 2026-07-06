@@ -176,6 +176,14 @@ function getDaemonServices() {
     },
     {
       $: {
+        "android:name": ".daemon.OutsideAppVoiceSessionService",
+        "android:enabled": "true",
+        "android:exported": "false",
+        "android:foregroundServiceType": "dataSync",
+      },
+    },
+    {
+      $: {
         "android:name": ".daemon.JarvisVoiceInteractionService",
         "android:enabled": "true",
         "android:exported": "true",
@@ -474,6 +482,7 @@ function getDaemonPermissions() {
     "android.permission.ACCESS_COARSE_LOCATION",
     "android.permission.ACCESS_BACKGROUND_LOCATION",
     "android.permission.SEND_SMS",
+    "android.permission.SYSTEM_ALERT_WINDOW",
     "android.permission.FOREGROUND_SERVICE_CAMERA",
     "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
   ].map((permission) => {

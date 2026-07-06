@@ -34,9 +34,81 @@ import java.util.concurrent.TimeUnit
 
 data class OpResult(val ok: Boolean, val data: Any? = null, val error: String? = null)
 
+object JarvisVoicePlaybackController {
+    private const val TAG = "JarvisVoicePlayback"
+
+    @Volatile private var currentPlayer: android.media.MediaPlayer? = null
+    @Volatile private var currentFile: File? = null
+
+    @Synchronized
+    fun register(player: android.media.MediaPlayer, file: File) {
+        stopActivePlayback(rearmTalkMode = false)
+        currentPlayer = player
+        currentFile = file
+    }
+
+    @Synchronized
+    fun completePlayback(player: android.media.MediaPlayer, file: File, rearmTalkMode: Boolean = true) {
+        if (currentPlayer !== player) return
+        currentPlayer = null
+        currentFile = null
+        releasePlayer(player)
+        file.delete()
+        if (rearmTalkMode) {
+            WakeWordService.onTtsFinished()
+            OutsideAppVoiceSessionService.markPlaybackListening()
+        }
+    }
+
+    @Synchronized
+    fun stopActivePlayback(rearmTalkMode: Boolean = true): Boolean {
+        val player = currentPlayer ?: return false
+        val file = currentFile
+        currentPlayer = null
+        currentFile = null
+        runCatching {
+            if (player.isPlaying) player.stop()
+        }.onFailure { Log.w(TAG, "Failed to stop active voice playback", it) }
+        releasePlayer(player)
+        file?.delete()
+        if (rearmTalkMode) {
+            WakeWordService.onTtsFinished()
+            OutsideAppVoiceSessionService.markPlaybackListening()
+        }
+        DaemonLog.add("voice_speak_audio: playback stopped")
+        return true
+    }
+
+    fun hasActivePlaybackForTest(): Boolean = currentPlayer != null
+
+    private fun releasePlayer(player: android.media.MediaPlayer) {
+        runCatching { player.release() }
+            .onFailure { Log.w(TAG, "Failed to release voice playback", it) }
+    }
+}
+
 object OpHandler {
 
     private const val TAG = "JarvisOp"
+
+    private fun startOutsideAppVoiceControls(context: Context) {
+        val sessionIntent = OutsideAppVoiceSessionService.startIntent(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(sessionIntent)
+        } else {
+            context.startService(sessionIntent)
+        }
+    }
+
+    private fun endOutsideAppVoiceControls(context: Context) {
+        if (!OutsideAppVoiceSessionService.isActive()) return
+        context.startService(
+            OutsideAppVoiceSessionService.controlIntent(
+                context,
+                OutsideAppVoiceSessionService.ACTION_END
+            )
+        )
+    }
 
     fun handle(context: Context, op: JSONObject): OpResult {
         val type = op.optString("type")
@@ -1291,6 +1363,13 @@ object OpHandler {
             arrayOf("hey jarvis", "jarvis", "computer")
         }
 
+        if (talkMode) {
+            OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()
+            startOutsideAppVoiceControls(context)
+        } else {
+            endOutsideAppVoiceControls(context)
+        }
+
         if (enabled && !allowSoftwareWakeWordFallback) {
             val stopIntent = Intent(context, WakeWordService::class.java).apply {
                 action = WakeWordService.ACTION_STOP
@@ -1353,6 +1432,12 @@ object OpHandler {
      */
     private fun handleSetTalkMode(context: Context, op: JSONObject): OpResult {
         val enabled = op.optBoolean("enabled", false)
+        if (enabled) {
+            OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()
+            startOutsideAppVoiceControls(context)
+        } else {
+            endOutsideAppVoiceControls(context)
+        }
         val svc = WakeWordService.instance
         if (svc == null) {
             DaemonLog.add("voice_set_talk_mode: system assistant mode; software listener is off")
@@ -1390,29 +1475,57 @@ object OpHandler {
     private fun handleSpeakAudio(context: Context, op: JSONObject): OpResult {
         val audioBase64 = op.optString("audioBase64", "")
         if (audioBase64.isEmpty()) return OpResult(false, error = "audioBase64 missing")
+        if (!OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()) {
+            DaemonLog.add("voice_speak_audio: dropped stale playback for paused or ended voice session")
+            return OpResult(false, error = "voice session is paused or ended")
+        }
 
+        var tmpFile: File? = null
+        var player: android.media.MediaPlayer? = null
+        var pausedForPlayback = false
         return try {
             val bytes = Base64.decode(audioBase64, Base64.DEFAULT)
-            val tmpFile = java.io.File(context.cacheDir, "jarvis_tts_${System.currentTimeMillis()}.mp3")
-            tmpFile.writeBytes(bytes)
+            val playbackFile = File(context.cacheDir, "jarvis_tts_${System.currentTimeMillis()}.mp3")
+            tmpFile = playbackFile
+            playbackFile.writeBytes(bytes)
 
             // Pause the wake-word microphone so the speaker audio isn't captured
             WakeWordService.pauseForPlayback()
+            pausedForPlayback = true
 
-            val player = android.media.MediaPlayer()
-            player.setDataSource(tmpFile.absolutePath)
-            player.prepare()
-            player.setOnCompletionListener { mp ->
-                mp.release()
-                tmpFile.delete()
-                // Notify WakeWordService so Talk Mode can re-arm the mic
-                WakeWordService.onTtsFinished()
-                DaemonLog.add("voice_speak_audio: playback complete — talk mode re-armed")
+            val mediaPlayer = android.media.MediaPlayer()
+            player = mediaPlayer
+            mediaPlayer.setDataSource(playbackFile.absolutePath)
+            mediaPlayer.prepare()
+            if (!OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()) {
+                runCatching { mediaPlayer.release() }
+                tmpFile?.delete()
+                tmpFile = null
+                DaemonLog.add("voice_speak_audio: dropped stale playback before start")
+                return OpResult(false, error = "voice session is paused or ended")
             }
-            player.start()
+            mediaPlayer.setOnCompletionListener { mp ->
+                val shouldRearm = OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()
+                JarvisVoicePlaybackController.completePlayback(mp, playbackFile, rearmTalkMode = shouldRearm)
+                if (shouldRearm) {
+                    DaemonLog.add("voice_speak_audio: playback complete — talk mode re-armed")
+                } else {
+                    DaemonLog.add("voice_speak_audio: playback complete — rearm skipped")
+                }
+            }
+            JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)
+            OutsideAppVoiceSessionService.markPlaybackSpeaking()
+            mediaPlayer.start()
             DaemonLog.add("voice_speak_audio: playing ${bytes.size} bytes")
             OpResult(true, data = JSONObject().put("playing", true).put("bytes", bytes.size))
         } catch (e: Exception) {
+            runCatching { player?.release() }
+            tmpFile?.delete()
+            if (pausedForPlayback && OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()) {
+                WakeWordService.onTtsFinished()
+                OutsideAppVoiceSessionService.markPlaybackListening()
+                DaemonLog.add("voice_speak_audio: playback failed — talk mode re-armed")
+            }
             Log.e(TAG, "handleSpeakAudio failed", e)
             OpResult(false, error = e.message ?: "playback failed")
         }

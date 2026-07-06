@@ -58,6 +58,19 @@ class WakeWordService : Service() {
         }
 
         /**
+         * Called by user-facing voice controls such as Pause. Unlike TTS playback
+         * pause, this must discard any partial utterance so no final result is sent
+         * after the user has paused the session.
+         */
+        fun pauseForUserControl() {
+            instance?.handlePauseForUserControl()
+        }
+
+        fun endTalkModeForUserControl() {
+            instance?.handleEndTalkModeForUserControl()
+        }
+
+        /**
          * Called by OpHandler when TTS audio finishes playing.
          * Re-arms the microphone when Talk Mode is on.
          */
@@ -221,6 +234,7 @@ class WakeWordService : Service() {
         }
 
         override fun onResults(results: Bundle?) {
+            if (!active && !capturingUtterance) return
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: emptyList<String>()
             if (capturingUtterance) {
                 // Talk Mode: send the captured utterance to the server for AI processing
@@ -247,6 +261,7 @@ class WakeWordService : Service() {
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
+            if (!active) return
             val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: emptyList<String>()
             if (!capturingUtterance) checkForWakeWord(matches)
         }
@@ -269,8 +284,10 @@ class WakeWordService : Service() {
     }
 
     private fun onWakeWordDetected(phrase: String, fullTranscript: String) {
-        // Bring the Jarvis mobile app to the foreground
-        bringJarvisToForeground()
+        // Talk Mode owns the turn through the daemon; keep the user's current app in focus.
+        if (!talkModeEnabled) {
+            bringJarvisToForeground()
+        }
 
         val event = JSONObject().apply {
             put("type", "wake_word_triggered")
@@ -280,8 +297,8 @@ class WakeWordService : Service() {
             // When true, the app should NOT start its own mic session to avoid competing pipelines.
             put("daemonHandling", talkModeEnabled)
         }
-        // Small delay so the app has time to come to the foreground before the event fires
-        mainHandler.postDelayed({ WebSocketService.sendEvent(event.toString()) }, 400L)
+        val eventDelayMs = if (talkModeEnabled) 0L else 400L
+        mainHandler.postDelayed({ WebSocketService.sendEvent(event.toString()) }, eventDelayMs)
 
         if (talkModeEnabled) {
             // Talk Mode: keep the recognizer running to immediately capture the next utterance.
@@ -358,6 +375,40 @@ class WakeWordService : Service() {
         }
         // Set active=false so startListening() in handleTtsFinished() is not a no-op
         active = false
+    }
+
+    private fun handlePauseForUserControl() {
+        if (!talkModeEnabled) return
+        DaemonLog.add("wake: pausing user capture")
+        capturingUtterance = false
+        active = false
+        mainHandler.post {
+            try {
+                speechRecognizer?.cancel()
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+            } catch (e: Exception) {
+                Log.e(TAG, "handlePauseForUserControl error", e)
+            }
+        }
+    }
+
+    private fun handleEndTalkModeForUserControl() {
+        if (!talkModeEnabled && !capturingUtterance) return
+        DaemonLog.add("wake: ending talk mode capture")
+        talkModeEnabled = false
+        capturingUtterance = false
+        active = false
+        mainHandler.post {
+            try {
+                speechRecognizer?.cancel()
+                speechRecognizer?.destroy()
+                speechRecognizer = null
+            } catch (e: Exception) {
+                Log.e(TAG, "handleEndTalkModeForUserControl error", e)
+            }
+            startListening()
+        }
     }
 
     private fun handleTtsFinished() {

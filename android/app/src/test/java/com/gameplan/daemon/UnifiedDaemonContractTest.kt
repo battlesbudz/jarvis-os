@@ -1,5 +1,7 @@
 package com.gameplan.daemon
 
+import android.app.Application
+import android.app.Service
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import org.json.JSONObject
@@ -8,7 +10,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
@@ -132,5 +136,209 @@ class UnifiedDaemonContractTest {
         } finally {
             modelFile.parentFile?.deleteRecursively()
         }
+    }
+
+    @Test
+    fun outsideAppVoiceSessionNotificationControlsStayStable() {
+        val actions = OutsideAppVoiceSessionStateMachine.notificationActions()
+
+        assertEquals(listOf("Pause", "Resume", "End", "Open"), actions.map { it.label })
+        assertEquals(
+            listOf(
+                OutsideAppVoiceSessionService.ACTION_PAUSE,
+                OutsideAppVoiceSessionService.ACTION_RESUME,
+                OutsideAppVoiceSessionService.ACTION_END,
+                OutsideAppVoiceSessionService.ACTION_OPEN,
+            ),
+            actions.map { it.action },
+        )
+    }
+
+    @Test
+    fun outsideAppVoiceOverlayTapInterruptsSpeechAndOpensControlsOtherwise() {
+        assertEquals(
+            OutsideAppVoiceOverlayTapAction.INTERRUPT_AND_LISTEN,
+            OutsideAppVoiceSessionStateMachine.overlayTapAction(OutsideAppVoiceState.SPEAKING),
+        )
+        for (state in listOf(
+            OutsideAppVoiceState.IDLE,
+            OutsideAppVoiceState.LISTENING,
+            OutsideAppVoiceState.WORKING,
+            OutsideAppVoiceState.APPROVAL,
+            OutsideAppVoiceState.PAUSED,
+        )) {
+            assertEquals(
+                "Unexpected overlay tap action for $state",
+                OutsideAppVoiceOverlayTapAction.OPEN_CONTROLS,
+                OutsideAppVoiceSessionStateMachine.overlayTapAction(state),
+            )
+        }
+    }
+
+    @Test
+    fun outsideAppVoiceServiceDoesNotAutoResumeFromNullRestart() {
+        val controller = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()
+        val service = controller.get()
+
+        val result = service.onStartCommand(null, 0, 1)
+
+        assertEquals(Service.START_NOT_STICKY, result)
+        assertFalse(service.sessionActiveForTest())
+        assertEquals(OutsideAppVoiceState.IDLE, service.stateForTest())
+        controller.destroy()
+    }
+
+    @Test
+    fun outsideAppVoiceServiceTracksPauseResumeAndEnd() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val controller = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()
+        val service = controller.get()
+
+        service.onStartCommand(OutsideAppVoiceSessionService.startIntent(context), 0, 1)
+        assertTrue(service.sessionActiveForTest())
+        assertEquals(OutsideAppVoiceState.LISTENING, service.stateForTest())
+        assertTrue(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
+
+        service.onStartCommand(
+            OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_PAUSE),
+            0,
+            2,
+        )
+        assertEquals(OutsideAppVoiceState.PAUSED, service.stateForTest())
+        assertFalse(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
+
+        service.onStartCommand(OutsideAppVoiceSessionService.startIntent(context), 0, 3)
+        assertEquals(OutsideAppVoiceState.PAUSED, service.stateForTest())
+        assertFalse(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
+
+        service.onStartCommand(
+            OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_RESUME),
+            0,
+            4,
+        )
+        assertEquals(OutsideAppVoiceState.LISTENING, service.stateForTest())
+        assertTrue(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
+
+        service.onStartCommand(
+            OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_END),
+            0,
+            5,
+        )
+        assertFalse(service.sessionActiveForTest())
+        assertEquals(OutsideAppVoiceState.IDLE, service.stateForTest())
+        assertFalse(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
+        controller.destroy()
+        assertFalse(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
+
+        OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()
+        assertTrue(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
+
+        val restartedController = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()
+        val restartedService = restartedController.get()
+        restartedService.onStartCommand(OutsideAppVoiceSessionService.startIntent(context), 0, 6)
+        assertTrue(restartedService.sessionActiveForTest())
+        assertEquals(OutsideAppVoiceState.LISTENING, restartedService.stateForTest())
+        assertTrue(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
+        restartedController.destroy()
+    }
+
+    @Test
+    fun outsideAppVoiceStartPreservesActiveNonIdleState() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val controller = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()
+        val service = controller.get()
+
+        service.onStartCommand(
+            OutsideAppVoiceSessionService.setStateIntent(context, OutsideAppVoiceState.SPEAKING),
+            0,
+            1,
+        )
+        service.onStartCommand(OutsideAppVoiceSessionService.startIntent(context), 0, 2)
+
+        assertTrue(service.sessionActiveForTest())
+        assertEquals(OutsideAppVoiceState.SPEAKING, service.stateForTest())
+        assertTrue(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
+        controller.destroy()
+    }
+
+    @Test
+    fun talkModeEnableStartsOutsideAppVoiceControls() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val shadowApplication = shadowOf(context as Application)
+        shadowApplication.clearStartedServices()
+
+        val result = OpHandler.handle(
+            context,
+            JSONObject()
+                .put("type", "voice_set_talk_mode")
+                .put("enabled", true)
+        )
+
+        assertTrue(result.ok)
+        assertTrue(
+            "Expected Talk Mode enable to start outside-app voice controls",
+            shadowApplication.allStartedServices.any { intent ->
+                intent.action == OutsideAppVoiceSessionService.ACTION_START &&
+                    intent.component?.className == OutsideAppVoiceSessionService::class.java.name
+            }
+        )
+    }
+
+    @Test
+    fun talkModeWakeSettingsStartControlsEvenWithoutSoftwareWakeWordFallback() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val shadowApplication = shadowOf(context as Application)
+        shadowApplication.clearStartedServices()
+
+        val result = OpHandler.handle(
+            context,
+            JSONObject()
+                .put("type", "voice_set_wake_words")
+                .put("enabled", false)
+                .put("talkMode", true)
+        )
+
+        assertTrue(result.ok)
+        assertTrue(
+            "Expected Talk Mode wake settings to start outside-app voice controls",
+            shadowApplication.allStartedServices.any { intent ->
+                intent.action == OutsideAppVoiceSessionService.ACTION_START &&
+                    intent.component?.className == OutsideAppVoiceSessionService::class.java.name
+            }
+        )
+        assertFalse(
+            "Talk Mode-only wake settings must not end outside-app voice controls",
+            shadowApplication.allStartedServices.any { intent ->
+                intent.action == OutsideAppVoiceSessionService.ACTION_END &&
+                    intent.component?.className == OutsideAppVoiceSessionService::class.java.name
+            }
+        )
+    }
+
+    @Test
+    fun talkModeDisableEndsOutsideAppVoiceControls() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val shadowApplication = shadowOf(context as Application)
+        val controller = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()
+        val service = controller.get()
+        service.onStartCommand(OutsideAppVoiceSessionService.startIntent(context), 0, 1)
+        shadowApplication.clearStartedServices()
+
+        val result = OpHandler.handle(
+            context,
+            JSONObject()
+                .put("type", "voice_set_talk_mode")
+                .put("enabled", false)
+        )
+
+        assertTrue(result.ok)
+        assertTrue(
+            "Expected Talk Mode disable to end outside-app voice controls",
+            shadowApplication.allStartedServices.any { intent ->
+                intent.action == OutsideAppVoiceSessionService.ACTION_END &&
+                    intent.component?.className == OutsideAppVoiceSessionService::class.java.name
+            }
+        )
+        controller.destroy()
     }
 }

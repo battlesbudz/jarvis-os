@@ -1,4 +1,4 @@
-import { NativeModules, Platform } from "react-native";
+import { DeviceEventEmitter, NativeModules, Platform } from "react-native";
 
 export type AndroidDaemonStatus = {
   available: boolean;
@@ -13,6 +13,9 @@ export type AndroidDaemonStatus = {
   hotwordDetail?: string;
   hotwordRecognitionActive?: boolean;
   hotwordLastError?: string | null;
+  voiceSessionActive?: boolean;
+  voiceSessionState?: "idle" | "listening" | "speaking" | "working" | "approval" | "paused";
+  voiceOverlayPermission?: boolean;
   serverUrl?: string;
 };
 
@@ -25,6 +28,12 @@ export type AndroidLocalGemmaValidationOptions = {
   cachePolicy?: "default" | "fresh" | "none";
   profileId?: string;
   profileLabel?: string;
+};
+
+export type AndroidOutsideAppVoiceControlEvent = {
+  action?: string;
+  state?: string;
+  outsideApp?: boolean;
 };
 
 const unavailableStatus: AndroidDaemonStatus = {
@@ -44,6 +53,12 @@ const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
       openNotificationListenerSettings(): Promise<void>;
       openAssistantSettings(): Promise<void>;
       refreshAssistantStatus(): Promise<AndroidDaemonStatus>;
+      startOutsideAppVoiceSession?(): Promise<AndroidDaemonStatus>;
+      pauseOutsideAppVoiceSession?(): Promise<AndroidDaemonStatus>;
+      resumeOutsideAppVoiceSession?(): Promise<AndroidDaemonStatus>;
+      endOutsideAppVoiceSession?(): Promise<AndroidDaemonStatus>;
+      setOutsideAppVoiceSessionState?(state: string): Promise<AndroidDaemonStatus>;
+      openOverlayPermissionSettings?(): Promise<void>;
       openAllFilesAccessSettings(): Promise<void>;
       requestCameraPermission(): Promise<void>;
       requestMicrophonePermission(): Promise<void>;
@@ -101,6 +116,38 @@ export async function smokeTestAndroidLocalGemmaModel(model: string, options: An
   const parsed = parseNativeJsonResult(await NativeJarvisDaemon.smokeTestLocalGemmaModel(model, JSON.stringify(options)));
   if (!parsed) throw new Error("Phone Gemma smoke test returned an empty result.");
   return parsed;
+}
+
+export async function startAndroidOutsideAppVoiceSession(): Promise<AndroidDaemonStatus | null> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.startOutsideAppVoiceSession) {
+    return null;
+  }
+  return NativeJarvisDaemon.startOutsideAppVoiceSession();
+}
+
+export async function endAndroidOutsideAppVoiceSession(): Promise<AndroidDaemonStatus | null> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.endOutsideAppVoiceSession) {
+    return null;
+  }
+  return NativeJarvisDaemon.endOutsideAppVoiceSession();
+}
+
+export async function setAndroidOutsideAppVoiceSessionState(
+  state: string,
+): Promise<AndroidDaemonStatus | null> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.setOutsideAppVoiceSessionState) {
+    return null;
+  }
+  return NativeJarvisDaemon.setOutsideAppVoiceSessionState(state);
+}
+
+export function addAndroidOutsideAppVoiceControlListener(
+  listener: (event: AndroidOutsideAppVoiceControlEvent) => void,
+): { remove: () => void } {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon) {
+    return { remove: () => {} };
+  }
+  return DeviceEventEmitter.addListener("JarvisVoiceSessionControl", listener);
 }
 
 export const AndroidDaemonNative = NativeJarvisDaemon;

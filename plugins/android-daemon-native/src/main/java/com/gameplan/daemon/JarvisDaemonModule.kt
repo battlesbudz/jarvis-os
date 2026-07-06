@@ -11,13 +11,52 @@ import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableMap
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.json.JSONObject
 
 class JarvisDaemonModule(
     private val reactApplicationContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactApplicationContext) {
 
+    companion object {
+        private const val VOICE_SESSION_CONTROL_EVENT = "JarvisVoiceSessionControl"
+
+        @Volatile private var activeReactContext: ReactApplicationContext? = null
+
+        fun emitVoiceSessionControl(actionName: String, state: String) {
+            val context = activeReactContext ?: return
+            val payload = Arguments.createMap().apply {
+                putString("action", actionName)
+                putString("state", state)
+                putBoolean("outsideApp", true)
+            }
+            context
+                .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                .emit(VOICE_SESSION_CONTROL_EVENT, payload)
+        }
+    }
+
     override fun getName(): String = "JarvisDaemonModule"
+
+    override fun initialize() {
+        super.initialize()
+        activeReactContext = reactApplicationContext
+    }
+
+    override fun invalidate() {
+        if (activeReactContext === reactApplicationContext) activeReactContext = null
+        super.invalidate()
+    }
+
+    @ReactMethod
+    fun addListener(eventName: String) {
+        // Required by React Native NativeEventEmitter.
+    }
+
+    @ReactMethod
+    fun removeListeners(count: Int) {
+        // Required by React Native NativeEventEmitter.
+    }
 
     @ReactMethod
     fun getStatus(promise: Promise) {
@@ -76,6 +115,64 @@ class JarvisDaemonModule(
     @ReactMethod
     fun refreshAssistantStatus(promise: Promise) {
         promise.resolve(buildStatusMap())
+    }
+
+    @ReactMethod
+    fun startOutsideAppVoiceSession(promise: Promise) {
+        val intent = OutsideAppVoiceSessionService.startIntent(reactApplicationContext)
+        if (!startVoiceSessionServiceCompat(intent, promise)) return
+        promise.resolve(buildStatusMap())
+    }
+
+    @ReactMethod
+    fun pauseOutsideAppVoiceSession(promise: Promise) {
+        val intent = OutsideAppVoiceSessionService.controlIntent(
+            reactApplicationContext,
+            OutsideAppVoiceSessionService.ACTION_PAUSE,
+        )
+        if (!startVoiceSessionServiceCompat(intent, promise)) return
+        promise.resolve(buildStatusMap())
+    }
+
+    @ReactMethod
+    fun resumeOutsideAppVoiceSession(promise: Promise) {
+        val intent = OutsideAppVoiceSessionService.controlIntent(
+            reactApplicationContext,
+            OutsideAppVoiceSessionService.ACTION_RESUME,
+        )
+        if (!startVoiceSessionServiceCompat(intent, promise)) return
+        promise.resolve(buildStatusMap())
+    }
+
+    @ReactMethod
+    fun endOutsideAppVoiceSession(promise: Promise) {
+        val intent = OutsideAppVoiceSessionService.controlIntent(
+            reactApplicationContext,
+            OutsideAppVoiceSessionService.ACTION_END,
+        )
+        if (!startVoiceSessionServiceCompat(intent, promise, foreground = false)) return
+        promise.resolve(buildStatusMap())
+    }
+
+    @ReactMethod
+    fun setOutsideAppVoiceSessionState(state: String, promise: Promise) {
+        val nextState = OutsideAppVoiceState.fromWireName(state)
+        val intent = OutsideAppVoiceSessionService.setStateIntent(reactApplicationContext, nextState)
+        if (!startVoiceSessionServiceCompat(intent, promise)) return
+        promise.resolve(buildStatusMap())
+    }
+
+    @ReactMethod
+    fun openOverlayPermissionSettings(promise: Promise) {
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:${reactApplicationContext.packageName}"),
+            )
+        } else {
+            Intent(Settings.ACTION_SETTINGS)
+        }
+        openIntent(intent, promise)
     }
 
     @ReactMethod
@@ -181,6 +278,24 @@ class JarvisDaemonModule(
         }
     }
 
+    private fun startVoiceSessionServiceCompat(intent: Intent, promise: Promise, foreground: Boolean = true): Boolean {
+        return try {
+            if (foreground && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                reactApplicationContext.startForegroundService(intent)
+            } else {
+                reactApplicationContext.startService(intent)
+            }
+            true
+        } catch (err: Exception) {
+            promise.reject(
+                "E_JARVIS_VOICE_SESSION_START",
+                "Jarvis could not start the outside-app voice session. Check microphone and overlay permissions, then try again. ${err.message ?: ""}".trim(),
+                err,
+            )
+            false
+        }
+    }
+
     private fun openSettingsIntent(action: String, promise: Promise) {
         openIntent(Intent(action), promise)
     }
@@ -231,6 +346,12 @@ class JarvisDaemonModule(
         map.putString("hotwordDetail", hotwordStatus.detail)
         map.putBoolean("hotwordRecognitionActive", hotwordStatus.recognitionActive)
         map.putString("hotwordLastError", hotwordStatus.lastError)
+        map.putBoolean("voiceSessionActive", OutsideAppVoiceSessionService.isActive())
+        map.putString("voiceSessionState", OutsideAppVoiceSessionService.currentState().wireName)
+        map.putBoolean(
+            "voiceOverlayPermission",
+            Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(reactApplicationContext),
+        )
         map.putString(
             "serverUrl",
             JarvisConfig.normalizeServerUrl(prefs.getString(WebSocketService.PREF_SERVER_URL, "")),
