@@ -34,6 +34,9 @@ jobs:
       - name: Build server
         run: npm run server:build
 
+      - name: Run APK voice runtime regression gate
+        run: npm run jarvis:voice-runtime:regression-gate
+
       - name: Run tests
         run: npm test
 

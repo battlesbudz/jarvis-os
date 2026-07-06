@@ -13,6 +13,7 @@ const ACCESSIBILITY_SERVICE_SHORT =
   `${PACKAGE_NAME}/.daemon.JarvisAccessibilityService`;
 const BOOTSTRAP_TOKEN = process.env.ANDROID_DAEMON_BOOTSTRAP_TOKEN || "e2e-bootstrap-token";
 const APK_PATH = process.env.ANDROID_APK_PATH || "android/app/build/outputs/apk/debug/app-debug.apk";
+const FAKE_LOCAL_GEMMA_E2E = process.env.JARVIS_ANDROID_E2E_FAKE_LOCAL_GEMMA !== "0";
 
 function sdkTool(name) {
   const sdk = process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT;
@@ -271,6 +272,64 @@ async function runOutsideAppVoiceFakeLocalGemmaSmoke() {
   );
 
   return { listening, speaking, interrupted, paused, resumed, approval, denied, approved, ended };
+}
+
+async function runCrashRestartSmoke() {
+  voiceE2eBroadcast("start", { token: "voice_crash_start" });
+  const listening = await waitForVoiceE2eStatus(
+    "voice session should start before simulated crash",
+    (status) => status.active && status.state === "listening",
+    25000,
+  );
+
+  voiceE2eBroadcast("crash", { token: "voice_crash" });
+  const crashed = await waitForVoiceE2eStatus(
+    "simulated crash should clear active voice session",
+    (status) => !status.active && status.state === "idle",
+    15000,
+  );
+  const crashLog = collectLogcat();
+  if (!/JarvisVoiceE2E.*token=voice_crash.*e2eCrashCommand=dispatched/.test(crashLog)) {
+    throw new Error("Simulated crash command did not emit the expected debug dispatch marker.");
+  }
+
+  voiceE2eBroadcast("start", { token: "voice_restart_after_crash" });
+  const restarted = await waitForVoiceE2eStatus(
+    "voice session should restart after simulated crash",
+    (status) => status.active && status.state === "listening",
+    25000,
+  );
+
+  voiceE2eBroadcast("end", { token: "voice_restart_end" });
+  const ended = await waitForVoiceE2eStatus(
+    "restart smoke should end voice session cleanly",
+    (status) => !status.active && status.state === "idle",
+  );
+
+  return { listening, crashed, restarted, ended };
+}
+
+async function runClipboardSmoke(bridge) {
+  const text = `jarvis-e2e-clipboard-${Date.now()}`;
+  const result = await bridge.sendOp({
+    type: "android_copy_text_to_clipboard",
+    text,
+    label: "jarvis_e2e_clipboard",
+  }, 30000);
+  const copyOk = result.ok && (
+    result.data?.result?.ok === true ||
+    result.data?.copied === true ||
+    result.data?.ok === true
+  );
+  if (!copyOk) {
+    throw new Error(`android_copy_text_to_clipboard failed: ${JSON.stringify(result)}`);
+  }
+
+  return {
+    ok: true,
+    textLength: text.length,
+    label: result.data?.result?.label ?? result.data?.label ?? "",
+  };
 }
 
 function findUsefulElement(snapshot) {
@@ -550,6 +609,9 @@ async function startBridge(port) {
 }
 
 async function main() {
+  if (!FAKE_LOCAL_GEMMA_E2E) {
+    throw new Error("Android emulator E2E runs with fake Local Gemma only. Use a physical phone for real Gemma validation.");
+  }
   await waitForDevice();
   await waitForBoot();
   adb(["logcat", "-c"]);
@@ -564,6 +626,7 @@ async function main() {
   adbShell(`monkey -p ${PACKAGE_NAME} -c android.intent.category.LAUNCHER 1`);
   await sleep(3000);
   const outsideAppVoice = await runOutsideAppVoiceFakeLocalGemmaSmoke();
+  const crashRestart = await runCrashRestartSmoke();
   enableAccessibilityService();
   await waitForAccessibilityService();
 
@@ -589,6 +652,7 @@ async function main() {
   }
 
   await waitForDaemonAccessibilityPing(bridge);
+  const clipboard = await runClipboardSmoke(bridge);
 
   const openSettings = await bridge.sendOp({
     type: "android_operator_action",
@@ -617,11 +681,19 @@ async function main() {
 
   console.log(JSON.stringify({
     ok: true,
+    fakeLocalGemma: FAKE_LOCAL_GEMMA_E2E,
     bootstrapClientKind: bootstrap.msg.clientKind,
     foregroundPackage: screenContext.data.foregroundPackage,
     screenContextElementCount: elements.length,
     tappedElementId: usefulElement.id,
     readScreenTextCount: readText.length,
+    clipboard,
+    crashRestart: {
+      startState: crashRestart.listening.state,
+      crashedActive: crashRestart.crashed.active,
+      restartedState: crashRestart.restarted.state,
+      endedActive: crashRestart.ended.active,
+    },
     outsideAppVoice: {
       startState: outsideAppVoice.listening.state,
       speakingOverlayTap: outsideAppVoice.speaking.overlayTap,

@@ -63,6 +63,10 @@ class DaemonE2eReceiver : BroadcastReceiver() {
                 "approve" -> OutsideAppVoiceSessionService.instance?.onOverlayApprove()
                 "deny" -> OutsideAppVoiceSessionService.instance?.onOverlayDeny()
                 "overlay_tap" -> OutsideAppVoiceSessionService.instance?.onOverlayTapped()
+                "crash" -> {
+                    startVoiceService(context, OutsideAppVoiceSessionService.e2eCrashIntent(context))
+                    Log.i(TAG, "token=$token e2eCrashCommand=dispatched")
+                }
                 "status" -> Unit
                 else -> Log.w(TAG, "unknown command=$command token=$token")
             }
