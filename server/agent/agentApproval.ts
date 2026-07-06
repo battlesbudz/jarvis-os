@@ -20,8 +20,8 @@ import { logAgentEvent } from "./agentLogger";
 import { EventEmitter } from "events";
 import { toolCallHooks, HOOK_PRIORITY } from "./toolCallHooks";
 import { evaluatePolicyForTool } from "./agentPolicyManager";
-import { requiresApproval, STRICTLY_IRREVERSIBLE_TOOLS } from "./approvalToolRisk";
-export { requiresApproval, STRICTLY_IRREVERSIBLE_TOOLS } from "./approvalToolRisk";
+import { requiresApproval, requiresHumanApproval } from "./approvalToolRisk";
+export { requiresApproval, requiresHumanApproval, STRICTLY_IRREVERSIBLE_TOOLS } from "./approvalToolRisk";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -139,16 +139,16 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
   const expiresAt = new Date(now.getTime() + ttl);
 
   const isJarvisInitiated = req.initiatedBy === 'jarvis';
-  const isStrictlyIrreversible = STRICTLY_IRREVERSIBLE_TOOLS.has(req.toolName);
+  const mustWaitForHuman = requiresHumanApproval(req.toolName, req.toolArgs);
 
   // ── Per-agent policy check ────────────────────────────────────────────────
   // Evaluate custom policy BEFORE applying global defaults. The policy can
   // force auto-approve (permissive, allowlist hit) or force require-approval
   // (strict) regardless of the global Jarvis-initiated logic.
-  let autoApprove = isJarvisInitiated && !isStrictlyIrreversible;
+  let autoApprove = isJarvisInitiated && !mustWaitForHuman;
   let policyApplied = "global";
   try {
-    const decision = await evaluatePolicyForTool(req.agentId, req.toolName, isStrictlyIrreversible);
+    const decision = await evaluatePolicyForTool(req.agentId, req.toolName, mustWaitForHuman);
     if (decision.action === "auto_approve") {
       autoApprove = true;
       policyApplied = decision.reason;

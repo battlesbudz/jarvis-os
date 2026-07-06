@@ -51,3 +51,10 @@ export const STRICTLY_IRREVERSIBLE_TOOLS = new Set([
   "sessions_send",
   "connected_accounts_execute",
 ]);
+
+export function requiresHumanApproval(toolName: string, toolArgs?: Record<string, unknown>): boolean {
+  if (toolName === "queue_background_job" && toolArgs?.task_scoped_cloud === true) {
+    return true;
+  }
+  return STRICTLY_IRREVERSIBLE_TOOLS.has(toolName);
+}
