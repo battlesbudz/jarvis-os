@@ -4,6 +4,7 @@ import { SUB_AGENT_TYPES } from "../subagents";
 import { getProtectedEntityNames, findEntityNearMatch } from "../../memory/protectedEntities";
 import { buildQueueBackgroundJobInput } from "./queueBackgroundJobInput";
 import { buildCloudBackgroundJobInput, type CloudBackgroundProviderOption } from "../cloudBackgroundEscalation";
+import { approvalReceiptCoversToolCall } from "../approvalReceipt";
 
 interface QueueJobArgs {
   agent_type?: string;
@@ -265,6 +266,14 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
 
     let extraJobInput: Record<string, unknown> | undefined;
     if (taskScopedCloud) {
+      if (!approvalReceiptCoversToolCall(ctx.approvalReceipt, { userId: ctx.userId, toolName: "queue_background_job" })) {
+        return {
+          ok: true,
+          content:
+            "Cloud background tasks need explicit approval before I can queue them. Ask the user to approve the provider and budget, then retry with the approved receipt.",
+          label: "Cloud background approval needed",
+        };
+      }
       if (!CLOUD_BACKGROUND_AGENT_TYPES.has(agentType)) {
         return {
           ok: true,
@@ -315,6 +324,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
         provider,
         budgetUsd: authType === "api_key" ? budgetUsd : null,
       });
+      extraJobInput.approvalReceipt = ctx.approvalReceipt;
     }
 
     const title = String(a.title || "").trim() || deriveTitle(agentType, prompt);

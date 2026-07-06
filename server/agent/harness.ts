@@ -4,7 +4,7 @@ import type { AgentTool, AgentToolCallRecord, ToolContext } from "./types";
 import type { ActivationPlan } from "./activationPlanner";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { getProvider, accumulateTurn, queryWithFallback, getGlobalFallbackChain, DEFAULT_PROVIDER_MODELS } from "./providers";
-import type { ProviderName, FallbackChainEntry, ProviderQueryParams } from "./providers";
+import type { ProviderName, FallbackChainEntry, ProviderQueryParams, ProviderTurnResult } from "./providers";
 import { resolveRuntimeAgentModel } from "./runtimeModel";
 import { checkResponseQuality, APOLOGY_PHRASES } from "./responseQuality";
 import { estimateModelUsage, recordModelUsage } from "./modelUsage";
@@ -43,6 +43,21 @@ function resolveProviderName(model: string): ProviderName {
   return "openai";
 }
 
+const DEFAULT_CLOUD_BUDGET_USD_PER_1K_TOKENS = 0.05;
+
+function roundCloudBudgetUsd(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.ceil(value * 100) / 100;
+}
+
+function estimateCloudBudgetUsdForTokens(tokens: number, usdPer1kTokens: number): number {
+  const safeTokens = Math.max(0, Math.ceil(tokens));
+  const safeRate = Number.isFinite(usdPer1kTokens) && usdPer1kTokens > 0
+    ? usdPer1kTokens
+    : DEFAULT_CLOUD_BUDGET_USD_PER_1K_TOKENS;
+  return roundCloudBudgetUsd((safeTokens / 1000) * safeRate);
+}
+
 export interface RunAgentOptions {
   model?: string;
   /**
@@ -53,6 +68,15 @@ export interface RunAgentOptions {
   forceModel?: boolean;
   /** Restrict provider credential selection for one approved run. */
   preferredAuthType?: ProviderQueryParams["preferredAuthType"];
+  /** Scoped receipt from a runtime-owned user approval. */
+  approvalReceipt?: ToolContext["approvalReceipt"];
+  /** Optional per-job cloud budget guard for forced task-scoped cloud runs. */
+  cloudBudget?: {
+    budgetUsd: number | null;
+    spentUsd: number;
+    usdPer1kTokens?: number;
+    onSpend?: (spentUsd: number) => Promise<void> | void;
+  };
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
   tools: AgentTool[];
   context: ToolContext;
@@ -261,6 +285,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
     model: modelOpt,
     forceModel,
     preferredAuthType,
+    approvalReceipt,
+    cloudBudget,
     tools: initialTools,
     context,
     maxTurns = 6,
@@ -294,6 +320,12 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
 
   const channel = context.channel || "Agent";
   const harnessStartedAt = Date.now();
+  const activeCloudBudget =
+    cloudBudget && typeof cloudBudget.budgetUsd === "number" && cloudBudget.budgetUsd > 0
+      ? cloudBudget
+      : null;
+  const cloudBudgetUsdPer1kTokens = activeCloudBudget?.usdPer1kTokens ?? DEFAULT_CLOUD_BUDGET_USD_PER_1K_TOKENS;
+  let cloudBudgetSpentUsd = roundCloudBudgetUsd(activeCloudBudget?.spentUsd ?? 0);
   const harnessContextLoaded = new Set<string>(["always_on_kernel"]);
 
   // ── Inject workspace context into system prompt ────────────────────────────
@@ -991,7 +1023,38 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
    */
   const runProviderQuery = async (
     queryParams: Parameters<typeof provider.query>[0],
-  ) => {
+  ): Promise<ProviderTurnResult> => {
+    if (activeCloudBudget) {
+      const promptUsage = estimateModelUsage({
+        messages: queryParams.messages,
+        tools: queryParams.tools,
+        textContent: "",
+        toolCallList: [],
+      });
+      const estimatedRequestUsd = estimateCloudBudgetUsdForTokens(
+        promptUsage.promptTokens + queryParams.maxCompletionTokens,
+        cloudBudgetUsdPer1kTokens,
+      );
+      if (cloudBudgetSpentUsd + estimatedRequestUsd > activeCloudBudget.budgetUsd) {
+        const remainingUsd = Math.max(
+          0,
+          Math.round((activeCloudBudget.budgetUsd - cloudBudgetSpentUsd) * 100) / 100,
+        );
+        const message =
+          `Cloud background task stopped before the next model request because the estimated request cost ($${estimatedRequestUsd.toFixed(2)}) would exceed the approved budget. ` +
+          `Estimated remaining budget: $${remainingUsd.toFixed(2)}.`;
+        return {
+          textContent: message,
+          textChunks: [message],
+          toolCallList: [],
+          finishReason: "budget_stopped",
+          providerName: primaryProviderName,
+          model: queryParams.model,
+          fallbackUsed: false,
+        };
+      }
+    }
+
     const startedAt = Date.now();
     try {
       const result = effectiveFallbackChain
@@ -1005,13 +1068,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             return plainResult;
           })();
 
+      const usage = estimateModelUsage({
+        messages: queryParams.messages,
+        tools: queryParams.tools,
+        textContent: result.textContent,
+        toolCallList: result.toolCallList,
+      });
       if (context.userId) {
-        const usage = estimateModelUsage({
-          messages: queryParams.messages,
-          tools: queryParams.tools,
-          textContent: result.textContent,
-          toolCallList: result.toolCallList,
-        });
         void recordModelUsage({
           userId: context.userId,
           provider: result.providerName ?? primaryProviderName,
@@ -1026,6 +1089,17 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
             fallbackUsed: Boolean(result.fallbackUsed),
           },
         });
+      }
+      if (activeCloudBudget) {
+        const estimatedSpendUsd = estimateCloudBudgetUsdForTokens(
+          Math.max(usage.totalTokens, 1),
+          cloudBudgetUsdPer1kTokens,
+        );
+        cloudBudgetSpentUsd = Math.min(
+          activeCloudBudget.budgetUsd,
+          roundCloudBudgetUsd(cloudBudgetSpentUsd + estimatedSpendUsd),
+        );
+        await activeCloudBudget.onSpend?.(cloudBudgetSpentUsd);
       }
 
       return result;
@@ -1289,7 +1363,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           }
 
           try {
-            const result = await tool.execute(effectiveArgs, context);
+            const result = await tool.execute(
+              effectiveArgs,
+              approvalReceipt ? { ...context, approvalReceipt } : context,
+            );
             toolCalls.push({
               name: tc.function.name,
               args: parsedArgs,

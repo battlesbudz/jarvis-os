@@ -216,6 +216,13 @@ export interface RunSubAgentOptions {
   forceModel?: boolean;
   /** Restrict provider credential selection for one approved run. */
   preferredAuthType?: "api_key" | "oauth";
+  /** Optional per-job cloud budget guard for forced task-scoped cloud runs. */
+  cloudBudget?: {
+    budgetUsd: number | null;
+    spentUsd: number;
+    usdPer1kTokens?: number;
+    onSpend?: (spentUsd: number) => Promise<void> | void;
+  };
   /** Optional caller cap for model/tool turns. Clamped to the agent spec max. */
   maxTurns?: number;
   /**
@@ -299,6 +306,8 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
     model: subAgentModel,
     forceModel: opts.forceModel,
     preferredAuthType: opts.preferredAuthType,
+    approvalReceipt: opts.approvalReceipt,
+    cloudBudget: opts.cloudBudget,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: opts.prompt },
