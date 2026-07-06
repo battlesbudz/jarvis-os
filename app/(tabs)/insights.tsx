@@ -1490,17 +1490,21 @@ export default function InsightsScreen() {
         setTalkModeEnabled(false);
         setTalkModeActive(false);
         stopSpeaking();
+        abortActiveChatTurn().catch(() => {});
         stopRecordingSilentlyRef.current().catch(() => {});
         apiRequest('PUT', '/api/voice/wake-settings', { talkModeEnabled: false }).catch(() => {});
         return;
       }
       if (action === 'resume' || action === 'listening') {
         nativeVoiceStateSyncHeldRef.current = false;
-        if (action === 'listening') {
-          outsideAppVoiceStateRef.current = 'listening';
-          return;
-        }
-        if (talkModeRef.current && !isSpeakingRef.current && !isRecordingRef.current) {
+        outsideAppVoiceStateRef.current = 'listening';
+        if (
+          talkModeRef.current &&
+          !isSpeakingRef.current &&
+          !isRecordingRef.current &&
+          !isStreamingRef.current &&
+          !isTranscribingRef.current
+        ) {
           scheduleTalkModeRecordingStart();
         }
       }
