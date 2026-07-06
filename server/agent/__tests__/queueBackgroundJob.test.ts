@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 process.env.DATABASE_URL ||= "postgres://test:test@localhost:5432/test";
 
 async function main() {
-  const { buildCloudBackgroundJobInput } = await import("../cloudBackgroundEscalation");
+  const { buildCloudBackgroundJobInput, isCloudBackgroundApprovalReady } = await import("../cloudBackgroundEscalation");
   const { buildQueueBackgroundJobInput } = await import("../tools/queueBackgroundJobInput");
   const queueToolSource = readFileSync(
     fileURLToPath(new URL("../tools/queueBackgroundJob.ts", import.meta.url).toString()),
@@ -104,6 +104,52 @@ async function main() {
   }
 
   {
+    assert.equal(isCloudBackgroundApprovalReady({ task_scoped_cloud: true }), false);
+    assert.equal(
+      isCloudBackgroundApprovalReady({
+        agent_type: "research",
+        prompt: "Research this with cloud.",
+        task_scoped_cloud: true,
+        cloud_provider_id: "google",
+        cloud_provider_auth_type: "api_key",
+      }),
+      false,
+    );
+    assert.equal(
+      isCloudBackgroundApprovalReady({
+        agent_type: "research",
+        prompt: "Research this with cloud.",
+        task_scoped_cloud: true,
+        cloud_provider_id: "google",
+        cloud_provider_auth_type: "api_key",
+        cloud_budget_usd: 1,
+      }),
+      true,
+    );
+    assert.equal(
+      isCloudBackgroundApprovalReady({
+        agent_type: "research",
+        prompt: "Research this with cloud.",
+        task_scoped_cloud: true,
+        cloud_provider_id: "google",
+        cloud_provider_auth_type: "oauth",
+      }),
+      false,
+    );
+    assert.equal(
+      isCloudBackgroundApprovalReady({
+        agent_type: "research",
+        prompt: "Research this with cloud.",
+        task_scoped_cloud: true,
+        cloud_provider_id: "openai",
+        cloud_provider_auth_type: "oauth",
+      }),
+      true,
+    );
+    console.log("OK: only fully specified cloud queue calls are approval-ready");
+  }
+
+  {
     assert.match(jobQueueSource, /validateCloudBackgroundJobInput\(jobInput\)/);
     assert.match(jobQueueSource, /cloudBackgroundValidation\.model/);
     assert.match(jobQueueSource, /forceModel: cloudBackgroundValidation\?\.ok === true/);
@@ -129,6 +175,7 @@ async function main() {
     assert.match(queueToolSource, /providerLabelFromStatus/);
     assert.match(queueToolSource, /catalogProviderLabel/);
     assert.match(queueToolSource, /toolCallHooks\.register/);
+    assert.match(queueToolSource, /isCloudBackgroundApprovalReady\(ctx\.params\)/);
     assert.match(queueToolSource, /Approve cloud background task/);
     assert.match(queueToolSource, /_approved_cloud_background/);
     assert.match(queueToolSource, /_approval_gate_id/);

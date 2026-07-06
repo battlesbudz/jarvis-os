@@ -1,3 +1,5 @@
+import { isCloudBackgroundApprovalReady } from "./cloudBackgroundEscalation";
+
 const HIGH_RISK_TOOLS = new Set([
   // Email
   "send_email",
@@ -54,7 +56,7 @@ export const STRICTLY_IRREVERSIBLE_TOOLS = new Set([
 
 export function requiresHumanApproval(toolName: string, toolArgs?: Record<string, unknown>): boolean {
   if (toolName === "queue_background_job" && toolArgs?.task_scoped_cloud === true) {
-    return true;
+    return isCloudBackgroundApprovalReady(toolArgs);
   }
   return STRICTLY_IRREVERSIBLE_TOOLS.has(toolName);
 }

@@ -57,6 +57,37 @@ async function main(): Promise<void> {
   assert.equal(normalQueueResult.allowed, true);
   assert.equal(requests.length, 0);
 
+  const missingProviderCloudQueueResult = await onBeforeTool("queue_background_job", {
+    agent_type: "research",
+    prompt: "Research this with cloud.",
+    task_scoped_cloud: true,
+  });
+  assert.equal(missingProviderCloudQueueResult.allowed, true);
+  assert.equal(missingProviderCloudQueueResult.params?._approved_cloud_background, undefined);
+  assert.equal(requests.length, 0);
+
+  const missingBudgetCloudQueueResult = await onBeforeTool("queue_background_job", {
+    agent_type: "research",
+    prompt: "Research this with cloud.",
+    task_scoped_cloud: true,
+    cloud_provider_id: "google",
+    cloud_provider_auth_type: "api_key",
+  });
+  assert.equal(missingBudgetCloudQueueResult.allowed, true);
+  assert.equal(missingBudgetCloudQueueResult.params?._approved_cloud_background, undefined);
+  assert.equal(requests.length, 0);
+
+  const unsupportedOAuthCloudQueueResult = await onBeforeTool("queue_background_job", {
+    agent_type: "research",
+    prompt: "Research this with cloud.",
+    task_scoped_cloud: true,
+    cloud_provider_id: "google",
+    cloud_provider_auth_type: "oauth",
+  });
+  assert.equal(unsupportedOAuthCloudQueueResult.allowed, true);
+  assert.equal(unsupportedOAuthCloudQueueResult.params?._approved_cloud_background, undefined);
+  assert.equal(requests.length, 0);
+
   const cloudQueueResult = await onBeforeTool("queue_background_job", {
     agent_type: "research",
     prompt: "Research this with cloud.",

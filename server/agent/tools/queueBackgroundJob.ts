@@ -6,6 +6,7 @@ import { buildQueueBackgroundJobInput } from "./queueBackgroundJobInput";
 import {
   CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD,
   buildCloudBackgroundJobInput,
+  isCloudBackgroundApprovalReady,
   type CloudBackgroundProviderOption,
 } from "../cloudBackgroundEscalation";
 import { toolCallHooks, HOOK_PRIORITY } from "../toolCallHooks";
@@ -64,6 +65,7 @@ toolCallHooks.register(async (ctx) => {
 
 toolCallHooks.register((ctx) => {
   if (ctx.toolName !== "queue_background_job" || ctx.params.task_scoped_cloud !== true) return undefined;
+  if (!isCloudBackgroundApprovalReady(ctx.params)) return undefined;
   const providerId = String(ctx.params.cloud_provider_id || "").trim();
   const providerLabel = catalogProviderLabel(providerId);
   const authType = ctx.params.cloud_provider_auth_type === "api_key" ? "API key" : "subscription";

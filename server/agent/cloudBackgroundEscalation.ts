@@ -192,6 +192,27 @@ const LOCAL_PROVIDER_IDS = new Set(["local-llama", "android-local-gemma"]);
 export const CLOUD_BACKGROUND_MODEL_STEP_ESTIMATE_USD = 0.05;
 export const CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD = 0.25;
 
+const CLOUD_BACKGROUND_APPROVAL_AGENT_TYPES = new Set(["research", "writing", "planning", "email"]);
+
+export function isCloudBackgroundApprovalReady(params?: Record<string, unknown> | null): boolean {
+  if (!params || params.task_scoped_cloud !== true) return false;
+
+  const agentType = String(params.agent_type || "").trim();
+  if (!CLOUD_BACKGROUND_APPROVAL_AGENT_TYPES.has(agentType)) return false;
+
+  const providerId = String(params.cloud_provider_id || "").trim();
+  const authType = params.cloud_provider_auth_type;
+  if (!providerId || (authType !== "api_key" && authType !== "oauth")) return false;
+
+  if (authType === "oauth") {
+    return providerId === "openai";
+  }
+
+  const budgetUsd = Number(params.cloud_budget_usd);
+  const roundedBudgetUsd = Math.round(budgetUsd * 100) / 100;
+  return Number.isFinite(roundedBudgetUsd) && roundedBudgetUsd >= CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD;
+}
+
 function compact(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 }

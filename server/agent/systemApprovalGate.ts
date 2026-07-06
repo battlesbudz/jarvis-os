@@ -4,6 +4,7 @@ import { withApprovalMarkerForTool } from "./approvalMarkers";
 import { notifyApprovalRequest as notifyApprovalRequestForGate } from "./approvalNotifications";
 import { approvalReceiptCoversToolCall } from "./approvalReceipt";
 import { requiresApproval as defaultRequiresApproval } from "./approvalToolRisk";
+import { isCloudBackgroundApprovalReady } from "./cloudBackgroundEscalation";
 import { getModelProvider } from "@shared/modelProviderCatalog";
 
 type OnBeforeToolResult = {
@@ -78,7 +79,9 @@ function requiresSystemApproval(
   params: Record<string, unknown>,
   requiresApproval: (toolName: string) => boolean,
 ): boolean {
-  if (toolName === "queue_background_job" && params.task_scoped_cloud === true) return true;
+  if (toolName === "queue_background_job" && params.task_scoped_cloud === true) {
+    return isCloudBackgroundApprovalReady(params);
+  }
   return requiresApproval(toolName);
 }
 
