@@ -172,7 +172,7 @@ class OutsideAppVoiceSessionService : Service() {
             ACTION_RESUME -> {
                 if (!sessionActive) sessionActive = true
                 resumeWakeCapture()
-                setState(OutsideAppVoiceState.LISTENING)
+                setState(OutsideAppVoiceState.LISTENING, "resume")
             }
             ACTION_SET_STATE -> {
                 if (!sessionActive) sessionActive = true
@@ -239,7 +239,7 @@ class OutsideAppVoiceSessionService : Service() {
 
     internal fun onOverlayResume() {
         resumeWakeCapture()
-        setState(OutsideAppVoiceState.LISTENING)
+        setState(OutsideAppVoiceState.LISTENING, "resume")
     }
 
     internal fun onOverlayEnd() {
@@ -261,11 +261,11 @@ class OutsideAppVoiceSessionService : Service() {
         DaemonLog.add("outside_app_voice: wake capture resumed")
     }
 
-    private fun setState(nextState: OutsideAppVoiceState) {
+    private fun setState(nextState: OutsideAppVoiceState, actionName: String = nextState.wireName) {
         state = nextState
         startForegroundCompat()
         updateOverlay()
-        sendVoiceSessionEvent(nextState.wireName)
+        sendVoiceSessionEvent(actionName)
     }
 
     private fun endSession() {

@@ -408,6 +408,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "WakeWordService.pauseForUserControl()", source);
   assertIncludes(contents, "WakeWordService.onTtsFinished()", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)", source);
+  assertIncludes(contents, "setState(OutsideAppVoiceState.LISTENING, \"resume\")", source);
   assertIncludes(contents, "JarvisDaemonModule.emitVoiceSessionControl(actionName, state.wireName)", source);
   assertIncludes(contents, "PendingIntent.getActivity", source);
   assertIncludes(contents, "private fun notificationActionPendingIntent", source);
@@ -422,6 +423,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "service.state != OutsideAppVoiceState.IDLE", source);
   assertIncludes(contents, "private val mainHandler = Handler(Looper.getMainLooper())", source);
   assertIncludes(contents, "private fun setStateFromAnyThread(nextState: OutsideAppVoiceState)", source);
+  assertIncludes(contents, "private fun setState(nextState: OutsideAppVoiceState, actionName: String = nextState.wireName)", source);
   assertIncludes(contents, "instance?.setStateFromAnyThread(OutsideAppVoiceState.SPEAKING)", source);
   assertIncludes(contents, "instance?.setStateFromAnyThread(OutsideAppVoiceState.LISTENING)", source);
   assertExcludes(contents, "WakeWordService.ACTION_STOP", source);

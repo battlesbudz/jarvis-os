@@ -1495,7 +1495,12 @@ export default function InsightsScreen() {
         apiRequest('PUT', '/api/voice/wake-settings', { talkModeEnabled: false }).catch(() => {});
         return;
       }
-      if (action === 'resume' || action === 'listening') {
+      if (action === 'listening') {
+        nativeVoiceStateSyncHeldRef.current = false;
+        outsideAppVoiceStateRef.current = 'listening';
+        return;
+      }
+      if (action === 'resume') {
         nativeVoiceStateSyncHeldRef.current = false;
         outsideAppVoiceStateRef.current = 'listening';
         if (
