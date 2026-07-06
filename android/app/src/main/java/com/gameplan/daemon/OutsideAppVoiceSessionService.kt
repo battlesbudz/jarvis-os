@@ -147,8 +147,8 @@ class OutsideAppVoiceSessionService : Service() {
 
     private val overlayController by lazy { OutsideAppVoiceOverlayController(this) }
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var state: OutsideAppVoiceState = OutsideAppVoiceState.IDLE
-    private var sessionActive = false
+    @Volatile private var state: OutsideAppVoiceState = OutsideAppVoiceState.IDLE
+    @Volatile private var sessionActive = false
 
     override fun onCreate() {
         super.onCreate()

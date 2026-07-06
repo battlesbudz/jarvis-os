@@ -399,6 +399,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = true)", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)", source);
   assertIncludes(contents, "WakeWordService.endTalkModeForUserControl()", source);
+  assertIncludes(contents, "@Volatile private var state: OutsideAppVoiceState", source);
+  assertIncludes(contents, "@Volatile private var sessionActive", source);
   assertIncludes(contents, "private fun endTalkModeCapture()", source);
   assertIncludes(contents, "private fun pauseWakeCapture()", source);
   assertIncludes(contents, "private fun resumeWakeCapture()", source);
