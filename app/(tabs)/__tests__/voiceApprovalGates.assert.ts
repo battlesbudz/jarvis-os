@@ -21,6 +21,12 @@ assert.ok(
   "server-handled overlay approvals should clear matching saved confirmation cards on app resume",
 );
 assert.ok(
+  insightsSource.includes("const refreshPendingCoachResponse = useCallback") &&
+    insightsSource.includes("await refreshPendingCoachResponse()") &&
+    insightsSource.includes("refreshPendingCoachResponse().catch(() => {})"),
+  "pending approval outcomes should refresh during initial load and foreground focus",
+);
+assert.ok(
   insightsSource.includes("confirmActionRef.current(pendingVoiceConfirmMessage.id, approved"),
   "foreground overlay approval events should execute the pending confirmation handler",
 );

@@ -2209,6 +2209,61 @@ export default function InsightsScreen() {
     } catch {}
   }, []);
 
+  const refreshPendingCoachResponse = useCallback(async () => {
+    try {
+      const pendingUrl = new URL('/api/coach/pending-response', getApiUrl());
+      const pendingRes = await authFetch(pendingUrl.toString());
+      const pendingData = await pendingRes.json();
+      if ((pendingData.text && pendingData.id) || pendingData.clearPendingConfirmationToken) {
+        setMessages(prev => {
+          const clearToken = typeof pendingData.clearPendingConfirmationToken === 'string'
+            ? pendingData.clearPendingConfirmationToken
+            : null;
+          const executedAction = pendingData.executedAction && typeof pendingData.executedAction === 'object'
+            ? pendingData.executedAction as ExecutedAction
+            : null;
+          let matchedConfirmation = false;
+          let changed = false;
+          let next = prev;
+
+          if (clearToken) {
+            next = next.map(message => {
+              if (message.pendingConfirm?.token !== clearToken) return message;
+              matchedConfirmation = true;
+              changed = true;
+              return {
+                ...message,
+                pendingConfirm: undefined,
+                content: pendingData.text || 'That action was already handled outside the app.',
+                ...(executedAction ? { executedActions: [executedAction] } : {}),
+              };
+            });
+          }
+
+          // Already in chat? Skip
+          if (pendingData.text && pendingData.id && !matchedConfirmation && !next.some(m => m.id === pendingData.id)) {
+            const pendingMsg: ChatMessage = {
+              id: pendingData.id,
+              role: 'assistant',
+              content: pendingData.text,
+              // If the task that triggered this pending response took a screenshot,
+              // include it as an executedAction so the image renders inline.
+              ...(pendingData.screenshotUrl ? {
+                executedActions: [{ tool: 'daemon_action', result: 'success', label: 'Temporary screen capture', screenshotUrl: pendingData.screenshotUrl }]
+              } : {}),
+            };
+            next = [pendingMsg, ...next];
+            changed = true;
+          }
+
+          if (!changed) return prev;
+          persistChatHistory(next);
+          return next;
+        });
+      }
+    } catch {}
+  }, []);
+
   const loadAll = useCallback(async () => {
     setIsBaseLoading(true);
     setIsEmailLoading(true);
@@ -2291,58 +2346,7 @@ export default function InsightsScreen() {
     // Pending daemon response — fetch any Jarvis response that was saved server-side
     // because the SSE connection dropped while the user was in another app (e.g. camera).
     // The server stores the response in userPreferences and clears it on first fetch.
-    try {
-      const pendingUrl = new URL('/api/coach/pending-response', getApiUrl());
-      const pendingRes = await authFetch(pendingUrl.toString());
-      const pendingData = await pendingRes.json();
-      if ((pendingData.text && pendingData.id) || pendingData.clearPendingConfirmationToken) {
-        setMessages(prev => {
-          const clearToken = typeof pendingData.clearPendingConfirmationToken === 'string'
-            ? pendingData.clearPendingConfirmationToken
-            : null;
-          const executedAction = pendingData.executedAction && typeof pendingData.executedAction === 'object'
-            ? pendingData.executedAction as ExecutedAction
-            : null;
-          let matchedConfirmation = false;
-          let changed = false;
-          let next = prev;
-
-          if (clearToken) {
-            next = next.map(message => {
-              if (message.pendingConfirm?.token !== clearToken) return message;
-              matchedConfirmation = true;
-              changed = true;
-              return {
-                ...message,
-                pendingConfirm: undefined,
-                content: pendingData.text || 'That action was already handled outside the app.',
-                ...(executedAction ? { executedActions: [executedAction] } : {}),
-              };
-            });
-          }
-
-          // Already in chat? Skip
-          if (pendingData.text && pendingData.id && !matchedConfirmation && !next.some(m => m.id === pendingData.id)) {
-            const pendingMsg: ChatMessage = {
-              id: pendingData.id,
-              role: 'assistant',
-              content: pendingData.text,
-              // If the task that triggered this pending response took a screenshot,
-              // include it as an executedAction so the image renders inline.
-              ...(pendingData.screenshotUrl ? {
-                executedActions: [{ tool: 'daemon_action', result: 'success', label: 'Temporary screen capture', screenshotUrl: pendingData.screenshotUrl }]
-              } : {}),
-            };
-            next = [pendingMsg, ...next];
-            changed = true;
-          }
-
-          if (!changed) return prev;
-          persistChatHistory(next);
-          return next;
-        });
-      }
-    } catch {}
+    await refreshPendingCoachResponse();
 
     // Check accountability on mount (proactive Jarvis message for overdue items)
     checkAccountabilityOnMount(loadedHistory, loadedCommitments, loadedGoals, loadedStats, loadedLifeContext).catch(() => {});
@@ -2402,13 +2406,14 @@ export default function InsightsScreen() {
     if (isGmailConnected && loadedGoals.length > 0) {
       scanForTasks(loadedGoals);
     }
-  }, [scanForTasks]);
+  }, [refreshPendingCoachResponse, scanForTasks]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
   useFocusEffect(useCallback(() => {
     getGoals().then(setGoals);
     getStats().then(setStats);
+    refreshPendingCoachResponse().catch(() => {});
     apiRequest('GET', '/api/voice/wake-settings').then(r => r.json()).then(d => {
       const enabled = d?.talkModeEnabled ?? false;
       setTalkModeEnabled(enabled);
@@ -2431,7 +2436,7 @@ export default function InsightsScreen() {
         stopRecordingSilentlyRef.current().catch(() => {});
       }
     };
-  }, []));
+  }, [refreshPendingCoachResponse]));
 
   const fetchMcpPrompts = useCallback(async () => {
     setMcpPromptsLoading(true);

@@ -2842,7 +2842,16 @@ You can extend yourself by building new tools directly. Generate the complete Ty
     try {
       if (approved) {
         const pending = pendingConfirmations.get(token);
-        if (!pending || pending.userId !== userId) return;
+        if (!pending || pending.userId !== userId) {
+          handledConfirmation = true;
+          await saveApprovalOutcome("That approval expired, so no phone action was taken.", {
+            tool: "confirmed_action",
+            result: "error",
+            label: "Approval expired",
+            detail: "No matching pending confirmation was found for the outside-app approval token.",
+          });
+          return;
+        }
         handledConfirmation = true;
         try {
           const execResult = await executePendingCoachAction({
@@ -2876,6 +2885,14 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         handledConfirmation = true;
         pendingConfirmations.delete(token);
         await saveApprovalOutcome("Got it - I won't proceed with that action.");
+      } else {
+        handledConfirmation = true;
+        await saveApprovalOutcome("That approval expired, so there was nothing left to cancel.", {
+          tool: "confirmed_action",
+          result: "error",
+          label: "Approval expired",
+          detail: "No matching pending confirmation was found for the outside-app denial token.",
+        });
       }
     } finally {
       if (handledConfirmation) {

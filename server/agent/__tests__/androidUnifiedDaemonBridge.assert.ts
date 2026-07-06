@@ -7,6 +7,7 @@ const bridgeSource = fs.readFileSync(path.join(projectRoot, "server/daemon/bridg
 const channelRoutesSource = fs.readFileSync(path.join(projectRoot, "server/channels/routes.ts"), "utf8");
 const appUpdateSource = fs.readFileSync(path.join(projectRoot, "server/routes/appUpdateRoutes.ts"), "utf8");
 const downloadRoutesSource = fs.readFileSync(path.join(projectRoot, "server/downloadRoutes.ts"), "utf8");
+const serverRoutesSource = fs.readFileSync(path.join(projectRoot, "server/routes.ts"), "utf8");
 
 assert.match(
   bridgeSource,
@@ -168,6 +169,12 @@ assert.match(
   bridgeSource,
   /setTimeout\(runApprovalFallback, VOICE_APPROVAL_REACT_FALLBACK_DELAY_MS\)/,
   "Outside-app approval controls should use an ack-gated server fallback when React reports active.",
+);
+
+assert.match(
+  serverRoutesSource,
+  /That approval expired[\s\S]*voice_set_outside_app_state/,
+  "Expired outside-app approval tokens should save a handled failure and reset the native overlay.",
 );
 
 assert.match(
