@@ -170,7 +170,12 @@ function buildAndroidApprovalPrompt(tool: string | undefined, preview: Record<st
   if (action === "android_screen_record") {
     return `Approve recording your screen${durationSeconds ? ` for ${durationSeconds} seconds` : ""}?`;
   }
-  if ((action === "android_type" || action === "android_type_text") && text) {
+  if (
+    (action === "android_type" ||
+      action === "android_type_text" ||
+      (action === "android_operator_action" && preview.operatorActionType === "type_text")) &&
+    text
+  ) {
     return `Approve submitting this phone text: "${text}"?`;
   }
   return "Approve this phone action?";

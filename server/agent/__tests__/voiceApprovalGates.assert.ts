@@ -123,6 +123,12 @@ function testOverlayPromptIsOneShortSentence() {
     preview: { action: "android_notification_reply", replyText: "Yes, I can do that" },
   });
   assert.equal(replyPrompt, 'Approve sending this notification reply: "Yes, I can do that"?');
+
+  const nestedOperatorPrompt = buildVoiceApprovalPrompt({
+    tool: "daemon_action",
+    preview: { action: "android_operator_action", operatorActionType: "type_text", text: "Ship it" },
+  });
+  assert.equal(nestedOperatorPrompt, 'Approve submitting this phone text: "Ship it"?');
   console.log("OK: voice approval overlay prompt is one short sentence");
 }
 

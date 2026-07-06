@@ -23,6 +23,16 @@ assert.equal(
 );
 
 assert.equal(
+  isAndroidSubmitCapableAction(
+    "daemon_action",
+    { action: "android_operator_action", operatorAction: { type: "type_text", text: "Ship it", submit: true } },
+    "Reply to this text",
+  ),
+  true,
+  "nested operator type_text submit should require confirmation",
+);
+
+assert.equal(
   isAndroidSubmitCapableAction("android_tap_screen", { x: 540, y: 1800 }, "Tap submit on this payment form"),
   true,
   "submit/pay taps should require confirmation",
@@ -67,6 +77,16 @@ const preview = buildAndroidSubmitConfirmationPreview(
 assert.equal(preview.action, "android_type_text");
 assert.equal(preview.text, "Thanks");
 assert.match(preview.reason, /submit|send|save|pay|publish/i);
+
+const nestedOperatorPreview = buildAndroidSubmitConfirmationPreview(
+  "daemon_action",
+  { action: "android_operator_action", operatorAction: { type: "type_text", text: "Ship it", submit: true } },
+  "Reply to this text",
+);
+assert.equal(nestedOperatorPreview.tool, "daemon_action");
+assert.equal(nestedOperatorPreview.action, "android_operator_action");
+assert.equal(nestedOperatorPreview.operatorActionType, "type_text");
+assert.equal(nestedOperatorPreview.text, "Ship it");
 
 const smsPreview = buildAndroidSubmitConfirmationPreview(
   "daemon_action",

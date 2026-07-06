@@ -29,6 +29,12 @@ function previewValue(value: unknown): string {
   }
 }
 
+function previewString(value: unknown, maxLength: number): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  return trimmed ? trimmed.slice(0, maxLength) : "";
+}
+
 function collectGateText(args: AndroidSubmitGateArgs, requestText?: string): string {
   const operatorAction = args?.operatorAction;
   return [
@@ -99,23 +105,36 @@ export function buildAndroidSubmitConfirmationPreview(
   requestText?: string,
 ): Record<string, string> {
   const action = normalizeActionName(tool, args);
+  const operatorAction = args?.operatorAction as Record<string, unknown> | undefined;
+  const operatorType = String(operatorAction?.type || "");
   const preview: Record<string, string> = {
     action,
     reason: "This phone action may submit, send, save, pay, publish, or change external state.",
   };
   if (tool !== action) preview.tool = tool;
-  if (typeof args?.text === "string" && args.text.trim()) preview.text = args.text.slice(0, 160);
-  if (typeof args?.message === "string" && args.message.trim()) preview.message = args.message.slice(0, 160);
-  if (typeof args?.replyText === "string" && args.replyText.trim()) preview.replyText = args.replyText.slice(0, 160);
-  if (typeof args?.to === "string" && args.to.trim()) preview.to = args.to.slice(0, 120);
-  if (typeof args?.notificationKey === "string" && args.notificationKey.trim()) {
-    preview.notificationKey = args.notificationKey.slice(0, 120);
-  }
+  if (operatorType) preview.operatorActionType = operatorType.slice(0, 80);
+  const text = previewString(args?.text, 160) || previewString(operatorAction?.text, 160);
+  const message = previewString(args?.message, 160) || previewString(operatorAction?.message, 160);
+  const replyText = previewString(args?.replyText, 160) || previewString(operatorAction?.replyText, 160);
+  const to = previewString(args?.to, 120) || previewString(operatorAction?.to, 120);
+  const notificationKey = previewString(args?.notificationKey, 120) || previewString(operatorAction?.notificationKey, 120);
+  if (text) preview.text = text;
+  if (message) preview.message = message;
+  if (replyText) preview.replyText = replyText;
+  if (to) preview.to = to;
+  if (notificationKey) preview.notificationKey = notificationKey;
   if (typeof args?.durationMs === "number" && Number.isFinite(args.durationMs)) {
     preview.durationMs = String(args.durationMs);
   }
   if (typeof args?.key === "string" && args.key.trim()) preview.key = args.key;
-  if (typeof args?.x === "number" && typeof args?.y === "number") preview.target = `${args.x},${args.y}`;
+  if (!preview.key && typeof operatorAction?.key === "string" && operatorAction.key.trim()) preview.key = operatorAction.key;
+  if (typeof args?.x === "number" && typeof args?.y === "number") {
+    preview.target = `${args.x},${args.y}`;
+  } else if (typeof operatorAction?.x === "number" && typeof operatorAction?.y === "number") {
+    preview.target = `${operatorAction.x},${operatorAction.y}`;
+  } else if (typeof operatorAction?.elementId === "number") {
+    preview.target = `element ${operatorAction.elementId}`;
+  }
   if (requestText?.trim()) preview.request = requestText.slice(0, 160);
   return preview;
 }
