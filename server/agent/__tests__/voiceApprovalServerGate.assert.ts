@@ -23,6 +23,18 @@ assert.equal(
 );
 
 assert.equal(
+  isAndroidSubmitCapableAction("android_type_text", { text: "On my way", submit: true }, "Text Bob that I am on my way"),
+  true,
+  "typed text-message sends should require confirmation",
+);
+
+assert.equal(
+  isAndroidSubmitCapableAction("android_press_phone_key", { key: "enter" }, "Message Sarah hello"),
+  true,
+  "message submit keys should require confirmation",
+);
+
+assert.equal(
   isAndroidSubmitCapableAction("android_type_text", { text: "recipes", submit: true }, "Search Instagram for recipes"),
   false,
   "typed search submissions should remain low risk",
