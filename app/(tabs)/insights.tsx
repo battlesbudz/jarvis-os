@@ -203,17 +203,19 @@ function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: Confirm
   const isEmail = pendingConfirm.tool === 'send_email';
   const isConnectedAccountAction = pendingConfirm.tool === 'connected_accounts_execute';
   const preview = pendingConfirm.preview;
+  const previewAction = String(preview.action || '');
+  const isAndroidAction = pendingConfirm.tool.startsWith('android_') || previewAction.startsWith('android_');
 
   return (
     <View style={styles.confirmCard}>
       <View style={styles.confirmCardHeader}>
         <Ionicons
-          name={isEmail ? 'mail-outline' : isConnectedAccountAction ? 'git-network-outline' : 'terminal-outline'}
+          name={isEmail ? 'mail-outline' : isConnectedAccountAction ? 'git-network-outline' : isAndroidAction ? 'phone-portrait-outline' : 'terminal-outline'}
           size={15}
           color={Colors.primary}
         />
         <Text style={styles.confirmCardTitle}>
-          {isEmail ? 'Send email?' : isConnectedAccountAction ? 'Approve connected account action?' : `Run terminal command?`}
+          {isEmail ? 'Send email?' : isConnectedAccountAction ? 'Approve connected account action?' : isAndroidAction ? 'Approve phone action?' : `Run terminal command?`}
         </Text>
       </View>
 
@@ -246,6 +248,41 @@ function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: Confirm
             <>
               <Text style={styles.confirmPreviewLabel}>Data</Text>
               <Text style={styles.confirmPreviewCode} numberOfLines={4}>{preview.data}</Text>
+            </>
+          )}
+        </View>
+      ) : isAndroidAction ? (
+        <View style={styles.confirmPreview}>
+          <Text style={styles.confirmPreviewLabel}>Action</Text>
+          <Text style={styles.confirmPreviewValue}>{previewAction || pendingConfirm.tool}</Text>
+          {!!preview.text && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Text</Text>
+              <Text style={styles.confirmPreviewCode} numberOfLines={3}>{preview.text}</Text>
+            </>
+          )}
+          {!!preview.key && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Key</Text>
+              <Text style={styles.confirmPreviewValue}>{preview.key}</Text>
+            </>
+          )}
+          {!!preview.target && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Target</Text>
+              <Text style={styles.confirmPreviewValue}>{preview.target}</Text>
+            </>
+          )}
+          {!!preview.reason && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Reason</Text>
+              <Text style={styles.confirmPreviewValue} numberOfLines={3}>{preview.reason}</Text>
+            </>
+          )}
+          {!!preview.request && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Request</Text>
+              <Text style={styles.confirmPreviewValue} numberOfLines={3}>{preview.request}</Text>
             </>
           )}
         </View>
@@ -288,7 +325,9 @@ function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: Confirm
             <Ionicons name="checkmark" size={14} color="#fff" />
           )}
           <Text style={styles.confirmBtnConfirmText}>
-            {isLoading ? (isEmail ? 'Sending...' : isConnectedAccountAction ? 'Approving...' : 'Running...') : isEmail ? 'Send' : isConnectedAccountAction ? 'Approve' : 'Run'}
+            {isLoading
+              ? (isEmail ? 'Sending...' : isConnectedAccountAction || isAndroidAction ? 'Approving...' : 'Running...')
+              : isEmail ? 'Send' : isConnectedAccountAction || isAndroidAction ? 'Approve' : 'Run'}
           </Text>
         </Pressable>
       </View>

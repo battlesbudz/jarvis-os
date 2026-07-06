@@ -30,7 +30,7 @@ const APPROVE_PATTERNS = [
 
 const DENY_PATTERNS = [
   /\b(no|nope|nah)\b/,
-  /\b(cancel|deny|decline|reject|stop|do not|don't)\b/,
+  /\b(cancel|deny|decline|reject|stop|do not|don't|dont|don t)\b/,
   /\b(not now|leave it|never mind|nevermind)\b/,
 ];
 
@@ -40,7 +40,7 @@ const AMBIGUOUS_PATTERNS = [
 ];
 
 const NEGATED_APPROVAL_PATTERNS = [
-  /\b(don't|do not|never)\s+(do it|send it|run it|post it|publish it|submit it|save it|proceed|approve|confirm)\b/,
+  /\b(don't|do not|dont|don t|never)\s+(do it|send it|run it|post it|publish it|submit it|save it|proceed|approve|confirm)\b/,
 ];
 
 const HIGH_RISK_PATTERNS = [
@@ -105,6 +105,7 @@ const LOW_RISK_ANDROID_TOOL_NAMES = [
 function normalizeSpeechText(text: string): string {
   return text
     .toLowerCase()
+    .replace(/[\u2018\u2019`]/g, "'")
     .replace(/[^\w\s']/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -227,6 +228,9 @@ export function buildVoiceApprovalPrompt(input: VoiceApprovalRiskInput): string 
   if (tool === "connected_accounts_execute") {
     const platform = typeof preview.platform === "string" && preview.platform.trim() ? ` in ${preview.platform.trim()}` : "";
     return `Approve this connected account action${platform}?`;
+  }
+  if (tool?.startsWith("android_") || (tool === "daemon_action" && typeof preview.action === "string" && preview.action.startsWith("android_"))) {
+    return "Approve this phone action?";
   }
   if (tool === "project_shell") {
     return "Approve running this terminal command?";

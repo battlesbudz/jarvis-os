@@ -23,6 +23,13 @@ assert.ok(
   "confirmed actions should explicitly mark confirmation execution as started and finished",
 );
 assert.ok(
+  insightsSource.includes("Approve phone action?") &&
+    insightsSource.includes("preview.text") &&
+    insightsSource.includes("preview.reason") &&
+    insightsSource.includes("preview.request"),
+  "Android confirmation cards should show phone action details before approval",
+);
+assert.ok(
   insightsSource.includes("setAndroidOutsideAppVoiceApproval(approvalPrompt)"),
   "voice-mode high-risk confirmations should push the approval prompt to the native overlay",
 );
