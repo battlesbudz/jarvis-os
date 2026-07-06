@@ -906,6 +906,7 @@ export default function InsightsScreen() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [talkModeEnabled, setTalkModeEnabled] = useState(false);
   const [voiceApprovalPrompt, setVoiceApprovalPrompt] = useState<string | null>(null);
+  const [voiceConfirmationExecuting, setVoiceConfirmationExecuting] = useState(false);
   const talkModeRef = useRef(false);
   const talkModeStartSeqRef = useRef(0);
   const outsideAppVoiceStateRef = useRef<string | null>(null);
@@ -933,6 +934,7 @@ export default function InsightsScreen() {
   const nativeVoiceStateSyncHeldRef = useRef(false);
   const nativeVoiceStateSyncReadyRef = useRef(Platform.OS !== 'android');
   const [nativeVoiceStateSyncReady, setNativeVoiceStateSyncReady] = useState(Platform.OS !== 'android');
+  const voiceConfirmationExecutingRef = useRef(false);
   const isTranscribingRef = useRef(false);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
   const webChunksRef = useRef<Blob[]>([]);
@@ -1403,7 +1405,7 @@ export default function InsightsScreen() {
       ? 'approval'
       : isSpeaking
       ? 'speaking'
-      : isTranscribing || isStreaming || isWorkingOnPhone
+      : voiceConfirmationExecuting || isTranscribing || isStreaming || isWorkingOnPhone
         ? 'working'
         : isRecording
           ? 'listening'
@@ -1419,7 +1421,7 @@ export default function InsightsScreen() {
     syncVoiceState.catch((err) => {
       console.warn('[voice] outside-app state sync failed:', err);
     });
-  }, [isRecording, isSpeaking, isStreaming, isTranscribing, isWorkingOnPhone, nativeVoiceStateSyncReady, talkModeEnabled, voiceApprovalPrompt]);
+  }, [isRecording, isSpeaking, isStreaming, isTranscribing, isWorkingOnPhone, nativeVoiceStateSyncReady, talkModeEnabled, voiceApprovalPrompt, voiceConfirmationExecuting]);
 
   // App-level wake word events — fired by WakeWordContext even when insights is not focused
   const { pendingWakeEvent, clearWakeEvent, setTalkModeActive } = useWakeWord();
@@ -1559,7 +1561,6 @@ export default function InsightsScreen() {
         const approved = action === 'approval_approve';
         const now = new Date().toISOString();
         nativeVoiceStateSyncHeldRef.current = false;
-        outsideAppVoiceStateRef.current = approved ? 'working' : 'listening';
         setVoiceApprovalPrompt(null);
         confirmActionRef.current(pendingVoiceConfirmMessage.id, approved, {
           source: 'voice',
@@ -3156,6 +3157,18 @@ export default function InsightsScreen() {
     await abortActiveChatTurn();
   }, [abortActiveChatTurn]);
 
+  const setVoiceConfirmationExecutionState = useCallback((executing: boolean) => {
+    voiceConfirmationExecutingRef.current = executing;
+    setVoiceConfirmationExecuting(executing);
+    if (Platform.OS !== 'android' || !talkModeRef.current || outsideAppVoiceStateRef.current === 'paused') return;
+    nativeVoiceStateSyncHeldRef.current = false;
+    const nextState = executing ? 'working' : isSpeakingRef.current ? 'speaking' : 'listening';
+    outsideAppVoiceStateRef.current = nextState;
+    setAndroidOutsideAppVoiceSessionState(nextState).catch((err) => {
+      console.warn('[voice] outside-app confirmation execution state sync failed:', err);
+    });
+  }, []);
+
   const handleConfirmAction = useCallback(async (msgId: string, confirmed: boolean, origin: SendMessageOrigin = { source: 'in_app' }) => {
     const msg = messagesRef.current.find(m => m.id === msgId);
     if (!msg?.pendingConfirm) return;
@@ -3257,6 +3270,7 @@ export default function InsightsScreen() {
       return;
     }
 
+    setVoiceConfirmationExecutionState(true);
     try {
       const url = new URL('/api/coach/execute-confirmed', getApiUrl());
       const res = await authFetch(url.toString(), {
@@ -3353,8 +3367,10 @@ export default function InsightsScreen() {
         return updated;
       });
       speakConfirmationResult(failureContent);
+    } finally {
+      setVoiceConfirmationExecutionState(false);
     }
-  }, []);
+  }, [setVoiceConfirmationExecutionState]);
 
   useEffect(() => {
     confirmActionRef.current = handleConfirmAction;

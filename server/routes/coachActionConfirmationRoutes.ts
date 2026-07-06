@@ -60,6 +60,25 @@ export function registerCoachActionConfirmationRoutes(
             detail: toolResult.content ?? toolResult.detail ?? "",
           };
         }
+      } else if (pending.tool.startsWith("android_")) {
+        const agentTool = getTool(pending.tool);
+        if (!agentTool) {
+          execResult = {
+            result: "error",
+            label: "Android action unavailable",
+            detail: `The Android action tool '${pending.tool}' is not registered.`,
+          };
+        } else {
+          const toolResult = await agentTool.execute(
+            { ...pending.args, approved: true, confirmed: true },
+            { userId, channel: "appchat", state: { pendingAttachments: [] } } as ToolContext,
+          );
+          execResult = {
+            result: toolResult.ok ? "success" : "error",
+            label: toolResult.label ?? "Android action",
+            detail: toolResult.content ?? toolResult.detail ?? "",
+          };
+        }
       } else {
         execResult = await executeCoachTool(pending.tool, pending.args, userId);
       }

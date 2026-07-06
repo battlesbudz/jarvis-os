@@ -128,6 +128,10 @@ import {
   runCoachModelTurn,
   streamCoachModelTurn,
 } from "./services/aiCoachContextService";
+import {
+  buildAndroidSubmitConfirmationPreview,
+  isAndroidSubmitCapableAction,
+} from "./agent/voiceApprovalServerGate";
 
 const RESTRICTED_MEMORY_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
 
@@ -2216,6 +2220,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             if (tc.type !== 'function') continue;
             let args: any = {};
             try { args = JSON.parse(tc.function.arguments); } catch {}
+            const userRequestText = String([...messages].reverse().find((m: any) => m?.role === 'user')?.content ?? '');
 
             const connectedAccountPermission = tc.function.name === 'connected_accounts_execute'
               ? classifyComposioActionPermission(
@@ -2224,9 +2229,11 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                   JSON.stringify(args.arguments || args.input || {}).slice(0, 1000),
                 )
               : null;
+            const androidSubmitApprovalRequired = isAndroidSubmitCapableAction(tc.function.name, args, userRequestText);
             const isHighStakes = tc.function.name === 'send_email' ||
               (tc.function.name === 'connected_accounts_execute' && connectedAccountPermission?.approvalRequired === true && args.dry_run !== true) ||
-              (tc.function.name === 'daemon_action' && ['shell', 'file_write'].includes(String(args.action || '')));
+              (tc.function.name === 'daemon_action' && ['shell', 'file_write'].includes(String(args.action || ''))) ||
+              androidSubmitApprovalRequired;
 
             if (isHighStakes) {
               openCoachSse(res);
@@ -2242,6 +2249,8 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 preview.connection = String(args.account || args.connected_account_id || args.connectedAccountId || '');
                 preview.reason = connectedAccountPermission?.reason || 'This Composio action can change an external account.';
                 if (args.arguments) preview.data = typeof args.arguments === 'string' ? args.arguments : JSON.stringify(args.arguments).slice(0, 500);
+              } else if (androidSubmitApprovalRequired) {
+                Object.assign(preview, buildAndroidSubmitConfirmationPreview(tc.function.name, args, userRequestText));
               } else {
                 preview.action = String(args.action || '');
                 if (args.cmd) preview.cmd = String(args.cmd);

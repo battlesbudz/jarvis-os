@@ -171,6 +171,7 @@ const tests = [
   { file: "server/agent/__tests__/localVoiceLoopTiming.assert.ts" },
   { file: "server/agent/__tests__/inAppLocalVoiceLoop.assert.ts" },
   { file: "server/agent/__tests__/voiceApprovalGates.assert.ts" },
+  { file: "server/agent/__tests__/voiceApprovalServerGate.assert.ts" },
   { file: "server/agent/__tests__/localVoiceRuntimeHarness.assert.ts" },
   { file: "server/agent/__tests__/developerDiagnostics.assert.ts" },
   { file: "server/agent/__tests__/telegramRunGuard.assert.ts" },
