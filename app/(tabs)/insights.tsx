@@ -1347,7 +1347,7 @@ export default function InsightsScreen() {
         ? 'working'
         : isRecording
           ? 'listening'
-          : 'idle';
+          : 'listening';
     if (outsideAppVoiceStateRef.current === nextState) return;
     outsideAppVoiceStateRef.current = nextState;
     setAndroidOutsideAppVoiceSessionState(nextState).catch((err) => {
