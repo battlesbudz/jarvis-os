@@ -1003,6 +1003,7 @@ export default function InsightsScreen() {
   const isSpeakingRef = useRef(false);
   const nativeVoiceStateSyncHeldRef = useRef(false);
   const nativeVoiceStateSyncReadyRef = useRef(Platform.OS !== 'android');
+  const initialLoadCompleteRef = useRef(false);
   const [nativeVoiceStateSyncReady, setNativeVoiceStateSyncReady] = useState(Platform.OS !== 'android');
   const voiceConfirmationExecutingRef = useRef(false);
   const isTranscribingRef = useRef(false);
@@ -2347,6 +2348,7 @@ export default function InsightsScreen() {
     // because the SSE connection dropped while the user was in another app (e.g. camera).
     // The server stores the response in userPreferences and clears it on first fetch.
     await refreshPendingCoachResponse();
+    initialLoadCompleteRef.current = true;
 
     // Check accountability on mount (proactive Jarvis message for overdue items)
     checkAccountabilityOnMount(loadedHistory, loadedCommitments, loadedGoals, loadedStats, loadedLifeContext).catch(() => {});
@@ -2413,7 +2415,9 @@ export default function InsightsScreen() {
   useFocusEffect(useCallback(() => {
     getGoals().then(setGoals);
     getStats().then(setStats);
-    refreshPendingCoachResponse().catch(() => {});
+    if (initialLoadCompleteRef.current) {
+      refreshPendingCoachResponse().catch(() => {});
+    }
     apiRequest('GET', '/api/voice/wake-settings').then(r => r.json()).then(d => {
       const enabled = d?.talkModeEnabled ?? false;
       setTalkModeEnabled(enabled);

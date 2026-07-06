@@ -22,9 +22,11 @@ assert.ok(
 );
 assert.ok(
   insightsSource.includes("const refreshPendingCoachResponse = useCallback") &&
+    insightsSource.includes("initialLoadCompleteRef.current = true") &&
+    insightsSource.includes("if (initialLoadCompleteRef.current)") &&
     insightsSource.includes("await refreshPendingCoachResponse()") &&
     insightsSource.includes("refreshPendingCoachResponse().catch(() => {})"),
-  "pending approval outcomes should refresh during initial load and foreground focus",
+  "pending approval outcomes should refresh during initial load and foreground focus after history is loaded",
 );
 assert.ok(
   insightsSource.includes("confirmActionRef.current(pendingVoiceConfirmMessage.id, approved"),
