@@ -179,7 +179,7 @@ function getDaemonServices() {
         "android:name": ".daemon.OutsideAppVoiceSessionService",
         "android:enabled": "true",
         "android:exported": "false",
-        "android:foregroundServiceType": "microphone",
+        "android:foregroundServiceType": "dataSync",
       },
     },
     {

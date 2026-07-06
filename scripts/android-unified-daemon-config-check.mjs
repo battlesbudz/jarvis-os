@@ -316,6 +316,8 @@ assertIncludes(manifest, 'android:name="android.permission.WRITE_EXTERNAL_STORAG
 assertIncludes(plugin, 'name: "android.permission.READ_EXTERNAL_STORAGE", maxSdkVersion: "32"', "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, 'name: "android.permission.WRITE_EXTERNAL_STORAGE", maxSdkVersion: "29"', "plugins/withJarvisAndroidDaemon.js");
 assertIncludes(plugin, 'mainApplication.$["android:allowBackup"] = "false"', "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, '"android:name": ".daemon.OutsideAppVoiceSessionService"', "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(plugin, '"android:foregroundServiceType": "dataSync"', "plugins/withJarvisAndroidDaemon.js");
 
 for (const snippet of requiredManifestSnippets) {
   assertIncludes(manifest, snippet, "AndroidManifest.xml");
