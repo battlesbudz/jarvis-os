@@ -944,6 +944,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   // Each entry carries its own model string so cross-provider fallback always
   // sends a model ID the receiving provider understands.
   const effectiveFallbackChain: FallbackChainEntry[] | null = (() => {
+    if (forceModel) return null;
     if (primaryProviderName === "chatgpt-codex-oauth") return null;
     if (primaryProviderName === "android-local-gemma") return null;
 

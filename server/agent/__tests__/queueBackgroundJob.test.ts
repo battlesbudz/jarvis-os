@@ -106,12 +106,15 @@ async function main() {
     assert.match(jobQueueSource, /cloudBackgroundValidation\.model/);
     assert.match(jobQueueSource, /forceModel: cloudBackgroundValidation\?\.ok === true/);
     assert.match(jobQueueSource, /maxCloudBackgroundModelTurnsForBudget/);
-    assert.match(jobQueueSource, /reserveCloudBackgroundModelStep/);
+    assert.match(jobQueueSource, /reserveCloudBackgroundModelAttempt/);
+    assert.match(jobQueueSource, /nextCloudBackgroundModelAttemptBudgetCheckpoint/);
     assert.match(jobQueueSource, /failJob\(job\.id, cloudBackgroundValidation\.message/);
     assert.match(queueToolSource, /CLOUD_BACKGROUND_AGENT_TYPES/);
     assert.match(queueToolSource, /Cloud background job type unsupported/);
+    assert.match(queueToolSource, /OAuth\/subscription background routing is only supported for OpenAI/);
     assert.match(subagentsSource, /forceModel: opts\.forceModel/);
     assert.match(harnessSource, /forceModel \? null : await getSelectedModelPreference/);
+    assert.match(harnessSource, /if \(forceModel\) return null/);
     console.log("OK: job queue validates cloud task provider and budget before worker execution");
   }
 

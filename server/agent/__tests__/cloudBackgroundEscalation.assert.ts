@@ -7,6 +7,7 @@ import {
   checkCloudBackgroundBudget,
   getDefaultCloudBackgroundModel,
   maxCloudBackgroundModelTurnsForBudget,
+  nextCloudBackgroundModelAttemptBudgetCheckpoint,
   nextCloudBackgroundModelStepBudgetCheckpoint,
   shouldOfferCloudBackgroundEscalation,
   validateCloudBackgroundJobInput,
@@ -153,7 +154,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
   assert.equal(getDefaultCloudBackgroundModel({ id: "openai", authType: "api_key" }), "openai/gpt-4.1-mini");
   assert.equal(getDefaultCloudBackgroundModel({ id: "google", authType: "api_key" }), "google/gemini-2.5-flash");
   assert.equal(getDefaultCloudBackgroundModel({ id: "anthropic", authType: "api_key" }), "anthropic/claude-sonnet-4-5");
-  assert.equal(maxCloudBackgroundModelTurnsForBudget(0.1, 6), 2);
+  assert.equal(maxCloudBackgroundModelTurnsForBudget(0.1, 6), 1);
   assert.equal(maxCloudBackgroundModelTurnsForBudget(3, 6), 6);
   assert.equal(maxCloudBackgroundModelTurnsForBudget(null, 6), 6);
   console.log("OK: approved cloud providers map to concrete worker models");
@@ -188,6 +189,21 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
       },
     }),
     { ok: false, message: "Cloud background task is missing its approved per-job budget." },
+  );
+  assert.deepEqual(
+    validateCloudBackgroundJobInput({
+      model: "google/gemini-2.5-flash",
+      cloudBackgroundTask: {
+        providerId: "google",
+        providerLabel: "Gemini",
+        providerAuthType: "oauth",
+        approvedModel: "google/gemini-2.5-flash",
+        budgetUsd: null,
+        liveModelSwitch: false,
+        disallowedCapabilities: ["phone_control", "memory_write"],
+      },
+    }),
+    { ok: false, message: "Cloud background task uses an unsupported provider authentication route." },
   );
   console.log("OK: worker validation rejects wrong-model or unbudgeted cloud jobs");
 }
@@ -224,7 +240,40 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
     })?.shouldStopBeforeNextStep,
     true,
   );
-  console.log("OK: API-key cloud jobs reserve budget before each model step");
+  const attemptInput = buildCloudBackgroundJobInput({
+    prompt: "Research the competitor and write a report.",
+    provider: {
+      id: "google",
+      label: "Gemini",
+      authType: "api_key",
+      requiresBudget: true,
+      hint: "Gemini API key, budget required",
+    },
+    budgetUsd: 0.1,
+  });
+  const attemptValidation = validateCloudBackgroundJobInput(attemptInput);
+  assert.equal(attemptValidation?.ok, true);
+  if (attemptValidation?.ok !== true) throw new Error("expected valid cloud job input");
+  assert.equal(
+    nextCloudBackgroundModelAttemptBudgetCheckpoint({
+      jobId: "job-attempt-ok",
+      task: attemptValidation.task,
+      spentUsd: 0,
+      maxTurns: 1,
+    })?.shouldStopBeforeNextStep,
+    false,
+  );
+  assert.equal(
+    nextCloudBackgroundModelAttemptBudgetCheckpoint({
+      jobId: "job-attempt-stop",
+      task: attemptValidation.task,
+      spentUsd: 0.05,
+      maxTurns: 1,
+      partialSummary: "Finished the first pass.",
+    })?.shouldStopBeforeNextStep,
+    true,
+  );
+  console.log("OK: API-key cloud jobs reserve budget before each model attempt");
 }
 
 {

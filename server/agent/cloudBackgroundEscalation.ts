@@ -212,6 +212,11 @@ function authTypeValue(value: unknown): CloudBackgroundProviderOption["authType"
   return value === "api_key" || value === "oauth" ? value : null;
 }
 
+function providerSupportsCloudAuthType(providerId: string, authType: CloudBackgroundProviderOption["authType"]): boolean {
+  if (authType === "oauth") return providerId === "openai";
+  return providerId === "openai" || providerId === "anthropic" || providerId === "google";
+}
+
 function disallowsCloudTaskCapability(value: unknown, capability: "phone_control" | "memory_write"): boolean {
   return Array.isArray(value) && value.includes(capability);
 }
@@ -243,12 +248,33 @@ export function nextCloudBackgroundModelStepBudgetCheckpoint(input: {
   });
 }
 
+export function nextCloudBackgroundModelAttemptBudgetCheckpoint(input: {
+  jobId: string;
+  task: ValidatedCloudBackgroundJobInput;
+  spentUsd: number;
+  maxTurns: number;
+  partialSummary?: string | null;
+  actions?: string[];
+}): CloudBackgroundBudgetCheckpoint | null {
+  if (input.task.providerAuthType !== "api_key") return null;
+  const reservedTurns = Math.max(1, input.maxTurns) + 1;
+  return checkCloudBackgroundBudget({
+    jobId: input.jobId,
+    providerId: input.task.providerId,
+    spentUsd: input.spentUsd,
+    budgetUsd: input.task.budgetUsd,
+    nextEstimatedUsd: reservedTurns * CLOUD_BACKGROUND_MODEL_STEP_ESTIMATE_USD,
+    partialSummary: input.partialSummary,
+    actions: input.actions,
+  });
+}
+
 export function maxCloudBackgroundModelTurnsForBudget(
   budgetUsd: number | null,
   defaultMaxTurns: number,
 ): number {
   if (budgetUsd === null) return defaultMaxTurns;
-  const affordableTurns = Math.floor(budgetUsd / CLOUD_BACKGROUND_MODEL_STEP_ESTIMATE_USD);
+  const affordableTurns = Math.floor(budgetUsd / CLOUD_BACKGROUND_MODEL_STEP_ESTIMATE_USD) - 1;
   return Math.max(1, Math.min(defaultMaxTurns, affordableTurns));
 }
 
@@ -391,6 +417,9 @@ export function validateCloudBackgroundJobInput(input: Record<string, unknown>):
 
   if (!providerId || !providerAuthType) {
     return { ok: false, message: "Cloud background task is missing its approved provider." };
+  }
+  if (!providerSupportsCloudAuthType(providerId, providerAuthType)) {
+    return { ok: false, message: "Cloud background task uses an unsupported provider authentication route." };
   }
 
   const expectedModel = getDefaultCloudBackgroundModel({ id: providerId, authType: providerAuthType });

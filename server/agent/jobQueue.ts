@@ -4,9 +4,8 @@ import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { runSubAgent, BUILD_FEATURE_WORKER_SYSTEM_PROMPT } from "./subagents";
 import {
-  CLOUD_BACKGROUND_MODEL_STEP_ESTIMATE_USD,
   maxCloudBackgroundModelTurnsForBudget,
-  nextCloudBackgroundModelStepBudgetCheckpoint,
+  nextCloudBackgroundModelAttemptBudgetCheckpoint,
   validateCloudBackgroundJobInput,
 } from "./cloudBackgroundEscalation";
 import { runGoalDecomposition } from "./goalDecomposer";
@@ -2437,24 +2436,28 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       );
       return;
     }
+    const cloudBackgroundMaxTurns = cloudBackgroundValidation?.ok
+      ? maxCloudBackgroundModelTurnsForBudget(cloudBackgroundValidation.task.budgetUsd, 6)
+      : undefined;
     let cloudBackgroundEstimatedSpentUsd = 0;
-    const reserveCloudBackgroundModelStep = (partialSummary?: string) => {
+    const reserveCloudBackgroundModelAttempt = (partialSummary?: string) => {
       if (!cloudBackgroundValidation?.ok) return null;
-      const checkpoint = nextCloudBackgroundModelStepBudgetCheckpoint({
+      const checkpoint = nextCloudBackgroundModelAttemptBudgetCheckpoint({
         jobId: job.id,
         task: cloudBackgroundValidation.task,
         spentUsd: cloudBackgroundEstimatedSpentUsd,
+        maxTurns: cloudBackgroundMaxTurns ?? 1,
         partialSummary,
         actions: partialSummary ? ["completed initial worker attempt"] : [],
       });
       if (!checkpoint) return null;
       if (checkpoint.shouldStopBeforeNextStep) return checkpoint;
       cloudBackgroundEstimatedSpentUsd = Math.round(
-        (cloudBackgroundEstimatedSpentUsd + CLOUD_BACKGROUND_MODEL_STEP_ESTIMATE_USD) * 100,
+        (cloudBackgroundEstimatedSpentUsd + checkpoint.nextEstimatedUsd) * 100,
       ) / 100;
       return null;
     };
-    const initialCloudBudgetStop = reserveCloudBackgroundModelStep();
+    const initialCloudBudgetStop = reserveCloudBackgroundModelAttempt();
     if (initialCloudBudgetStop?.shouldStopBeforeNextStep) {
       const message = "Cloud background task stopped before starting because the approved budget is too low for a model step.";
       await failJob(job.id, message, job.userId);
@@ -2468,9 +2471,6 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       );
       return;
     }
-    const cloudBackgroundMaxTurns = cloudBackgroundValidation?.ok
-      ? maxCloudBackgroundModelTurnsForBudget(cloudBackgroundValidation.task.budgetUsd, 6)
-      : undefined;
 
     // Per-type model routing is handled at orchestrator-controlled spawn points
     // (queue_background_job, spawn_subagent) via getModelForJobType(). The model
@@ -2542,7 +2542,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         // passed === false: content rejected — retry if attempts remain
         correctionContext = verification.reason;
         if (attempt < MAX_JOB_VERIFY_RETRIES) {
-          const budgetStop = reserveCloudBackgroundModelStep(
+          const budgetStop = reserveCloudBackgroundModelAttempt(
             `Completed an initial ${job.agentType} attempt, then stopped before another model step to stay within the approved cloud budget.`,
           );
           if (budgetStop?.shouldStopBeforeNextStep) {

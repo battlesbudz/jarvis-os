@@ -284,6 +284,14 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
           label: "Cloud provider approval needed",
         };
       }
+      if (authType === "oauth" && providerId !== "openai") {
+        return {
+          ok: true,
+          content:
+            `${providerLabel} cloud background jobs need an API-key budget; OAuth/subscription background routing is only supported for OpenAI right now.`,
+          label: "Cloud budget approval needed",
+        };
+      }
       const budgetUsd = Number(a.cloud_budget_usd);
       if (authType === "api_key" && (!Number.isFinite(budgetUsd) || budgetUsd <= 0)) {
         return {
