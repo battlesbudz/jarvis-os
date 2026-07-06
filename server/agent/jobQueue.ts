@@ -2639,6 +2639,14 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       ? `## Context from prior research phase\n${priorContextRaw}\n\nUse the above as background. Do not re-research topics already covered there — build on them.`
       : undefined;
 
+    const cloudBackgroundInstructionsBlock = cloudBackgroundValidation?.ok
+      ? `## Task-scoped cloud output contract\n${cloudBackgroundValidation.task.compactVerifiedPacketInstructions}`
+      : undefined;
+    const subAgentExtraSystemPrompt = [
+      priorContextBlock,
+      cloudBackgroundInstructionsBlock,
+    ].filter((value): value is string => Boolean(value && value.trim())).join("\n\n") || undefined;
+
     let sub = await runSubAgent({
       agentType: job.agentType as SubAgentType,
       prompt: job.prompt,
@@ -2649,7 +2657,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       preferredAuthType: cloudBackgroundPreferredAuthType,
       cloudBudget: cloudBackgroundBudgetGuardForRun(),
       maxTurns: cloudBackgroundMaxTurns,
-      extraSystemPrompt: priorContextBlock,
+      extraSystemPrompt: subAgentExtraSystemPrompt,
       approvalReceipt,
     });
     if (cloudBackgroundValidation?.ok && sub.finishReason === "budget_stopped") {

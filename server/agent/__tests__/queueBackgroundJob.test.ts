@@ -163,6 +163,9 @@ async function main() {
     assert.match(jobQueueSource, /cloudBackgroundEstimatedSpendOf\(jobInput\)/);
     assert.match(jobQueueSource, /withCloudBackgroundEstimatedSpend\(jobInput, cloudBackgroundEstimatedSpentUsd\)/);
     assert.match(jobQueueSource, /cloudBackgroundApprovalGateMatches/);
+    assert.match(jobQueueSource, /compactVerifiedPacketInstructions/);
+    assert.match(jobQueueSource, /subAgentExtraSystemPrompt/);
+    assert.match(jobQueueSource, /extraSystemPrompt: subAgentExtraSystemPrompt/);
     assert.match(jobQueueSource, /schema\.agentApprovalGates/);
     assert.match(jobQueueSource, /resolvedAt\.getTime\(\) > gate\.expiresAt\.getTime\(\)/);
     assert.doesNotMatch(jobQueueSource, /gte\(schema\.agentApprovalGates\.expiresAt/);
