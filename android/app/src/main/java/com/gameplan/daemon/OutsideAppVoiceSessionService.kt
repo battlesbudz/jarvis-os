@@ -15,6 +15,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
@@ -97,9 +98,24 @@ class OutsideAppVoiceSessionService : Service() {
         @Volatile var instance: OutsideAppVoiceSessionService? = null
             private set
 
+        private const val RECENT_END_PLAYBACK_DROP_MS = 30_000L
+        @Volatile private var lastEndedAtMs = 0L
+
         fun isActive(): Boolean = instance?.sessionActive == true
 
         fun currentState(): OutsideAppVoiceState = instance?.state ?: OutsideAppVoiceState.IDLE
+
+        fun shouldAcceptPlaybackForCurrentSession(): Boolean {
+            val service = instance
+            if (service == null) {
+                val endedAtMs = lastEndedAtMs
+                return endedAtMs == 0L ||
+                    SystemClock.elapsedRealtime() - endedAtMs > RECENT_END_PLAYBACK_DROP_MS
+            }
+            return service.sessionActive &&
+                service.state != OutsideAppVoiceState.PAUSED &&
+                service.state != OutsideAppVoiceState.IDLE
+        }
 
         fun markPlaybackSpeaking() {
             instance?.setStateFromAnyThread(OutsideAppVoiceState.SPEAKING)
@@ -143,6 +159,7 @@ class OutsideAppVoiceSessionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
+                lastEndedAtMs = 0L
                 sessionActive = true
                 setState(OutsideAppVoiceState.LISTENING)
             }
@@ -251,6 +268,7 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private fun endSession() {
+        lastEndedAtMs = SystemClock.elapsedRealtime()
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         endTalkModeCapture()
         sendVoiceSessionEvent("end")

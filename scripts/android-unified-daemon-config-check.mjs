@@ -411,6 +411,11 @@ for (const [contents, source] of [
   assertIncludes(contents, "private fun openJarvisIntent()", source);
   assertIncludes(contents, "fun markPlaybackSpeaking()", source);
   assertIncludes(contents, "fun markPlaybackListening()", source);
+  assertIncludes(contents, "fun shouldAcceptPlaybackForCurrentSession()", source);
+  assertIncludes(contents, "RECENT_END_PLAYBACK_DROP_MS", source);
+  assertIncludes(contents, "lastEndedAtMs = SystemClock.elapsedRealtime()", source);
+  assertIncludes(contents, "service.state != OutsideAppVoiceState.PAUSED", source);
+  assertIncludes(contents, "service.state != OutsideAppVoiceState.IDLE", source);
   assertIncludes(contents, "private val mainHandler = Handler(Looper.getMainLooper())", source);
   assertIncludes(contents, "private fun setStateFromAnyThread(nextState: OutsideAppVoiceState)", source);
   assertIncludes(contents, "instance?.setStateFromAnyThread(OutsideAppVoiceState.SPEAKING)", source);
@@ -424,7 +429,10 @@ for (const [contents, source] of [
   assertIncludes(contents, "object JarvisVoicePlaybackController", source);
   assertIncludes(contents, "fun stopActivePlayback(rearmTalkMode: Boolean = true)", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)", source);
-  assertIncludes(contents, "JarvisVoicePlaybackController.completePlayback(mp, playbackFile)", source);
+  assertIncludes(contents, "JarvisVoicePlaybackController.completePlayback(mp, playbackFile, rearmTalkMode = shouldRearm)", source);
+  assertIncludes(contents, "OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()", source);
+  assertIncludes(contents, "voice_speak_audio: dropped stale playback", source);
+  assertIncludes(contents, "pausedForPlayback && OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.markPlaybackSpeaking()", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.markPlaybackListening()", source);
 }

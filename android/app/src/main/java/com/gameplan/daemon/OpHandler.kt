@@ -1443,6 +1443,10 @@ object OpHandler {
     private fun handleSpeakAudio(context: Context, op: JSONObject): OpResult {
         val audioBase64 = op.optString("audioBase64", "")
         if (audioBase64.isEmpty()) return OpResult(false, error = "audioBase64 missing")
+        if (!OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()) {
+            DaemonLog.add("voice_speak_audio: dropped stale playback for paused or ended voice session")
+            return OpResult(false, error = "voice session is paused or ended")
+        }
 
         var tmpFile: File? = null
         var player: android.media.MediaPlayer? = null
@@ -1461,9 +1465,21 @@ object OpHandler {
             player = mediaPlayer
             mediaPlayer.setDataSource(playbackFile.absolutePath)
             mediaPlayer.prepare()
+            if (!OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()) {
+                runCatching { mediaPlayer.release() }
+                tmpFile?.delete()
+                tmpFile = null
+                DaemonLog.add("voice_speak_audio: dropped stale playback before start")
+                return OpResult(false, error = "voice session is paused or ended")
+            }
             mediaPlayer.setOnCompletionListener { mp ->
-                JarvisVoicePlaybackController.completePlayback(mp, playbackFile)
-                DaemonLog.add("voice_speak_audio: playback complete — talk mode re-armed")
+                val shouldRearm = OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()
+                JarvisVoicePlaybackController.completePlayback(mp, playbackFile, rearmTalkMode = shouldRearm)
+                if (shouldRearm) {
+                    DaemonLog.add("voice_speak_audio: playback complete — talk mode re-armed")
+                } else {
+                    DaemonLog.add("voice_speak_audio: playback complete — rearm skipped")
+                }
             }
             JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)
             OutsideAppVoiceSessionService.markPlaybackSpeaking()
@@ -1473,7 +1489,7 @@ object OpHandler {
         } catch (e: Exception) {
             runCatching { player?.release() }
             tmpFile?.delete()
-            if (pausedForPlayback) {
+            if (pausedForPlayback && OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()) {
                 WakeWordService.onTtsFinished()
                 OutsideAppVoiceSessionService.markPlaybackListening()
                 DaemonLog.add("voice_speak_audio: playback failed — talk mode re-armed")
