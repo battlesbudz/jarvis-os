@@ -80,6 +80,11 @@ export type ToolCallRunResult = {
   params?: Record<string, unknown>;
 };
 
+type ApprovalFlowResult = {
+  allowed: boolean;
+  gateId?: string;
+};
+
 // ── Registry ───────────────────────────────────────────────────────────────────
 
 /**
@@ -173,12 +178,14 @@ export class ToolCallHookRegistry {
         const approvalCtx = rewrittenParams !== ctx.params
           ? { ...ctx, params: rewrittenParams }
           : ctx;
-        const allowed = await runApprovalFlowWithOriginNotification(approvalCtx, result.requireApproval);
+        const approvalResult = await runApprovalFlowWithOriginNotification(approvalCtx, result.requireApproval);
         return {
-          allowed,
-          reason: allowed ? undefined : "User did not approve this action",
+          allowed: approvalResult.allowed,
+          reason: approvalResult.allowed ? undefined : "User did not approve this action",
           // Propagate rewritten params even when going through approval
-          params: allowed ? withApprovalMarkerForTool(ctx.toolName, rewrittenParams) : undefined,
+          params: approvalResult.allowed
+            ? withApprovalMarkerForTool(ctx.toolName, rewrittenParams, approvalResult.gateId)
+            : undefined,
         };
       }
 
@@ -203,13 +210,13 @@ export class ToolCallHookRegistry {
 async function runApprovalFlowWithOriginNotification(
   ctx: ToolCallHookContext,
   approval: NonNullable<ToolCallHookResult["requireApproval"]>,
-): Promise<boolean> {
+): Promise<ApprovalFlowResult> {
   if (approvalReceiptCoversToolCall(ctx.approvalReceipt, { userId: ctx.userId, toolName: ctx.toolName })) {
     console.log(
       `[ToolCallHooks] approval receipt accepted: gate=${ctx.approvalReceipt?.gateId} tool=${ctx.toolName}`,
     );
     approval.onResolution?.("allow");
-    return true;
+    return { allowed: true, gateId: ctx.approvalReceipt?.gateId };
   }
 
   const { requestApproval, awaitApproval } = await import("./agentApproval");
@@ -218,7 +225,7 @@ async function runApprovalFlowWithOriginNotification(
   if (!ctx.userId) {
     console.warn(`[ToolCallHooks] requireApproval: no userId in context for tool=${ctx.toolName} - denying`);
     approval.onResolution?.("deny");
-    return false;
+    return { allowed: false };
   }
 
   const userId = ctx.userId;
@@ -245,7 +252,7 @@ async function runApprovalFlowWithOriginNotification(
         detail: `gate=${gate.id} auto-approved`,
       });
       approval.onResolution?.("allow");
-      return true;
+      return { allowed: true, gateId: gate.id };
     }
 
     try {
@@ -285,11 +292,11 @@ async function runApprovalFlowWithOriginNotification(
       });
     }
 
-    return approved;
+    return { allowed: approved, gateId: approved ? gate.id : undefined };
   } catch (err) {
     console.error(`[ToolCallHooks] approval gate error for ${ctx.toolName}:`, err);
     approval.onResolution?.("deny");
-    return false;
+    return { allowed: false };
   }
 }
 

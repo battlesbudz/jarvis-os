@@ -89,6 +89,7 @@ export interface BuildCloudBackgroundJobInput {
   prompt: string;
   provider: CloudBackgroundProviderOption;
   budgetUsd?: number | null;
+  approvalGateId?: string | null;
 }
 
 export interface CloudBackgroundJobInput {
@@ -98,6 +99,7 @@ export interface CloudBackgroundJobInput {
     providerLabel: string;
     providerAuthType: CloudBackgroundProviderOption["authType"];
     approvedModel: string;
+    approvalGateId: string;
     budgetUsd: number | null;
     liveModelSwitch: false;
     disallowedCapabilities: ["phone_control", "memory_write"];
@@ -111,6 +113,7 @@ export interface ValidatedCloudBackgroundJobInput {
   providerLabel: string;
   providerAuthType: CloudBackgroundProviderOption["authType"];
   approvedModel: string;
+  approvalGateId: string;
   budgetUsd: number | null;
 }
 
@@ -413,6 +416,7 @@ export function buildCloudBackgroundJobInput(input: BuildCloudBackgroundJobInput
       providerLabel: input.provider.label,
       providerAuthType: input.provider.authType,
       approvedModel: model,
+      approvalGateId: compact(input.approvalGateId),
       budgetUsd: input.provider.requiresBudget ? budgetValue(input.budgetUsd) : null,
       liveModelSwitch: false,
       disallowedCapabilities: ["phone_control", "memory_write"],
@@ -431,11 +435,15 @@ export function validateCloudBackgroundJobInput(input: Record<string, unknown>):
   const providerLabel = compact(recordValue(rawTask, "providerLabel")) || providerId;
   const providerAuthType = authTypeValue(recordValue(rawTask, "providerAuthType"));
   const approvedModel = compact(recordValue(rawTask, "approvedModel"));
+  const approvalGateId = compact(recordValue(rawTask, "approvalGateId"));
   const model = compact(input.model);
   const budgetUsd = budgetValue(recordValue(rawTask, "budgetUsd"));
 
   if (!providerId || !providerAuthType) {
     return { ok: false, message: "Cloud background task is missing its approved provider." };
+  }
+  if (!approvalGateId) {
+    return { ok: false, message: "Cloud background task is missing its approval gate." };
   }
   if (!providerSupportsCloudAuthType(providerId, providerAuthType)) {
     return { ok: false, message: "Cloud background task uses an unsupported provider authentication route." };
@@ -477,6 +485,7 @@ export function validateCloudBackgroundJobInput(input: Record<string, unknown>):
       providerLabel,
       providerAuthType,
       approvedModel,
+      approvalGateId,
       budgetUsd: providerAuthType === "api_key" ? budgetUsd : null,
     },
   };

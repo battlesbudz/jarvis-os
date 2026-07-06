@@ -23,6 +23,8 @@ interface QueueJobArgs {
   cloud_provider_label?: string;
   cloud_provider_auth_type?: "api_key" | "oauth";
   cloud_budget_usd?: number;
+  _approved_cloud_background?: boolean;
+  _approval_gate_id?: string;
 }
 
 /**
@@ -329,11 +331,19 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
       }
       const providerId = String(a.cloud_provider_id || "").trim();
       const authType = a.cloud_provider_auth_type;
+      const approvalGateId = String(a._approval_gate_id || "").trim();
       if (!providerId || (authType !== "api_key" && authType !== "oauth")) {
         return {
           ok: true,
           content:
             "Cloud background tasks need an approved provider before I can queue them. Ask which connected cloud provider to use, or open Settings if none are connected.",
+          label: "Cloud provider approval needed",
+        };
+      }
+      if (a._approved_cloud_background !== true || !approvalGateId) {
+        return {
+          ok: true,
+          content: "Cloud background tasks need approval before I can queue them.",
           label: "Cloud provider approval needed",
         };
       }
@@ -388,6 +398,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
         prompt,
         provider,
         budgetUsd: authType === "api_key" ? roundedBudgetUsd : null,
+        approvalGateId,
       });
     }
 

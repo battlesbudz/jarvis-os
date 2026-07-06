@@ -163,10 +163,12 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
       hint: "Claude API key, budget required",
     },
     budgetUsd: 4,
+    approvalGateId: "gate_cloud_anthropic",
   });
   assert.equal(input.model, "anthropic/claude-sonnet-4-5");
   assert.equal(input.cloudBackgroundTask.providerId, "anthropic");
   assert.equal(input.cloudBackgroundTask.approvedModel, "anthropic/claude-sonnet-4-5");
+  assert.equal(input.cloudBackgroundTask.approvalGateId, "gate_cloud_anthropic");
   assert.equal(input.cloudBackgroundTask.budgetUsd, 4);
   assert.equal(input.cloudBackgroundTask.liveModelSwitch, false);
   assert.deepEqual(input.cloudBackgroundTask.disallowedCapabilities, ["phone_control", "memory_write"]);
@@ -178,6 +180,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
       providerLabel: "Claude",
       providerAuthType: "api_key",
       approvedModel: "anthropic/claude-sonnet-4-5",
+      approvalGateId: "gate_cloud_anthropic",
       budgetUsd: 4,
     },
   });
@@ -199,12 +202,28 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
 {
   assert.deepEqual(
     validateCloudBackgroundJobInput({
+      model: "google/gemini-2.5-flash",
+      cloudBackgroundTask: {
+        providerId: "google",
+        providerLabel: "Gemini",
+        providerAuthType: "api_key",
+        approvedModel: "google/gemini-2.5-flash",
+        budgetUsd: 3,
+        liveModelSwitch: false,
+        disallowedCapabilities: ["phone_control", "memory_write"],
+      },
+    }),
+    { ok: false, message: "Cloud background task is missing its approval gate." },
+  );
+  assert.deepEqual(
+    validateCloudBackgroundJobInput({
       model: "gpt-4.1-mini",
       cloudBackgroundTask: {
         providerId: "google",
         providerLabel: "Gemini",
         providerAuthType: "api_key",
         approvedModel: "google/gemini-2.5-flash",
+        approvalGateId: "gate_cloud_google",
         budgetUsd: 3,
         liveModelSwitch: false,
         disallowedCapabilities: ["phone_control", "memory_write"],
@@ -220,6 +239,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
         providerLabel: "Gemini",
         providerAuthType: "api_key",
         approvedModel: "google/gemini-2.5-flash",
+        approvalGateId: "gate_cloud_google",
         liveModelSwitch: false,
         disallowedCapabilities: ["phone_control", "memory_write"],
       },
@@ -234,6 +254,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
         providerLabel: "Gemini",
         providerAuthType: "oauth",
         approvedModel: "google/gemini-2.5-flash",
+        approvalGateId: "gate_cloud_google",
         budgetUsd: null,
         liveModelSwitch: false,
         disallowedCapabilities: ["phone_control", "memory_write"],
@@ -252,6 +273,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
         hint: "Gemini API key, budget required",
       },
       budgetUsd: 0.004,
+      approvalGateId: "gate_cloud_google",
     })),
     { ok: false, message: "Cloud background task is missing its approved per-job budget." },
   );
@@ -266,6 +288,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
         hint: "Gemini API key, budget required",
       },
       budgetUsd: CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD - 0.01,
+      approvalGateId: "gate_cloud_google",
     })),
     { ok: false, message: "Cloud background task budget is below the minimum required to start." },
   );
@@ -283,6 +306,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
       hint: "Gemini API key, budget required",
     },
     budgetUsd: CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD,
+    approvalGateId: "gate_cloud_budget_step",
   });
   const validation = validateCloudBackgroundJobInput(input);
   assert.equal(validation?.ok, true);
@@ -314,6 +338,7 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
       hint: "Gemini API key, budget required",
     },
     budgetUsd: CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD,
+    approvalGateId: "gate_cloud_budget_attempt",
   });
   const attemptValidation = validateCloudBackgroundJobInput(attemptInput);
   assert.equal(attemptValidation?.ok, true);

@@ -117,7 +117,7 @@ export function createSystemApprovalOnBeforeTool(opts: SystemApprovalGateOptions
     }
 
     if (approvalReceiptCoversToolCall(opts.approvalReceipt, { userId: opts.userId, toolName })) {
-      return { allowed: true, params: withApprovalMarkerForTool(toolName, params) };
+      return { allowed: true, params: withApprovalMarkerForTool(toolName, params, opts.approvalReceipt?.gateId) };
     }
 
     if (!opts.userId) {
@@ -140,7 +140,7 @@ export function createSystemApprovalOnBeforeTool(opts: SystemApprovalGateOptions
       });
 
       if (gate.status === "approved") {
-        return { allowed: true, params: withApprovalMarkerForTool(toolName, params) };
+        return { allowed: true, params: withApprovalMarkerForTool(toolName, params, gate.id) };
       }
 
       try {
@@ -161,7 +161,7 @@ export function createSystemApprovalOnBeforeTool(opts: SystemApprovalGateOptions
 
       const approved = await deps.awaitApproval(gate.id, opts.timeoutMs, opts.signal);
       return approved
-        ? { allowed: true, params: withApprovalMarkerForTool(toolName, params) }
+        ? { allowed: true, params: withApprovalMarkerForTool(toolName, params, gate.id) }
         : { allowed: false, reason: "User did not approve this action" };
     } catch (err) {
       console.error(`[SystemApprovalGate] approval gate error for ${toolName}:`, err);

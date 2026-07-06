@@ -278,6 +278,41 @@ async function run() {
     );
   }
 
+  // TH-19: Receipt-approved task-scoped cloud queues receive an approval gate marker
+  {
+    const reg = new ToolCallHookRegistry();
+    reg.register(() => ({ requireApproval: { title: "Approve", description: "Cloud background task" } }));
+    const result = await reg.run(makeCtx({
+      toolName: "queue_background_job",
+      userId: "user-test",
+      params: {
+        agent_type: "research",
+        prompt: "Research this competitor.",
+        task_scoped_cloud: true,
+        cloud_provider_id: "google",
+        cloud_provider_auth_type: "api_key",
+        cloud_budget_usd: 1,
+      },
+      approvalReceipt: {
+        gateId: "gate_cloud_background_receipt",
+        userId: "user-test",
+        toolName: "queue_background_job",
+        scope: "top_level_action",
+        originalUserText: "Research this competitor.",
+        createdAt: new Date().toISOString(),
+      },
+    }));
+    assert(result.allowed === true, "TH-19: matching receipt allows task-scoped cloud queue");
+    assert(
+      (result.params as Record<string, unknown>)?._approved_cloud_background === true,
+      "TH-19: receipt-approved task-scoped cloud params include approved marker",
+    );
+    assert(
+      (result.params as Record<string, unknown>)?._approval_gate_id === "gate_cloud_background_receipt",
+      "TH-19: receipt-approved task-scoped cloud params include gate id",
+    );
+  }
+
   // ── Summary ────────────────────────────────────────────────────────────────
   console.log(`\nResults: ${passed} passed, ${failed} failed`);
   if (failed > 0) process.exit(1);

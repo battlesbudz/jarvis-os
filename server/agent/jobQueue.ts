@@ -6,6 +6,7 @@ import { runSubAgent, BUILD_FEATURE_WORKER_SYSTEM_PROMPT } from "./subagents";
 import {
   buildCompactCloudBackgroundResultPacket,
   maxCloudBackgroundModelTurnsForBudget,
+  type ValidatedCloudBackgroundJobInput,
   validateCloudBackgroundJobInput,
 } from "./cloudBackgroundEscalation";
 import { runGoalDecomposition } from "./goalDecomposer";
@@ -658,6 +659,7 @@ async function notifySubAgentJobComplete(
 const TICK_MS = 15 * 1000;
 const MAX_JOB_DURATION_MS = 5 * 60 * 1000;
 const RESOURCE_PAUSE_RECOVERY_POLL_MS = 5 * 60 * 1000;
+const QUEUE_BACKGROUND_JOB_TOOL = "queue_background_job";
 
 let workerRunning = false;
 let workerStarted = false;
@@ -690,6 +692,57 @@ function withCloudBackgroundEstimatedSpend(
       estimatedSpentUsd,
     },
   };
+}
+
+function recordOf(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringField(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function budgetCents(value: unknown): number | null {
+  if (value == null) return null;
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? Math.round(numberValue * 100) : null;
+}
+
+async function cloudBackgroundApprovalGateMatches(opts: {
+  userId: string;
+  agentType: string;
+  prompt: string;
+  task: ValidatedCloudBackgroundJobInput["task"];
+}): Promise<boolean> {
+  const [gate] = await db
+    .select({
+      toolArgs: schema.agentApprovalGates.toolArgs,
+    })
+    .from(schema.agentApprovalGates)
+    .where(and(
+      eq(schema.agentApprovalGates.id, opts.task.approvalGateId),
+      eq(schema.agentApprovalGates.userId, opts.userId),
+      eq(schema.agentApprovalGates.toolName, QUEUE_BACKGROUND_JOB_TOOL),
+      eq(schema.agentApprovalGates.status, "approved"),
+      gte(schema.agentApprovalGates.expiresAt, new Date()),
+    ))
+    .limit(1);
+
+  const gateArgs = recordOf(gate?.toolArgs);
+  if (!gateArgs || gateArgs.task_scoped_cloud !== true) return false;
+
+  const budgetMatches = opts.task.providerAuthType !== "api_key"
+    || budgetCents(gateArgs.cloud_budget_usd) === budgetCents(opts.task.budgetUsd);
+
+  return (
+    stringField(gateArgs.agent_type) === opts.agentType &&
+    stringField(gateArgs.prompt) === opts.prompt.trim() &&
+    stringField(gateArgs.cloud_provider_id) === opts.task.providerId &&
+    stringField(gateArgs.cloud_provider_auth_type) === opts.task.providerAuthType &&
+    budgetMatches
+  );
 }
 
 async function appendWorkerEventToJob(opts: {
@@ -929,10 +982,12 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
     console.warn(`[JobQueue] job ${job.id} exceeded ${MAX_JOB_DURATION_MS}ms (still running)`);
   }, MAX_JOB_DURATION_MS);
 
+  let latestJobInput = jobInputOf(job);
+
   try {
     // Extract origin channel stored at queue time — used to route the completion
     // notification back to the right channel rather than spamming all channels.
-    let jobInput = jobInputOf(job);
+    let jobInput = latestJobInput;
     jobInput = await appendWorkerEventToJob({
       jobId: job.id,
       agentType: job.agentType,
@@ -946,6 +1001,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
       console.warn(`[JobQueue] worker start event failed for ${job.id}:`, err);
       return jobInput;
     });
+    latestJobInput = jobInput;
     const originChannel = typeof jobInput.originChannel === "string" ? jobInput.originChannel : undefined;
     const originChannelId = typeof jobInput.originChannelId === "string" ? jobInput.originChannelId : undefined;
     const originDiscordChannelId = typeof jobInput.originDiscordChannelId === "string" ? jobInput.originDiscordChannelId : undefined;
@@ -967,6 +1023,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
           requiredFor: typeof jobInput.approvalToolName === "string" ? jobInput.approvalToolName : job.agentType,
         },
       }).catch(() => jobInput);
+      latestJobInput = jobInput;
     }
 
     // Helper: fire the workflow hook if this job belongs to a workflow step.
@@ -1098,6 +1155,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         console.warn(`[JobQueue] ephemeral_agent_task progress append failed for ${job.id}:`, err);
         return jobInput;
       });
+      latestJobInput = jobInput;
 
       jobInput = await appendWorkerProgressToJob({
         jobId: job.id,
@@ -1111,6 +1169,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         console.warn(`[JobQueue] ephemeral_agent_task running progress append failed for ${job.id}:`, err);
         return jobInput;
       });
+      latestJobInput = jobInput;
 
       const result = await runEphemeralAgentSession({
         userId: job.userId,
@@ -1137,6 +1196,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         console.warn(`[JobQueue] ephemeral_agent_task deliverable progress append failed for ${job.id}:`, err);
         return jobInput;
       });
+      latestJobInput = jobInput;
 
       const [deliverable] = await db
         .insert(schema.deliverables)
@@ -1156,6 +1216,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
         console.warn(`[JobQueue] ephemeral_agent_task review progress append failed for ${job.id}:`, err);
         return jobInput;
       });
+      latestJobInput = jobInput;
 
       await completeJob(job.id, {
         result: {
@@ -1616,6 +1677,7 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
           console.warn(`[JobQueue] build_feature progress append failed for ${job.id}:`, err);
           return jobInput;
         });
+        latestJobInput = jobInput;
       };
 
       const baseFeatureDescription = String(jobInput.feature_description ?? job.prompt);
@@ -2462,6 +2524,28 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       return;
     }
     if (cloudBackgroundValidation?.ok) {
+      const approvalGateVerified = await cloudBackgroundApprovalGateMatches({
+        userId: job.userId,
+        agentType: job.agentType,
+        prompt: job.prompt || "",
+        task: cloudBackgroundValidation.task,
+      }).catch((err) => {
+        console.warn(`[JobQueue] cloud background approval gate verification failed for ${job.id}:`, err);
+        return false;
+      });
+      if (!approvalGateVerified) {
+        const message = "Cloud background task approval could not be verified. Please approve it again before restarting this cloud task.";
+        await failJob(job.id, message, job.userId);
+        await notifyJobComplete(
+          job.userId,
+          job.agentType,
+          job.title,
+          message,
+          originChannel,
+          originDiscordChannelId,
+        );
+        return;
+      }
       const providerStatus = await getProviderStatus({ userId: job.userId }).catch(() => null);
       const approvedAuthStatus =
         providerStatus?.providers[cloudBackgroundValidation.task.providerId]
@@ -2490,6 +2574,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     const persistCloudBackgroundEstimatedSpend = async (spentUsd: number) => {
       cloudBackgroundEstimatedSpentUsd = Math.round(Math.max(0, spentUsd) * 100) / 100;
       jobInput = withCloudBackgroundEstimatedSpend(jobInput, cloudBackgroundEstimatedSpentUsd);
+      latestJobInput = jobInput;
       await db
         .update(schema.agentJobs)
         .set({ input: jobInput })
@@ -2800,7 +2885,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[JobQueue] job ${job.id} failed:`, err);
 
-    const jobInput = (job.input as Record<string, unknown>) ?? {};
+    const jobInput = latestJobInput;
     const MAX_RETRIES = 2;
     const recovery = decideJobFailureRecovery({
       input: jobInput,

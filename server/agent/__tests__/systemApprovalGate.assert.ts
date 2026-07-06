@@ -67,6 +67,8 @@ async function main(): Promise<void> {
     cloud_budget_usd: 1,
   });
   assert.equal(cloudQueueResult.allowed, true);
+  assert.equal(cloudQueueResult.params?._approved_cloud_background, true);
+  assert.equal(cloudQueueResult.params?._approval_gate_id, "gate_1");
   assert.equal(requests.length, 1);
   assert.equal(requests[0].toolName, "queue_background_job");
   assert.match(String(requests[0].description), /Gemini/);

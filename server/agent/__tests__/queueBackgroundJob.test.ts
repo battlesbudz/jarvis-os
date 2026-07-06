@@ -84,6 +84,7 @@ async function main() {
           hint: "Gemini API key, budget required",
         },
         budgetUsd: 3,
+        approvalGateId: "gate_cloud_google",
       }),
     );
 
@@ -95,6 +96,7 @@ async function main() {
     assert.equal(task.providerLabel, "Gemini");
     assert.equal(task.providerAuthType, "api_key");
     assert.equal(task.approvedModel, "google/gemini-2.5-flash");
+    assert.equal(task.approvalGateId, "gate_cloud_google");
     assert.equal(task.budgetUsd, 3);
     assert.equal(task.liveModelSwitch, false);
     assert.deepEqual(task.disallowedCapabilities, ["phone_control", "memory_write"]);
@@ -114,6 +116,10 @@ async function main() {
     assert.match(jobQueueSource, /no longer connected with the approved/);
     assert.match(jobQueueSource, /cloudBackgroundEstimatedSpendOf\(jobInput\)/);
     assert.match(jobQueueSource, /withCloudBackgroundEstimatedSpend\(jobInput, cloudBackgroundEstimatedSpentUsd\)/);
+    assert.match(jobQueueSource, /cloudBackgroundApprovalGateMatches/);
+    assert.match(jobQueueSource, /schema\.agentApprovalGates/);
+    assert.match(jobQueueSource, /Cloud background task approval could not be verified/);
+    assert.match(jobQueueSource, /latestJobInput/);
     assert.match(jobQueueSource, /update\(schema\.agentJobs\)/);
     assert.match(jobQueueSource, /preferredAuthType: cloudBackgroundPreferredAuthType/);
     assert.match(jobQueueSource, /failJob\(job\.id, cloudBackgroundValidation\.message/);
@@ -122,6 +128,9 @@ async function main() {
     assert.match(queueToolSource, /catalogProviderLabel/);
     assert.match(queueToolSource, /toolCallHooks\.register/);
     assert.match(queueToolSource, /Approve cloud background task/);
+    assert.match(queueToolSource, /_approved_cloud_background/);
+    assert.match(queueToolSource, /_approval_gate_id/);
+    assert.match(queueToolSource, /approvalGateId/);
     assert.match(queueToolSource, /getProviderStatus/);
     assert.match(queueToolSource, /Cloud provider not connected/);
     assert.match(queueToolSource, /Cloud background job type unsupported/);
