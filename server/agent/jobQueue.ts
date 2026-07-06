@@ -667,6 +667,30 @@ function jobInputOf(job: { input: unknown }): Record<string, unknown> {
   return (job.input && typeof job.input === "object" ? job.input : {}) as Record<string, unknown>;
 }
 
+function cloudBackgroundEstimatedSpendOf(jobInput: Record<string, unknown>): number {
+  const task = jobInput.cloudBackgroundTask;
+  if (!task || typeof task !== "object" || Array.isArray(task)) return 0;
+  const value = (task as Record<string, unknown>).estimatedSpentUsd;
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.round(value * 100) / 100
+    : 0;
+}
+
+function withCloudBackgroundEstimatedSpend(
+  jobInput: Record<string, unknown>,
+  estimatedSpentUsd: number,
+): Record<string, unknown> {
+  const task = jobInput.cloudBackgroundTask;
+  if (!task || typeof task !== "object" || Array.isArray(task)) return jobInput;
+  return {
+    ...jobInput,
+    cloudBackgroundTask: {
+      ...(task as Record<string, unknown>),
+      estimatedSpentUsd,
+    },
+  };
+}
+
 async function appendWorkerEventToJob(opts: {
   jobId: string;
   agentType: string;
@@ -2439,8 +2463,15 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     const cloudBackgroundMaxTurns = cloudBackgroundValidation?.ok
       ? maxCloudBackgroundModelTurnsForBudget(cloudBackgroundValidation.task.budgetUsd, 6)
       : undefined;
-    let cloudBackgroundEstimatedSpentUsd = 0;
-    const reserveCloudBackgroundModelAttempt = (partialSummary?: string) => {
+    let cloudBackgroundEstimatedSpentUsd = cloudBackgroundEstimatedSpendOf(jobInput);
+    const persistCloudBackgroundEstimatedSpend = async () => {
+      jobInput = withCloudBackgroundEstimatedSpend(jobInput, cloudBackgroundEstimatedSpentUsd);
+      await db
+        .update(schema.agentJobs)
+        .set({ input: jobInput })
+        .where(eq(schema.agentJobs.id, job.id));
+    };
+    const reserveCloudBackgroundModelAttempt = async (partialSummary?: string) => {
       if (!cloudBackgroundValidation?.ok) return null;
       const checkpoint = nextCloudBackgroundModelAttemptBudgetCheckpoint({
         jobId: job.id,
@@ -2455,9 +2486,10 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       cloudBackgroundEstimatedSpentUsd = Math.round(
         (cloudBackgroundEstimatedSpentUsd + checkpoint.nextEstimatedUsd) * 100,
       ) / 100;
+      await persistCloudBackgroundEstimatedSpend();
       return null;
     };
-    const initialCloudBudgetStop = reserveCloudBackgroundModelAttempt();
+    const initialCloudBudgetStop = await reserveCloudBackgroundModelAttempt();
     if (initialCloudBudgetStop?.shouldStopBeforeNextStep) {
       const message = "Cloud background task stopped before starting because the approved budget is too low for a model step.";
       await failJob(job.id, message, job.userId);
@@ -2481,6 +2513,10 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       : typeof jobInput.model === "string"
         ? jobInput.model
         : undefined;
+    const cloudBackgroundPreferredAuthType =
+      cloudBackgroundValidation?.ok && cloudBackgroundValidation.task.providerId === "openai"
+        ? cloudBackgroundValidation.task.providerAuthType
+        : undefined;
 
     // Prior-context injection: deep_research Phase 2 jobs carry priorContext in
     // their input so Phase 1 findings can be injected into the system prompt.
@@ -2496,6 +2532,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       context: ctx,
       model: subAgentModelOverride,
       forceModel: cloudBackgroundValidation?.ok === true,
+      preferredAuthType: cloudBackgroundPreferredAuthType,
       maxTurns: cloudBackgroundMaxTurns,
       extraSystemPrompt: priorContextBlock,
       approvalReceipt,
@@ -2542,7 +2579,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         // passed === false: content rejected — retry if attempts remain
         correctionContext = verification.reason;
         if (attempt < MAX_JOB_VERIFY_RETRIES) {
-          const budgetStop = reserveCloudBackgroundModelAttempt(
+          const budgetStop = await reserveCloudBackgroundModelAttempt(
             `Completed an initial ${job.agentType} attempt, then stopped before another model step to stay within the approved cloud budget.`,
           );
           if (budgetStop?.shouldStopBeforeNextStep) {
@@ -2569,6 +2606,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             context: ctx,
             model: subAgentModelOverride,
             forceModel: cloudBackgroundValidation?.ok === true,
+            preferredAuthType: cloudBackgroundPreferredAuthType,
             maxTurns: cloudBackgroundMaxTurns,
             approvalReceipt,
           });

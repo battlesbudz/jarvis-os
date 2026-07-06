@@ -4,7 +4,7 @@ import type { AgentTool, AgentToolCallRecord, ToolContext } from "./types";
 import type { ActivationPlan } from "./activationPlanner";
 import { emit as diagEmit } from "../diagnostics/diagnosticsService";
 import { getProvider, accumulateTurn, queryWithFallback, getGlobalFallbackChain, DEFAULT_PROVIDER_MODELS } from "./providers";
-import type { ProviderName, FallbackChainEntry } from "./providers";
+import type { ProviderName, FallbackChainEntry, ProviderQueryParams } from "./providers";
 import { resolveRuntimeAgentModel } from "./runtimeModel";
 import { checkResponseQuality, APOLOGY_PHRASES } from "./responseQuality";
 import { estimateModelUsage, recordModelUsage } from "./modelUsage";
@@ -51,6 +51,8 @@ export interface RunAgentOptions {
    * the user approved a specific provider for one background job.
    */
   forceModel?: boolean;
+  /** Restrict provider credential selection for one approved run. */
+  preferredAuthType?: ProviderQueryParams["preferredAuthType"];
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
   tools: AgentTool[];
   context: ToolContext;
@@ -258,6 +260,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const {
     model: modelOpt,
     forceModel,
+    preferredAuthType,
     tools: initialTools,
     context,
     maxTurns = 6,
@@ -1136,6 +1139,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       tools: openAITools,
       toolChoice,
       maxCompletionTokens,
+      preferredAuthType,
       stream: !!onToken,
       userId: context.userId,
       signal,
@@ -1576,6 +1580,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
       tools: undefined, // no tools — force text reply
       toolChoice: "none",
       maxCompletionTokens,
+      preferredAuthType,
       stream: !!onToken,
       userId: context.userId,
       signal,

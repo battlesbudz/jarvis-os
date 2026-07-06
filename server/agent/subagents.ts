@@ -214,6 +214,8 @@ export interface RunSubAgentOptions {
    * Used for task-scoped cloud approvals.
    */
   forceModel?: boolean;
+  /** Restrict provider credential selection for one approved run. */
+  preferredAuthType?: "api_key" | "oauth";
   /** Optional caller cap for model/tool turns. Clamped to the agent spec max. */
   maxTurns?: number;
   /**
@@ -296,6 +298,7 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
   const result = await runAgent({
     model: subAgentModel,
     forceModel: opts.forceModel,
+    preferredAuthType: opts.preferredAuthType,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: opts.prompt },
