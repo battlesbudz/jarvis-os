@@ -15,7 +15,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.View
@@ -98,8 +97,7 @@ class OutsideAppVoiceSessionService : Service() {
         @Volatile var instance: OutsideAppVoiceSessionService? = null
             private set
 
-        private const val RECENT_END_PLAYBACK_DROP_MS = 30_000L
-        @Volatile private var lastEndedAtMs = 0L
+        @Volatile private var endedSessionBlocksPlayback = false
 
         fun isActive(): Boolean = instance?.sessionActive == true
 
@@ -108,9 +106,7 @@ class OutsideAppVoiceSessionService : Service() {
         fun shouldAcceptPlaybackForCurrentSession(): Boolean {
             val service = instance
             if (service == null) {
-                val endedAtMs = lastEndedAtMs
-                return endedAtMs == 0L ||
-                    SystemClock.elapsedRealtime() - endedAtMs > RECENT_END_PLAYBACK_DROP_MS
+                return !endedSessionBlocksPlayback
             }
             return service.sessionActive &&
                 service.state != OutsideAppVoiceState.PAUSED &&
@@ -159,7 +155,7 @@ class OutsideAppVoiceSessionService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
-                lastEndedAtMs = 0L
+                endedSessionBlocksPlayback = false
                 if (sessionActive && state == OutsideAppVoiceState.PAUSED) {
                     startForegroundCompat()
                     updateOverlay()
@@ -273,7 +269,7 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private fun endSession() {
-        lastEndedAtMs = SystemClock.elapsedRealtime()
+        endedSessionBlocksPlayback = true
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         endTalkModeCapture()
         sendVoiceSessionEvent("end")

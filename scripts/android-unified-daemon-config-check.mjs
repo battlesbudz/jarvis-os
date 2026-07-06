@@ -401,6 +401,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "WakeWordService.endTalkModeForUserControl()", source);
   assertIncludes(contents, "@Volatile private var state: OutsideAppVoiceState", source);
   assertIncludes(contents, "@Volatile private var sessionActive", source);
+  assertIncludes(contents, "@Volatile private var endedSessionBlocksPlayback", source);
   assertIncludes(contents, "private fun endTalkModeCapture()", source);
   assertIncludes(contents, "private fun pauseWakeCapture()", source);
   assertIncludes(contents, "private fun resumeWakeCapture()", source);
@@ -414,8 +415,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "fun markPlaybackSpeaking()", source);
   assertIncludes(contents, "fun markPlaybackListening()", source);
   assertIncludes(contents, "fun shouldAcceptPlaybackForCurrentSession()", source);
-  assertIncludes(contents, "RECENT_END_PLAYBACK_DROP_MS", source);
-  assertIncludes(contents, "lastEndedAtMs = SystemClock.elapsedRealtime()", source);
+  assertIncludes(contents, "endedSessionBlocksPlayback = true", source);
+  assertIncludes(contents, "endedSessionBlocksPlayback = false", source);
   assertIncludes(contents, "if (sessionActive && state == OutsideAppVoiceState.PAUSED)", source);
   assertIncludes(contents, "service.state != OutsideAppVoiceState.PAUSED", source);
   assertIncludes(contents, "service.state != OutsideAppVoiceState.IDLE", source);
