@@ -58,6 +58,45 @@ function estimateCloudBudgetUsdForTokens(tokens: number, usdPer1kTokens: number)
   return roundCloudBudgetUsd((safeTokens / 1000) * safeRate);
 }
 
+function compactCloudBudgetPartialText(value: string, maxChars = 600): string {
+  const compacted = value.replace(/\s+/g, " ").trim();
+  if (compacted.length <= maxChars) return compacted;
+  return `${compacted.slice(0, maxChars - 3).trimEnd()}...`;
+}
+
+function messageContentToText(
+  content: OpenAI.Chat.Completions.ChatCompletionMessageParam["content"],
+): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => {
+      if (!part || typeof part !== "object") return "";
+      const text = (part as { text?: unknown }).text;
+      return typeof text === "string" ? text : "";
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+function summarizeCloudBudgetPartialMessages(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): string {
+  const entries: string[] = [];
+  for (const message of messages) {
+    if (message.role !== "assistant" && message.role !== "tool") continue;
+    const text = compactCloudBudgetPartialText(messageContentToText(message.content));
+    if (!text) continue;
+    entries.push(`${message.role === "tool" ? "Tool result" : "Assistant draft"}: ${text}`);
+  }
+  const recent = entries.slice(-6);
+  if (recent.length === 0) return "";
+  return [
+    "Partial work already gathered:",
+    ...recent.map((entry, index) => `${index + 1}. ${entry}`),
+  ].join("\n");
+}
+
 export interface RunAgentOptions {
   model?: string;
   /**
@@ -1040,9 +1079,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           0,
           Math.round((activeCloudBudget.budgetUsd - cloudBudgetSpentUsd) * 100) / 100,
         );
+        const partialSummary = summarizeCloudBudgetPartialMessages(queryParams.messages);
         const message =
           `Cloud background task stopped before the next model request because the estimated request cost ($${estimatedRequestUsd.toFixed(2)}) would exceed the approved budget. ` +
-          `Estimated remaining budget: $${remainingUsd.toFixed(2)}.`;
+          `Estimated remaining budget: $${remainingUsd.toFixed(2)}.` +
+          (partialSummary ? `\n\n${partialSummary}` : "\n\nNo partial worker output was available before the budget stop.");
         return {
           textContent: message,
           textChunks: [message],
