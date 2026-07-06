@@ -118,6 +118,8 @@ async function main() {
     assert.match(jobQueueSource, /withCloudBackgroundEstimatedSpend\(jobInput, cloudBackgroundEstimatedSpentUsd\)/);
     assert.match(jobQueueSource, /cloudBackgroundApprovalGateMatches/);
     assert.match(jobQueueSource, /schema\.agentApprovalGates/);
+    assert.match(jobQueueSource, /resolvedAt\.getTime\(\) > gate\.expiresAt\.getTime\(\)/);
+    assert.doesNotMatch(jobQueueSource, /gte\(schema\.agentApprovalGates\.expiresAt/);
     assert.match(jobQueueSource, /Cloud background task approval could not be verified/);
     assert.match(jobQueueSource, /latestJobInput/);
     assert.match(jobQueueSource, /update\(schema\.agentJobs\)/);

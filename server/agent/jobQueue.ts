@@ -719,6 +719,8 @@ async function cloudBackgroundApprovalGateMatches(opts: {
   const [gate] = await db
     .select({
       toolArgs: schema.agentApprovalGates.toolArgs,
+      resolvedAt: schema.agentApprovalGates.resolvedAt,
+      expiresAt: schema.agentApprovalGates.expiresAt,
     })
     .from(schema.agentApprovalGates)
     .where(and(
@@ -726,12 +728,13 @@ async function cloudBackgroundApprovalGateMatches(opts: {
       eq(schema.agentApprovalGates.userId, opts.userId),
       eq(schema.agentApprovalGates.toolName, QUEUE_BACKGROUND_JOB_TOOL),
       eq(schema.agentApprovalGates.status, "approved"),
-      gte(schema.agentApprovalGates.expiresAt, new Date()),
     ))
     .limit(1);
 
   const gateArgs = recordOf(gate?.toolArgs);
   if (!gateArgs || gateArgs.task_scoped_cloud !== true) return false;
+  if (!(gate.resolvedAt instanceof Date) || !(gate.expiresAt instanceof Date)) return false;
+  if (gate.resolvedAt.getTime() > gate.expiresAt.getTime()) return false;
 
   const budgetMatches = opts.task.providerAuthType !== "api_key"
     || budgetCents(gateArgs.cloud_budget_usd) === budgetCents(opts.task.budgetUsd);
