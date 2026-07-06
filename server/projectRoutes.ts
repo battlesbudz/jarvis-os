@@ -21,6 +21,7 @@ import { getProjectDownloadsDir, getProjectWorkspaceDir } from "./projectStorage
 import { hydrateProjectWorkspace, listProjectSnapshot, readProjectArchive, readProjectSnapshotFile } from "./projectArtifacts";
 import * as fs from "fs";
 import * as path from "path";
+import { RESOURCE_PAUSED_STATUS } from "./agent/voiceRuntimeResourceCore";
 
 const _p = (v: string | string[]): string => Array.isArray(v) ? (v[0] ?? "") : v;
 
@@ -280,7 +281,7 @@ export function registerProjectRoutes(app: Express): void {
         .where(and(
           eq(schema.agentJobs.userId, userId),
           sql`${schema.agentJobs.input}->>'projectId' = ${id}`,
-          sql`${schema.agentJobs.status} IN ('queued', 'running')`,
+          sql`${schema.agentJobs.status} IN ('queued', 'running', ${RESOURCE_PAUSED_STATUS})`,
         ));
 
       await db.delete(schema.jarvisProjects).where(eq(schema.jarvisProjects.id, id));

@@ -22,20 +22,47 @@ function sdkTool(name) {
 }
 
 function run(command, args, options = {}) {
+  const { allowNonZeroWithOutput = false, ...spawnOptions } = options;
   const result = spawnSync(command, args, {
     encoding: "utf8",
-    stdio: options.capture ? "pipe" : "inherit",
-    ...options,
+    stdio: spawnOptions.capture ? "pipe" : "inherit",
+    ...spawnOptions,
   });
   if (result.status !== 0) {
+    if (allowNonZeroWithOutput && result.stdout?.trim()) return result.stdout;
     const detail = [result.stdout, result.stderr].filter(Boolean).join("\n");
     throw new Error(`${command} ${args.join(" ")} failed with exit ${result.status}${detail ? `\n${detail}` : ""}`);
   }
   return result.stdout || "";
 }
 
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function isTransientAdbFailure(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /device ['"]?emulator-\d+['"]? not found|device offline|no devices\/emulators found|failed to get feature set|unable to connect to adb daemon|connection refused/i
+    .test(message);
+}
+
 function adb(args, options = {}) {
-  return run(sdkTool("adb"), args, options);
+  const retries = options.retries ?? 6;
+  let lastError = null;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return run(sdkTool("adb"), args, options);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries || !isTransientAdbFailure(error)) {
+        throw error;
+      }
+      const reason = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      console.warn(`Transient adb failure on attempt ${attempt}/${retries}; retrying: ${reason}`);
+      sleepSync(1000);
+    }
+  }
+  throw lastError;
 }
 
 function adbShell(command, options = {}) {
@@ -170,7 +197,10 @@ async function runOutsideAppVoiceFakeLocalGemmaSmoke() {
     25000,
   );
 
-  const notificationDump = adbShell("dumpsys notification --noredact", { capture: true });
+  const notificationDump = adbShell("dumpsys notification --noredact", {
+    capture: true,
+    allowNonZeroWithOutput: true,
+  });
   if (!/jarvis_voice_session|Jarvis voice/i.test(notificationDump)) {
     throw new Error("Outside-app voice session notification was not visible in dumpsys notification output.");
   }
@@ -263,16 +293,19 @@ function elementText(element) {
 
 function findBlockingSystemDialog(snapshot, options = {}) {
   const elements = Array.isArray(snapshot?.elements) ? snapshot.elements : [];
-  const title = elements.find((element) => /isn't responding|is not responding|keeps stopping|has stopped/i.test(
-    elementText(element),
-  ));
-  if (!title) return null;
-
   const nonDestructiveAction = elements.find((element) => element.viewId === "android:id/aerr_wait") ||
     elements.find((element) => /^wait$/i.test(elementText(element))) ||
     elements.find((element) => /^ok$/i.test(elementText(element)));
   const closeAction = elements.find((element) => element.viewId === "android:id/aerr_close") ||
     elements.find((element) => /^close app$/i.test(elementText(element)));
+  const appInfoAction = elements.find((element) => element.viewId === "android:id/aerr_app_info");
+  const title = elements.find((element) => /isn't responding|is not responding|keeps stopping|has stopped/i.test(
+    elementText(element),
+  )) ||
+    (snapshot?.foregroundPackage === "android" && appInfoAction && closeAction
+      ? elements.find((element) => element.viewId === "android:id/alertTitle") ?? appInfoAction
+      : null);
+  if (!title) return null;
 
   const ownAppDialog = /gameplan|jarvis|com\.gameplan/i.test(elementText(title));
   const action = !ownAppDialog && closeAction && (options.allowClose || !nonDestructiveAction)

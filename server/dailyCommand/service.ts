@@ -3,6 +3,7 @@ import * as schema from "@shared/schema";
 import { db } from "../db";
 import { attachDeliverableReviewState } from "../agent/reviewLoop";
 import { attachJobReviewState } from "../agent/reviewLoop";
+import { RESOURCE_PAUSED_STATUS } from "../agent/voiceRuntimeResourceCore";
 import {
   applyDailyPlanPatch,
   buildDailyCommandStatusReasons,
@@ -133,7 +134,7 @@ export async function getDailyCommandSnapshot(userId: string, now = new Date()):
     db
       .select()
       .from(schema.agentJobs)
-      .where(and(eq(schema.agentJobs.userId, userId), sql`${schema.agentJobs.status} IN ('queued', 'running', 'cancelling')`))
+      .where(and(eq(schema.agentJobs.userId, userId), sql`${schema.agentJobs.status} IN ('queued', 'running', 'cancelling', ${RESOURCE_PAUSED_STATUS})`))
       .orderBy(asc(schema.agentJobs.createdAt))
       .limit(20),
     db

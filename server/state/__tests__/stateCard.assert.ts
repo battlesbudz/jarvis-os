@@ -236,6 +236,45 @@ function testTaskStateLimitPrioritizesRunningJobs() {
   console.log("OK: runtime state card task limiting prioritizes running jobs over queued jobs");
 }
 
+function testTaskStateLimitKeepsResourcePausedJobsVisible() {
+  const limited = limitRuntimeTaskStateRows([{
+    taskId: "queued-1",
+    source: "agent_job",
+    goal: "Queued job",
+    status: "queued",
+    updatedAt: "2026-06-23T11:00:00.000Z",
+  }, {
+    taskId: "resource-paused-1",
+    source: "agent_job",
+    goal: "Paused for local voice",
+    status: "resource_paused",
+    nextAction: "Resume after local voice call ends.",
+    updatedAt: "2026-06-23T11:01:00.000Z",
+  }, {
+    taskId: "scheduled-1",
+    source: "scheduled_task",
+    goal: "Scheduled low priority",
+    status: "scheduled",
+    updatedAt: "2026-06-23T11:02:00.000Z",
+  }], 3);
+
+  assert.equal(limited[0].taskId, "queued-1");
+  assert.ok(limited.some((task) => task.taskId === "resource-paused-1"));
+  const rendered = renderRuntimeStateCard({
+    assistantName: "Jarvis",
+    user: { userId: "user-123", source: "fallback" },
+    session: { generatedAt: fixedNow.toISOString(), source: "state_kernel" },
+    taskState: limited,
+    relevantContext: [],
+    availableTools: [],
+    provenance: ["state_kernel", "task_state_store"],
+    uncertainty: [],
+  }, { maxChars: 5_000 });
+  assert.match(rendered, /Paused for local voice/);
+  assert.match(rendered, /Resume after local voice call ends/);
+  console.log("OK: runtime state card keeps resource-paused jobs visible");
+}
+
 async function testPromptHelperRespectsCompactBudget() {
   const prompt = await buildRuntimeStateCardPrompt({
     userId: "user-123",
@@ -259,6 +298,7 @@ async function main() {
   await testStateCardFallsBackWhenStoresAreUnavailable();
   testTaskStateLimitPreservesJobsAndWorkflows();
   testTaskStateLimitPrioritizesRunningJobs();
+  testTaskStateLimitKeepsResourcePausedJobsVisible();
   await testPromptHelperRespectsCompactBudget();
 }
 

@@ -10,6 +10,7 @@ import {
   isDesktopDaemonActive,
 } from "../daemon/bridge";
 import * as schema from "@shared/schema";
+import { RESOURCE_PAUSED_STATUS } from "../agent/voiceRuntimeResourceCore";
 
 export type GatewayNodeKind =
   | "server"
@@ -135,7 +136,7 @@ export async function listGatewayNodes(userId: string | null, limit = 50): Promi
       .catch(() => []),
     db.select()
       .from(schema.agentJobs)
-      .where(and(eq(schema.agentJobs.userId, userId), inArray(schema.agentJobs.status, ["queued", "running"])))
+      .where(and(eq(schema.agentJobs.userId, userId), inArray(schema.agentJobs.status, ["queued", "running", RESOURCE_PAUSED_STATUS])))
       .orderBy(desc(schema.agentJobs.createdAt))
       .limit(Math.min(limit, 100))
       .catch(() => []),
@@ -200,7 +201,7 @@ export async function listGatewayNodes(userId: string | null, limit = 50): Promi
       scopes: ["system"],
       lastSeenAt: iso(job.startedAt ?? job.createdAt),
       actions: ["jobs.cancel"],
-      metadata: { agentType: job.agentType, turns: job.turns, toolCallsCount: job.toolCallsCount },
+      metadata: { agentType: job.agentType, status: job.status, turns: job.turns, toolCallsCount: job.toolCallsCount },
     });
   }
 

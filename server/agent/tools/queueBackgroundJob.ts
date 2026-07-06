@@ -169,7 +169,7 @@ export const queueBackgroundJobTool: AgentTool = {
 
 IMPORTANT — one job per user message: Do NOT call this tool more than once per user message. If you have multiple approaches to a topic, pick the best one and queue a single job. Queuing multiple jobs for the same user message results in the user receiving multiple notifications for what felt like one question. If the user asks to "try another approach", you may queue a second job.
 
-Before calling this tool, use sessions_list (filter: status=queued or status=running) to check whether a recent job already exists for this topic and agent_type. If a matching job is already active, tell the user their request is already in progress rather than queuing a duplicate.
+Before calling this tool, use sessions_list (filter: status=queued, status=running, or status=resource_paused) to check whether a recent job already exists for this topic and agent_type. If a matching job is already active, tell the user their request is already in progress rather than queuing a duplicate.
 
 Choose agent_type based on the request. Use "ephemeral_agent_task" only for a one-off scoped worker: a specialized temporary worker clone for a bounded task that the main agent should not do inline, runs once with scoped tools, returns a reviewable result, records durable facts/preferences as handoff notes, then is deleted after the task. Do not use it for normal tutoring, quick coaching, simple answers, or work the main agent can do directly:
 - "research"       — single focused topic; results don't depend on each other (e.g. "latest news on OpenAI", "what is the current ETH price")

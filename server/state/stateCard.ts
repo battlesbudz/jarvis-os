@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 
 import type { MemoryContext, MemoryModelTarget } from "../memory/memoryOs";
+import { RESOURCE_PAUSED_STATUS } from "../agent/voiceRuntimeResourceCore";
 import {
   retrieveRelevantRuntimeWorkingContext,
   type RuntimeWorkingContextItem,
@@ -158,6 +159,7 @@ function taskStatusRank(task: RuntimeTaskStateSummary): number {
   if (task.source === "agent_job" && task.status === "running") return 95;
   if (task.status === "needs_attention") return 90;
   if (task.source === "agent_job" && task.status === "queued") return 85;
+  if (task.source === "agent_job" && task.status === RESOURCE_PAUSED_STATUS) return 82;
   if (task.source === "agent_workflow" && task.status === "paused_waiting") return 80;
   if (task.source === "agent_workflow" && task.status === "paused") return 75;
   if (task.status === "running") return 70;
@@ -296,7 +298,7 @@ async function loadTaskStateFromDb(userId: string, limit: number): Promise<Runti
       .from(schema.agentJobs)
       .where(and(
         eq(schema.agentJobs.userId, userId),
-        inArray(schema.agentJobs.status, ["queued", "running"]),
+        inArray(schema.agentJobs.status, ["queued", "running", RESOURCE_PAUSED_STATUS]),
       ))
       .orderBy(
         sql`case when ${schema.agentJobs.status} = 'running' then 0 else 1 end`,
@@ -332,7 +334,11 @@ async function loadTaskStateFromDb(userId: string, limit: number): Promise<Runti
       currentStep: job.agentType,
       status: job.status,
       lastAction: job.error ? truncateText(job.error, 160) : undefined,
-      nextAction: job.status === "queued" ? "Start queued agent job." : undefined,
+      nextAction: job.status === "queued"
+        ? "Start queued agent job."
+        : job.status === RESOURCE_PAUSED_STATUS
+          ? "Resume after local voice call ends."
+          : undefined,
       updatedAt: formatDate(job.startedAt ?? job.createdAt),
     })),
     ...agentWorkflows.map((workflow): RuntimeTaskStateSummary => {

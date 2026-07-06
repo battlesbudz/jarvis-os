@@ -2,6 +2,7 @@ import type { Express, Request, Response } from "express";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { db as dbType } from "../db";
+import { cancellationStatusForAgentJobStatus } from "../agent/voiceRuntimeResourceCore";
 
 type Db = typeof dbType;
 
@@ -32,7 +33,7 @@ export function registerMissionControlQueueRoutes(app: Express, deps: MissionCon
           .where(
             and(
               eq(schema.agentJobs.userId, userId),
-              sql`${schema.agentJobs.status} IN ('queued', 'running', 'cancelling')`,
+              sql`${schema.agentJobs.status} IN ('queued', 'running', 'cancelling', 'resource_paused')`,
             ),
           )
           .orderBy(asc(schema.agentJobs.createdAt))
@@ -74,7 +75,10 @@ export function registerMissionControlQueueRoutes(app: Express, deps: MissionCon
         return res.json({ ok: true, status: job.status });
       }
 
-      const newStatus = job.status === "queued" ? "cancelled" : "cancelling";
+      const newStatus = cancellationStatusForAgentJobStatus(job.status);
+      if (!newStatus) {
+        return res.status(400).json({ error: "Job is already finished" });
+      }
       await db
         .update(schema.agentJobs)
         .set({ status: newStatus, completedAt: newStatus === "cancelled" ? new Date() : undefined })

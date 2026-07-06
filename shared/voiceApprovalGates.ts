@@ -1,10 +1,20 @@
 export type VoiceApprovalIntent = "approve" | "deny" | "ambiguous" | "unrelated";
+export type VoiceRestoreIntent = "restore" | "dismiss" | "ambiguous" | "unrelated";
 
 export type VoiceActionRiskTier = "T0" | "T4";
 
 export interface VoiceApprovalIntentResult {
   intent: VoiceApprovalIntent;
   normalizedText: string;
+}
+
+export interface VoiceRestoreIntentResult {
+  intent: VoiceRestoreIntent;
+  normalizedText: string;
+}
+
+export interface VoiceRestoreIntentOptions {
+  allowGenericReply?: boolean;
 }
 
 export interface VoiceApprovalRiskInput {
@@ -43,6 +53,35 @@ const NEGATED_APPROVAL_PATTERNS = [
   /\b(don't|do not|dont|don t|never)\s+(do it|send it|run it|post it|publish it|submit it|save it|proceed|approve|confirm)\b/,
   /\b(not|isn t|isn't|is not|don t|don't|dont)\s+(ok|okay|fine|good)\b/,
   /\b(that is|that's|thats|it is|it's|its)\s+not\s+(ok|okay|fine|good)\b/,
+];
+
+const RESTORE_CONTEXT_PATTERNS = [
+  /\b(restore|resume|recover)\b.*\b(voice|voice call|voice chat|context|conversation|session)\b/,
+  /\b(pick\s+up|continue)\b.*\b(where\s+we\s+left\s+off|context|conversation)\b/,
+  /\buse\s+that\s+context\b/,
+];
+
+const GENERIC_RESTORE_CONTEXT_PATTERNS = [
+  /^(restore|resume|recover)$/,
+  /\b(restore|resume|recover)\s+(it|that)\b$/,
+  /\b(pick\s+up|continue)\b.*\b(that|it)\b/,
+  /\bbring\s+it\s+back\b/,
+];
+
+const DISMISS_RESTORE_PATTERNS = [
+  /\b(cancel|dismiss|discard|forget|ignore|skip)\b.*\b(context|restore|voice|conversation|session)\b/,
+  /\b(don't|do not|dont|don t|never)\s+(restore|resume|recover|continue)\b/,
+];
+
+const GENERIC_DISMISS_RESTORE_PATTERNS = [
+  /\b(no|nope|nah)\b/,
+  /^(cancel|dismiss|discard|forget|ignore|skip)(\s+(it|that))?$/,
+  /\b(start\s+fresh|fresh\s+start|new\s+conversation)\b/,
+];
+
+const NEGATED_RESTORE_PATTERNS = [
+  /\b(don't|do not|dont|don t|never)\s+(restore|resume|recover|continue)\b/,
+  /\b(no|nope|nah)\b.*\b(don't|do not|dont|don t|never)\s+(restore|resume|recover|continue)\b/,
 ];
 
 const HIGH_RISK_PATTERNS = [
@@ -203,6 +242,42 @@ export function normalizeVoiceApprovalReply(text: string): VoiceApprovalIntentRe
 
   if (hasApprove) {
     return { intent: "approve", normalizedText };
+  }
+
+  return { intent: "unrelated", normalizedText };
+}
+
+export function normalizeVoiceRestoreReply(text: string, options: VoiceRestoreIntentOptions = {}): VoiceRestoreIntentResult {
+  const normalizedText = normalizeSpeechText(text);
+  if (!normalizedText) return { intent: "unrelated", normalizedText };
+
+  const allowGenericReply = options.allowGenericReply === true;
+  const hasContextDismiss = patternMatches(normalizedText, DISMISS_RESTORE_PATTERNS);
+  const hasGenericDismiss = allowGenericReply && patternMatches(normalizedText, GENERIC_DISMISS_RESTORE_PATTERNS);
+  const hasDismiss = hasContextDismiss || hasGenericDismiss;
+  const hasRestore = patternMatches(normalizedText, RESTORE_CONTEXT_PATTERNS) ||
+    (allowGenericReply && patternMatches(normalizedText, GENERIC_RESTORE_CONTEXT_PATTERNS)) ||
+    (allowGenericReply && patternMatches(normalizedText, APPROVE_PATTERNS));
+  const hasAmbiguity = patternMatches(normalizedText, AMBIGUOUS_PATTERNS);
+
+  if (patternMatches(normalizedText, NEGATED_RESTORE_PATTERNS)) {
+    return { intent: "dismiss", normalizedText };
+  }
+
+  if (!hasDismiss && !hasRestore) {
+    return { intent: "unrelated", normalizedText };
+  }
+
+  if (hasAmbiguity || (hasGenericDismiss && hasRestore && !hasContextDismiss)) {
+    return { intent: "ambiguous", normalizedText };
+  }
+
+  if (hasDismiss) {
+    return { intent: "dismiss", normalizedText };
+  }
+
+  if (hasRestore) {
+    return { intent: "restore", normalizedText };
   }
 
   return { intent: "unrelated", normalizedText };

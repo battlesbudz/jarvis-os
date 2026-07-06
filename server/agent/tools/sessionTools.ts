@@ -4,6 +4,7 @@ import { eq, and, desc } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { submitAgentJob } from "../jobQueue";
 import type { AgentJobType } from "../jobQueue";
+import { cancellationStatusForAgentJobStatus } from "../voiceRuntimeResourceCore";
 
 export const sessionsListTool: AgentTool = {
   name: "sessions_list",
@@ -15,7 +16,7 @@ export const sessionsListTool: AgentTool = {
       status: {
         type: "string",
         description:
-          "Optional filter by status: queued, running, complete, failed, cancelled. Omit to see all recent jobs.",
+          "Optional filter by status: queued, running, resource_paused, complete, failed, cancelled. Omit to see all recent jobs.",
       },
       limit: {
         type: "number",
@@ -313,7 +314,7 @@ export const sessionsCancelTool: AgentTool = {
   name: "sessions_cancel",
   description:
     "Cancel a background agent session (job) by its ID. Use when the user asks to stop, abort, or cancel a running or queued background job. " +
-    "Queued jobs are cancelled immediately (they never started). " +
+    "Queued and resource-paused jobs are cancelled immediately (they never started). " +
     "Running jobs are marked as 'cancelling' — they stop at the next checkpoint. " +
     "First call sessions_list if you need to look up the job ID.",
   parameters: {
@@ -363,7 +364,14 @@ export const sessionsCancelTool: AgentTool = {
         };
       }
 
-      const newStatus = job.status === "queued" ? "cancelled" : "cancelling";
+      const newStatus = cancellationStatusForAgentJobStatus(job.status);
+      if (!newStatus) {
+        return {
+          ok: true,
+          content: `Job "${job.title}" already finished with status "${job.status}" — nothing to cancel.`,
+          label: "sessions_cancel: already finished",
+        };
+      }
       await db
         .update(schema.agentJobs)
         .set({

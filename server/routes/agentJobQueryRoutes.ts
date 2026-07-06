@@ -37,7 +37,7 @@ export function registerAgentJobQueryRoutes(app: Express): void {
         .where(
           and(
             eq(schema.agentJobs.userId, userId),
-            sql`${schema.agentJobs.status} IN ('queued', 'running', 'cancelling')`,
+            sql`${schema.agentJobs.status} IN ('queued', 'running', 'cancelling', 'resource_paused')`,
           ),
         )
         .orderBy(asc(schema.agentJobs.createdAt))

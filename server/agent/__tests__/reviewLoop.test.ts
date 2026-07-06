@@ -32,6 +32,31 @@ import {
 
 {
   const review = buildJobReviewState({
+    id: "job_resource_paused",
+    agentType: "app_project",
+    title: "Build local demo app",
+    prompt: "Build the demo app while I am in voice mode.",
+    input: { originChannel: "Voice", autonomyPolicy: true },
+    status: "resource_paused",
+    result: null,
+    error: null,
+    createdAt: new Date("2026-07-06T10:00:00.000Z"),
+    startedAt: null,
+    completedAt: null,
+  });
+
+  assert.equal(review.stage, "in_progress");
+  assert.equal(review.label, "Paused for voice");
+  assert.equal(review.originChannel, "Voice");
+  assert.equal(review.autonomyPolicy, true);
+  assert.equal(review.canCancel, true);
+  assert.equal(review.canRetry, false);
+  assert.equal(review.nextAction, "Wait for voice to finish or cancel");
+  assert.equal(review.preview, "Build the demo app while I am in voice mode.");
+}
+
+{
+  const review = buildJobReviewState({
     id: "job_failed",
     agentType: "research",
     title: "Research vendors",

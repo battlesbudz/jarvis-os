@@ -34,6 +34,7 @@ import {
   buildFeatureProgressPercent,
   type BuildFeatureProgressInput,
 } from "./buildFeatureJobCore";
+import { recoverStaleResourcePausedJobsAfterVoice } from "./voiceRuntimeResourceScheduler";
 
 // Re-export from the shared client so existing callers don't break.
 export type { NotifyJobCompleteDeps } from "./notifyJobCompleteCore";
@@ -650,10 +651,12 @@ async function notifySubAgentJobComplete(
 
 const TICK_MS = 15 * 1000;
 const MAX_JOB_DURATION_MS = 5 * 60 * 1000;
+const RESOURCE_PAUSE_RECOVERY_POLL_MS = 5 * 60 * 1000;
 
 let workerRunning = false;
 let workerStarted = false;
 let stopRequested = false;
+let resourcePauseRecoveryTimer: ReturnType<typeof setInterval> | null = null;
 
 function jobInputOf(job: { input: unknown }): Record<string, unknown> {
   return (job.input && typeof job.input === "object" ? job.input : {}) as Record<string, unknown>;
@@ -2735,8 +2738,20 @@ async function recoverStaleJobs(): Promise<void> {
     if (cancelled.length > 0) {
       console.log(`[JobQueue] cancelled ${cancelled.length} stale cancelling job(s) from previous process`);
     }
+    await recoverStaleVoicePausedJobs("previous process");
   } catch (err) {
     console.error("[JobQueue] recoverStaleJobs failed:", err);
+  }
+}
+
+async function recoverStaleVoicePausedJobs(source: string): Promise<void> {
+  try {
+    const resourceResumed = await recoverStaleResourcePausedJobsAfterVoice();
+    if (resourceResumed.length > 0) {
+      console.log(`[JobQueue] recovered ${resourceResumed.length} stale voice-paused job(s) from ${source}`);
+    }
+  } catch (err) {
+    console.error(`[JobQueue] stale voice-paused recovery failed from ${source}:`, err);
   }
 }
 
@@ -2746,6 +2761,12 @@ export function startJobQueueWorker(): void {
   stopRequested = false;
 
   recoverStaleJobs().catch((err) => console.error("[JobQueue] recover error:", err));
+  resourcePauseRecoveryTimer = setInterval(() => {
+    recoverStaleVoicePausedJobs("live recovery").catch((err) => {
+      console.error("[JobQueue] live stale voice-paused recovery failed:", err);
+    });
+  }, RESOURCE_PAUSE_RECOVERY_POLL_MS);
+  resourcePauseRecoveryTimer.unref?.();
 
   const loop = async () => {
     if (stopRequested) return;
@@ -2770,4 +2791,8 @@ export function startJobQueueWorker(): void {
 
 export function stopJobQueueWorker(): void {
   stopRequested = true;
+  if (resourcePauseRecoveryTimer) {
+    clearInterval(resourcePauseRecoveryTimer);
+    resourcePauseRecoveryTimer = null;
+  }
 }

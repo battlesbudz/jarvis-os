@@ -16,6 +16,7 @@ import { channelLinks } from "@shared/schema";
 import { runCoachAgent } from "../channels/coachAgent";
 import { routeSlashCommand, getHelpText, SLASH_COMMANDS } from "../channels/slashCommandRouter";
 import { cancelAllForUser } from "../agent/jobClient";
+import { RESOURCE_PAUSED_STATUS } from "../agent/voiceRuntimeResourceCore";
 import { tryHandleDiscordChatWithPrime } from "./primeRuntimeChat";
 
 import { generateSlashCommandPairingCode } from "./manager";
@@ -634,7 +635,7 @@ async function handleStatus(
       .orderBy(desc(schema.agentJobs.createdAt))
       .limit(20);
 
-    const active = jobs.filter((j) => j.status === "queued" || j.status === "running");
+    const active = jobs.filter((j) => j.status === "queued" || j.status === "running" || j.status === RESOURCE_PAUSED_STATUS);
     const lastDone = jobs.find((j) => j.status === "complete" || j.status === "failed");
 
     let summary: string;
@@ -645,9 +646,11 @@ async function handleStatus(
     } else {
       const runningCount = active.filter((j) => j.status === "running").length;
       const queuedCount = active.filter((j) => j.status === "queued").length;
+      const pausedCount = active.filter((j) => j.status === RESOURCE_PAUSED_STATUS).length;
       const statusParts: string[] = [];
       if (runningCount > 0) statusParts.push(`${runningCount} running`);
       if (queuedCount > 0) statusParts.push(`${queuedCount} queued`);
+      if (pausedCount > 0) statusParts.push(`${pausedCount} paused for voice`);
       const firstTitle = active[0].title;
       summary = `⚙️ ${statusParts.join(", ")} — "${firstTitle}"${active.length > 1 ? ` (+${active.length - 1} more)` : ""}.`;
     }

@@ -57,6 +57,7 @@ import {
   type CoachingMode,
   type ExecutedAction,
   type PendingConfirm,
+  type PendingVoiceRestore,
 } from '@/lib/storage';
 import {
   scheduleEveningAccountability,
@@ -97,6 +98,7 @@ import {
   buildVoiceApprovalPrompt,
   classifyVoiceApprovalRisk,
   normalizeVoiceApprovalReply,
+  normalizeVoiceRestoreReply,
   voiceApprovalClarificationPrompt,
 } from '@shared/voiceApprovalGates';
 
@@ -111,6 +113,12 @@ interface EmailSuggestion {
 }
 
 const DEFAULT_RUNTIME_MODE: CoachingMode = 'sharp';
+const VOICE_RESTORE_FRESH_MS = 60 * 60 * 1000;
+
+function isPendingVoiceRestoreFresh(voiceRestore?: PendingVoiceRestore, now = Date.now()): boolean {
+  const createdAt = voiceRestore?.createdAt;
+  return typeof createdAt === 'number' && Number.isFinite(createdAt) && now - createdAt < VOICE_RESTORE_FRESH_MS;
+}
 
 type SendMessageOrigin =
   | { source: 'in_app' }
@@ -1617,7 +1625,7 @@ export default function InsightsScreen() {
         stopRecordingSilentlyRef.current().catch(() => {});
         return;
       }
-      if (action === 'end') {
+      if (action === 'end' || action === 'crash' || action === 'unexpected_end') {
         nativeVoiceStateSyncHeldRef.current = false;
         outsideAppVoiceStateRef.current = null;
         talkModeRef.current = false;
@@ -2223,6 +2231,9 @@ export default function InsightsScreen() {
           const executedAction = pendingData.executedAction && typeof pendingData.executedAction === 'object'
             ? pendingData.executedAction as ExecutedAction
             : null;
+          const voiceRestore = pendingData.voiceRestore && typeof pendingData.voiceRestore === 'object'
+            ? pendingData.voiceRestore as PendingVoiceRestore
+            : null;
           let matchedConfirmation = false;
           let changed = false;
           let next = prev;
@@ -2252,6 +2263,7 @@ export default function InsightsScreen() {
               ...(pendingData.screenshotUrl ? {
                 executedActions: [{ tool: 'daemon_action', result: 'success', label: 'Temporary screen capture', screenshotUrl: pendingData.screenshotUrl }]
               } : {}),
+              ...(voiceRestore ? { pendingVoiceRestore: voiceRestore } : {}),
             };
             next = [pendingMsg, ...next];
             changed = true;
@@ -2598,7 +2610,7 @@ export default function InsightsScreen() {
             role: message.role,
             content: message.content,
           })),
-          voiceTrace: origin.voiceTrace,
+          voiceTrace: origin.source === 'voice' ? origin.voiceTrace : undefined,
         }),
       };
       setMessages(prev => {
@@ -2608,6 +2620,136 @@ export default function InsightsScreen() {
       });
       speakTextRef.current(clarification, assistantId);
       return;
+    }
+
+    const pendingVoiceRestoreMessage = messagesRef.current.find((message) => message.role === 'assistant' && !!message.pendingVoiceRestore);
+    if (pendingVoiceRestoreMessage?.pendingVoiceRestore) {
+      const voiceRestore = pendingVoiceRestoreMessage.pendingVoiceRestore;
+      const pendingVoiceRestoreIsFresh = isPendingVoiceRestoreFresh(voiceRestore);
+      const pendingVoiceRestoreIsLatest = pendingVoiceRestoreIsFresh && messagesRef.current[0]?.id === pendingVoiceRestoreMessage.id;
+      if (!pendingVoiceRestoreIsFresh) {
+        const clearedMessages = messagesRef.current.map((message) => message.id === pendingVoiceRestoreMessage.id
+          ? { ...message, pendingVoiceRestore: undefined }
+          : message);
+        messagesRef.current = clearedMessages;
+        setMessages(clearedMessages);
+        persistChatHistory(clearedMessages);
+        const staleReply = normalizeVoiceRestoreReply(userMsg.content, { allowGenericReply: true });
+        if (staleReply.intent !== 'unrelated') {
+          const assistantText = 'That interrupted voice context expired, so I started fresh. What would you like to do next?';
+          const finishedAt = new Date();
+          const assistantMsg: ChatMessage = {
+            id: assistantId,
+            role: 'assistant',
+            content: assistantText,
+            diagnostics: buildTurnDiagnosticBundle({
+              turnId: assistantId,
+              source: origin.source === 'voice' ? 'voice' : 'in_app',
+              channel: origin.source === 'voice' ? 'voice' : 'app',
+              requestText: userMsg.content,
+              responseText: assistantText,
+              selected: {
+                mode: coachingModeRef.current,
+                model: 'local-runtime',
+                profile: 'voice-restore-expired',
+              },
+              runtimeIntent: 'voice_restore',
+              contextPacket: {
+                pendingVoiceRestore: voiceRestore,
+                voiceRestoreReply: staleReply,
+                cleared: true,
+                expired: true,
+              },
+              timing: {
+                startedAt: diagnosticStartedAt.toISOString(),
+                finishedAt: finishedAt.toISOString(),
+                durationMs: finishedAt.getTime() - diagnosticStartedAt.getTime(),
+              },
+              androidState: {
+                micAutoResumed: false,
+              },
+              recentTurnHistory: clearedMessages.slice(0, 8).map((message) => ({
+                role: message.role,
+                content: message.content,
+              })),
+              voiceTrace: origin.source === 'voice' ? origin.voiceTrace : undefined,
+            }),
+          };
+          setMessages([assistantMsg, userMsg, ...clearedMessages]);
+          persistChatHistory([assistantMsg, userMsg, ...clearedMessages]);
+          setInput('');
+          setIntegrationError(null);
+          setConfirmClear(false);
+          if (talkModeRef.current && assistantText.trim()) {
+            speakTextRef.current(assistantText, assistantId);
+          }
+          return;
+        }
+      }
+      const reply = normalizeVoiceRestoreReply(userMsg.content, { allowGenericReply: pendingVoiceRestoreIsLatest });
+      if (pendingVoiceRestoreIsFresh && reply.intent !== 'unrelated') {
+        const shouldClearRestore = reply.intent === 'restore' || reply.intent === 'dismiss';
+        const assistantText = reply.intent === 'restore'
+          ? `${voiceRestore.recap || 'I restored the interrupted voice context.'}\nThe mic is still paused; tap Talk Mode when you want me listening again.`
+          : reply.intent === 'dismiss'
+            ? "Okay, I won't restore that interrupted voice context."
+            : 'Do you want me to restore the interrupted voice context or start fresh?';
+        const finishedAt = new Date();
+        const assistantMsg: ChatMessage = {
+          id: assistantId,
+          role: 'assistant',
+          content: assistantText,
+          ...(shouldClearRestore ? {} : { pendingVoiceRestore: voiceRestore }),
+          diagnostics: buildTurnDiagnosticBundle({
+            turnId: assistantId,
+            source: origin.source === 'voice' ? 'voice' : 'in_app',
+            channel: origin.source === 'voice' ? 'voice' : 'app',
+            requestText: userMsg.content,
+            responseText: assistantText,
+            selected: {
+              mode: coachingModeRef.current,
+              model: 'local-runtime',
+              profile: 'voice-restore',
+            },
+            runtimeIntent: 'voice_restore',
+            contextPacket: {
+              pendingVoiceRestore: voiceRestore,
+              voiceRestoreReply: reply,
+              cleared: shouldClearRestore,
+            },
+            timing: {
+              startedAt: diagnosticStartedAt.toISOString(),
+              finishedAt: finishedAt.toISOString(),
+              durationMs: finishedAt.getTime() - diagnosticStartedAt.getTime(),
+            },
+            androidState: {
+              micAutoResumed: false,
+            },
+            recentTurnHistory: messagesRef.current.slice(0, 8).map((message) => ({
+              role: message.role,
+              content: message.content,
+            })),
+            voiceTrace: origin.source === 'voice' ? origin.voiceTrace : undefined,
+          }),
+        };
+        setMessages(prev => {
+          const cleared = shouldClearRestore
+            ? prev.map((message) => message.pendingVoiceRestore
+              ? { ...message, pendingVoiceRestore: undefined }
+              : message)
+            : prev;
+          const updated = [assistantMsg, userMsg, ...cleared];
+          persistChatHistory(updated);
+          return updated;
+        });
+        setInput('');
+        setIntegrationError(null);
+        setConfirmClear(false);
+        if (talkModeRef.current && assistantText.trim()) {
+          speakTextRef.current(assistantText, assistantId);
+        }
+        return;
+      }
     }
 
     const normalizedVoiceText = userMsg.content.toLowerCase();

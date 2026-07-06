@@ -77,4 +77,34 @@ assert.ok(
   "voice-mode high-risk confirmations should be spoken",
 );
 
+assert.ok(
+  insightsSource.includes("pendingData.voiceRestore") &&
+    insightsSource.includes("pendingVoiceRestore: voiceRestore"),
+  "pending crash-restore prompts should keep restore metadata on the assistant message",
+);
+assert.ok(
+  insightsSource.includes("const VOICE_RESTORE_FRESH_MS = 60 * 60 * 1000") &&
+    insightsSource.includes("function isPendingVoiceRestoreFresh") &&
+    insightsSource.includes("const voiceRestore = pendingVoiceRestoreMessage.pendingVoiceRestore") &&
+    insightsSource.includes("const pendingVoiceRestoreIsFresh = isPendingVoiceRestoreFresh(voiceRestore)") &&
+    insightsSource.includes("pendingVoiceRestoreIsFresh && messagesRef.current[0]?.id === pendingVoiceRestoreMessage.id") &&
+    insightsSource.includes("normalizeVoiceRestoreReply(userMsg.content, { allowGenericReply: pendingVoiceRestoreIsLatest })") &&
+    insightsSource.includes("pendingVoiceRestoreIsFresh && reply.intent !== 'unrelated'") &&
+    insightsSource.includes("const staleReply = normalizeVoiceRestoreReply(userMsg.content, { allowGenericReply: true });") &&
+    insightsSource.includes("That interrupted voice context expired, so I started fresh.") &&
+    insightsSource.includes("messagesRef.current = clearedMessages") &&
+    insightsSource.includes("message.id === pendingVoiceRestoreMessage.id") &&
+    insightsSource.includes("...(shouldClearRestore ? {} : { pendingVoiceRestore: voiceRestore })") &&
+    insightsSource.includes("message.pendingVoiceRestore") &&
+    insightsSource.includes("runtimeIntent: 'voice_restore'") &&
+    insightsSource.includes("micAutoResumed: false"),
+  "voice restore replies should keep clarification prompts active and only accept generic approvals when latest",
+);
+assert.ok(
+  insightsSource.includes("action === 'end' || action === 'crash' || action === 'unexpected_end'") &&
+    insightsSource.includes("setTalkModeEnabled(false)") &&
+    insightsSource.includes("setTalkModeActive(false)"),
+  "outside-app crash events should clear React Talk Mode state like an ended voice session",
+);
+
 console.log("OK: app voice approval gates bridge overlay approval into pending confirmations");

@@ -3,6 +3,7 @@ import {
   buildVoiceApprovalPrompt,
   classifyVoiceApprovalRisk,
   normalizeVoiceApprovalReply,
+  normalizeVoiceRestoreReply,
   voiceApprovalClarificationPrompt,
 } from "@shared/voiceApprovalGates";
 
@@ -32,6 +33,38 @@ function testAmbiguousRepliesNeedOneClarification() {
   assert.equal(normalizeVoiceApprovalReply("no, go ahead").intent, "ambiguous");
   assert.equal(voiceApprovalClarificationPrompt(), "Do you want me to approve it or cancel it?");
   console.log("OK: voice approval asks one short clarification on ambiguous replies");
+}
+
+function testVoiceRestoreReplies() {
+  assert.equal(normalizeVoiceRestoreReply("yes").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("ok").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("no").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("cancel my meeting").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("ignore that notification").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("start fresh").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("yes", { allowGenericReply: true }).intent, "restore");
+  assert.equal(normalizeVoiceRestoreReply("no", { allowGenericReply: true }).intent, "dismiss");
+  assert.equal(normalizeVoiceRestoreReply("dismiss it", { allowGenericReply: true }).intent, "dismiss");
+  assert.equal(normalizeVoiceRestoreReply("start fresh", { allowGenericReply: true }).intent, "dismiss");
+  assert.equal(normalizeVoiceRestoreReply("yes restore it").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("yes restore it", { allowGenericReply: true }).intent, "restore");
+  assert.equal(normalizeVoiceRestoreReply("resume that").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("resume that", { allowGenericReply: true }).intent, "restore");
+  assert.equal(normalizeVoiceRestoreReply("restore").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("restore", { allowGenericReply: true }).intent, "restore");
+  assert.equal(normalizeVoiceRestoreReply("resume").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("resume", { allowGenericReply: true }).intent, "restore");
+  assert.equal(normalizeVoiceRestoreReply("continue that").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("continue that", { allowGenericReply: true }).intent, "restore");
+  assert.equal(normalizeVoiceRestoreReply("pick up where we left off").intent, "restore");
+  assert.equal(normalizeVoiceRestoreReply("dismiss the restore context").intent, "dismiss");
+  assert.equal(normalizeVoiceRestoreReply("no don't restore it").intent, "dismiss");
+  assert.equal(normalizeVoiceRestoreReply("maybe restore it").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("maybe restore it", { allowGenericReply: true }).intent, "ambiguous");
+  assert.equal(normalizeVoiceRestoreReply("resume YouTube playback").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("restore that file").intent, "unrelated");
+  assert.equal(normalizeVoiceRestoreReply("what is the weather").intent, "unrelated");
+  console.log("OK: voice restore accepts restore, dismiss, and ambiguous replies");
 }
 
 function testLowRiskPhoneControlDoesNotRequireApproval() {
@@ -135,6 +168,7 @@ function testOverlayPromptIsOneShortSentence() {
 testNaturalApprovalReplies();
 testNaturalDenialReplies();
 testAmbiguousRepliesNeedOneClarification();
+testVoiceRestoreReplies();
 testLowRiskPhoneControlDoesNotRequireApproval();
 testHighRiskBoundariesRequireOverlayApproval();
 testOverlayPromptIsOneShortSentence();

@@ -336,7 +336,22 @@ export interface PendingConfirm {
     cmd?: string;
     path?: string;
     content?: string;
+    message?: string;
+    replyText?: string;
+    text?: string;
+    notificationKey?: string;
+    durationMs?: number;
+    key?: string;
+    target?: string;
+    request?: string;
   };
+}
+
+export interface PendingVoiceRestore {
+  incidentId: string;
+  prompt: string;
+  recap: string;
+  createdAt?: number;
 }
 
 export interface ChatMessage {
@@ -354,6 +369,7 @@ export interface ChatMessage {
   mcpAttachments?: McpAttachment[];
   diagnostics?: TurnDiagnosticBundle;
   pendingConfirm?: PendingConfirm;
+  pendingVoiceRestore?: PendingVoiceRestore;
   stopped?: boolean;
 }
 
