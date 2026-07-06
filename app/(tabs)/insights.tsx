@@ -1556,7 +1556,8 @@ export default function InsightsScreen() {
         isStreamingRef.current ||
         isSpeakingRef.current ||
         isRecordingRef.current ||
-        isTranscribingRef.current
+        isTranscribingRef.current ||
+        voiceConfirmationExecutingRef.current
       ) {
         return;
       }

@@ -29,6 +29,16 @@ assert.equal(
 );
 
 assert.equal(
+  isAndroidSubmitCapableAction(
+    "android_type_text",
+    { text: "On my way", submit: true },
+    "Use Messages to tell Bob I'm on my way",
+  ),
+  true,
+  "tell-style typed message sends should require confirmation",
+);
+
+assert.equal(
   isAndroidSubmitCapableAction("android_press_phone_key", { key: "enter" }, "Message Sarah hello"),
   true,
   "message submit keys should require confirmation",

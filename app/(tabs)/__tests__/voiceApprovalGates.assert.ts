@@ -34,6 +34,10 @@ assert.ok(
   "outside-app overlay should stay in a working state while confirmed actions execute",
 );
 assert.ok(
+  insightsSource.includes("voiceConfirmationExecutingRef.current"),
+  "delayed Talk Mode recording starts should stay blocked while confirmed actions execute",
+);
+assert.ok(
   insightsSource.includes("setVoiceConfirmationExecutionState(true)") &&
     insightsSource.includes("setVoiceConfirmationExecutionState(false)"),
   "confirmed actions should explicitly mark confirmation execution as started and finished",
