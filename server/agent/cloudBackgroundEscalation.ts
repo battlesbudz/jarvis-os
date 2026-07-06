@@ -81,6 +81,7 @@ export interface BuildCloudBackgroundEscalationDecisionInput {
   reason: CloudBackgroundEscalationReason;
   providers: CloudBackgroundProviderStatus[];
   selectedProviderId?: string | null;
+  selectedProviderAuthType?: CloudBackgroundProviderOption["authType"] | null;
   approvedProvider?: boolean;
   approvedBudgetUsd?: number | null;
 }
@@ -332,8 +333,18 @@ export function buildCloudBackgroundEscalationDecision(
     };
   }
 
+  const selectedProviderAuthType = authTypeValue(input.selectedProviderAuthType);
+  const selectedProviderMatches = input.selectedProviderId
+    ? connectedProviders.filter(
+        (provider) =>
+          provider.id === input.selectedProviderId &&
+          (!selectedProviderAuthType || provider.authType === selectedProviderAuthType),
+      )
+    : [];
   const selectedProvider = input.selectedProviderId
-    ? connectedProviders.find((provider) => provider.id === input.selectedProviderId)
+    ? selectedProviderMatches.length === 1
+      ? selectedProviderMatches[0]!
+      : null
     : input.approvedProvider && connectedProviders.length === 1
       ? connectedProviders[0]!
       : null;

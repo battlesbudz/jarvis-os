@@ -194,6 +194,7 @@ export interface LocalVoiceHarnessResult {
 export interface LocalVoiceCloudEscalationInput {
   providers: CloudBackgroundProviderStatus[];
   selectedProviderId?: string | null;
+  selectedProviderAuthType?: "api_key" | "oauth" | null;
   approvedProvider?: boolean;
   approvedBudgetUsd?: number | null;
 }
@@ -1709,6 +1710,7 @@ function cloudEscalationForModelProblem(
     reason: outcome,
     providers: escalation.providers,
     selectedProviderId: escalation.selectedProviderId,
+    selectedProviderAuthType: escalation.selectedProviderAuthType,
     approvedProvider: escalation.approvedProvider,
     approvedBudgetUsd: escalation.approvedBudgetUsd,
   });

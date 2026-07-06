@@ -101,6 +101,52 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
 }
 
 {
+  const openAiRoutes: CloudBackgroundProviderStatus[] = [
+    { id: "openai", label: "OpenAI", connected: true, authType: "oauth" },
+    { id: "openai", label: "OpenAI", connected: true, authType: "api_key" },
+  ];
+  const ambiguous = buildCloudBackgroundEscalationDecision({
+    requestText: "Use a cloud model for this.",
+    reason: "model_timeout",
+    providers: openAiRoutes,
+    selectedProviderId: "openai",
+    approvedProvider: true,
+    approvedBudgetUsd: 2,
+  });
+  assert.equal(ambiguous.kind, "choose_provider");
+  assert.match(ambiguous.message, /subscription/i);
+  assert.match(ambiguous.message, /API key/i);
+
+  const apiKeyRoute = buildCloudBackgroundEscalationDecision({
+    requestText: "Use a cloud model for this.",
+    reason: "model_timeout",
+    providers: openAiRoutes,
+    selectedProviderId: "openai",
+    selectedProviderAuthType: "api_key",
+    approvedProvider: true,
+    approvedBudgetUsd: 2,
+  });
+  assert.equal(apiKeyRoute.kind, "queue_job");
+  assert.equal(apiKeyRoute.job.provider.id, "openai");
+  assert.equal(apiKeyRoute.job.provider.authType, "api_key");
+  assert.equal(apiKeyRoute.job.budgetUsd, 2);
+
+  const oauthRoute = buildCloudBackgroundEscalationDecision({
+    requestText: "Use a cloud model for this.",
+    reason: "model_timeout",
+    providers: openAiRoutes,
+    selectedProviderId: "openai",
+    selectedProviderAuthType: "oauth",
+    approvedProvider: true,
+  });
+  assert.equal(oauthRoute.kind, "queue_job");
+  assert.equal(oauthRoute.job.provider.id, "openai");
+  assert.equal(oauthRoute.job.provider.authType, "oauth");
+  assert.equal(oauthRoute.job.budgetUsd, null);
+  console.log("OK: duplicate provider ids require auth-route selection before queueing");
+}
+
+{
   const decision = buildCloudBackgroundEscalationDecision({
     requestText: "Research this company.",
     reason: "weak_answer",
