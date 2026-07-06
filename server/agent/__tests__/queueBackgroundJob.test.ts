@@ -110,6 +110,8 @@ async function main() {
     assert.match(jobQueueSource, /buildCompactCloudBackgroundResultPacket/);
     assert.match(jobQueueSource, /cloudBackgroundBudgetStopped/);
     assert.match(jobQueueSource, /task_scoped_cloud_approved_route_guard/);
+    assert.match(jobQueueSource, /getProviderStatus\(\{ userId: job\.userId \}\)/);
+    assert.match(jobQueueSource, /no longer connected with the approved/);
     assert.match(jobQueueSource, /cloudBackgroundEstimatedSpendOf\(jobInput\)/);
     assert.match(jobQueueSource, /withCloudBackgroundEstimatedSpend\(jobInput, cloudBackgroundEstimatedSpentUsd\)/);
     assert.match(jobQueueSource, /update\(schema\.agentJobs\)/);

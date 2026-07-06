@@ -329,7 +329,9 @@ export function buildCloudBackgroundEscalationDecision(
 
   const selectedProvider = input.selectedProviderId
     ? connectedProviders.find((provider) => provider.id === input.selectedProviderId)
-    : null;
+    : input.approvedProvider && connectedProviders.length === 1
+      ? connectedProviders[0]!
+      : null;
 
   if (!selectedProvider) {
     if (connectedProviders.length === 1) {

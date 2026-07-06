@@ -34,6 +34,7 @@ import { createDriveBinaryFile } from "../integrations/googleDrive";
 import { normalizeApprovalReceipt } from "./approvalReceipt";
 import { decideJobFailureRecovery } from "./jobObservability";
 import { buildWorkerRuntimeEvent, resolveWorkerType, withWorkerRuntimeEvent } from "./workerRuntime";
+import { getProviderStatus } from "./providers/modelProviderAuthProfiles";
 import {
   buildFeatureProgressLabel,
   buildFeatureProgressPercent,
@@ -2459,6 +2460,28 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         originDiscordChannelId,
       );
       return;
+    }
+    if (cloudBackgroundValidation?.ok) {
+      const providerStatus = await getProviderStatus({ userId: job.userId }).catch(() => null);
+      const approvedAuthStatus =
+        providerStatus?.providers[cloudBackgroundValidation.task.providerId]
+          ?.authTypes[cloudBackgroundValidation.task.providerAuthType];
+      if (!approvedAuthStatus?.connected) {
+        const message =
+          `${cloudBackgroundValidation.task.providerLabel} is no longer connected with the approved ` +
+          `${cloudBackgroundValidation.task.providerAuthType === "api_key" ? "API-key" : "subscription"} route. ` +
+          "Reconnect it in Settings before restarting this cloud background task.";
+        await failJob(job.id, message, job.userId);
+        await notifyJobComplete(
+          job.userId,
+          job.agentType,
+          job.title,
+          message,
+          originChannel,
+          originDiscordChannelId,
+        );
+        return;
+      }
     }
     const cloudBackgroundMaxTurns = cloudBackgroundValidation?.ok
       ? maxCloudBackgroundModelTurnsForBudget(cloudBackgroundValidation.task.budgetUsd, 6)

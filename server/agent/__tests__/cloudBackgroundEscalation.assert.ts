@@ -64,6 +64,22 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
 
 {
   const decision = buildCloudBackgroundEscalationDecision({
+    requestText: "Use a cloud model for this.",
+    reason: "model_timeout",
+    providers: status({
+      openai: { connected: true, authType: "oauth", isDefault: true },
+    }),
+    approvedProvider: true,
+  });
+  assert.equal(decision.kind, "queue_job");
+  assert.equal(decision.liveModelSwitch, false);
+  assert.equal(decision.job.provider.id, "openai");
+  assert.equal(decision.job.budgetUsd, null);
+  console.log("OK: single connected provider approval infers the approved provider");
+}
+
+{
+  const decision = buildCloudBackgroundEscalationDecision({
     requestText: "Research this company overnight.",
     reason: "weak_answer",
     providers: status({
