@@ -1087,6 +1087,7 @@ export default function InsightsScreen() {
   stopRecordingSilentlyRef.current = stopRecordingSilently;
 
   const transcribeAndSend = useCallback(async (base64: string) => {
+    const transcribeSeq = talkModeStartSeqRef.current;
     setIsTranscribing(true);
     try {
       const url = new URL('/api/coach/transcribe', getApiUrl());
@@ -1100,6 +1101,13 @@ export default function InsightsScreen() {
         throw new Error(errData.error || `Server error ${res.status}`);
       }
       const data = await res.json();
+      if (
+        talkModeRef.current &&
+        (talkModeStartSeqRef.current !== transcribeSeq || outsideAppVoiceStateRef.current === 'paused')
+      ) {
+        setIsTranscribing(false);
+        return;
+      }
       if (data.text && data.text.trim()) {
         setIsTranscribing(false);
         const transcriptText = data.text.trim();
@@ -1412,6 +1420,7 @@ export default function InsightsScreen() {
       if (
         !talkModeRef.current ||
         talkModeStartSeqRef.current !== startSeq ||
+        outsideAppVoiceStateRef.current === 'paused' ||
         isStreamingRef.current ||
         isSpeakingRef.current ||
         isRecordingRef.current ||
@@ -1421,6 +1430,26 @@ export default function InsightsScreen() {
       }
       startRecordingRef.current();
     }, delayMs);
+  }, []);
+
+  const abortActiveChatTurn = useCallback(async () => {
+    const runId = chatRunIdRef.current;
+    if (runId) {
+      try {
+        await apiRequest('POST', '/api/chat/abort', { runId });
+      } catch {}
+    }
+    chatAbortControllerRef.current?.abort();
+    chatAbortControllerRef.current = null;
+    chatRunIdRef.current = null;
+    streamingAssistantIdRef.current = null;
+    isStreamingRef.current = false;
+    isTranscribingRef.current = false;
+    setIsStreaming(false);
+    setShowTyping(false);
+    setIsSearchingWeb(false);
+    setIsWorkingOnPhone(false);
+    setIsTranscribing(false);
   }, []);
 
   const interruptSpeakingAndListen = useCallback(() => {
@@ -1450,6 +1479,7 @@ export default function InsightsScreen() {
         talkModeStartSeqRef.current += 1;
         outsideAppVoiceStateRef.current = 'paused';
         stopSpeaking();
+        abortActiveChatTurn().catch(() => {});
         stopRecordingSilentlyRef.current().catch(() => {});
         return;
       }
@@ -1476,7 +1506,7 @@ export default function InsightsScreen() {
       }
     });
     return () => subscription.remove();
-  }, [interruptSpeakingAndListen, scheduleTalkModeRecordingStart, setTalkModeActive, stopSpeaking]);
+  }, [abortActiveChatTurn, interruptSpeakingAndListen, scheduleTalkModeRecordingStart, setTalkModeActive, stopSpeaking]);
 
   const speakText = useCallback(async (text: string, assistantId?: string) => {
     if (isSpeaking && speakingTextRef.current === text) {
@@ -1504,7 +1534,7 @@ export default function InsightsScreen() {
       setIsSpeaking(false);
       setIsTTSLoading(false);
       apiRequest('POST', '/api/voice/tts-done').catch(() => {});
-      if (talkModeRef.current) {
+      if (talkModeRef.current && outsideAppVoiceStateRef.current !== 'paused') {
         scheduleTalkModeRecordingStart(400);
       }
     };
@@ -2762,7 +2792,7 @@ export default function InsightsScreen() {
       });
 
       // Auto-speak the reply in Talk Mode once streaming finishes.
-      if (talkModeRef.current && finalContent.trim()) {
+      if (talkModeRef.current && outsideAppVoiceStateRef.current !== 'paused' && finalContent.trim()) {
         speakTextRef.current(finalContent, assistantId);
       }
 
@@ -2938,20 +2968,8 @@ export default function InsightsScreen() {
   }, [copyDiagnosticBundleToClipboard]);
 
   const handleStop = useCallback(async () => {
-    const runId = chatRunIdRef.current;
-    if (runId) {
-      try {
-        await apiRequest('POST', '/api/chat/abort', { runId });
-      } catch {}
-    }
-    chatAbortControllerRef.current?.abort();
-    chatAbortControllerRef.current = null;
-    chatRunIdRef.current = null;
-    setIsStreaming(false);
-    setShowTyping(false);
-    setIsSearchingWeb(false);
-    setIsWorkingOnPhone(false);
-  }, []);
+    await abortActiveChatTurn();
+  }, [abortActiveChatTurn]);
 
   const handleConfirmAction = useCallback(async (msgId: string, confirmed: boolean) => {
     const msg = messagesRef.current.find(m => m.id === msgId);

@@ -160,8 +160,13 @@ class OutsideAppVoiceSessionService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 lastEndedAtMs = 0L
-                sessionActive = true
-                setState(OutsideAppVoiceState.LISTENING)
+                if (sessionActive && state == OutsideAppVoiceState.PAUSED) {
+                    startForegroundCompat()
+                    updateOverlay()
+                } else {
+                    sessionActive = true
+                    setState(OutsideAppVoiceState.LISTENING)
+                }
             }
             ACTION_PAUSE -> {
                 if (!sessionActive) sessionActive = true

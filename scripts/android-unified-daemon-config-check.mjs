@@ -414,6 +414,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "fun shouldAcceptPlaybackForCurrentSession()", source);
   assertIncludes(contents, "RECENT_END_PLAYBACK_DROP_MS", source);
   assertIncludes(contents, "lastEndedAtMs = SystemClock.elapsedRealtime()", source);
+  assertIncludes(contents, "if (sessionActive && state == OutsideAppVoiceState.PAUSED)", source);
   assertIncludes(contents, "service.state != OutsideAppVoiceState.PAUSED", source);
   assertIncludes(contents, "service.state != OutsideAppVoiceState.IDLE", source);
   assertIncludes(contents, "private val mainHandler = Handler(Looper.getMainLooper())", source);

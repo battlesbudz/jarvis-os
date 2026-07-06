@@ -205,10 +205,14 @@ class UnifiedDaemonContractTest {
         assertEquals(OutsideAppVoiceState.PAUSED, service.stateForTest())
         assertFalse(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
 
+        service.onStartCommand(OutsideAppVoiceSessionService.startIntent(context), 0, 3)
+        assertEquals(OutsideAppVoiceState.PAUSED, service.stateForTest())
+        assertFalse(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
+
         service.onStartCommand(
             OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_RESUME),
             0,
-            3,
+            4,
         )
         assertEquals(OutsideAppVoiceState.LISTENING, service.stateForTest())
         assertTrue(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
@@ -216,7 +220,7 @@ class UnifiedDaemonContractTest {
         service.onStartCommand(
             OutsideAppVoiceSessionService.controlIntent(context, OutsideAppVoiceSessionService.ACTION_END),
             0,
-            4,
+            5,
         )
         assertFalse(service.sessionActiveForTest())
         assertEquals(OutsideAppVoiceState.IDLE, service.stateForTest())
