@@ -143,6 +143,11 @@ expectIncludes(
 );
 expectIncludes(
   emulatorScript,
+  "result.data?.copied === true",
+  "Emulator clipboard smoke should accept the daemon's top-level copy result shape",
+);
+expectIncludes(
+  emulatorScript,
   'voiceE2eBroadcast("crash"',
   "Emulator smoke should exercise the debug crash command",
 );

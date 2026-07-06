@@ -316,14 +316,19 @@ async function runClipboardSmoke(bridge) {
     text,
     label: "jarvis_e2e_clipboard",
   }, 30000);
-  if (!result.ok || result.data?.result?.ok !== true) {
+  const copyOk = result.ok && (
+    result.data?.result?.ok === true ||
+    result.data?.copied === true ||
+    result.data?.ok === true
+  );
+  if (!copyOk) {
     throw new Error(`android_copy_text_to_clipboard failed: ${JSON.stringify(result)}`);
   }
 
   return {
     ok: true,
     textLength: text.length,
-    label: result.data?.result?.label ?? "",
+    label: result.data?.result?.label ?? result.data?.label ?? "",
   };
 }
 
