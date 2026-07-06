@@ -945,6 +945,7 @@ export default function InsightsScreen() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [talkModeEnabled, setTalkModeEnabled] = useState(false);
   const [voiceApprovalPrompt, setVoiceApprovalPrompt] = useState<string | null>(null);
+  const [voiceApprovalToken, setVoiceApprovalToken] = useState<string | null>(null);
   const [voiceConfirmationExecuting, setVoiceConfirmationExecuting] = useState(false);
   const talkModeRef = useRef(false);
   const talkModeStartSeqRef = useRef(0);
@@ -1436,6 +1437,7 @@ export default function InsightsScreen() {
     if (!talkModeEnabled) {
       outsideAppVoiceStateRef.current = null;
       nativeVoiceStateSyncHeldRef.current = false;
+      setVoiceApprovalToken(null);
       return;
     }
     if (!nativeVoiceStateSyncReady || !nativeVoiceStateSyncReadyRef.current) return;
@@ -1450,17 +1452,17 @@ export default function InsightsScreen() {
           ? 'listening'
           : 'listening';
     const nextStateKey = nextState === 'approval'
-      ? `${nextState}:${voiceApprovalPrompt ?? ''}`
+      ? `${nextState}:${voiceApprovalPrompt ?? ''}:${voiceApprovalToken ?? ''}`
       : nextState;
     if (outsideAppVoiceStateRef.current === nextStateKey) return;
     outsideAppVoiceStateRef.current = nextStateKey;
     const syncVoiceState = nextState === 'approval' && voiceApprovalPrompt
-      ? setAndroidOutsideAppVoiceApproval(voiceApprovalPrompt)
+      ? setAndroidOutsideAppVoiceApproval(voiceApprovalPrompt, voiceApprovalToken ?? '')
       : setAndroidOutsideAppVoiceSessionState(nextState);
     syncVoiceState.catch((err) => {
       console.warn('[voice] outside-app state sync failed:', err);
     });
-  }, [isRecording, isSpeaking, isStreaming, isTranscribing, isWorkingOnPhone, nativeVoiceStateSyncReady, talkModeEnabled, voiceApprovalPrompt, voiceConfirmationExecuting]);
+  }, [isRecording, isSpeaking, isStreaming, isTranscribing, isWorkingOnPhone, nativeVoiceStateSyncReady, talkModeEnabled, voiceApprovalPrompt, voiceApprovalToken, voiceConfirmationExecuting]);
 
   // App-level wake word events — fired by WakeWordContext even when insights is not focused
   const { pendingWakeEvent, clearWakeEvent, setTalkModeActive } = useWakeWord();
@@ -1595,12 +1597,16 @@ export default function InsightsScreen() {
         return;
       }
       if (action === 'approval_approve' || action === 'approval_deny') {
-        const pendingVoiceConfirmMessage = messagesRef.current.find((message) => message.role === 'assistant' && !!message.pendingConfirm);
+        const confirmationToken = typeof event.confirmationToken === 'string' ? event.confirmationToken : '';
+        const pendingVoiceConfirmMessage = confirmationToken
+          ? messagesRef.current.find((message) => message.role === 'assistant' && message.pendingConfirm?.token === confirmationToken)
+          : messagesRef.current.find((message) => message.role === 'assistant' && !!message.pendingConfirm);
         if (!pendingVoiceConfirmMessage?.pendingConfirm) return;
         const approved = action === 'approval_approve';
         const now = new Date().toISOString();
         nativeVoiceStateSyncHeldRef.current = false;
         setVoiceApprovalPrompt(null);
+        setVoiceApprovalToken(null);
         confirmActionRef.current(pendingVoiceConfirmMessage.id, approved, {
           source: 'voice',
           voiceTrace: {
@@ -2472,6 +2478,7 @@ export default function InsightsScreen() {
 
       if (reply.intent === 'approve' || reply.intent === 'deny') {
         setVoiceApprovalPrompt(null);
+        setVoiceApprovalToken(null);
         setAndroidOutsideAppVoiceSessionState(reply.intent === 'approve' ? 'working' : 'listening').catch(() => {});
         await confirmActionRef.current(pendingVoiceConfirmMessage.id, reply.intent === 'approve', origin);
         return;
@@ -2483,6 +2490,7 @@ export default function InsightsScreen() {
       });
       const clarification = voiceApprovalClarificationPrompt();
       setVoiceApprovalPrompt(prompt);
+      setVoiceApprovalToken(pendingVoiceConfirmMessage.pendingConfirm.token);
       const finishedAt = new Date();
       const assistantMsg: ChatMessage = {
         id: assistantId,
@@ -2864,7 +2872,8 @@ export default function InsightsScreen() {
                 });
                 if (talkModeRef.current) {
                   setVoiceApprovalPrompt(approvalPrompt);
-                  setAndroidOutsideAppVoiceApproval(approvalPrompt).catch(() => {});
+                  setVoiceApprovalToken(pendingConfirm.token);
+                  setAndroidOutsideAppVoiceApproval(approvalPrompt, pendingConfirm.token).catch(() => {});
                   speakTextRef.current(approvalPrompt, assistantId);
                 }
               } else if (parsed.type === 'searching') {
@@ -3219,6 +3228,7 @@ export default function InsightsScreen() {
       }
     };
     setVoiceApprovalPrompt(null);
+    setVoiceApprovalToken(null);
     const confirmStartedAt = new Date();
     const buildConfirmedActionDiagnostics = (input: {
       responseText: string;

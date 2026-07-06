@@ -57,6 +57,7 @@ class DaemonE2eReceiver : BroadcastReceiver() {
                         context,
                         intent.getStringExtra(OutsideAppVoiceSessionService.EXTRA_APPROVAL_PROMPT)
                             ?: "Approve this action?",
+                        intent.getStringExtra(OutsideAppVoiceSessionService.EXTRA_APPROVAL_TOKEN),
                     ),
                 )
                 "approve" -> OutsideAppVoiceSessionService.instance?.onOverlayApprove()

@@ -10,8 +10,13 @@ assert.ok(
   "outside-app overlay approval events should be handled by the app listener",
 );
 assert.ok(
+  insightsSource.includes("event.confirmationToken") &&
+    insightsSource.includes("message.pendingConfirm?.token === confirmationToken"),
+  "outside-app overlay approval events should target pending confirmations by token",
+);
+assert.ok(
   insightsSource.includes("confirmActionRef.current(pendingVoiceConfirmMessage.id, approved"),
-  "overlay approval events should execute the pending confirmation handler",
+  "foreground overlay approval events should execute the pending confirmation handler",
 );
 assert.ok(
   insightsSource.includes("voiceConfirmationExecuting || isTranscribing || isStreaming || isWorkingOnPhone"),
@@ -30,8 +35,9 @@ assert.ok(
   "Android confirmation cards should show phone action details before approval",
 );
 assert.ok(
-  insightsSource.includes("setAndroidOutsideAppVoiceApproval(approvalPrompt)"),
-  "voice-mode high-risk confirmations should push the approval prompt to the native overlay",
+  insightsSource.includes("setAndroidOutsideAppVoiceApproval(approvalPrompt, pendingConfirm.token)") &&
+    insightsSource.includes("setAndroidOutsideAppVoiceApproval(voiceApprovalPrompt, voiceApprovalToken ?? '')"),
+  "voice-mode high-risk confirmations should push the approval prompt and token to the native overlay",
 );
 assert.ok(
   insightsSource.includes("speakTextRef.current(approvalPrompt, assistantId)"),

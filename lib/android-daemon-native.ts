@@ -34,6 +34,8 @@ export type AndroidOutsideAppVoiceControlEvent = {
   action?: string;
   state?: string;
   outsideApp?: boolean;
+  confirmationToken?: string;
+  reactActive?: boolean;
 };
 
 const unavailableStatus: AndroidDaemonStatus = {
@@ -58,7 +60,7 @@ const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
       resumeOutsideAppVoiceSession?(): Promise<AndroidDaemonStatus>;
       endOutsideAppVoiceSession?(): Promise<AndroidDaemonStatus>;
       setOutsideAppVoiceSessionState?(state: string): Promise<AndroidDaemonStatus>;
-      setOutsideAppVoiceApproval?(prompt: string): Promise<AndroidDaemonStatus>;
+      setOutsideAppVoiceApproval?(prompt: string, confirmationToken: string): Promise<AndroidDaemonStatus>;
       openOverlayPermissionSettings?(): Promise<void>;
       openAllFilesAccessSettings(): Promise<void>;
       requestCameraPermission(): Promise<void>;
@@ -144,11 +146,12 @@ export async function setAndroidOutsideAppVoiceSessionState(
 
 export async function setAndroidOutsideAppVoiceApproval(
   prompt: string,
+  confirmationToken = "",
 ): Promise<AndroidDaemonStatus | null> {
   if (Platform.OS !== "android" || !NativeJarvisDaemon?.setOutsideAppVoiceApproval) {
     return null;
   }
-  return NativeJarvisDaemon.setOutsideAppVoiceApproval(prompt);
+  return NativeJarvisDaemon.setOutsideAppVoiceApproval(prompt, confirmationToken);
 }
 
 export function addAndroidOutsideAppVoiceControlListener(

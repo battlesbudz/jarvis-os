@@ -56,7 +56,7 @@ import { registerDiscordConnectionRoutes } from "./routes/discordConnectionRoute
 import { registerGoalSummaryRoutes } from "./routes/goalSummaryRoutes";
 import { registerBrainDumpRoutes } from "./routes/brainDumpRoutes";
 import { registerCoachAudioRoutes } from "./routes/coachAudioRoutes";
-import { registerCoachActionConfirmationRoutes } from "./routes/coachActionConfirmationRoutes";
+import { executePendingCoachAction, registerCoachActionConfirmationRoutes } from "./routes/coachActionConfirmationRoutes";
 import { registerCoachInsightRoutes } from "./routes/coachInsightRoutes";
 import { registerCoachSessionRoutes } from "./routes/coachSessionRoutes";
 import { registerWebchatEventsRoutes } from "./routes/webchatEventsRoutes";
@@ -76,7 +76,7 @@ import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoul
 import { buildUntrustedSoulContext, BUDGET_PRESETS } from "./memory/contextBuilder";
 import { containsRawRestrictedContent } from "./memory/restrictedContent";
 import { listPeople, deletePerson } from "./memory/people";
-import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, type AndroidDaemonAction } from "./daemon/bridge";
+import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, setDaemonVoiceApprovalHandler, type AndroidDaemonAction } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
@@ -2830,6 +2830,22 @@ You can extend yourself by building new tools directly. Generate the complete Ty
   registerWebchatInviteRoutes(app, authMiddleware);
 
   registerCoachSessionRoutes(app, openai);
+
+  setDaemonVoiceApprovalHandler(async ({ userId, token, approved }) => {
+    if (approved) {
+      await executePendingCoachAction({
+        pendingConfirmations,
+        executeCoachTool,
+        userId,
+        token,
+      });
+      return;
+    }
+    const pending = pendingConfirmations.get(token);
+    if (pending?.userId === userId) {
+      pendingConfirmations.delete(token);
+    }
+  });
 
   registerCoachActionConfirmationRoutes(app, { pendingConfirmations, executeCoachTool, openai });
 

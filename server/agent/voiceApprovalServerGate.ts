@@ -4,6 +4,12 @@ const ANDROID_EXTERNAL_BOUNDARY_PATTERN =
   /\b(send|reply|respond|post|publish|comment|share|pay|purchase|buy|order|transfer|withdraw|subscribe|submit|save|apply|authorize|confirm|delete|remove|clear|erase|destroy|wipe|book|schedule|reschedule|cancel|connect|disconnect|log in|login|sign in|sign out|logout|password|account)\b/i;
 
 const SUBMIT_KEYS = new Set(["enter", "search", "go", "send", "done"]);
+const HIGH_RISK_ANDROID_ACTIONS = new Set([
+  "android_sms_send",
+  "android_notification_reply",
+  "android_camera_clip",
+  "android_screen_record",
+]);
 
 function normalizeActionName(tool: string, args: AndroidSubmitGateArgs): string {
   if (tool === "daemon_action") {
@@ -56,6 +62,10 @@ export function isAndroidSubmitCapableAction(
 ): boolean {
   const action = normalizeActionName(tool, args);
 
+  if (HIGH_RISK_ANDROID_ACTIONS.has(action)) {
+    return true;
+  }
+
   if (action === "android_type" || action === "android_type_text") {
     return args?.submit === true;
   }
@@ -95,6 +105,15 @@ export function buildAndroidSubmitConfirmationPreview(
   };
   if (tool !== action) preview.tool = tool;
   if (typeof args?.text === "string" && args.text.trim()) preview.text = args.text.slice(0, 160);
+  if (typeof args?.message === "string" && args.message.trim()) preview.message = args.message.slice(0, 160);
+  if (typeof args?.replyText === "string" && args.replyText.trim()) preview.replyText = args.replyText.slice(0, 160);
+  if (typeof args?.to === "string" && args.to.trim()) preview.to = args.to.slice(0, 120);
+  if (typeof args?.notificationKey === "string" && args.notificationKey.trim()) {
+    preview.notificationKey = args.notificationKey.slice(0, 120);
+  }
+  if (typeof args?.durationMs === "number" && Number.isFinite(args.durationMs)) {
+    preview.durationMs = String(args.durationMs);
+  }
   if (typeof args?.key === "string" && args.key.trim()) preview.key = args.key;
   if (typeof args?.x === "number" && typeof args?.y === "number") preview.target = `${args.x},${args.y}`;
   if (requestText?.trim()) preview.request = requestText.slice(0, 160);

@@ -46,6 +46,19 @@ assert.equal(
   "enter key used at an external send boundary should require confirmation",
 );
 
+for (const [action, args] of [
+  ["android_sms_send", { action: "android_sms_send", to: "+15551234567", message: "On my way", approved: true }],
+  ["android_notification_reply", { action: "android_notification_reply", notificationKey: "notif-1", replyText: "Yes", approved: true }],
+  ["android_camera_clip", { action: "android_camera_clip", durationMs: 5000, approved: true }],
+  ["android_screen_record", { action: "android_screen_record", durationMs: 10000, approved: true }],
+] as const) {
+  assert.equal(
+    isAndroidSubmitCapableAction("daemon_action", args, "Do this phone action"),
+    true,
+    `${action} should require server-side confirmation even when model args already include approval`,
+  );
+}
+
 const preview = buildAndroidSubmitConfirmationPreview(
   "android_type_text",
   { text: "Thanks", submit: true },
@@ -54,5 +67,15 @@ const preview = buildAndroidSubmitConfirmationPreview(
 assert.equal(preview.action, "android_type_text");
 assert.equal(preview.text, "Thanks");
 assert.match(preview.reason, /submit|send|save|pay|publish/i);
+
+const smsPreview = buildAndroidSubmitConfirmationPreview(
+  "daemon_action",
+  { action: "android_sms_send", to: "+15551234567", message: "On my way", approved: true },
+  "Text them back",
+);
+assert.equal(smsPreview.tool, "daemon_action");
+assert.equal(smsPreview.action, "android_sms_send");
+assert.equal(smsPreview.to, "+15551234567");
+assert.equal(smsPreview.message, "On my way");
 
 console.log("OK: server approval gate protects submit-capable Android input");

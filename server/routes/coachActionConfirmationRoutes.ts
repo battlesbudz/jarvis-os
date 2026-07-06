@@ -22,6 +22,71 @@ type CoachActionConfirmationDeps = {
   openai: OpenAI;
 };
 
+type ExecutePendingCoachActionInput = {
+  pendingConfirmations: Map<string, PendingConfirmation>;
+  executeCoachTool: (toolName: string, args: any, userId: string) => Promise<CoachToolResult>;
+  userId: string;
+  token: string;
+};
+
+function confirmationError(message: string, status: number): Error & { status: number } {
+  return Object.assign(new Error(message), { status });
+}
+
+function isAndroidAgentToolConfirmation(pending: PendingConfirmation): boolean {
+  const action = String(pending.args?.action || "");
+  return pending.tool.startsWith("android_") || (pending.tool === "daemon_action" && action.startsWith("android_"));
+}
+
+async function executeAgentTool(
+  toolName: string,
+  args: any,
+  userId: string,
+  fallbackLabel: string,
+): Promise<CoachToolResult> {
+  const agentTool = getTool(toolName);
+  if (!agentTool) {
+    return {
+      result: "error",
+      label: `${fallbackLabel} unavailable`,
+      detail: `The ${fallbackLabel.toLowerCase()} tool '${toolName}' is not registered.`,
+    };
+  }
+  const toolResult = await agentTool.execute(
+    { ...args, approved: true, confirmed: true },
+    { userId, channel: "appchat", state: { pendingAttachments: [] } } as ToolContext,
+  );
+  return {
+    result: toolResult.ok ? "success" : "error",
+    label: toolResult.label ?? fallbackLabel,
+    detail: toolResult.content ?? toolResult.detail ?? "",
+  };
+}
+
+export async function executePendingCoachAction({
+  pendingConfirmations,
+  executeCoachTool,
+  userId,
+  token,
+}: ExecutePendingCoachActionInput): Promise<CoachToolResult> {
+  if (!token) throw confirmationError("token is required", 400);
+  const pending = pendingConfirmations.get(token);
+  if (!pending) throw confirmationError("Confirmation token not found or expired", 400);
+  if (pending.userId !== userId) throw confirmationError("Token does not belong to this user", 403);
+  if (pending.expiresAt < Date.now()) {
+    pendingConfirmations.delete(token);
+    throw confirmationError("Confirmation token has expired", 400);
+  }
+  pendingConfirmations.delete(token);
+  if (pending.tool === "connected_accounts_execute") {
+    return executeAgentTool("connected_accounts_execute", pending.args, userId, "Connected account action");
+  }
+  if (isAndroidAgentToolConfirmation(pending)) {
+    return executeAgentTool(pending.tool, pending.args, userId, "Android action");
+  }
+  return executeCoachTool(pending.tool, pending.args, userId);
+}
+
 export function registerCoachActionConfirmationRoutes(
   app: Express,
   { pendingConfirmations, executeCoachTool, openai }: CoachActionConfirmationDeps,
@@ -32,59 +97,21 @@ export function registerCoachActionConfirmationRoutes(
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Unauthorized" });
       if (!token) return res.status(400).json({ error: "token is required" });
-      const pending = pendingConfirmations.get(token);
-      if (!pending) return res.status(400).json({ error: "Confirmation token not found or expired" });
-      if (pending.userId !== userId) return res.status(403).json({ error: "Token does not belong to this user" });
-      if (pending.expiresAt < Date.now()) {
-        pendingConfirmations.delete(token);
-        return res.status(400).json({ error: "Confirmation token has expired" });
-      }
-      pendingConfirmations.delete(token);
-      let execResult: CoachToolResult;
-      if (pending.tool === "connected_accounts_execute") {
-        const connectedAccountsTool = getTool("connected_accounts_execute");
-        if (!connectedAccountsTool) {
-          execResult = {
-            result: "error",
-            label: "Connected account action unavailable",
-            detail: "The connected account action tool is not registered.",
-          };
-        } else {
-          const toolResult = await connectedAccountsTool.execute(
-            { ...pending.args, approved: true, confirmed: true },
-            { userId, channel: "appchat", state: { pendingAttachments: [] } } as ToolContext,
-          );
-          execResult = {
-            result: toolResult.ok ? "success" : "error",
-            label: toolResult.label ?? "Connected account action",
-            detail: toolResult.content ?? toolResult.detail ?? "",
-          };
-        }
-      } else if (pending.tool.startsWith("android_")) {
-        const agentTool = getTool(pending.tool);
-        if (!agentTool) {
-          execResult = {
-            result: "error",
-            label: "Android action unavailable",
-            detail: `The Android action tool '${pending.tool}' is not registered.`,
-          };
-        } else {
-          const toolResult = await agentTool.execute(
-            { ...pending.args, approved: true, confirmed: true },
-            { userId, channel: "appchat", state: { pendingAttachments: [] } } as ToolContext,
-          );
-          execResult = {
-            result: toolResult.ok ? "success" : "error",
-            label: toolResult.label ?? "Android action",
-            detail: toolResult.content ?? toolResult.detail ?? "",
-          };
-        }
-      } else {
-        execResult = await executeCoachTool(pending.tool, pending.args, userId);
-      }
+      const execResult = await executePendingCoachAction({
+        pendingConfirmations,
+        executeCoachTool,
+        userId,
+        token,
+      });
       return res.json({ result: execResult.result, label: execResult.label, detail: execResult.detail });
     } catch (error) {
       console.error("Error in execute-confirmed:", error);
+      const status = typeof (error as { status?: unknown })?.status === "number"
+        ? (error as { status: number }).status
+        : 500;
+      if (status !== 500) {
+        return res.status(status).json({ error: (error as Error).message });
+      }
       return res.status(500).json({ error: "Failed to execute confirmed action" });
     }
   });

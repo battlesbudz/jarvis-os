@@ -18,7 +18,14 @@ interface ResultMsg { type: "result"; id: string; ok: boolean; data?: unknown; e
 interface HelloMsg { type: "hello"; ok: boolean; userId?: string; error?: string }
 interface PingMsg { type: "ping" }
 interface NotificationEventMsg { type: "notification_event"; notification: PhoneNotification }
-interface VoiceSessionControlMsg { type: "voice_session_control"; action?: string; state?: string; outsideApp?: boolean }
+interface VoiceSessionControlMsg {
+  type: "voice_session_control";
+  action?: string;
+  state?: string;
+  outsideApp?: boolean;
+  confirmationToken?: string;
+  reactActive?: boolean;
+}
 
 export type DaemonOp =
   | { type: "ping" }
@@ -162,6 +169,18 @@ const pendingByUser = new Map<string, Map<string, PendingOp>>();
 const daemonSocketReplacementLocks = new Set<string>();
 const ANDROID_DAEMON_BOOTSTRAP_TOKEN_PREFIX = "android_bootstrap_";
 let opCounter = 0;
+let daemonVoiceApprovalHandler: ((input: {
+  userId: string;
+  token: string;
+  action: "approval_approve" | "approval_deny";
+  approved: boolean;
+}) => Promise<void>) | null = null;
+
+export function setDaemonVoiceApprovalHandler(
+  handler: typeof daemonVoiceApprovalHandler,
+): void {
+  daemonVoiceApprovalHandler = handler;
+}
 
 // Wake word event subscriptions: userId → set of callbacks
 const wakeWordTriggerCallbacks = new Map<string, Set<(e: { phrase: string; transcript: string; daemonHandling: boolean }) => void>>();
@@ -1325,6 +1344,22 @@ export function startDaemonBridge(server: HttpServer): void {
       if ((m.type as string) === "voice_session_control" && pairedUserId) {
         const control = m as VoiceSessionControlMsg;
         const action = String(control.action || "").trim().toLowerCase();
+        const confirmationToken = String(control.confirmationToken || "").trim();
+        if (
+          (action === "approval_approve" || action === "approval_deny") &&
+          confirmationToken &&
+          control.reactActive !== true &&
+          daemonVoiceApprovalHandler
+        ) {
+          daemonVoiceApprovalHandler({
+            userId: pairedUserId,
+            token: confirmationToken,
+            action,
+            approved: action === "approval_approve",
+          }).catch((err) => {
+            console.error(`[daemon] outside-app voice approval failed userId=${pairedUserId}:`, err);
+          });
+        }
         if (action === "pause" || action === "paused" || action === "end") {
           cancelDaemonVoiceTurns(pairedUserId);
         }

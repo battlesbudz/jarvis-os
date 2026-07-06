@@ -142,6 +142,18 @@ assert.match(
 
 assert.match(
   bridgeSource,
+  /export function setDaemonVoiceApprovalHandler/,
+  "Daemon bridge should expose a narrow server callback for outside-app voice approvals.",
+);
+
+assert.match(
+  bridgeSource,
+  /confirmationToken[\s\S]*control\.reactActive !== true[\s\S]*daemonVoiceApprovalHandler/,
+  "Outside-app approval controls should execute through the server when React is not active.",
+);
+
+assert.match(
+  bridgeSource,
   /const voiceTurnGeneration = currentVoiceTurnGeneration\(userId\);[\s\S]*?isDaemonVoiceTurnCancelled\(userId, voiceTurnGeneration\)[\s\S]*?runCoachAgent[\s\S]*?isDaemonVoiceTurnCancelled\(userId, voiceTurnGeneration\)[\s\S]*?textToSpeech[\s\S]*?isDaemonVoiceTurnCancelled\(userId, voiceTurnGeneration\)[\s\S]*?voice_speak_audio/,
   "Daemon voice processing should abandon cancelled turns before continuing to session persistence or TTS playback.",
 );

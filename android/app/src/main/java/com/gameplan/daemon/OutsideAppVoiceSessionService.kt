@@ -97,6 +97,7 @@ class OutsideAppVoiceSessionService : Service() {
         const val ACTION_DENY = "com.gameplan.daemon.VOICE_SESSION_DENY"
         const val EXTRA_STATE = "state"
         const val EXTRA_APPROVAL_PROMPT = "approval_prompt"
+        const val EXTRA_APPROVAL_TOKEN = "approval_token"
 
         @Volatile var instance: OutsideAppVoiceSessionService? = null
             private set
@@ -131,6 +132,8 @@ class OutsideAppVoiceSessionService : Service() {
 
         fun currentApprovalPrompt(): String = instance?.approvalPrompt ?: ""
 
+        fun currentApprovalToken(): String = instance?.approvalToken ?: ""
+
         fun startIntent(context: Context): Intent {
             return Intent(context, OutsideAppVoiceSessionService::class.java).apply {
                 action = ACTION_START
@@ -150,10 +153,11 @@ class OutsideAppVoiceSessionService : Service() {
             }
         }
 
-        fun setApprovalIntent(context: Context, prompt: String): Intent {
+        fun setApprovalIntent(context: Context, prompt: String, confirmationToken: String? = null): Intent {
             return Intent(context, OutsideAppVoiceSessionService::class.java).apply {
                 action = ACTION_SET_APPROVAL
                 putExtra(EXTRA_APPROVAL_PROMPT, prompt)
+                putExtra(EXTRA_APPROVAL_TOKEN, confirmationToken ?: "")
             }
         }
     }
@@ -163,6 +167,7 @@ class OutsideAppVoiceSessionService : Service() {
     @Volatile private var state: OutsideAppVoiceState = OutsideAppVoiceState.IDLE
     @Volatile private var sessionActive = false
     @Volatile private var approvalPrompt = ""
+    @Volatile private var approvalToken = ""
 
     override fun onCreate() {
         super.onCreate()
@@ -199,6 +204,7 @@ class OutsideAppVoiceSessionService : Service() {
             ACTION_SET_APPROVAL -> {
                 if (!sessionActive) sessionActive = true
                 approvalPrompt = sanitizeApprovalPrompt(intent.getStringExtra(EXTRA_APPROVAL_PROMPT))
+                approvalToken = sanitizeApprovalToken(intent.getStringExtra(EXTRA_APPROVAL_TOKEN))
                 setState(OutsideAppVoiceState.APPROVAL)
             }
             ACTION_APPROVE -> {
@@ -208,6 +214,7 @@ class OutsideAppVoiceSessionService : Service() {
             ACTION_DENY -> {
                 sendVoiceSessionEvent("approval_deny")
                 approvalPrompt = ""
+                approvalToken = ""
                 setState(OutsideAppVoiceState.LISTENING)
             }
             ACTION_OPEN -> {
@@ -307,6 +314,7 @@ class OutsideAppVoiceSessionService : Service() {
     private fun setState(nextState: OutsideAppVoiceState, actionName: String = nextState.wireName) {
         if (nextState != OutsideAppVoiceState.APPROVAL) {
             approvalPrompt = ""
+            approvalToken = ""
         }
         state = nextState
         startForegroundCompat()
@@ -320,6 +328,7 @@ class OutsideAppVoiceSessionService : Service() {
         endTalkModeCapture()
         sendVoiceSessionEvent("end")
         approvalPrompt = ""
+        approvalToken = ""
         state = OutsideAppVoiceState.IDLE
         sessionActive = false
         overlayController.remove()
@@ -351,6 +360,14 @@ class OutsideAppVoiceSessionService : Service() {
             ?.replace(Regex("\\s+"), " ")
             ?.trim()
             ?.take(120)
+            ?: ""
+    }
+
+    private fun sanitizeApprovalToken(token: String?): String {
+        return token
+            ?.replace(Regex("\\s+"), "")
+            ?.trim()
+            ?.take(200)
             ?: ""
     }
 
@@ -427,14 +444,23 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private fun sendVoiceSessionEvent(actionName: String) {
+        val confirmationToken = approvalToken
+        val reactActive = JarvisDaemonModule.emitVoiceSessionControl(
+            actionName,
+            state.wireName,
+            confirmationToken,
+        )
         val event = JSONObject().apply {
             put("type", "voice_session_control")
             put("action", actionName)
             put("state", state.wireName)
             put("outsideApp", true)
+            put("reactActive", reactActive)
+            if (confirmationToken.isNotBlank()) {
+                put("confirmationToken", confirmationToken)
+            }
         }
         WebSocketService.sendEvent(event.toString())
-        JarvisDaemonModule.emitVoiceSessionControl(actionName, state.wireName)
         DaemonLog.add("voice_session: $actionName state=${state.wireName}")
     }
 }

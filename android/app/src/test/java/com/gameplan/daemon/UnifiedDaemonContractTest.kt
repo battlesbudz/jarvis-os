@@ -352,6 +352,7 @@ class UnifiedDaemonContractTest {
             OutsideAppVoiceSessionService.setApprovalIntent(
                 context,
                 "Approve sending this email to test@example.com?",
+                "confirm-token-1",
             ),
             0,
             1,
@@ -363,19 +364,22 @@ class UnifiedDaemonContractTest {
             "Approve sending this email to test@example.com?",
             OutsideAppVoiceSessionService.currentApprovalPrompt(),
         )
+        assertEquals("confirm-token-1", OutsideAppVoiceSessionService.currentApprovalToken())
 
         service.onOverlayDeny()
         assertEquals(OutsideAppVoiceState.LISTENING, service.stateForTest())
         assertEquals("", OutsideAppVoiceSessionService.currentApprovalPrompt())
+        assertEquals("", OutsideAppVoiceSessionService.currentApprovalToken())
 
         service.onStartCommand(
-            OutsideAppVoiceSessionService.setApprovalIntent(context, "Approve this action?"),
+            OutsideAppVoiceSessionService.setApprovalIntent(context, "Approve this action?", "confirm-token-2"),
             0,
             2,
         )
         service.onOverlayApprove()
         assertEquals(OutsideAppVoiceState.WORKING, service.stateForTest())
         assertEquals("", OutsideAppVoiceSessionService.currentApprovalPrompt())
+        assertEquals("", OutsideAppVoiceSessionService.currentApprovalToken())
         controller.destroy()
     }
 }
