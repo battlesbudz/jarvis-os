@@ -1,5 +1,6 @@
 package com.gameplan.daemon
 
+import android.app.Application
 import android.app.Service
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
@@ -11,6 +12,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
@@ -238,5 +240,28 @@ class UnifiedDaemonContractTest {
         assertEquals(OutsideAppVoiceState.LISTENING, restartedService.stateForTest())
         assertTrue(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
         restartedController.destroy()
+    }
+
+    @Test
+    fun talkModeEnableStartsOutsideAppVoiceControls() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val shadowApplication = shadowOf(context as Application)
+        shadowApplication.clearStartedServices()
+
+        val result = OpHandler.handle(
+            context,
+            JSONObject()
+                .put("type", "voice_set_talk_mode")
+                .put("enabled", true)
+        )
+
+        assertTrue(result.ok)
+        assertTrue(
+            "Expected Talk Mode enable to start outside-app voice controls",
+            shadowApplication.allStartedServices.any { intent ->
+                intent.action == OutsideAppVoiceSessionService.ACTION_START &&
+                    intent.component?.className == OutsideAppVoiceSessionService::class.java.name
+            }
+        )
     }
 }

@@ -91,6 +91,15 @@ object OpHandler {
 
     private const val TAG = "JarvisOp"
 
+    private fun startOutsideAppVoiceControls(context: Context) {
+        val sessionIntent = OutsideAppVoiceSessionService.startIntent(context)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(sessionIntent)
+        } else {
+            context.startService(sessionIntent)
+        }
+    }
+
     fun handle(context: Context, op: JSONObject): OpResult {
         val type = op.optString("type")
         val startMs = SystemClock.elapsedRealtime()
@@ -1346,6 +1355,7 @@ object OpHandler {
 
         if (enabled && talkMode) {
             OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()
+            startOutsideAppVoiceControls(context)
         }
 
         if (enabled && !allowSoftwareWakeWordFallback) {
@@ -1412,6 +1422,7 @@ object OpHandler {
         val enabled = op.optBoolean("enabled", false)
         if (enabled) {
             OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()
+            startOutsideAppVoiceControls(context)
         }
         val svc = WakeWordService.instance
         if (svc == null) {
