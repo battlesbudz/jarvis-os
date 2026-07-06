@@ -23,6 +23,12 @@ assert.equal(
 );
 
 assert.equal(
+  isAndroidSubmitCapableAction("android_type_text", { text: "recipes", submit: true }, "Search Instagram for recipes"),
+  false,
+  "typed search submissions should remain low risk",
+);
+
+assert.equal(
   isAndroidSubmitCapableAction(
     "daemon_action",
     { action: "android_operator_action", operatorAction: { type: "type_text", text: "Ship it", submit: true } },
@@ -30,6 +36,16 @@ assert.equal(
   ),
   true,
   "nested operator type_text submit should require confirmation",
+);
+
+assert.equal(
+  isAndroidSubmitCapableAction(
+    "daemon_action",
+    { action: "android_operator_action", operatorAction: { type: "type_text", text: "recipes", submit: true } },
+    "Search Instagram for recipes",
+  ),
+  false,
+  "nested operator typed searches should remain low risk",
 );
 
 assert.equal(

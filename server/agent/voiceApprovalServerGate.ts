@@ -36,7 +36,7 @@ function previewString(value: unknown, maxLength: number): string {
 }
 
 function collectGateText(args: AndroidSubmitGateArgs, requestText?: string): string {
-  const operatorAction = args?.operatorAction;
+  const operatorAction = args?.operatorAction as Record<string, unknown> | undefined;
   return [
     requestText,
     args?.text,
@@ -46,7 +46,13 @@ function collectGateText(args: AndroidSubmitGateArgs, requestText?: string): str
     args?.buttonText,
     args?.accessibilityLabel,
     args?.contentDescription,
-    operatorAction,
+    operatorAction?.text,
+    operatorAction?.label,
+    operatorAction?.description,
+    operatorAction?.reason,
+    operatorAction?.buttonText,
+    operatorAction?.accessibilityLabel,
+    operatorAction?.contentDescription,
   ]
     .map(previewValue)
     .filter(Boolean)
@@ -73,7 +79,7 @@ export function isAndroidSubmitCapableAction(
   }
 
   if (action === "android_type" || action === "android_type_text") {
-    return args?.submit === true;
+    return args?.submit === true && hasExternalBoundaryLanguage(args, requestText);
   }
 
   if (action === "android_press_key" || action === "android_press_phone_key") {
@@ -87,7 +93,9 @@ export function isAndroidSubmitCapableAction(
   if (action === "android_operator_action") {
     const operatorAction = args?.operatorAction as Record<string, unknown> | undefined;
     const operatorType = String(operatorAction?.type || "");
-    if (operatorType === "type_text" && operatorAction?.submit === true) return true;
+    if (operatorType === "type_text" && operatorAction?.submit === true) {
+      return hasExternalBoundaryLanguage(args, requestText);
+    }
     if (operatorType === "press_key" && SUBMIT_KEYS.has(String(operatorAction?.key || "").toLowerCase())) {
       return hasExternalBoundaryLanguage(args, requestText);
     }

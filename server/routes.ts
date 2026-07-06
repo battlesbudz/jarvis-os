@@ -2832,6 +2832,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
   registerCoachSessionRoutes(app, openai);
 
   setDaemonVoiceApprovalHandler(async ({ userId, token, approved }) => {
+    let handledConfirmation = false;
     const saveApprovalOutcome = async (text: string, executedAction?: { tool: string; result: "success" | "error"; label: string; detail?: string }) => {
       await savePendingCoachResponse(userId, text, undefined, {
         clearPendingConfirmationToken: token,
@@ -2842,6 +2843,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       if (approved) {
         const pending = pendingConfirmations.get(token);
         if (!pending || pending.userId !== userId) return;
+        handledConfirmation = true;
         try {
           const execResult = await executePendingCoachAction({
             pendingConfirmations,
@@ -2871,13 +2873,16 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       }
       const pending = pendingConfirmations.get(token);
       if (pending?.userId === userId) {
+        handledConfirmation = true;
         pendingConfirmations.delete(token);
         await saveApprovalOutcome("Got it - I won't proceed with that action.");
       }
     } finally {
-      await sendDaemonOp(userId, { type: "voice_set_outside_app_state", state: "listening" }, 5000).catch((err) => {
-        console.warn(`[voice] failed to reset outside-app approval state userId=${userId}:`, err);
-      });
+      if (handledConfirmation) {
+        await sendDaemonOp(userId, { type: "voice_set_outside_app_state", state: "listening" }, 5000).catch((err) => {
+          console.warn(`[voice] failed to reset outside-app approval state userId=${userId}:`, err);
+        });
+      }
     }
   });
 
