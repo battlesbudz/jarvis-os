@@ -2832,18 +2832,24 @@ You can extend yourself by building new tools directly. Generate the complete Ty
   registerCoachSessionRoutes(app, openai);
 
   setDaemonVoiceApprovalHandler(async ({ userId, token, approved }) => {
-    if (approved) {
-      await executePendingCoachAction({
-        pendingConfirmations,
-        executeCoachTool,
-        userId,
-        token,
+    try {
+      if (approved) {
+        await executePendingCoachAction({
+          pendingConfirmations,
+          executeCoachTool,
+          userId,
+          token,
+        });
+        return;
+      }
+      const pending = pendingConfirmations.get(token);
+      if (pending?.userId === userId) {
+        pendingConfirmations.delete(token);
+      }
+    } finally {
+      await sendDaemonOp(userId, { type: "voice_set_outside_app_state", state: "listening" }, 5000).catch((err) => {
+        console.warn(`[voice] failed to reset outside-app approval state userId=${userId}:`, err);
       });
-      return;
-    }
-    const pending = pendingConfirmations.get(token);
-    if (pending?.userId === userId) {
-      pendingConfirmations.delete(token);
     }
   });
 

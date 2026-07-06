@@ -148,6 +148,12 @@ assert.match(
 
 assert.match(
   bridgeSource,
+  /voice_set_outside_app_state/,
+  "Daemon bridge should expose a voice op for resetting outside-app overlay state.",
+);
+
+assert.match(
+  bridgeSource,
   /confirmationToken[\s\S]*control\.reactActive !== true[\s\S]*daemonVoiceApprovalHandler/,
   "Outside-app approval controls should execute through the server when React is not active.",
 );

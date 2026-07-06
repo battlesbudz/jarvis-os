@@ -71,6 +71,7 @@ export type DaemonOp =
   | { type: "browser_mcp"; tool: string; args: Record<string, unknown> }
   | { type: "voice_set_wake_words"; enabled: boolean; words?: string[]; talkMode?: boolean; allowSoftwareWakeWordFallback?: boolean }
   | { type: "voice_set_talk_mode"; enabled: boolean }
+  | { type: "voice_set_outside_app_state"; state: "listening" | "speaking" | "working" | "approval" | "paused" | "idle" }
   | { type: "voice_tts_finished" }
   | { type: "voice_speak_audio"; audioBase64: string; format?: string }
   | { type: "android_camera_snap"; facing?: "front" | "back" | "both" }

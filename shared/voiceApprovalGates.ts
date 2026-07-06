@@ -41,6 +41,8 @@ const AMBIGUOUS_PATTERNS = [
 
 const NEGATED_APPROVAL_PATTERNS = [
   /\b(don't|do not|dont|don t|never)\s+(do it|send it|run it|post it|publish it|submit it|save it|proceed|approve|confirm)\b/,
+  /\b(not|isn t|isn't|is not|don t|don't|dont)\s+(ok|okay|fine|good)\b/,
+  /\b(that is|that's|thats|it is|it's|its)\s+not\s+(ok|okay|fine|good)\b/,
 ];
 
 const HIGH_RISK_PATTERNS = [
@@ -126,6 +128,52 @@ function previewToText(preview?: Record<string, unknown> | null): string {
 function humanizeToolName(tool?: string): string {
   if (!tool) return "action";
   return tool.replace(/^android_/, "").replace(/_/g, " ");
+}
+
+function previewString(preview: Record<string, unknown>, key: string, maxLength = 80): string {
+  const value = preview[key];
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim().replace(/\s+/g, " ");
+  if (!trimmed) return "";
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}...` : trimmed;
+}
+
+function buildAndroidApprovalPrompt(tool: string | undefined, preview: Record<string, unknown>): string {
+  const action = typeof preview.action === "string" && preview.action.trim()
+    ? preview.action.trim()
+    : tool || "";
+  const to = previewString(preview, "to", 40);
+  const message = previewString(preview, "message", 80);
+  const replyText = previewString(preview, "replyText", 80);
+  const text = previewString(preview, "text", 80);
+  const durationMs = typeof preview.durationMs === "string" && preview.durationMs.trim()
+    ? Number(preview.durationMs)
+    : typeof preview.durationMs === "number"
+      ? preview.durationMs
+      : null;
+  const durationSeconds = durationMs && Number.isFinite(durationMs)
+    ? Math.max(1, Math.round(durationMs / 1000))
+    : null;
+
+  if (action === "android_sms_send") {
+    const target = to ? ` to ${to}` : "";
+    const body = message ? `: "${message}"` : "";
+    return `Approve sending this text${target}${body}?`;
+  }
+  if (action === "android_notification_reply") {
+    const body = replyText ? `: "${replyText}"` : "";
+    return `Approve sending this notification reply${body}?`;
+  }
+  if (action === "android_camera_clip") {
+    return `Approve recording a camera clip${durationSeconds ? ` for ${durationSeconds} seconds` : ""}?`;
+  }
+  if (action === "android_screen_record") {
+    return `Approve recording your screen${durationSeconds ? ` for ${durationSeconds} seconds` : ""}?`;
+  }
+  if ((action === "android_type" || action === "android_type_text") && text) {
+    return `Approve submitting this phone text: "${text}"?`;
+  }
+  return "Approve this phone action?";
 }
 
 export function normalizeVoiceApprovalReply(text: string): VoiceApprovalIntentResult {
@@ -230,7 +278,7 @@ export function buildVoiceApprovalPrompt(input: VoiceApprovalRiskInput): string 
     return `Approve this connected account action${platform}?`;
   }
   if (tool?.startsWith("android_") || (tool === "daemon_action" && typeof preview.action === "string" && preview.action.startsWith("android_"))) {
-    return "Approve this phone action?";
+    return buildAndroidApprovalPrompt(tool, preview);
   }
   if (tool === "project_shell") {
     return "Approve running this terminal command?";

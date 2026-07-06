@@ -255,10 +255,40 @@ function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: Confirm
         <View style={styles.confirmPreview}>
           <Text style={styles.confirmPreviewLabel}>Action</Text>
           <Text style={styles.confirmPreviewValue}>{previewAction || pendingConfirm.tool}</Text>
+          {!!preview.to && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>To</Text>
+              <Text style={styles.confirmPreviewValue} numberOfLines={1}>{preview.to}</Text>
+            </>
+          )}
+          {!!preview.message && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Message</Text>
+              <Text style={styles.confirmPreviewCode} numberOfLines={4}>{preview.message}</Text>
+            </>
+          )}
+          {!!preview.replyText && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Reply</Text>
+              <Text style={styles.confirmPreviewCode} numberOfLines={4}>{preview.replyText}</Text>
+            </>
+          )}
           {!!preview.text && (
             <>
               <Text style={styles.confirmPreviewLabel}>Text</Text>
               <Text style={styles.confirmPreviewCode} numberOfLines={3}>{preview.text}</Text>
+            </>
+          )}
+          {!!preview.notificationKey && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Notification</Text>
+              <Text style={styles.confirmPreviewValue} numberOfLines={1}>{preview.notificationKey}</Text>
+            </>
+          )}
+          {!!preview.durationMs && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Duration</Text>
+              <Text style={styles.confirmPreviewValue}>{preview.durationMs} ms</Text>
             </>
           )}
           {!!preview.key && (

@@ -18,6 +18,9 @@ function testNaturalDenialReplies() {
   assert.equal(normalizeVoiceApprovalReply("don't do it").intent, "deny");
   assert.equal(normalizeVoiceApprovalReply("dont send it").intent, "deny");
   assert.equal(normalizeVoiceApprovalReply("don\u2019t send it").intent, "deny");
+  assert.equal(normalizeVoiceApprovalReply("not ok").intent, "deny");
+  assert.equal(normalizeVoiceApprovalReply("not okay").intent, "deny");
+  assert.equal(normalizeVoiceApprovalReply("that is not okay").intent, "deny");
   assert.equal(normalizeVoiceApprovalReply("not now").intent, "deny");
   console.log("OK: voice approval accepts natural denial phrases");
 }
@@ -107,7 +110,19 @@ function testOverlayPromptIsOneShortSentence() {
     tool: "daemon_action",
     preview: { action: "android_type", text: "Thanks" },
   });
-  assert.equal(phonePrompt, "Approve this phone action?");
+  assert.equal(phonePrompt, 'Approve submitting this phone text: "Thanks"?');
+
+  const smsPrompt = buildVoiceApprovalPrompt({
+    tool: "daemon_action",
+    preview: { action: "android_sms_send", to: "+15551234567", message: "On my way" },
+  });
+  assert.equal(smsPrompt, 'Approve sending this text to +15551234567: "On my way"?');
+
+  const replyPrompt = buildVoiceApprovalPrompt({
+    tool: "daemon_action",
+    preview: { action: "android_notification_reply", replyText: "Yes, I can do that" },
+  });
+  assert.equal(replyPrompt, 'Approve sending this notification reply: "Yes, I can do that"?');
   console.log("OK: voice approval overlay prompt is one short sentence");
 }
 

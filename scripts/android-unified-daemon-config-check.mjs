@@ -306,6 +306,7 @@ assertIncludes(serverBridge, 'interface VoiceSessionControlMsg {', "server/daemo
 assertIncludes(serverBridge, "confirmationToken?: string", "server/daemon/bridge.ts");
 assertIncludes(serverBridge, "reactActive?: boolean", "server/daemon/bridge.ts");
 assertIncludes(serverBridge, "setDaemonVoiceApprovalHandler", "server/daemon/bridge.ts");
+assertIncludes(serverBridge, "voice_set_outside_app_state", "server/daemon/bridge.ts");
 assertIncludes(serverBridge, 'persistDaemonTalkModeEnabled(pairedUserId, false)', "server/daemon/bridge.ts");
 assertIncludes(serverBridge, 'const action = String(control.action || "").trim().toLowerCase()', "server/daemon/bridge.ts");
 
@@ -455,6 +456,9 @@ for (const [contents, source] of [
   assertIncludes(contents, "private fun endOutsideAppVoiceControls(context: Context)", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.startIntent(context)", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.ACTION_END", source);
+  assertIncludes(contents, '"voice_set_outside_app_state" -> handleSetOutsideAppState(context, op)', source);
+  assertIncludes(contents, "OutsideAppVoiceSessionService.setStateIntent(context, state)", source);
+  assertIncludes(contents, "private fun handleSetOutsideAppState", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.completePlayback(mp, playbackFile, rearmTalkMode = shouldRearm)", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()", source);

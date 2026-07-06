@@ -29,6 +29,11 @@ assert.ok(
 );
 assert.ok(
   insightsSource.includes("Approve phone action?") &&
+    insightsSource.includes("preview.to") &&
+    insightsSource.includes("preview.message") &&
+    insightsSource.includes("preview.replyText") &&
+    insightsSource.includes("preview.notificationKey") &&
+    insightsSource.includes("preview.durationMs") &&
     insightsSource.includes("preview.text") &&
     insightsSource.includes("preview.reason") &&
     insightsSource.includes("preview.request"),
