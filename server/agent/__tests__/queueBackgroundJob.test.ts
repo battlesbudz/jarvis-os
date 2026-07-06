@@ -109,7 +109,7 @@ async function main() {
     assert.match(jobQueueSource, /cloudBackgroundBudgetGuardForRun/);
     assert.match(jobQueueSource, /buildCompactCloudBackgroundResultPacket/);
     assert.match(jobQueueSource, /cloudBackgroundBudgetStopped/);
-    assert.match(jobQueueSource, /task_scoped_cloud_api_key_budget_guard/);
+    assert.match(jobQueueSource, /task_scoped_cloud_approved_route_guard/);
     assert.match(jobQueueSource, /cloudBackgroundEstimatedSpendOf\(jobInput\)/);
     assert.match(jobQueueSource, /withCloudBackgroundEstimatedSpend\(jobInput, cloudBackgroundEstimatedSpentUsd\)/);
     assert.match(jobQueueSource, /update\(schema\.agentJobs\)/);

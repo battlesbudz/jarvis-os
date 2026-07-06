@@ -2554,16 +2554,14 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     let verificationPassed: boolean | null = null;
     let verificationRetries = 0;
     let verificationReason: string | undefined;
-    const skipVerifierForApprovedApiKeyCloudJob =
-      cloudBackgroundValidation?.ok === true &&
-      cloudBackgroundValidation.task.providerAuthType === "api_key";
+    const skipVerifierForTaskScopedCloudJob = cloudBackgroundValidation?.ok === true;
 
-    if (skipVerifierForApprovedApiKeyCloudJob) {
+    if (skipVerifierForTaskScopedCloudJob) {
       verificationReason = sub.finishReason === "budget_stopped"
         ? "budget_stopped"
-        : "task_scoped_cloud_api_key_budget_guard";
+        : "task_scoped_cloud_approved_route_guard";
       console.log(
-        `[JobQueue] skipped verifier for task-scoped API-key cloud job ${job.id}; verifier is outside the approved job budget`,
+        `[JobQueue] skipped verifier for task-scoped cloud job ${job.id}; verifier is outside the approved provider/auth route`,
       );
     } else if (VERIFY_AGENT_TYPES.includes(job.agentType)) {
       const { getModel } = await import("../lib/modelPrefs");
