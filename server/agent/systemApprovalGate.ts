@@ -72,6 +72,29 @@ async function defaultAwaitApproval(gateId: string, ttlMs?: number, signal?: Abo
   return awaitApproval(gateId, ttlMs, signal);
 }
 
+function requiresSystemApproval(
+  toolName: string,
+  params: Record<string, unknown>,
+  requiresApproval: (toolName: string) => boolean,
+): boolean {
+  if (toolName === "queue_background_job" && params.task_scoped_cloud === true) return true;
+  return requiresApproval(toolName);
+}
+
+function systemApprovalDescription(agentName: string, toolName: string, params: Record<string, unknown>): string {
+  if (toolName === "queue_background_job" && params.task_scoped_cloud === true) {
+    const providerLabel = String(params.cloud_provider_label || params.cloud_provider_id || "the selected cloud provider").trim();
+    const authType = params.cloud_provider_auth_type === "api_key" ? "API key" : "subscription";
+    const budget = Number(params.cloud_budget_usd);
+    const budgetText = Number.isFinite(budget) && budget > 0 ? ` Budget: $${(Math.round(budget * 100) / 100).toFixed(2)}.` : "";
+    return (
+      `Agent "${agentName}" wants to start a separate cloud background job using ${providerLabel} via ${authType}.` +
+      `${budgetText} The live chat model stays unchanged, and the cloud worker cannot directly control the phone or write MemoryOS.`
+    );
+  }
+  return `Agent "${agentName}" wants to run tool: ${toolName}`;
+}
+
 export function createSystemApprovalOnBeforeTool(opts: SystemApprovalGateOptions): OnBeforeTool {
   const deps = {
     requiresApproval: opts.deps?.requiresApproval ?? defaultRequiresApproval,
@@ -83,7 +106,7 @@ export function createSystemApprovalOnBeforeTool(opts: SystemApprovalGateOptions
   return async (toolName, toolArgs) => {
     const params = toolArgs ?? {};
 
-    if (!deps.requiresApproval(toolName)) {
+    if (!requiresSystemApproval(toolName, params, deps.requiresApproval)) {
       return { allowed: true, params };
     }
 
@@ -104,7 +127,7 @@ export function createSystemApprovalOnBeforeTool(opts: SystemApprovalGateOptions
         userId: opts.userId,
         toolName,
         toolArgs: params,
-        description: `Agent "${opts.agentName}" wants to run tool: ${toolName}`,
+        description: systemApprovalDescription(opts.agentName, toolName, params),
         ttlMs: opts.timeoutMs,
         initiatedBy: opts.initiatedBy ?? "user",
         workerJobId: opts.workerJobId,
