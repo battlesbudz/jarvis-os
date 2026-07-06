@@ -107,12 +107,17 @@ async function main() {
     assert.match(jobQueueSource, /forceModel: cloudBackgroundValidation\?\.ok === true/);
     assert.match(jobQueueSource, /maxCloudBackgroundModelTurnsForBudget/);
     assert.match(jobQueueSource, /cloudBackgroundBudgetGuardForRun/);
+    assert.match(jobQueueSource, /buildCompactCloudBackgroundResultPacket/);
+    assert.match(jobQueueSource, /cloudBackgroundBudgetStopped/);
+    assert.match(jobQueueSource, /task_scoped_cloud_api_key_budget_guard/);
     assert.match(jobQueueSource, /cloudBackgroundEstimatedSpendOf\(jobInput\)/);
     assert.match(jobQueueSource, /withCloudBackgroundEstimatedSpend\(jobInput, cloudBackgroundEstimatedSpentUsd\)/);
     assert.match(jobQueueSource, /update\(schema\.agentJobs\)/);
     assert.match(jobQueueSource, /preferredAuthType: cloudBackgroundPreferredAuthType/);
     assert.match(jobQueueSource, /failJob\(job\.id, cloudBackgroundValidation\.message/);
     assert.match(queueToolSource, /CLOUD_BACKGROUND_AGENT_TYPES/);
+    assert.match(queueToolSource, /providerLabelFromStatus/);
+    assert.match(queueToolSource, /catalogProviderLabel/);
     assert.match(queueToolSource, /toolCallHooks\.register/);
     assert.match(queueToolSource, /Approve cloud background task/);
     assert.match(queueToolSource, /getProviderStatus/);
@@ -122,6 +127,7 @@ async function main() {
     assert.match(subagentsSource, /forceModel: opts\.forceModel/);
     assert.match(subagentsSource, /preferredAuthType: opts\.preferredAuthType/);
     assert.match(subagentsSource, /approvalReceipt: opts\.approvalReceipt/);
+    assert.match(subagentsSource, /finishReason: result\.finishReason/);
     assert.match(harnessSource, /forceModel \? null : await getSelectedModelPreference/);
     assert.match(harnessSource, /preferredAuthType/);
     assert.match(harnessSource, /estimateCloudBudgetUsdForTokens/);

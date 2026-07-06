@@ -4,6 +4,7 @@ import { withApprovalMarkerForTool } from "./approvalMarkers";
 import { notifyApprovalRequest as notifyApprovalRequestForGate } from "./approvalNotifications";
 import { approvalReceiptCoversToolCall } from "./approvalReceipt";
 import { requiresApproval as defaultRequiresApproval } from "./approvalToolRisk";
+import { getModelProvider } from "@shared/modelProviderCatalog";
 
 type OnBeforeToolResult = {
   allowed: boolean;
@@ -81,9 +82,14 @@ function requiresSystemApproval(
   return requiresApproval(toolName);
 }
 
+function catalogProviderLabel(providerId: string): string {
+  const provider = getModelProvider(providerId);
+  return provider?.shortLabel || provider?.label || providerId || "the selected cloud provider";
+}
+
 function systemApprovalDescription(agentName: string, toolName: string, params: Record<string, unknown>): string {
   if (toolName === "queue_background_job" && params.task_scoped_cloud === true) {
-    const providerLabel = String(params.cloud_provider_label || params.cloud_provider_id || "the selected cloud provider").trim();
+    const providerLabel = catalogProviderLabel(String(params.cloud_provider_id || "").trim());
     const authType = params.cloud_provider_auth_type === "api_key" ? "API key" : "subscription";
     const budget = Number(params.cloud_budget_usd);
     const budgetText = Number.isFinite(budget) && budget > 0 ? ` Budget: $${(Math.round(budget * 100) / 100).toFixed(2)}.` : "";

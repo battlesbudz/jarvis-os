@@ -1,9 +1,10 @@
 import { db } from "../db";
 import { eq, and, sql, gte, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";
-import type { SubAgentType } from "./subagents";
+import type { SubAgentResult, SubAgentType } from "./subagents";
 import { runSubAgent, BUILD_FEATURE_WORKER_SYSTEM_PROMPT } from "./subagents";
 import {
+  buildCompactCloudBackgroundResultPacket,
   maxCloudBackgroundModelTurnsForBudget,
   validateCloudBackgroundJobInput,
 } from "./cloudBackgroundEscalation";
@@ -2479,6 +2480,32 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             onSpend: persistCloudBackgroundEstimatedSpend,
           }
         : undefined;
+    const markCloudBackgroundBudgetStopped = (result: SubAgentResult) => {
+      if (!cloudBackgroundValidation?.ok) return;
+      const summary = result.summary || "Cloud background task stopped before exceeding the approved budget.";
+      const packet = buildCompactCloudBackgroundResultPacket({
+        jobId: job.id,
+        providerId: cloudBackgroundValidation.task.providerId,
+        status: "budget_stopped",
+        summary,
+        actions: ["Preserved the partial worker result before another model request could exceed budget."],
+        partial: true,
+        spentUsd: cloudBackgroundEstimatedSpentUsd,
+        budgetUsd: cloudBackgroundValidation.task.budgetUsd,
+      });
+      result.meta.cloudBackgroundBudgetStopped = true;
+      result.meta.cloudBackgroundBudgetPacket = packet;
+      result.meta.cloudBackgroundPartial = true;
+      result.summary = summary.toLowerCase().startsWith("partial ")
+        ? summary
+        : `Partial cloud background result - ${summary}`;
+      if (!/^## Partial cloud background result\b/i.test(result.body)) {
+        result.body =
+          `## Partial cloud background result\n\n` +
+          `The approved cloud budget stopped this job before another model request. Partial work was preserved below.\n\n` +
+          result.body;
+      }
+    };
 
     // Per-type model routing is handled at orchestrator-controlled spawn points
     // (queue_background_job, spawn_subagent) via getModelForJobType(). The model
@@ -2514,6 +2541,9 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       extraSystemPrompt: priorContextBlock,
       approvalReceipt,
     });
+    if (cloudBackgroundValidation?.ok && sub.finishReason === "budget_stopped") {
+      markCloudBackgroundBudgetStopped(sub);
+    }
 
     // ── Codex OAuth verification loop ─────────────────────────────────────────
     // Applies to user-facing deliverable types only. Skipped for system jobs
@@ -2523,8 +2553,19 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     const MAX_JOB_VERIFY_RETRIES = 2;
     let verificationPassed: boolean | null = null;
     let verificationRetries = 0;
+    let verificationReason: string | undefined;
+    const skipVerifierForApprovedApiKeyCloudJob =
+      cloudBackgroundValidation?.ok === true &&
+      cloudBackgroundValidation.task.providerAuthType === "api_key";
 
-    if (VERIFY_AGENT_TYPES.includes(job.agentType)) {
+    if (skipVerifierForApprovedApiKeyCloudJob) {
+      verificationReason = sub.finishReason === "budget_stopped"
+        ? "budget_stopped"
+        : "task_scoped_cloud_api_key_budget_guard";
+      console.log(
+        `[JobQueue] skipped verifier for task-scoped API-key cloud job ${job.id}; verifier is outside the approved job budget`,
+      );
+    } else if (VERIFY_AGENT_TYPES.includes(job.agentType)) {
       const { getModel } = await import("../lib/modelPrefs");
       const orchModel = await getModel(job.userId, "orchestrator");
       let correctionContext: string | undefined;
@@ -2585,6 +2626,9 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             maxTurns: cloudBackgroundMaxTurns,
             approvalReceipt,
           });
+          if (cloudBackgroundValidation?.ok && sub.finishReason === "budget_stopped") {
+            markCloudBackgroundBudgetStopped(sub);
+          }
         } else {
           verificationPassed = false;
           console.log(
@@ -2597,11 +2641,16 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     // Attach verification outcome to meta so the UI can surface a badge.
     sub.meta.verificationPassed = verificationPassed;
     sub.meta.verificationRetries = verificationRetries;
+    if (verificationReason) {
+      sub.meta.verificationReason = verificationReason;
+    }
     if (cloudBackgroundValidation?.ok) {
       sub.meta.cloudBackgroundTask = {
         ...cloudBackgroundValidation.task,
         liveModelSwitch: false,
         estimatedSpentUsd: cloudBackgroundEstimatedSpentUsd,
+        status: sub.meta.cloudBackgroundBudgetStopped ? "budget_stopped" : "complete",
+        partial: Boolean(sub.meta.cloudBackgroundPartial),
       };
     }
     // ─────────────────────────────────────────────────────────────────────────

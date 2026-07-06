@@ -6,6 +6,7 @@ import { buildQueueBackgroundJobInput } from "./queueBackgroundJobInput";
 import { buildCloudBackgroundJobInput, type CloudBackgroundProviderOption } from "../cloudBackgroundEscalation";
 import { toolCallHooks, HOOK_PRIORITY } from "../toolCallHooks";
 import { getProviderStatus } from "../providers/modelProviderAuthProfiles";
+import { getModelProvider } from "@shared/modelProviderCatalog";
 
 interface QueueJobArgs {
   agent_type?: string;
@@ -27,9 +28,38 @@ interface QueueJobArgs {
 const QUEUEABLE_AGENT_TYPES: readonly string[] = [...SUB_AGENT_TYPES, "deep_research", "app_project", "ephemeral_agent_task"];
 const CLOUD_BACKGROUND_AGENT_TYPES = new Set<string>(SUB_AGENT_TYPES);
 
+function catalogProviderLabel(providerId: string): string {
+  const provider = getModelProvider(providerId);
+  return provider?.shortLabel || provider?.label || providerId || "the selected cloud provider";
+}
+
+function providerLabelFromStatus(
+  providerId: string,
+  providerStatus: Awaited<ReturnType<typeof getProviderStatus>> | null,
+): string {
+  const statusLabel = providerStatus?.providers[providerId]?.label;
+  return String(statusLabel || catalogProviderLabel(providerId)).trim();
+}
+
+toolCallHooks.register(async (ctx) => {
+  if (ctx.toolName !== "queue_background_job" || ctx.params.task_scoped_cloud !== true) return undefined;
+  const providerId = String(ctx.params.cloud_provider_id || "").trim();
+  if (!providerId) return undefined;
+  const providerStatus = ctx.userId
+    ? await getProviderStatus({ userId: ctx.userId }).catch(() => null)
+    : null;
+  return {
+    params: {
+      ...ctx.params,
+      cloud_provider_label: providerLabelFromStatus(providerId, providerStatus),
+    },
+  };
+}, { priority: HOOK_PRIORITY.APPROVAL + 20, critical: true });
+
 toolCallHooks.register((ctx) => {
   if (ctx.toolName !== "queue_background_job" || ctx.params.task_scoped_cloud !== true) return undefined;
-  const providerLabel = String(ctx.params.cloud_provider_label || ctx.params.cloud_provider_id || "the selected cloud provider").trim();
+  const providerId = String(ctx.params.cloud_provider_id || "").trim();
+  const providerLabel = catalogProviderLabel(providerId);
   const authType = ctx.params.cloud_provider_auth_type === "api_key" ? "API key" : "subscription";
   const budget = Number(ctx.params.cloud_budget_usd);
   const budgetText = Number.isFinite(budget) && budget > 0 ? ` Budget: $${(Math.round(budget * 100) / 100).toFixed(2)}.` : "";
@@ -294,9 +324,8 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
         };
       }
       const providerId = String(a.cloud_provider_id || "").trim();
-      const providerLabel = String(a.cloud_provider_label || providerId).trim();
       const authType = a.cloud_provider_auth_type;
-      if (!providerId || !providerLabel || (authType !== "api_key" && authType !== "oauth")) {
+      if (!providerId || (authType !== "api_key" && authType !== "oauth")) {
         return {
           ok: true,
           content:
@@ -304,6 +333,8 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
           label: "Cloud provider approval needed",
         };
       }
+      const providerStatus = await getProviderStatus({ userId: ctx.userId }).catch(() => null);
+      const providerLabel = providerLabelFromStatus(providerId, providerStatus);
       if (authType === "oauth" && providerId !== "openai") {
         return {
           ok: true,
@@ -322,7 +353,6 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
           label: "Cloud budget approval needed",
         };
       }
-      const providerStatus = await getProviderStatus({ userId: ctx.userId }).catch(() => null);
       const approvedProviderStatus = providerStatus?.providers[providerId];
       if (!approvedProviderStatus?.authTypes[authType]?.connected) {
         return {

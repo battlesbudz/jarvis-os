@@ -27,6 +27,7 @@ export interface SubAgentResult {
   summary: string;
   body: string;
   meta: Record<string, unknown>;
+  finishReason?: string | null;
   turns: number;
   toolCallsCount: number;
 }
@@ -352,6 +353,9 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
     meta.subject = parsed.subject;
     meta.emailBody = parsed.emailBody;
   }
+  if (result.finishReason) {
+    meta.finishReason = result.finishReason;
+  }
 
   return {
     type: spec.deliverableType,
@@ -359,6 +363,7 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
     summary,
     body,
     meta,
+    finishReason: result.finishReason,
     turns: result.turns,
     toolCallsCount: result.toolCalls.length,
   };
