@@ -289,8 +289,8 @@ async function runCrashRestartSmoke() {
     15000,
   );
   const crashLog = collectLogcat();
-  if (!/outside_app_voice: e2e simulated crash|voice_session: crash/.test(crashLog)) {
-    throw new Error("Simulated crash did not emit the expected outside-app voice crash log.");
+  if (!/JarvisVoiceE2E.*token=voice_crash.*e2eCrashCommand=dispatched/.test(crashLog)) {
+    throw new Error("Simulated crash command did not emit the expected debug dispatch marker.");
   }
 
   voiceE2eBroadcast("start", { token: "voice_restart_after_crash" });

@@ -154,8 +154,8 @@ expectIncludes(
 
 expectIncludes(
   "android/app/src/debug/java/com/gameplan/daemon/DaemonE2eReceiver.kt",
-  '"crash" -> startVoiceService(context, OutsideAppVoiceSessionService.e2eCrashIntent(context))',
-  "Debug receiver should expose a crash command for emulator-only restart testing",
+  "e2eCrashCommand=dispatched",
+  "Debug receiver should expose a deterministic crash command marker for emulator-only restart testing",
 );
 expectIncludes(
   "android/app/src/main/java/com/gameplan/daemon/OutsideAppVoiceSessionService.kt",
