@@ -5,7 +5,9 @@ import {
   buildCloudBackgroundJobInput,
   buildCompactCloudBackgroundResultPacket,
   checkCloudBackgroundBudget,
+  getDefaultCloudBackgroundModel,
   shouldOfferCloudBackgroundEscalation,
+  validateCloudBackgroundJobInput,
   type CloudBackgroundProviderStatus,
 } from "../cloudBackgroundEscalation";
 
@@ -123,12 +125,66 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
     },
     budgetUsd: 4,
   });
+  assert.equal(input.model, "anthropic/claude-sonnet-4-5");
   assert.equal(input.cloudBackgroundTask.providerId, "anthropic");
+  assert.equal(input.cloudBackgroundTask.approvedModel, "anthropic/claude-sonnet-4-5");
   assert.equal(input.cloudBackgroundTask.budgetUsd, 4);
   assert.equal(input.cloudBackgroundTask.liveModelSwitch, false);
   assert.deepEqual(input.cloudBackgroundTask.disallowedCapabilities, ["phone_control", "memory_write"]);
+  assert.deepEqual(validateCloudBackgroundJobInput(input), {
+    ok: true,
+    model: "anthropic/claude-sonnet-4-5",
+    task: {
+      providerId: "anthropic",
+      providerLabel: "Claude",
+      providerAuthType: "api_key",
+      approvedModel: "anthropic/claude-sonnet-4-5",
+      budgetUsd: 4,
+    },
+  });
   assert.match(input.cloudBackgroundTask.compactVerifiedPacketInstructions, /compact verified packet/i);
   console.log("OK: queued cloud task metadata is task-scoped and forbids phone control/memory writes");
+}
+
+{
+  assert.equal(getDefaultCloudBackgroundModel({ id: "openai", authType: "oauth" }), "chatgpt-codex-oauth/auto");
+  assert.equal(getDefaultCloudBackgroundModel({ id: "openai", authType: "api_key" }), "openai/gpt-4.1-mini");
+  assert.equal(getDefaultCloudBackgroundModel({ id: "google", authType: "api_key" }), "google/gemini-2.5-flash");
+  assert.equal(getDefaultCloudBackgroundModel({ id: "anthropic", authType: "api_key" }), "anthropic/claude-sonnet-4-5");
+  console.log("OK: approved cloud providers map to concrete worker models");
+}
+
+{
+  assert.deepEqual(
+    validateCloudBackgroundJobInput({
+      model: "gpt-4.1-mini",
+      cloudBackgroundTask: {
+        providerId: "google",
+        providerLabel: "Gemini",
+        providerAuthType: "api_key",
+        approvedModel: "google/gemini-2.5-flash",
+        budgetUsd: 3,
+        liveModelSwitch: false,
+        disallowedCapabilities: ["phone_control", "memory_write"],
+      },
+    }),
+    { ok: false, message: "Cloud background task is not routed through the approved provider." },
+  );
+  assert.deepEqual(
+    validateCloudBackgroundJobInput({
+      model: "google/gemini-2.5-flash",
+      cloudBackgroundTask: {
+        providerId: "google",
+        providerLabel: "Gemini",
+        providerAuthType: "api_key",
+        approvedModel: "google/gemini-2.5-flash",
+        liveModelSwitch: false,
+        disallowedCapabilities: ["phone_control", "memory_write"],
+      },
+    }),
+    { ok: false, message: "Cloud background task is missing its approved per-job budget." },
+  );
+  console.log("OK: worker validation rejects wrong-model or unbudgeted cloud jobs");
 }
 
 {

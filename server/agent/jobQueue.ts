@@ -3,6 +3,7 @@ import { eq, and, sql, gte, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { runSubAgent, BUILD_FEATURE_WORKER_SYSTEM_PROMPT } from "./subagents";
+import { validateCloudBackgroundJobInput } from "./cloudBackgroundEscalation";
 import { runGoalDecomposition } from "./goalDecomposer";
 import { runNamedAgent } from "./runNamedAgent";
 import { runEphemeralAgentSession, type EphemeralAgentKind } from "./ephemeralAgents";
@@ -2418,11 +2419,29 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
     };
 
+    const cloudBackgroundValidation = validateCloudBackgroundJobInput(jobInput);
+    if (cloudBackgroundValidation?.ok === false) {
+      await failJob(job.id, cloudBackgroundValidation.message, job.userId);
+      await notifyJobComplete(
+        job.userId,
+        job.agentType,
+        job.title,
+        cloudBackgroundValidation.message,
+        originChannel,
+        originDiscordChannelId,
+      );
+      return;
+    }
+
     // Per-type model routing is handled at orchestrator-controlled spawn points
     // (queue_background_job, spawn_subagent) via getModelForJobType(). The model
     // arrives here via job.input.model. Other callers that omit input.model
     // preserve the original resolution path inside runSubAgent.
-    const subAgentModelOverride = typeof jobInput.model === "string" ? jobInput.model : undefined;
+    const subAgentModelOverride = cloudBackgroundValidation?.ok
+      ? cloudBackgroundValidation.model
+      : typeof jobInput.model === "string"
+        ? jobInput.model
+        : undefined;
 
     // Prior-context injection: deep_research Phase 2 jobs carry priorContext in
     // their input so Phase 1 findings can be injected into the system prompt.
@@ -2509,6 +2528,13 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     // Attach verification outcome to meta so the UI can surface a badge.
     sub.meta.verificationPassed = verificationPassed;
     sub.meta.verificationRetries = verificationRetries;
+    if (cloudBackgroundValidation?.ok) {
+      sub.meta.cloudBackgroundTask = {
+        ...cloudBackgroundValidation.task,
+        liveModelSwitch: false,
+        spentUsd: null,
+      };
+    }
     // ─────────────────────────────────────────────────────────────────────────
 
     if (job.agentType === "research" && !researchHasSourceUrls(sub.body)) {

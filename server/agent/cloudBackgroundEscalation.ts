@@ -1,4 +1,4 @@
-import type { ModelProviderId, ProviderCredentialKind } from "@shared/modelProviderCatalog";
+import { CODEX_OAUTH_MODEL, type ModelProviderId, type ProviderCredentialKind } from "@shared/modelProviderCatalog";
 
 export type CloudBackgroundEscalationReason =
   | "model_timeout"
@@ -92,10 +92,12 @@ export interface BuildCloudBackgroundJobInput {
 }
 
 export interface CloudBackgroundJobInput {
+  model: string;
   cloudBackgroundTask: {
     providerId: string;
     providerLabel: string;
     providerAuthType: CloudBackgroundProviderOption["authType"];
+    approvedModel: string;
     budgetUsd: number | null;
     liveModelSwitch: false;
     disallowedCapabilities: ["phone_control", "memory_write"];
@@ -103,6 +105,19 @@ export interface CloudBackgroundJobInput {
     originalPrompt: string;
   };
 }
+
+export interface ValidatedCloudBackgroundJobInput {
+  providerId: string;
+  providerLabel: string;
+  providerAuthType: CloudBackgroundProviderOption["authType"];
+  approvedModel: string;
+  budgetUsd: number | null;
+}
+
+export type CloudBackgroundJobInputValidation =
+  | { ok: true; model: string; task: ValidatedCloudBackgroundJobInput }
+  | { ok: false; message: string }
+  | null;
 
 export interface BuildCompactCloudBackgroundResultPacketInput {
   jobId: string;
@@ -185,6 +200,27 @@ function moneyValue(value: unknown): number {
   const amount = typeof value === "number" ? value : Number(value);
   if (!Number.isFinite(amount) || amount <= 0) return 0;
   return Math.round(amount * 100) / 100;
+}
+
+function recordValue(value: unknown, key: string): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return (value as Record<string, unknown>)[key];
+}
+
+function authTypeValue(value: unknown): CloudBackgroundProviderOption["authType"] | null {
+  return value === "api_key" || value === "oauth" ? value : null;
+}
+
+function disallowsCloudTaskCapability(value: unknown, capability: "phone_control" | "memory_write"): boolean {
+  return Array.isArray(value) && value.includes(capability);
+}
+
+export function getDefaultCloudBackgroundModel(provider: Pick<CloudBackgroundProviderOption, "id" | "authType">): string {
+  if (provider.id === "openai" && provider.authType === "oauth") return CODEX_OAUTH_MODEL;
+  if (provider.id === "openai") return "openai/gpt-4.1-mini";
+  if (provider.id === "anthropic") return "anthropic/claude-sonnet-4-5";
+  if (provider.id === "google") return "google/gemini-2.5-flash";
+  return CODEX_OAUTH_MODEL;
 }
 
 export function shouldOfferCloudBackgroundEscalation(reason: CloudBackgroundEscalationReason): boolean {
@@ -295,17 +331,69 @@ export function buildCloudBackgroundEscalationDecision(
 }
 
 export function buildCloudBackgroundJobInput(input: BuildCloudBackgroundJobInput): CloudBackgroundJobInput {
+  const model = getDefaultCloudBackgroundModel(input.provider);
   return {
+    model,
     cloudBackgroundTask: {
       providerId: input.provider.id,
       providerLabel: input.provider.label,
       providerAuthType: input.provider.authType,
+      approvedModel: model,
       budgetUsd: input.provider.requiresBudget ? budgetValue(input.budgetUsd) : null,
       liveModelSwitch: false,
       disallowedCapabilities: ["phone_control", "memory_write"],
       compactVerifiedPacketInstructions:
         "Return a compact verified packet with status, summary, actions taken, partial flag, spend, and budget. Do not write MemoryOS or directly control the phone.",
       originalPrompt: compact(input.prompt),
+    },
+  };
+}
+
+export function validateCloudBackgroundJobInput(input: Record<string, unknown>): CloudBackgroundJobInputValidation {
+  const rawTask = input.cloudBackgroundTask;
+  if (!rawTask || typeof rawTask !== "object" || Array.isArray(rawTask)) return null;
+
+  const providerId = compact(recordValue(rawTask, "providerId"));
+  const providerLabel = compact(recordValue(rawTask, "providerLabel")) || providerId;
+  const providerAuthType = authTypeValue(recordValue(rawTask, "providerAuthType"));
+  const approvedModel = compact(recordValue(rawTask, "approvedModel"));
+  const model = compact(input.model);
+  const budgetUsd = budgetValue(recordValue(rawTask, "budgetUsd"));
+
+  if (!providerId || !providerAuthType) {
+    return { ok: false, message: "Cloud background task is missing its approved provider." };
+  }
+
+  const expectedModel = getDefaultCloudBackgroundModel({ id: providerId, authType: providerAuthType });
+  if (!model || model !== expectedModel || approvedModel !== expectedModel) {
+    return { ok: false, message: "Cloud background task is not routed through the approved provider." };
+  }
+
+  if (recordValue(rawTask, "liveModelSwitch") !== false) {
+    return { ok: false, message: "Cloud background task attempted to switch the live chat model." };
+  }
+
+  const disallowedCapabilities = recordValue(rawTask, "disallowedCapabilities");
+  if (
+    !disallowsCloudTaskCapability(disallowedCapabilities, "phone_control") ||
+    !disallowsCloudTaskCapability(disallowedCapabilities, "memory_write")
+  ) {
+    return { ok: false, message: "Cloud background task is missing its restricted permission envelope." };
+  }
+
+  if (providerAuthType === "api_key" && budgetUsd === null) {
+    return { ok: false, message: "Cloud background task is missing its approved per-job budget." };
+  }
+
+  return {
+    ok: true,
+    model,
+    task: {
+      providerId,
+      providerLabel,
+      providerAuthType,
+      approvedModel,
+      budgetUsd: providerAuthType === "api_key" ? budgetUsd : null,
     },
   };
 }

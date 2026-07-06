@@ -11,6 +11,10 @@ async function main() {
     fileURLToPath(new URL("../tools/queueBackgroundJob.ts", import.meta.url).toString()),
     "utf8",
   );
+  const jobQueueSource = readFileSync(
+    fileURLToPath(new URL("../jobQueue.ts", import.meta.url).toString()),
+    "utf8",
+  );
 
   {
     assert.match(queueToolSource, /one-off scoped worker/i);
@@ -76,16 +80,24 @@ async function main() {
     );
 
     const task = input.cloudBackgroundTask as Record<string, unknown>;
-    assert.equal(input.model, "gpt-4.1-mini");
+    assert.equal(input.model, "google/gemini-2.5-flash");
     assert.equal(input.originChannel, "voice");
     assert.equal(input.originChannelId, "voice-session-1");
     assert.equal(task.providerId, "google");
     assert.equal(task.providerLabel, "Gemini");
     assert.equal(task.providerAuthType, "api_key");
+    assert.equal(task.approvedModel, "google/gemini-2.5-flash");
     assert.equal(task.budgetUsd, 3);
     assert.equal(task.liveModelSwitch, false);
     assert.deepEqual(task.disallowedCapabilities, ["phone_control", "memory_write"]);
     console.log("OK: queue input preserves task-scoped cloud metadata without switching live chat");
+  }
+
+  {
+    assert.match(jobQueueSource, /validateCloudBackgroundJobInput\(jobInput\)/);
+    assert.match(jobQueueSource, /cloudBackgroundValidation\.model/);
+    assert.match(jobQueueSource, /failJob\(job\.id, cloudBackgroundValidation\.message/);
+    console.log("OK: job queue validates cloud task provider and budget before worker execution");
   }
 
   console.log("\nAll queue background job assertions passed.");
