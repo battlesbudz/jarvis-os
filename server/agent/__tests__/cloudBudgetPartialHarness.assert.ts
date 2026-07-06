@@ -1,10 +1,4 @@
 import assert from "node:assert/strict";
-import { runAgent } from "../harness";
-import {
-  BaseProvider,
-  _clearProviderCacheForTesting,
-  _overrideProviderForTesting,
-} from "../providers";
 import type { ProviderChunk, ProviderQueryParams } from "../providers/base";
 import type { AgentTool } from "../types";
 
@@ -13,30 +7,6 @@ process.env.JARVIS_CODEX_OAUTH_ENABLED = "false";
 delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
 delete process.env.JARVIS_MODEL_PROVIDER;
 delete process.env.JARVIS_AI_PROVIDER;
-
-class ToolFirstProvider extends BaseProvider {
-  calls = 0;
-
-  async initialize(): Promise<void> {}
-  async cleanup(): Promise<void> {}
-
-  async *query(_params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
-    this.calls++;
-    if (this.calls === 1) {
-      yield {
-        type: "tool_call_start",
-        index: 0,
-        id: "call_findings",
-        name: "collect_findings",
-      };
-      yield { type: "tool_call_args", index: 0, args: "{}" };
-      yield { type: "finish", reason: "tool_calls" };
-      return;
-    }
-    yield { type: "text", delta: "This second model turn should not run." };
-    yield { type: "finish", reason: "stop" };
-  }
-}
 
 const collectFindingsTool: AgentTool = {
   name: "collect_findings",
@@ -49,6 +19,37 @@ const collectFindingsTool: AgentTool = {
 };
 
 async function main(): Promise<void> {
+  const { runAgent } = await import("../harness");
+  const {
+    BaseProvider,
+    _clearProviderCacheForTesting,
+    _overrideProviderForTesting,
+  } = await import("../providers");
+
+  class ToolFirstProvider extends BaseProvider {
+    calls = 0;
+
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(_params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      this.calls++;
+      if (this.calls === 1) {
+        yield {
+          type: "tool_call_start",
+          index: 0,
+          id: "call_findings",
+          name: "collect_findings",
+        };
+        yield { type: "tool_call_args", index: 0, args: "{}" };
+        yield { type: "finish", reason: "tool_calls" };
+        return;
+      }
+      yield { type: "text", delta: "This second model turn should not run." };
+      yield { type: "finish", reason: "stop" };
+    }
+  }
+
   const provider = new ToolFirstProvider();
   _overrideProviderForTesting("openai", provider);
   _overrideProviderForTesting("chatgpt-codex-oauth", provider);
