@@ -44,6 +44,11 @@ assert.ok(
     insightsSource.includes("setAndroidOutsideAppVoiceApproval(voiceApprovalPrompt, voiceApprovalToken ?? '')"),
   "voice-mode high-risk confirmations should push the approval prompt and token to the native overlay",
 );
+assert.match(
+  insightsSource,
+  /if \(!talkModeEnabled\) \{\s*outsideAppVoiceStateRef\.current = null;\s*nativeVoiceStateSyncHeldRef\.current = false;\s*setVoiceApprovalPrompt\(null\);\s*setVoiceApprovalToken\(null\);\s*return;\s*\}/,
+  "turning off Talk Mode should clear both stale voice approval prompt and token",
+);
 assert.ok(
   insightsSource.includes("speakTextRef.current(approvalPrompt, assistantId)"),
   "voice-mode high-risk confirmations should be spoken",

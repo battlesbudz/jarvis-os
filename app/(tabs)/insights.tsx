@@ -1467,6 +1467,7 @@ export default function InsightsScreen() {
     if (!talkModeEnabled) {
       outsideAppVoiceStateRef.current = null;
       nativeVoiceStateSyncHeldRef.current = false;
+      setVoiceApprovalPrompt(null);
       setVoiceApprovalToken(null);
       return;
     }
