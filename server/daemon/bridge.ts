@@ -1349,17 +1349,25 @@ export function startDaemonBridge(server: HttpServer): void {
         if (
           (action === "approval_approve" || action === "approval_deny") &&
           confirmationToken &&
-          control.reactActive !== true &&
           daemonVoiceApprovalHandler
         ) {
-          daemonVoiceApprovalHandler({
-            userId: pairedUserId,
-            token: confirmationToken,
-            action,
-            approved: action === "approval_approve",
-          }).catch((err) => {
-            console.error(`[daemon] outside-app voice approval failed userId=${pairedUserId}:`, err);
-          });
+          const approvalFallbackDelayMs = control.reactActive === true ? 1_500 : 0;
+          const runApprovalFallback = () => {
+            daemonVoiceApprovalHandler?.({
+              userId: pairedUserId,
+              token: confirmationToken,
+              action,
+              approved: action === "approval_approve",
+            }).catch((err) => {
+              console.error(`[daemon] outside-app voice approval failed userId=${pairedUserId}:`, err);
+            });
+          };
+          if (approvalFallbackDelayMs > 0) {
+            const timer = setTimeout(runApprovalFallback, approvalFallbackDelayMs);
+            (timer as unknown as { unref?: () => void }).unref?.();
+          } else {
+            runApprovalFallback();
+          }
         }
         if (action === "pause" || action === "paused" || action === "end") {
           cancelDaemonVoiceTurns(pairedUserId);

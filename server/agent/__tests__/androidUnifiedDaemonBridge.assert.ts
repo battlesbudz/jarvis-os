@@ -154,8 +154,8 @@ assert.match(
 
 assert.match(
   bridgeSource,
-  /confirmationToken[\s\S]*control\.reactActive !== true[\s\S]*daemonVoiceApprovalHandler/,
-  "Outside-app approval controls should execute through the server when React is not active.",
+  /confirmationToken[\s\S]*approvalFallbackDelayMs = control\.reactActive === true \? 1_500 : 0[\s\S]*daemonVoiceApprovalHandler/,
+  "Outside-app approval controls should keep a delayed server fallback even when React reports active.",
 );
 
 assert.match(

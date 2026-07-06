@@ -2841,6 +2841,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
     try {
       if (approved) {
         const pending = pendingConfirmations.get(token);
+        if (!pending || pending.userId !== userId) return;
         try {
           const execResult = await executePendingCoachAction({
             pendingConfirmations,
@@ -2872,8 +2873,6 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       if (pending?.userId === userId) {
         pendingConfirmations.delete(token);
         await saveApprovalOutcome("Got it - I won't proceed with that action.");
-      } else {
-        await saveApprovalOutcome("That approval is no longer active, so I did not run the action.");
       }
     } finally {
       await sendDaemonOp(userId, { type: "voice_set_outside_app_state", state: "listening" }, 5000).catch((err) => {
