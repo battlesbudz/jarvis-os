@@ -272,7 +272,7 @@ Do not require confirmation for low-risk phone navigation and read-only control:
         op = { type: "android_tap", x: args.x, y: args.y };
       } else if (rawAction === "android_type") {
         if (!args.text) return { ok: false, content: jsonErrorContent("text required") };
-        op = { type: "android_type", text: String(args.text) };
+        op = { type: "android_type", text: String(args.text), submit: args.submit === true };
       } else if (rawAction === "android_swipe") {
         if (typeof args.x1 !== "number" || typeof args.y1 !== "number" || typeof args.x2 !== "number" || typeof args.y2 !== "number") {
           return { ok: false, content: jsonErrorContent("x1, y1, x2, y2 required") };
