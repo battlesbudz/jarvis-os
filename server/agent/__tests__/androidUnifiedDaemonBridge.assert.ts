@@ -136,8 +136,8 @@ assert.match(
 
 assert.match(
   bridgeSource,
-  /if \(action === "end"\) \{\s*cancelDaemonVoiceTurns\(pairedUserId\);[\s\S]*?persistDaemonTalkModeEnabled\(pairedUserId, false\)/,
-  "Outside-app voice End should cancel in-flight daemon voice turns before persisting Talk Mode off.",
+  /if \(action === "pause" \|\| action === "paused" \|\| action === "end"\) \{\s*cancelDaemonVoiceTurns\(pairedUserId\);[\s\S]*?if \(action === "end"\) \{\s*await persistDaemonTalkModeEnabled\(pairedUserId, false\)/,
+  "Outside-app voice Pause and End should cancel in-flight daemon voice turns, while only End persists Talk Mode off.",
 );
 
 assert.match(

@@ -1325,8 +1325,10 @@ export function startDaemonBridge(server: HttpServer): void {
       if ((m.type as string) === "voice_session_control" && pairedUserId) {
         const control = m as VoiceSessionControlMsg;
         const action = String(control.action || "").trim().toLowerCase();
-        if (action === "end") {
+        if (action === "pause" || action === "paused" || action === "end") {
           cancelDaemonVoiceTurns(pairedUserId);
+        }
+        if (action === "end") {
           await persistDaemonTalkModeEnabled(pairedUserId, false);
         }
         return;
