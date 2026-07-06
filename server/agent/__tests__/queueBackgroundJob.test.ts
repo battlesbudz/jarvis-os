@@ -191,6 +191,8 @@ async function main() {
     assert.match(subagentsSource, /forceModel: opts\.forceModel/);
     assert.match(subagentsSource, /preferredAuthType: opts\.preferredAuthType/);
     assert.match(subagentsSource, /approvalReceipt: opts\.approvalReceipt/);
+    assert.match(subagentsSource, /systemPrompt = `\$\{systemPrompt\}\\n\\n--- CONTEXT ---/);
+    assert.doesNotMatch(subagentsSource, /systemPrompt = `\$\{spec\.systemPrompt\}\\n\\n--- CONTEXT ---/);
     assert.match(subagentsSource, /finishReason: result\.finishReason/);
     assert.match(subagentsSource, /result\.finishReason !== "budget_stopped"/);
     assert.match(harnessSource, /forceModel \? null : await getSelectedModelPreference/);

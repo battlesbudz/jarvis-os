@@ -294,7 +294,7 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
       console.error(`[subagents/email] people enrichment failed for ${opts.context.userId}:`, err);
     }
     if (enrich.length > 0) {
-      systemPrompt = `${spec.systemPrompt}\n\n--- CONTEXT ---\n${enrich.join("\n\n")}`;
+      systemPrompt = `${systemPrompt}\n\n--- CONTEXT ---\n${enrich.join("\n\n")}`;
     }
   }
 
