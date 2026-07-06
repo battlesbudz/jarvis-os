@@ -228,6 +228,9 @@ class UnifiedDaemonContractTest {
         controller.destroy()
         assertFalse(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
 
+        OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()
+        assertTrue(OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession())
+
         val restartedController = Robolectric.buildService(OutsideAppVoiceSessionService::class.java).create()
         val restartedService = restartedController.get()
         restartedService.onStartCommand(OutsideAppVoiceSessionService.startIntent(context), 0, 6)

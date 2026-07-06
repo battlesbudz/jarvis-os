@@ -1344,6 +1344,10 @@ object OpHandler {
             arrayOf("hey jarvis", "jarvis", "computer")
         }
 
+        if (enabled && talkMode) {
+            OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()
+        }
+
         if (enabled && !allowSoftwareWakeWordFallback) {
             val stopIntent = Intent(context, WakeWordService::class.java).apply {
                 action = WakeWordService.ACTION_STOP
@@ -1406,6 +1410,9 @@ object OpHandler {
      */
     private fun handleSetTalkMode(context: Context, op: JSONObject): OpResult {
         val enabled = op.optBoolean("enabled", false)
+        if (enabled) {
+            OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()
+        }
         val svc = WakeWordService.instance
         if (svc == null) {
             DaemonLog.add("voice_set_talk_mode: system assistant mode; software listener is off")

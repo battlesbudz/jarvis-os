@@ -70,6 +70,7 @@ import { useWakeWord } from '@/lib/wake-word-context';
 import {
   addAndroidOutsideAppVoiceControlListener,
   endAndroidOutsideAppVoiceSession,
+  getAndroidDaemonStatus,
   setAndroidOutsideAppVoiceSessionState,
   startAndroidOutsideAppVoiceSession,
 } from '@/lib/android-daemon-native';
@@ -920,6 +921,8 @@ export default function InsightsScreen() {
   const streamingAssistantIdRef = useRef<string | null>(null);
   const isSpeakingRef = useRef(false);
   const nativeVoiceStateSyncHeldRef = useRef(false);
+  const nativeVoiceStateSyncReadyRef = useRef(Platform.OS !== 'android');
+  const [nativeVoiceStateSyncReady, setNativeVoiceStateSyncReady] = useState(Platform.OS !== 'android');
   const isTranscribingRef = useRef(false);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
   const webChunksRef = useRef<Blob[]>([]);
@@ -1346,8 +1349,44 @@ export default function InsightsScreen() {
     if (!talkModeEnabled) {
       outsideAppVoiceStateRef.current = null;
       nativeVoiceStateSyncHeldRef.current = false;
+      nativeVoiceStateSyncReadyRef.current = true;
+      setNativeVoiceStateSyncReady(true);
       return;
     }
+    let cancelled = false;
+    nativeVoiceStateSyncReadyRef.current = false;
+    setNativeVoiceStateSyncReady(false);
+
+    getAndroidDaemonStatus()
+      .then((status) => {
+        if (cancelled || !talkModeRef.current) return;
+        const nativeState = status.voiceSessionState;
+        if (!nativeState) return;
+        outsideAppVoiceStateRef.current = nativeState;
+        nativeVoiceStateSyncHeldRef.current = nativeState === 'paused';
+      })
+      .catch((err) => {
+        console.warn('[voice] outside-app state init failed:', err);
+      })
+      .finally(() => {
+        if (cancelled) return;
+        nativeVoiceStateSyncReadyRef.current = true;
+        setNativeVoiceStateSyncReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [talkModeEnabled]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    if (!talkModeEnabled) {
+      outsideAppVoiceStateRef.current = null;
+      nativeVoiceStateSyncHeldRef.current = false;
+      return;
+    }
+    if (!nativeVoiceStateSyncReady || !nativeVoiceStateSyncReadyRef.current) return;
     if (nativeVoiceStateSyncHeldRef.current) return;
     const nextState = isSpeaking
       ? 'speaking'
@@ -1361,7 +1400,7 @@ export default function InsightsScreen() {
     setAndroidOutsideAppVoiceSessionState(nextState).catch((err) => {
       console.warn('[voice] outside-app state sync failed:', err);
     });
-  }, [isRecording, isSpeaking, isStreaming, isTranscribing, isWorkingOnPhone, talkModeEnabled]);
+  }, [isRecording, isSpeaking, isStreaming, isTranscribing, isWorkingOnPhone, nativeVoiceStateSyncReady, talkModeEnabled]);
 
   // App-level wake word events — fired by WakeWordContext even when insights is not focused
   const { pendingWakeEvent, clearWakeEvent, setTalkModeActive } = useWakeWord();

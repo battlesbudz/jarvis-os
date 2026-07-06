@@ -416,6 +416,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "fun markPlaybackSpeaking()", source);
   assertIncludes(contents, "fun markPlaybackListening()", source);
   assertIncludes(contents, "fun shouldAcceptPlaybackForCurrentSession()", source);
+  assertIncludes(contents, "fun clearEndedPlaybackGateForTalkModeEnable()", source);
   assertIncludes(contents, "endedSessionBlocksPlayback = true", source);
   assertIncludes(contents, "endedSessionBlocksPlayback = false", source);
   assertIncludes(contents, "if (sessionActive && state == OutsideAppVoiceState.PAUSED)", source);
@@ -441,6 +442,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "pausedForPlayback && OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.markPlaybackSpeaking()", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.markPlaybackListening()", source);
+  assertIncludes(contents, "OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()", source);
 }
 assertIncludes(pluginTemplateJarvisVoiceInteraction, "EXTRA_SHOW_WHEN_LOCKED_TOKEN", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");
 assertIncludes(pluginTemplateJarvisVoiceInteraction, "UUID.randomUUID()", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");

@@ -103,6 +103,10 @@ class OutsideAppVoiceSessionService : Service() {
 
         fun currentState(): OutsideAppVoiceState = instance?.state ?: OutsideAppVoiceState.IDLE
 
+        fun clearEndedPlaybackGateForTalkModeEnable() {
+            endedSessionBlocksPlayback = false
+        }
+
         fun shouldAcceptPlaybackForCurrentSession(): Boolean {
             val service = instance
             if (service == null) {
