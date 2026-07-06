@@ -6,6 +6,8 @@ import {
   buildCompactCloudBackgroundResultPacket,
   checkCloudBackgroundBudget,
   getDefaultCloudBackgroundModel,
+  maxCloudBackgroundModelTurnsForBudget,
+  nextCloudBackgroundModelStepBudgetCheckpoint,
   shouldOfferCloudBackgroundEscalation,
   validateCloudBackgroundJobInput,
   type CloudBackgroundProviderStatus,
@@ -151,6 +153,9 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
   assert.equal(getDefaultCloudBackgroundModel({ id: "openai", authType: "api_key" }), "openai/gpt-4.1-mini");
   assert.equal(getDefaultCloudBackgroundModel({ id: "google", authType: "api_key" }), "google/gemini-2.5-flash");
   assert.equal(getDefaultCloudBackgroundModel({ id: "anthropic", authType: "api_key" }), "anthropic/claude-sonnet-4-5");
+  assert.equal(maxCloudBackgroundModelTurnsForBudget(0.1, 6), 2);
+  assert.equal(maxCloudBackgroundModelTurnsForBudget(3, 6), 6);
+  assert.equal(maxCloudBackgroundModelTurnsForBudget(null, 6), 6);
   console.log("OK: approved cloud providers map to concrete worker models");
 }
 
@@ -185,6 +190,41 @@ console.log("OK: local failure signals can offer a task-scoped cloud retry");
     { ok: false, message: "Cloud background task is missing its approved per-job budget." },
   );
   console.log("OK: worker validation rejects wrong-model or unbudgeted cloud jobs");
+}
+
+{
+  const input = buildCloudBackgroundJobInput({
+    prompt: "Research the competitor and write a report.",
+    provider: {
+      id: "google",
+      label: "Gemini",
+      authType: "api_key",
+      requiresBudget: true,
+      hint: "Gemini API key, budget required",
+    },
+    budgetUsd: 0.05,
+  });
+  const validation = validateCloudBackgroundJobInput(input);
+  assert.equal(validation?.ok, true);
+  if (validation?.ok !== true) throw new Error("expected valid cloud job input");
+  assert.equal(
+    nextCloudBackgroundModelStepBudgetCheckpoint({
+      jobId: "job-budget-ok",
+      task: validation.task,
+      spentUsd: 0,
+    })?.shouldStopBeforeNextStep,
+    false,
+  );
+  assert.equal(
+    nextCloudBackgroundModelStepBudgetCheckpoint({
+      jobId: "job-budget-stop",
+      task: validation.task,
+      spentUsd: 0.05,
+      partialSummary: "Finished the first pass.",
+    })?.shouldStopBeforeNextStep,
+    true,
+  );
+  console.log("OK: API-key cloud jobs reserve budget before each model step");
 }
 
 {

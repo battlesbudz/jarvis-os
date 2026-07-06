@@ -3,7 +3,12 @@ import { eq, and, sql, gte, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { runSubAgent, BUILD_FEATURE_WORKER_SYSTEM_PROMPT } from "./subagents";
-import { validateCloudBackgroundJobInput } from "./cloudBackgroundEscalation";
+import {
+  CLOUD_BACKGROUND_MODEL_STEP_ESTIMATE_USD,
+  maxCloudBackgroundModelTurnsForBudget,
+  nextCloudBackgroundModelStepBudgetCheckpoint,
+  validateCloudBackgroundJobInput,
+} from "./cloudBackgroundEscalation";
 import { runGoalDecomposition } from "./goalDecomposer";
 import { runNamedAgent } from "./runNamedAgent";
 import { runEphemeralAgentSession, type EphemeralAgentKind } from "./ephemeralAgents";
@@ -2432,6 +2437,40 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       );
       return;
     }
+    let cloudBackgroundEstimatedSpentUsd = 0;
+    const reserveCloudBackgroundModelStep = (partialSummary?: string) => {
+      if (!cloudBackgroundValidation?.ok) return null;
+      const checkpoint = nextCloudBackgroundModelStepBudgetCheckpoint({
+        jobId: job.id,
+        task: cloudBackgroundValidation.task,
+        spentUsd: cloudBackgroundEstimatedSpentUsd,
+        partialSummary,
+        actions: partialSummary ? ["completed initial worker attempt"] : [],
+      });
+      if (!checkpoint) return null;
+      if (checkpoint.shouldStopBeforeNextStep) return checkpoint;
+      cloudBackgroundEstimatedSpentUsd = Math.round(
+        (cloudBackgroundEstimatedSpentUsd + CLOUD_BACKGROUND_MODEL_STEP_ESTIMATE_USD) * 100,
+      ) / 100;
+      return null;
+    };
+    const initialCloudBudgetStop = reserveCloudBackgroundModelStep();
+    if (initialCloudBudgetStop?.shouldStopBeforeNextStep) {
+      const message = "Cloud background task stopped before starting because the approved budget is too low for a model step.";
+      await failJob(job.id, message, job.userId);
+      await notifyJobComplete(
+        job.userId,
+        job.agentType,
+        job.title,
+        message,
+        originChannel,
+        originDiscordChannelId,
+      );
+      return;
+    }
+    const cloudBackgroundMaxTurns = cloudBackgroundValidation?.ok
+      ? maxCloudBackgroundModelTurnsForBudget(cloudBackgroundValidation.task.budgetUsd, 6)
+      : undefined;
 
     // Per-type model routing is handled at orchestrator-controlled spawn points
     // (queue_background_job, spawn_subagent) via getModelForJobType(). The model
@@ -2456,6 +2495,8 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       defaultTitle: job.title,
       context: ctx,
       model: subAgentModelOverride,
+      forceModel: cloudBackgroundValidation?.ok === true,
+      maxTurns: cloudBackgroundMaxTurns,
       extraSystemPrompt: priorContextBlock,
       approvalReceipt,
     });
@@ -2501,6 +2542,19 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         // passed === false: content rejected — retry if attempts remain
         correctionContext = verification.reason;
         if (attempt < MAX_JOB_VERIFY_RETRIES) {
+          const budgetStop = reserveCloudBackgroundModelStep(
+            `Completed an initial ${job.agentType} attempt, then stopped before another model step to stay within the approved cloud budget.`,
+          );
+          if (budgetStop?.shouldStopBeforeNextStep) {
+            verificationPassed = null;
+            sub.meta.cloudBackgroundBudgetStopped = true;
+            sub.meta.cloudBackgroundBudgetPacket = budgetStop.packet ?? null;
+            sub.summary = `Partial cloud background result — ${sub.summary}`;
+            console.log(
+              `[JobQueue] cloud budget stopped retry for job ${job.id} after estimated spend $${cloudBackgroundEstimatedSpentUsd.toFixed(2)}`,
+            );
+            break;
+          }
           verificationRetries++;
           console.log(
             `[JobQueue] verify retry ${attempt + 1}/${MAX_JOB_VERIFY_RETRIES} for job ${job.id} (${job.agentType}): ${verification.reason}`,
@@ -2514,6 +2568,8 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             defaultTitle: job.title,
             context: ctx,
             model: subAgentModelOverride,
+            forceModel: cloudBackgroundValidation?.ok === true,
+            maxTurns: cloudBackgroundMaxTurns,
             approvalReceipt,
           });
         } else {
@@ -2532,7 +2588,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       sub.meta.cloudBackgroundTask = {
         ...cloudBackgroundValidation.task,
         liveModelSwitch: false,
-        spentUsd: null,
+        estimatedSpentUsd: cloudBackgroundEstimatedSpentUsd,
       };
     }
     // ─────────────────────────────────────────────────────────────────────────

@@ -23,6 +23,7 @@ interface QueueJobArgs {
  * "deep_research" and "app_project" types beyond the core SubAgentType set.
  */
 const QUEUEABLE_AGENT_TYPES: readonly string[] = [...SUB_AGENT_TYPES, "deep_research", "app_project", "ephemeral_agent_task"];
+const CLOUD_BACKGROUND_AGENT_TYPES = new Set<string>(SUB_AGENT_TYPES);
 
 /**
  * Commonly confused US city names — bare city name (lower-cased) → list of states.
@@ -264,6 +265,14 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
 
     let extraJobInput: Record<string, unknown> | undefined;
     if (taskScopedCloud) {
+      if (!CLOUD_BACKGROUND_AGENT_TYPES.has(agentType)) {
+        return {
+          ok: true,
+          content:
+            "Task-scoped cloud background work currently supports research, writing, planning, and email jobs. Use one of those job types so the approved provider and budget can be enforced.",
+          label: "Cloud background job type unsupported",
+        };
+      }
       const providerId = String(a.cloud_provider_id || "").trim();
       const providerLabel = String(a.cloud_provider_label || providerId).trim();
       const authType = a.cloud_provider_auth_type;

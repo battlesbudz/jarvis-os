@@ -45,6 +45,12 @@ function resolveProviderName(model: string): ProviderName {
 
 export interface RunAgentOptions {
   model?: string;
+  /**
+   * Use opts.model as an explicit executor choice even when the user has a
+   * global selected model. This is reserved for task-scoped approvals where
+   * the user approved a specific provider for one background job.
+   */
+  forceModel?: boolean;
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
   tools: AgentTool[];
   context: ToolContext;
@@ -251,6 +257,7 @@ function toOpenAITool(t: AgentTool): OpenAI.Chat.Completions.ChatCompletionTool 
 export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const {
     model: modelOpt,
+    forceModel,
     tools: initialTools,
     context,
     maxTurns = 6,
@@ -279,7 +286,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const toolToIntegrationKey = new Map<string, string[]>();
 
   const { getModel, getSelectedModelPreference } = await import("../lib/modelPrefs");
-  const selectedModel = await getSelectedModelPreference(context.userId);
+  const selectedModel = forceModel ? null : await getSelectedModelPreference(context.userId);
   const model = resolveRuntimeAgentModel(selectedModel ?? modelOpt ?? (await getModel(context.userId, "chat")));
 
   const channel = context.channel || "Agent";

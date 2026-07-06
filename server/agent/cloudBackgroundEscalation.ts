@@ -185,6 +185,7 @@ const CLOUD_ESCALATION_REASONS = new Set([
 ]);
 
 const LOCAL_PROVIDER_IDS = new Set(["local-llama", "android-local-gemma"]);
+export const CLOUD_BACKGROUND_MODEL_STEP_ESTIMATE_USD = 0.05;
 
 function compact(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -221,6 +222,34 @@ export function getDefaultCloudBackgroundModel(provider: Pick<CloudBackgroundPro
   if (provider.id === "anthropic") return "anthropic/claude-sonnet-4-5";
   if (provider.id === "google") return "google/gemini-2.5-flash";
   return CODEX_OAUTH_MODEL;
+}
+
+export function nextCloudBackgroundModelStepBudgetCheckpoint(input: {
+  jobId: string;
+  task: ValidatedCloudBackgroundJobInput;
+  spentUsd: number;
+  partialSummary?: string | null;
+  actions?: string[];
+}): CloudBackgroundBudgetCheckpoint | null {
+  if (input.task.providerAuthType !== "api_key") return null;
+  return checkCloudBackgroundBudget({
+    jobId: input.jobId,
+    providerId: input.task.providerId,
+    spentUsd: input.spentUsd,
+    budgetUsd: input.task.budgetUsd,
+    nextEstimatedUsd: CLOUD_BACKGROUND_MODEL_STEP_ESTIMATE_USD,
+    partialSummary: input.partialSummary,
+    actions: input.actions,
+  });
+}
+
+export function maxCloudBackgroundModelTurnsForBudget(
+  budgetUsd: number | null,
+  defaultMaxTurns: number,
+): number {
+  if (budgetUsd === null) return defaultMaxTurns;
+  const affordableTurns = Math.floor(budgetUsd / CLOUD_BACKGROUND_MODEL_STEP_ESTIMATE_USD);
+  return Math.max(1, Math.min(defaultMaxTurns, affordableTurns));
 }
 
 export function shouldOfferCloudBackgroundEscalation(reason: CloudBackgroundEscalationReason): boolean {
@@ -423,7 +452,7 @@ export function checkCloudBackgroundBudget(
   const budgetUsd = budgetValue(input.budgetUsd);
   const nextEstimatedUsd = moneyValue(input.nextEstimatedUsd);
   const remainingUsd = budgetUsd == null ? null : Math.max(0, Math.round((budgetUsd - spentUsd) * 100) / 100);
-  const shouldStopBeforeNextStep = budgetUsd != null && spentUsd + nextEstimatedUsd >= budgetUsd;
+  const shouldStopBeforeNextStep = budgetUsd != null && spentUsd + nextEstimatedUsd > budgetUsd;
 
   if (!shouldStopBeforeNextStep) {
     return {

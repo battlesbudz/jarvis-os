@@ -15,6 +15,14 @@ async function main() {
     fileURLToPath(new URL("../jobQueue.ts", import.meta.url).toString()),
     "utf8",
   );
+  const subagentsSource = readFileSync(
+    fileURLToPath(new URL("../subagents.ts", import.meta.url).toString()),
+    "utf8",
+  );
+  const harnessSource = readFileSync(
+    fileURLToPath(new URL("../harness.ts", import.meta.url).toString()),
+    "utf8",
+  );
 
   {
     assert.match(queueToolSource, /one-off scoped worker/i);
@@ -96,7 +104,14 @@ async function main() {
   {
     assert.match(jobQueueSource, /validateCloudBackgroundJobInput\(jobInput\)/);
     assert.match(jobQueueSource, /cloudBackgroundValidation\.model/);
+    assert.match(jobQueueSource, /forceModel: cloudBackgroundValidation\?\.ok === true/);
+    assert.match(jobQueueSource, /maxCloudBackgroundModelTurnsForBudget/);
+    assert.match(jobQueueSource, /reserveCloudBackgroundModelStep/);
     assert.match(jobQueueSource, /failJob\(job\.id, cloudBackgroundValidation\.message/);
+    assert.match(queueToolSource, /CLOUD_BACKGROUND_AGENT_TYPES/);
+    assert.match(queueToolSource, /Cloud background job type unsupported/);
+    assert.match(subagentsSource, /forceModel: opts\.forceModel/);
+    assert.match(harnessSource, /forceModel \? null : await getSelectedModelPreference/);
     console.log("OK: job queue validates cloud task provider and budget before worker execution");
   }
 

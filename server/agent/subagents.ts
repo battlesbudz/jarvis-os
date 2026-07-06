@@ -210,6 +210,13 @@ export interface RunSubAgentOptions {
    */
   model?: string;
   /**
+   * Force the model override even when the user has a global selected model.
+   * Used for task-scoped cloud approvals.
+   */
+  forceModel?: boolean;
+  /** Optional caller cap for model/tool turns. Clamped to the agent spec max. */
+  maxTurns?: number;
+  /**
    * Additional system prompt text appended after the base agent prompt.
    * Used by custom user-defined agents to inject specialization context
    * without replacing the base prompt.
@@ -288,13 +295,14 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
 
   const result = await runAgent({
     model: subAgentModel,
+    forceModel: opts.forceModel,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: opts.prompt },
     ],
     tools,
     context: opts.context,
-    maxTurns: spec.maxTurns,
+    maxTurns: opts.maxTurns ? Math.max(1, Math.min(opts.maxTurns, spec.maxTurns)) : spec.maxTurns,
     maxCompletionTokens: 1200,
     onBeforeTool: async (toolName, toolArgs) => {
       const result = await toolCallHooks.run({
