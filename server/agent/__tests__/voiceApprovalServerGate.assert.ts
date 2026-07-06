@@ -39,6 +39,18 @@ assert.equal(
 );
 
 assert.equal(
+  isAndroidSubmitCapableAction("android_tap_screen", { x: 540, y: 1800 }, "Complete checkout"),
+  true,
+  "checkout taps should require confirmation",
+);
+
+assert.equal(
+  isAndroidSubmitCapableAction("android_press_phone_key", { key: "enter" }, "Check out now"),
+  true,
+  "checkout submit keys should require confirmation",
+);
+
+assert.equal(
   isAndroidSubmitCapableAction("android_tap_screen", { x: 120, y: 340 }, "Tap the search field"),
   false,
   "ordinary navigation taps should remain low risk",

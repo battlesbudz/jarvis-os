@@ -7,6 +7,18 @@ type ScreenshotEntry = {
   expires: number;
 };
 
+type PendingCoachResponseExecutedAction = {
+  tool: string;
+  result: "success" | "error";
+  label: string;
+  detail?: string;
+};
+
+type PendingCoachResponseOptions = {
+  clearPendingConfirmationToken?: string;
+  executedAction?: PendingCoachResponseExecutedAction;
+};
+
 const screenshotStore = new Map<string, ScreenshotEntry>();
 
 const screenshotCleanupInterval = setInterval(() => {
@@ -25,12 +37,19 @@ export function storeDaemonScreenshot(id: string, data: Buffer, ttlMs = 30 * 60 
   screenshotStore.set(id, { data, expires: Date.now() + ttlMs });
 }
 
-export async function savePendingCoachResponse(userId: string, text: string, screenshotUrl?: string): Promise<void> {
+export async function savePendingCoachResponse(
+  userId: string,
+  text: string,
+  screenshotUrl?: string,
+  options: PendingCoachResponseOptions = {},
+): Promise<void> {
   const id = `pr-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq(userPreferences.userId, userId));
   const prefs = (rows[0]?.data as any) || {};
   const payload: any = { id, text, createdAt: Date.now() };
   if (screenshotUrl) payload.screenshotUrl = screenshotUrl;
+  if (options.clearPendingConfirmationToken) payload.clearPendingConfirmationToken = options.clearPendingConfirmationToken;
+  if (options.executedAction) payload.executedAction = options.executedAction;
   await db.insert(userPreferences).values({ userId, data: { ...prefs, pendingResponse: payload } })
     .onConflictDoUpdate({ target: userPreferences.userId, set: { data: { ...prefs, pendingResponse: payload } } });
 }
@@ -39,6 +58,8 @@ export async function consumePendingCoachResponse(userId: string): Promise<{
   id?: string;
   text: string | null;
   screenshotUrl?: string | null;
+  clearPendingConfirmationToken?: string | null;
+  executedAction?: PendingCoachResponseExecutedAction | null;
 }> {
   const rows = await db.select({ data: userPreferences.data }).from(userPreferences).where(eq(userPreferences.userId, userId));
   const prefs = (rows[0]?.data as any) || {};
@@ -47,7 +68,13 @@ export async function consumePendingCoachResponse(userId: string): Promise<{
   if (pending && pending.createdAt && (Date.now() - pending.createdAt) < oneHour && pending.text) {
     const updated = { ...prefs, pendingResponse: null };
     await db.update(userPreferences).set({ data: updated }).where(eq(userPreferences.userId, userId));
-    return { id: pending.id, text: pending.text, screenshotUrl: pending.screenshotUrl || null };
+    return {
+      id: pending.id,
+      text: pending.text,
+      screenshotUrl: pending.screenshotUrl || null,
+      clearPendingConfirmationToken: pending.clearPendingConfirmationToken || null,
+      executedAction: pending.executedAction || null,
+    };
   }
   return { text: null };
 }

@@ -1,7 +1,7 @@
 type AndroidSubmitGateArgs = Record<string, unknown> | null | undefined;
 
 const ANDROID_EXTERNAL_BOUNDARY_PATTERN =
-  /\b(send|reply|respond|post|publish|comment|share|pay|purchase|buy|order|transfer|withdraw|subscribe|submit|save|apply|authorize|confirm|delete|remove|clear|erase|destroy|wipe|book|schedule|reschedule|cancel|connect|disconnect|log in|login|sign in|sign out|logout|password|account)\b/i;
+  /\b(send|reply|respond|post|publish|comment|share|pay|purchase|buy|order|checkout|check[ -]?out|transfer|withdraw|subscribe|submit|save|apply|authorize|confirm|delete|remove|clear|erase|destroy|wipe|book|schedule|reschedule|cancel|connect|disconnect|log in|login|sign in|sign out|logout|password|account)\b/i;
 
 const SUBMIT_KEYS = new Set(["enter", "search", "go", "send", "done"]);
 const HIGH_RISK_ANDROID_ACTIONS = new Set([

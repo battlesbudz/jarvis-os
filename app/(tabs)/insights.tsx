@@ -2289,23 +2289,51 @@ export default function InsightsScreen() {
       const pendingUrl = new URL('/api/coach/pending-response', getApiUrl());
       const pendingRes = await authFetch(pendingUrl.toString());
       const pendingData = await pendingRes.json();
-      if (pendingData.text && pendingData.id) {
+      if ((pendingData.text && pendingData.id) || pendingData.clearPendingConfirmationToken) {
         setMessages(prev => {
+          const clearToken = typeof pendingData.clearPendingConfirmationToken === 'string'
+            ? pendingData.clearPendingConfirmationToken
+            : null;
+          const executedAction = pendingData.executedAction && typeof pendingData.executedAction === 'object'
+            ? pendingData.executedAction as ExecutedAction
+            : null;
+          let matchedConfirmation = false;
+          let changed = false;
+          let next = prev;
+
+          if (clearToken) {
+            next = next.map(message => {
+              if (message.pendingConfirm?.token !== clearToken) return message;
+              matchedConfirmation = true;
+              changed = true;
+              return {
+                ...message,
+                pendingConfirm: undefined,
+                content: pendingData.text || 'That action was already handled outside the app.',
+                ...(executedAction ? { executedActions: [executedAction] } : {}),
+              };
+            });
+          }
+
           // Already in chat? Skip
-          if (prev.some(m => m.id === pendingData.id)) return prev;
-          const pendingMsg: ChatMessage = {
-            id: pendingData.id,
-            role: 'assistant',
-            content: pendingData.text,
-            // If the task that triggered this pending response took a screenshot,
-            // include it as an executedAction so the image renders inline.
-            ...(pendingData.screenshotUrl ? {
-              executedActions: [{ tool: 'daemon_action', result: 'success', label: 'Temporary screen capture', screenshotUrl: pendingData.screenshotUrl }]
-            } : {}),
-          };
-          const updated = [pendingMsg, ...prev];
-          persistChatHistory(updated);
-          return updated;
+          if (pendingData.text && pendingData.id && !matchedConfirmation && !next.some(m => m.id === pendingData.id)) {
+            const pendingMsg: ChatMessage = {
+              id: pendingData.id,
+              role: 'assistant',
+              content: pendingData.text,
+              // If the task that triggered this pending response took a screenshot,
+              // include it as an executedAction so the image renders inline.
+              ...(pendingData.screenshotUrl ? {
+                executedActions: [{ tool: 'daemon_action', result: 'success', label: 'Temporary screen capture', screenshotUrl: pendingData.screenshotUrl }]
+              } : {}),
+            };
+            next = [pendingMsg, ...next];
+            changed = true;
+          }
+
+          if (!changed) return prev;
+          persistChatHistory(next);
+          return next;
         });
       }
     } catch {}

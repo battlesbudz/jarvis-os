@@ -2832,19 +2832,48 @@ You can extend yourself by building new tools directly. Generate the complete Ty
   registerCoachSessionRoutes(app, openai);
 
   setDaemonVoiceApprovalHandler(async ({ userId, token, approved }) => {
+    const saveApprovalOutcome = async (text: string, executedAction?: { tool: string; result: "success" | "error"; label: string; detail?: string }) => {
+      await savePendingCoachResponse(userId, text, undefined, {
+        clearPendingConfirmationToken: token,
+        executedAction,
+      });
+    };
     try {
       if (approved) {
-        await executePendingCoachAction({
-          pendingConfirmations,
-          executeCoachTool,
-          userId,
-          token,
-        });
+        const pending = pendingConfirmations.get(token);
+        try {
+          const execResult = await executePendingCoachAction({
+            pendingConfirmations,
+            executeCoachTool,
+            userId,
+            token,
+          });
+          const resultText = execResult.result === "success"
+            ? `${execResult.label || "Action"} completed successfully.`
+            : `${execResult.label || "Action"} failed: ${execResult.detail || "Unknown error"}`;
+          await saveApprovalOutcome(resultText, {
+            tool: pending?.tool || "confirmed_action",
+            result: execResult.result === "success" ? "success" : "error",
+            label: execResult.label || (execResult.result === "success" ? "Done" : "Failed"),
+            detail: execResult.detail,
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          await saveApprovalOutcome("That action could not be completed. The approval may have expired.", {
+            tool: pending?.tool || "confirmed_action",
+            result: "error",
+            label: "Action failed",
+            detail,
+          });
+        }
         return;
       }
       const pending = pendingConfirmations.get(token);
       if (pending?.userId === userId) {
         pendingConfirmations.delete(token);
+        await saveApprovalOutcome("Got it - I won't proceed with that action.");
+      } else {
+        await saveApprovalOutcome("That approval is no longer active, so I did not run the action.");
       }
     } finally {
       await sendDaemonOp(userId, { type: "voice_set_outside_app_state", state: "listening" }, 5000).catch((err) => {

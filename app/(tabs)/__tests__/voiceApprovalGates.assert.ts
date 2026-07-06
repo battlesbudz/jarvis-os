@@ -15,6 +15,12 @@ assert.ok(
   "outside-app overlay approval events should target pending confirmations by token",
 );
 assert.ok(
+  insightsSource.includes("pendingData.clearPendingConfirmationToken") &&
+    insightsSource.includes("message.pendingConfirm?.token !== clearToken") &&
+    insightsSource.includes("pendingConfirm: undefined"),
+  "server-handled overlay approvals should clear matching saved confirmation cards on app resume",
+);
+assert.ok(
   insightsSource.includes("confirmActionRef.current(pendingVoiceConfirmMessage.id, approved"),
   "foreground overlay approval events should execute the pending confirmation handler",
 );
