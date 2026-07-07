@@ -243,6 +243,12 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         .update(schema.deliverables)
         .set({ status: "rejected", actedAt: new Date() })
         .where(eq(schema.deliverables.id, id));
+      if (d.jobId) {
+        await db
+          .update(schema.agentJobs)
+          .set({ status: "delivered" })
+          .where(and(eq(schema.agentJobs.id, d.jobId), eq(schema.agentJobs.status, "complete")));
+      }
       res.json({ ok: true, continuation });
     } catch (err) {
       console.error("Error rejecting deliverable:", err);
