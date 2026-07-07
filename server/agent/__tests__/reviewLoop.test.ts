@@ -183,8 +183,7 @@ import {
   assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "revise").allowed, true);
   assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "discard").allowed, true);
   assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "save_to_drive").allowed, true);
-  assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "reject").allowed, false);
-  assert.match(getDeliverableReviewActionPolicy(normalDeliverable, "reject").reason ?? "", /approval requests/i);
+  assert.equal(getDeliverableReviewActionPolicy(normalDeliverable, "reject").allowed, true);
 }
 
 {
@@ -209,6 +208,8 @@ import {
   assert.equal(getDeliverableReviewActionPolicy(approvedDeliverable, "revise").allowed, false);
   assert.equal(getDeliverableReviewActionPolicy(approvedDeliverable, "discard").allowed, false);
   assert.equal(getDeliverableReviewActionPolicy(approvedDeliverable, "save_to_drive").allowed, true);
+  assert.equal(getDeliverableReviewActionPolicy(approvedDeliverable, "reject").allowed, false);
+  assert.match(getDeliverableReviewActionPolicy(approvedDeliverable, "reject").reason ?? "", /only pending/i);
 }
 
 console.log("All autonomy review loop assertions passed.");

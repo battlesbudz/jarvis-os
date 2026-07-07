@@ -17,6 +17,7 @@ import {
   ANDROID_PHONE_RUNTIME_TOOL_NAMES,
 } from "../androidPhoneRuntimeToolNames";
 import {
+  extractAndroidNotificationsFromScreenContext,
   formatAndroidNotificationsInOrder,
   summarizeAndroidNotificationDetail,
 } from "../androidNotificationSummary";
@@ -106,10 +107,12 @@ function compactRuntimeObservationText(value: unknown, maxChars = 5_000): string
 
 function observationDetailFromOutcome(outcome: RuntimeOutcome): string {
   const userSummary = compactRuntimeObservationText(outcome.detail.userFacingSummary, 1_500);
-  const screenContext = compactRuntimeObservationText(outcome.detail.screenContext, 3_500);
   const notifications = Array.isArray(outcome.detail.notifications)
     ? compactRuntimeObservationText(formatAndroidNotificationsInOrder(outcome.detail.notifications), 3_500)
     : "";
+  const screenContext = notifications
+    ? ""
+    : compactRuntimeObservationText(outcome.detail.screenContext, 3_500);
   const screenshotUrl = compactRuntimeObservationText(outcome.detail.screenshotUrl, 500);
   return [userSummary, screenContext, notifications, screenshotUrl].filter(Boolean).join("\n");
 }
@@ -630,16 +633,29 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
   if (!shadeReadResult.ok) {
     return { ok: false, label: "Could not read notification shade", detail: { error: shadeReadResult.error || "android_read_screen failed" } };
   }
+  const shadeNotifications = extractAndroidNotificationsFromScreenContext(shadeReadResult.data);
   const shadeDetail = {
     source: "notification_shade_accessibility_tree",
     screenContext: compactScreenContext(shadeReadResult.data, 5000),
   };
+  if (shadeNotifications.length > 0) {
+    recordAndroidVoiceNotificationObservation(userId, shadeNotifications);
+  } else {
+    clearAndroidVoiceNotificationObservation(userId);
+  }
+  const notificationDetail = shadeNotifications.length > 0
+    ? { notifications: shadeNotifications }
+    : {};
   const outcome = {
     ok: true,
     label: "Notification shade read",
     detail: {
       ...shadeDetail,
-      userFacingSummary: summarizeAndroidNotificationDetail(shadeDetail),
+      ...notificationDetail,
+      userFacingSummary: summarizeAndroidNotificationDetail({
+        ...shadeDetail,
+        ...notificationDetail,
+      }),
     },
   };
   await recordAndroidOutcomeObservation(userId, "notifications", outcome);

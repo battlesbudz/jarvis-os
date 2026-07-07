@@ -270,9 +270,10 @@ export function getDeliverableReviewActionPolicy(
   }
 
   if (action === "reject") {
+    if (isPending) return { allowed: true };
     return {
       allowed: false,
-      reason: "Decline is only available for approval requests.",
+      reason: "Only pending deliverables can be declined.",
     };
   }
 

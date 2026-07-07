@@ -257,6 +257,7 @@ async function main() {
                 "Life360 - Justin arrived Home",
                 "Codex - PR review finished",
               ],
+              clickable: Array.from({ length: 400 }, (_, index) => `debug node ${index}`),
             },
           };
         }
@@ -274,21 +275,28 @@ async function main() {
       "android_press_key",
     ]);
     const accessibilitySummary = summarizeAndroidNotificationDetail(accessibilityResult.detail);
-    assert.match(accessibilitySummary, /notification shade/i);
     assert.match(accessibilitySummary, /Life360/);
     assert.match(accessibilitySummary, /Codex/);
+    assert.doesNotMatch(accessibilitySummary, /visibleText|android_read_screen|\{/);
     assert.equal(accessibilityObservations.length, 1);
     assert.equal(accessibilityObservations[0]?.kind, "notifications");
     assert.match(accessibilityObservations[0]?.detail ?? "", /Codex/);
-    assert.deepEqual(accessibilityVoiceNotificationObservations, []);
+    assert.doesNotMatch(accessibilityObservations[0]?.detail ?? "", /visibleText/);
+    assert.equal(accessibilityVoiceNotificationObservations.length, 1);
+    assert.match(JSON.stringify(accessibilityVoiceNotificationObservations[0]), /Life360/);
+    assert.match(JSON.stringify(accessibilityVoiceNotificationObservations[0]), /Codex/);
     assert.deepEqual(accessibilityVoiceNotificationClears, ["user-phone"]);
 
     const failedListenerOps: string[] = [];
     const failedListenerVoiceNotificationClears: string[] = [];
+    const failedListenerVoiceNotificationObservations: unknown[][] = [];
     _setAndroidAppRuntimeDepsForTesting({
       isAndroidDaemonActive: () => true,
       isAndroidDaemonActionAllowed: async () => true,
       recordLocalRuntimeObservation: async () => ({} as never),
+      recordVoiceNotificationObservation: (_userId, notifications) => {
+        failedListenerVoiceNotificationObservations.push(notifications);
+      },
       clearVoiceNotificationObservation: (userId) => {
         failedListenerVoiceNotificationClears.push(userId);
       },
@@ -306,6 +314,7 @@ async function main() {
                 "Notifications",
                 "Bank - Card charge approved",
               ],
+              clickable: Array.from({ length: 400 }, (_, index) => `debug node ${index}`),
             },
           };
         }
@@ -317,12 +326,53 @@ async function main() {
     assert.equal(failedListenerResult.ok, true);
     assert.equal(failedListenerResult.detail.source, "notification_shade_accessibility_tree");
     assert.deepEqual(failedListenerVoiceNotificationClears, ["user-phone"]);
+    assert.equal(failedListenerVoiceNotificationObservations.length, 1);
+    assert.match(JSON.stringify(failedListenerVoiceNotificationObservations[0]), /Bank/);
+    assert.match(summarizeAndroidNotificationDetail(failedListenerResult.detail), /Bank/);
     assert.deepEqual(failedListenerOps.slice(0, 4), [
       "android_notifications_list",
       "android_swipe",
       "android_read_screen",
       "android_press_key",
     ]);
+
+    const unreadableShadeVoiceNotificationObservations: unknown[][] = [];
+    const unreadableShadeVoiceNotificationClears: string[] = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      recordLocalRuntimeObservation: async () => ({} as never),
+      recordVoiceNotificationObservation: (_userId, notifications) => {
+        unreadableShadeVoiceNotificationObservations.push(notifications);
+      },
+      clearVoiceNotificationObservation: (userId) => {
+        unreadableShadeVoiceNotificationClears.push(userId);
+      },
+      sendDaemonOp: async (_userId, op) => {
+        if (op.type === "android_notifications_list") {
+          return { ok: true, data: { listenerEnabled: false, notifications: [] } };
+        }
+        if (op.type === "android_swipe") return { ok: true, data: { swiped: true } };
+        if (op.type === "android_read_screen") {
+          return {
+            ok: true,
+            data: {
+              visibleText: ["Notifications", "Expand"],
+              clickable: Array.from({ length: 400 }, (_, index) => `debug node ${index}`),
+            },
+          };
+        }
+        if (op.type === "android_press_key") return { ok: true, data: { pressed: "back" } };
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const unreadableShadeResult = await runAndroidReadNotifications({}, "user-phone");
+    assert.equal(unreadableShadeResult.ok, true);
+    assert.equal(Array.isArray(unreadableShadeResult.detail.notifications), false);
+    assert.match(summarizeAndroidNotificationDetail(unreadableShadeResult.detail), /could not find readable notification entries/i);
+    assert.doesNotMatch(summarizeAndroidNotificationDetail(unreadableShadeResult.detail), /no current notifications/i);
+    assert.deepEqual(unreadableShadeVoiceNotificationObservations, []);
+    assert.deepEqual(unreadableShadeVoiceNotificationClears, ["user-phone", "user-phone"]);
 
     const youtubeOps: string[] = [];
     const youtubeObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];

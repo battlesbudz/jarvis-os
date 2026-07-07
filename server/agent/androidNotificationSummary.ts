@@ -10,6 +10,127 @@ export interface AndroidNotificationSummaryEntry {
   priority: "important" | "normal";
 }
 
+const SHADE_STATUS_TEXT = new Set([
+  "alarm",
+  "at&t",
+  "bluetooth on.",
+  "bluetooth on",
+  "connected",
+  "expand",
+  "nfc on",
+  "notifications",
+]);
+
+function normalizedText(value: unknown): string {
+  return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+}
+
+function isNotificationTimeToken(value: string): boolean {
+  return /^\d{1,2}:\d{2}\s?(?:AM|PM)?$/i.test(value);
+}
+
+function isShadeDateOrStatus(value: string): boolean {
+  const text = value.trim();
+  const lower = text.toLowerCase();
+  return !text ||
+    SHADE_STATUS_TEXT.has(lower) ||
+    /^battery\s+\d+\s*percent\.?$/i.test(text) ||
+    /^[a-z]+,\s+[a-z]+\s+\d{1,2}$/i.test(text) ||
+    /^applications are using your location\.?$/i.test(text) ||
+    /^[a-z0-9 .&'-]+,\s+(?:one|two|three|four|five)\s+bars\.?$/i.test(text);
+}
+
+function screenContextTextItems(screenContext: unknown): string[] {
+  if (screenContext && typeof screenContext === "object" && !Array.isArray(screenContext)) {
+    const data = screenContext as Record<string, unknown>;
+    if (Array.isArray(data.text)) return data.text.map(normalizedText).filter(Boolean);
+    if (Array.isArray(data.visibleText)) return data.visibleText.map(normalizedText).filter(Boolean);
+  }
+  const trimmed = normalizedText(screenContext);
+  if (!trimmed) return [];
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    if (Array.isArray(parsed.text)) return parsed.text.map(normalizedText).filter(Boolean);
+    if (Array.isArray(parsed.visibleText)) return parsed.visibleText.map(normalizedText).filter(Boolean);
+  } catch {
+    // Fall through to line parsing below.
+  }
+  return trimmed
+    .split(/\r?\n/)
+    .map(normalizedText)
+    .filter(Boolean);
+}
+
+function notificationEntryKey(entry: Pick<AndroidNotificationSummaryEntry, "app" | "title" | "text">): string {
+  return `${entry.app}\u0000${entry.title}\u0000${entry.text}`.toLowerCase();
+}
+
+function titleFromShadeBody(value: string): { title: string; text: string } {
+  const [title, ...rest] = value.split(/\s+-\s+|\s+\u2014\s+|\s+:\s+/);
+  if (rest.length === 0) return { title: value, text: "" };
+  return { title: title.trim(), text: rest.join(": ").trim() };
+}
+
+function appAndTitleFromDashLine(value: string): { app: string; title: string; text: string } | null {
+  const match = value.match(/^([A-Za-z][A-Za-z0-9 .&'_()-]{1,40})\s+-\s+(.{2,180})$/);
+  if (!match) return null;
+  const app = match[1]?.trim() ?? "";
+  const body = match[2]?.trim() ?? "";
+  if (!app || !body || isShadeDateOrStatus(app)) return null;
+  const { title, text } = titleFromShadeBody(body);
+  return { app, title, text };
+}
+
+export function extractAndroidNotificationsFromScreenContext(screenContext: unknown): AndroidNotificationSummaryEntry[] {
+  const items = screenContextTextItems(screenContext);
+  const rawEntries: Array<{ app: string; title: string; text: string; ts?: number }> = [];
+
+  for (const item of items) {
+    const dashEntry = appAndTitleFromDashLine(item);
+    if (dashEntry) rawEntries.push(dashEntry);
+  }
+
+  let lastApp = "";
+  let lastTimeIndex = -1;
+  for (let index = 0; index < items.length; index += 1) {
+    const timeToken = items[index] ?? "";
+    if (!isNotificationTimeToken(timeToken)) continue;
+
+    const previousTimeIndex = lastTimeIndex;
+    lastTimeIndex = index;
+    const appCandidates = items
+      .slice(previousTimeIndex + 1, index)
+      .filter((candidate) => !isNotificationTimeToken(candidate) && !isShadeDateOrStatus(candidate));
+    const app = appCandidates.length === 1 && lastApp
+      ? lastApp
+      : appCandidates[appCandidates.length - 1] ?? lastApp;
+
+    let body = "";
+    for (let bodyIndex = index + 1; bodyIndex < items.length; bodyIndex += 1) {
+      const candidate = items[bodyIndex] ?? "";
+      if (isNotificationTimeToken(candidate)) break;
+      if (isShadeDateOrStatus(candidate)) continue;
+      body = candidate;
+      break;
+    }
+
+    if (!app || !body || isShadeDateOrStatus(app)) continue;
+    const { title, text } = titleFromShadeBody(body);
+    rawEntries.push({ app, title, text });
+    lastApp = app;
+  }
+
+  const seen = new Set<string>();
+  return normalizeAndroidNotifications(rawEntries)
+    .filter((entry) => {
+      const key = notificationEntryKey(entry);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return Boolean(entry.app && (entry.title || entry.text));
+    })
+    .slice(0, 20);
+}
+
 function relativeNotificationAge(ts: unknown): string {
   if (typeof ts !== "number" || !Number.isFinite(ts)) return "";
   const diffMs = Math.max(0, Date.now() - ts);
@@ -197,18 +318,30 @@ export function summarizeAndroidNotificationDetail(detail: unknown): string {
   const explicitSummary = typeof data.userFacingSummary === "string" ? data.userFacingSummary.trim() : "";
   if (explicitSummary) return explicitSummary;
 
+  const source = typeof data.source === "string" ? data.source.trim() : "";
+  const screenContext = typeof data.screenContext === "string" ? data.screenContext.trim() : "";
   const notifications = Array.isArray(data.notifications) ? data.notifications : [];
   if (notifications.length > 0) {
     return summarizeAndroidNotifications(notifications);
   }
 
   if (Array.isArray(data.notifications) && notifications.length === 0) {
+    if (source === "notification_shade_accessibility_tree") {
+      if (screenContext) {
+        const shadeNotifications = extractAndroidNotificationsFromScreenContext(screenContext);
+        if (shadeNotifications.length > 0) return summarizeAndroidNotifications(shadeNotifications);
+      }
+      return "I read your notification shade through Android accessibility, but I could not find readable notification entries.";
+    }
     return "I checked your Android notifications. There are no current notifications.";
   }
 
-  const screenContext = typeof data.screenContext === "string" ? data.screenContext.trim() : "";
   if (screenContext) {
-    return `I read your notification shade through Android accessibility. Here's what I can see:\n${screenContext}`;
+    const shadeNotifications = extractAndroidNotificationsFromScreenContext(screenContext);
+    if (shadeNotifications.length > 0) {
+      return summarizeAndroidNotifications(shadeNotifications);
+    }
+    return "I read your notification shade through Android accessibility, but I could not find readable notification entries.";
   }
 
   const error = typeof data.error === "string" ? data.error.trim() : "";

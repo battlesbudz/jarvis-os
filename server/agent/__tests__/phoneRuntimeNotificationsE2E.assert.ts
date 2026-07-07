@@ -21,6 +21,7 @@ async function main() {
     isPhoneRuntimeCoveredRequest,
   } = await import("../phoneRuntimeRouting");
   const { resolveAndroidNotificationFollowUp } = await import("../androidNotificationFollowups");
+  const { extractAndroidNotificationsFromScreenContext } = await import("../androidNotificationSummary");
 
   const phoneTools = [
     chatTool("android_open_app"),
@@ -114,6 +115,61 @@ async function main() {
     null,
     "model-selected notification tool calls must not short-circuit the multi-tool loop",
   );
+
+  const shadeScreenContext = JSON.stringify({
+    package: "com.android.systemui",
+    activity: "android.widget.FrameLayout",
+    text: [
+      "AT&T",
+      "Bluetooth on.",
+      "NFC on",
+      "Alarm",
+      "Battery 20 percent.",
+      "Applications are using your location.",
+      "Remote",
+      "3:33 AM",
+      "Codex is working",
+      "Expand",
+      "Life360",
+      "3:16 AM",
+      "Turn off Battery Optimization",
+      "Jarvis app",
+      "3:15 AM",
+      "Connected to SM-F956U",
+    ],
+  });
+  const shadeSummary = deterministicAndroidToolSummary("android_read_notifications", {
+    result: "success",
+    label: "Notification shade read",
+    detail: JSON.stringify({
+      source: "notification_shade_accessibility_tree",
+      screenContext: shadeScreenContext,
+    }),
+  }, {
+    deterministicToolCall: true,
+  });
+  assert.match(shadeSummary ?? "", /Codex|Life360|Jarvis app/);
+  assert.doesNotMatch(shadeSummary ?? "", /com\.android\.systemui|"package"|\{"text"/);
+  const shadeNotifications = extractAndroidNotificationsFromScreenContext(shadeScreenContext);
+  assert.ok(shadeNotifications.length >= 2);
+  assert.match(JSON.stringify(shadeNotifications), /Codex is working/);
+  assert.doesNotMatch(JSON.stringify(shadeNotifications), /just now/);
+  const shadeFollowUpSummary = resolveAndroidNotificationFollowUp("Summarize this", shadeNotifications);
+  assert.equal(shadeFollowUpSummary?.kind, "summary");
+  assert.match(shadeFollowUpSummary?.response ?? "", /Codex|Life360|Jarvis app/);
+  const repeatedAppShadeNotifications = extractAndroidNotificationsFromScreenContext(JSON.stringify({
+    text: [
+      "Gmail",
+      "3:16 AM",
+      "Alice: First email",
+      "3:15 AM",
+      "Bob: Second email",
+    ],
+  }));
+  assert.equal(repeatedAppShadeNotifications.length, 2);
+  assert.equal(repeatedAppShadeNotifications[0]?.app, "Gmail");
+  assert.equal(repeatedAppShadeNotifications[1]?.app, "Gmail");
+  assert.doesNotMatch(JSON.stringify(repeatedAppShadeNotifications), /\"app\":\"Alice/);
 
   const followUpNotifications = [
     { app: "Gmail", pkg: "com.google.android.gm", title: "Reddit digest", text: "Trending posts from Reddit", ts: Date.now() },

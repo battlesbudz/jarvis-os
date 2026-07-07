@@ -211,6 +211,37 @@ async function run(): Promise<void> {
     );
     assert.equal(discardNormal.status, 200, "HTTP route allows discarding normal pending deliverables");
 
+    const [rejectJob] = await db
+      .insert(agentJobs)
+      .values({
+        userId: user.id,
+        agentType: "planning",
+        title: "Declined operating plan",
+        prompt: "Create a plan that the user may decline",
+        input: {},
+        status: "complete",
+      })
+      .returning();
+    const rejectNormal = await insertDeliverable(db, user.id, {
+      type: "document",
+      title: "Declinable operating plan",
+      body: "This plan should be declined.",
+      jobId: rejectJob.id,
+    });
+    const rejectNormalResponse = await requestJson(
+      port,
+      "POST",
+      `/api/deliverables/${rejectNormal.id}/reject`,
+      token,
+    );
+    assert.equal(rejectNormalResponse.status, 200, "HTTP route allows rejecting normal pending deliverables");
+    const [rejectJobAfter] = await db
+      .select({ status: agentJobs.status })
+      .from(agentJobs)
+      .where(eq(agentJobs.id, rejectJob.id))
+      .limit(1);
+    assert.equal(rejectJobAfter.status, "delivered", "reject route closes the linked complete job");
+
     const approvedDeliverable = await insertDeliverable(db, user.id, {
       type: "document",
       status: "approved",

@@ -81,8 +81,7 @@ async function run(): Promise<void> {
     }
 
     const rejectNormal = await loadDeliverableForReviewAction(db, user.id, normalDeliverable.id, "reject");
-    assert.equal(rejectNormal.ok, false, "normal deliverables reject decline action");
-    assert.match(rejectNormal.ok ? "" : rejectNormal.error, /approval requests/i);
+    assert.equal(rejectNormal.ok, true, "normal pending deliverables allow reject/decline action");
 
     const approvedDeliverable = await insertDeliverable(db, user.id, {
       type: "document",
@@ -94,6 +93,10 @@ async function run(): Promise<void> {
     const editApproved = await loadDeliverableForReviewAction(db, user.id, approvedDeliverable.id, "edit");
     assert.equal(editApproved.ok, false, "approved deliverables cannot be edited after review");
     assert.match(editApproved.ok ? "" : editApproved.error, /only pending/i);
+
+    const rejectApproved = await loadDeliverableForReviewAction(db, user.id, approvedDeliverable.id, "reject");
+    assert.equal(rejectApproved.ok, false, "approved deliverables cannot be declined after review");
+    assert.match(rejectApproved.ok ? "" : rejectApproved.error, /only pending/i);
 
     const saveApproved = await loadDeliverableForReviewAction(db, user.id, approvedDeliverable.id, "save_to_drive");
     assert.equal(saveApproved.ok, true, "approved normal deliverables can still be saved to Drive");
