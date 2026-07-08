@@ -21,7 +21,11 @@ async function main() {
     isPhoneRuntimeCoveredRequest,
   } = await import("../phoneRuntimeRouting");
   const { resolveAndroidNotificationFollowUp } = await import("../androidNotificationFollowups");
-  const { extractAndroidNotificationsFromScreenContext } = await import("../androidNotificationSummary");
+  const {
+    extractAndroidNotificationsFromScreenContext,
+    normalizeAndroidNotifications,
+    summarizeAndroidNotifications,
+  } = await import("../androidNotificationSummary");
 
   const phoneTools = [
     chatTool("android_open_app"),
@@ -246,6 +250,45 @@ async function main() {
   assert.equal(unrelatedItQuestion, null, "generic tell-me-about-it questions must not dump cached notifications");
   const notificationSummaryAgain = resolveAndroidNotificationFollowUp("Summarize those again", followUpNotifications);
   assert.equal(notificationSummaryAgain?.kind, "summary", "pronoun-anchored notification summaries should still work");
+  const spamRiskNotifications = [
+    { app: "Missed call", pkg: "com.samsung.android.dialer", title: "Spam Risk", text: "", ts: Date.now() },
+    { app: "Gmail", pkg: "com.google.android.gm", title: "Invoice due", text: "Invoice 123 is due tomorrow", ts: Date.now() },
+  ];
+  assert.equal(
+    normalizeAndroidNotifications(spamRiskNotifications)[0]?.priority,
+    "normal",
+    "Spam Risk missed calls must not be elevated as important notifications",
+  );
+  const spamRiskSummary = summarizeAndroidNotifications(spamRiskNotifications);
+  assert.doesNotMatch(spamRiskSummary, /important one is:\s*Missed call:\s*Spam Risk/i);
+  const fullFollowUpSummary = resolveAndroidNotificationFollowUp("Can you summarize all of them?", spamRiskNotifications);
+  assert.equal(fullFollowUpSummary?.kind, "summary");
+  assert.match(fullFollowUpSummary?.response ?? "", /found 2/i);
+  assert.match(fullFollowUpSummary?.response ?? "", /Spam Risk/);
+  assert.match(fullFollowUpSummary?.response ?? "", /Gmail/);
+  assert.doesNotMatch(fullFollowUpSummary?.response ?? "", /cannot summarize|restricted to/i);
+  const manyNotificationSummary = resolveAndroidNotificationFollowUp(
+    "Summarize all of them",
+    Array.from({ length: 14 }, (_, index) => ({
+      app: `App ${index + 1}`,
+      title: `Notice ${index + 1}`,
+      text: "",
+      ts: Date.now(),
+    })),
+  );
+  assert.match(manyNotificationSummary?.response ?? "", /App 14/);
+  assert.doesNotMatch(manyNotificationSummary?.response ?? "", /more beyond this summary/i);
+  const allHandsNamedSummary = resolveAndroidNotificationFollowUp(
+    "Summarize that All Hands notification",
+    Array.from({ length: 14 }, (_, index) => ({
+      app: index === 0 ? "Calendar" : `App ${index + 1}`,
+      title: index === 0 ? "All Hands" : `Notice ${index + 1}`,
+      text: index === 0 ? "Starts at 3 PM" : "",
+      ts: Date.now(),
+    })),
+  );
+  assert.equal(allHandsNamedSummary?.kind, "summary");
+  assert.doesNotMatch(allHandsNamedSummary?.response ?? "", /App 14/);
   const soleNotification = [
     { app: "Calendar", pkg: "com.google.android.calendar", title: "Team sync", text: "Starts in 5 minutes", ts: Date.now() },
   ];

@@ -150,6 +150,9 @@ function receivedAtAge(receivedAt: unknown): string {
 
 function notificationPriority(app: string, title: string, text: string): AndroidNotificationSummaryEntry["priority"] {
   const haystack = `${app} ${title} ${text}`;
+  if (/\b(?:spam risk|potential spam|suspected spam|scam likely|telemarketer|robocall)\b/i.test(haystack)) {
+    return "normal";
+  }
   return /\b(bank|budget|card|charge|fraud|invoice|payment|security|verification|code|due|overdue|limit|deadline|calendar|meeting|missed call|voicemail|urgent|alert)\b/i.test(haystack)
     ? "important"
     : "normal";
@@ -181,20 +184,30 @@ function spokenNotification(entry: AndroidNotificationSummaryEntry): string {
   return `${entry.app}${age}: ${title}${body}`;
 }
 
-export function summarizeAndroidNotifications(notifications: unknown[]): string {
+export function summarizeAndroidNotifications(
+  notifications: unknown[],
+  options: { includeAll?: boolean } = {},
+): string {
   const entries = normalizeAndroidNotifications(notifications);
   if (entries.length === 0) {
     return "I checked your Android notifications. There are no current notifications.";
   }
 
   const important = entries.filter((entry) => entry.priority === "important");
-  const lead = important.length > 0 ? important : entries;
-  const visible = lead.slice(0, 3).map(spokenNotification);
+  const lead = options.includeAll ? entries : important.length > 0 ? important : entries;
+  const visibleLimit = options.includeAll ? entries.length : 3;
+  const visible = lead.slice(0, visibleLimit).map(spokenNotification);
   const remainder = entries.length - visible.length;
-  const prefix = important.length > 0
+  const prefix = options.includeAll
+    ? `I checked your Android notifications and found ${entries.length}. They are`
+    : important.length > 0
     ? `I checked your Android notifications. The important ${important.length === 1 ? "one is" : "ones are"}`
     : `I checked your Android notifications and found ${entries.length}. The latest ${entries.length === 1 ? "one is" : "ones are"}`;
-  const suffix = remainder > 0 ? ` There ${remainder === 1 ? "is" : "are"} ${remainder} more if you want me to read all of them.` : "";
+  const suffix = remainder > 0
+    ? options.includeAll
+      ? ` There ${remainder === 1 ? "is" : "are"} ${remainder} more beyond this summary.`
+      : ` There ${remainder === 1 ? "is" : "are"} ${remainder} more if you want me to read all of them.`
+    : "";
   return `${prefix}: ${visible.join("; ")}.${suffix}`;
 }
 

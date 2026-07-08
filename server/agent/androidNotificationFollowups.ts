@@ -75,6 +75,13 @@ function wantsNotificationSummaryFollowUp(transcript: string): boolean {
     (hasExplicitSummaryVerb && /\b(?:that|this|those|these|them|it)\b/i.test(transcript));
 }
 
+function wantsFullNotificationSummary(transcript: string): boolean {
+  return /\b(?:all|everything|each|every one|every single one)\s+(?:of\s+)?(?:them|those|these|notifications?|alerts?)\b/i.test(transcript) ||
+    /\b(?:them|those|these)\s+all\b/i.test(transcript) ||
+    /\b(?:the\s+)?rest\b/i.test(transcript) ||
+    /\bevery\s+(?:notification|alert)\b/i.test(transcript);
+}
+
 function negatedNotificationCancellationAction(
   clause: string,
   notifications: unknown[],
@@ -190,5 +197,8 @@ export function resolveAndroidNotificationFollowUp(
     };
   }
 
-  return { kind: "summary", response: summarizeAndroidNotifications(notifications) };
+  return {
+    kind: "summary",
+    response: summarizeAndroidNotifications(notifications, { includeAll: wantsFullNotificationSummary(request.clause) }),
+  };
 }

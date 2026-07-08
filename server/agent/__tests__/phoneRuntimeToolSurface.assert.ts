@@ -37,6 +37,17 @@ assert.match(routingSource, /!options\.androidActive \|\| !options\.phoneRuntime
 assert.match(routesSource, /Routing notification request to Android Device Control/);
 assert.match(routesSource, /deterministicPhoneRuntimeToolCallFromRequest\(lastUserOrigText, modelRequestTools,[\s\S]*androidActive,[\s\S]*phoneRuntimeCoveredRequest/);
 assert.match(routesSource, /deterministicAndroidToolSummary\(tc\.function\.name, execResult,[\s\S]*deterministicToolCall:\s*deterministicToolCall\?\.id === tc\.id/);
+assert.match(routesSource, /getRecentNotificationObservation\(userId, 20\)/);
+assert.match(routesSource, /resolveAndroidNotificationFollowUp\(lastUserOrigText, recentNotificationObservation\)/);
+assert.match(routesSource, /appNotificationFollowUp\.kind === "summary"/);
+assert.match(routesSource, /previousTurnWasNotificationRead/);
+const previousTurnDetectorStart = routesSource.indexOf("const previousTurnWasNotificationRead");
+const previousTurnDetectorEnd = routesSource.indexOf("const currentHasNotificationAnchor", previousTurnDetectorStart);
+const previousTurnDetectorSource = routesSource.slice(previousTurnDetectorStart, previousTurnDetectorEnd);
+assert.match(previousTurnDetectorSource, /I checked your Android notifications/);
+assert.doesNotMatch(previousTurnDetectorSource, /notification shade/i);
+assert.match(routesSource, /canUseRecentNotificationObservation/);
+assert.match(routesSource, /recentNotificationObservation && canUseRecentNotificationObservation/);
 assert.match(routingSource, /function isYoutubeServerResearchRequest/);
 assert.match(routingSource, /function isYoutubePhoneActionRequest/);
 assert.match(routingSource, /function isMemoryPhoneBypassRequest/);

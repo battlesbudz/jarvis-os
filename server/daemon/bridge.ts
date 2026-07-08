@@ -165,6 +165,10 @@ function getRecentVoiceNotificationContext(userId: string, limit = 20): PhoneNot
   return context.notifications.slice(0, limit);
 }
 
+export function getRecentNotificationObservation(userId: string, limit = 20): PhoneNotification[] | null {
+  return getRecentVoiceNotificationContext(userId, limit);
+}
+
 interface PendingOp {
   resolve: (r: { ok: boolean; data?: unknown; error?: string }) => void;
   socket: WebSocket;
