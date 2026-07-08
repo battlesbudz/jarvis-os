@@ -76,7 +76,7 @@ import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoul
 import { buildUntrustedSoulContext, BUDGET_PRESETS } from "./memory/contextBuilder";
 import { containsRawRestrictedContent } from "./memory/restrictedContent";
 import { listPeople, deletePerson } from "./memory/people";
-import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getDaemonDeviceMeta, setDaemonVoiceApprovalHandler, type AndroidDaemonAction } from "./daemon/bridge";
+import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getRecentNotificationObservation, getDaemonDeviceMeta, setDaemonVoiceApprovalHandler, type AndroidDaemonAction } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
@@ -97,6 +97,7 @@ import {
   isYoutubePhoneRequest,
   isYoutubeServerResearchRequest,
 } from "./agent/phoneRuntimeRouting";
+import { resolveAndroidNotificationFollowUp } from "./agent/androidNotificationFollowups";
 import { parseNaturalTime, parseRecurringExpr } from "./agent/tools/cronTools";
 import { buildYouTubeContextBlock } from "./utils/youtubeAutoFetch";
 import { getPromptData, setPromptData } from "./coachSessionPromptCache";
@@ -1868,6 +1869,53 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       req.on('close', stopKeepalive);
 
       if (userId) {
+        const recentNotificationObservation = androidActive && !memoryPhoneBypassRequest
+          ? getRecentNotificationObservation(userId, 20)
+          : null;
+        const appNotificationFollowUp = recentNotificationObservation
+          ? resolveAndroidNotificationFollowUp(lastUserOrigText, recentNotificationObservation)
+          : null;
+        if (
+          appNotificationFollowUp &&
+          (appNotificationFollowUp.kind === "summary" || appNotificationFollowUp.kind === "read_all" || appNotificationFollowUp.kind === "read")
+        ) {
+          const responseText = appNotificationFollowUp.response;
+          openCoachSse(res);
+          res.write(`data: ${JSON.stringify({ content: responseText })}\n\n`);
+          try {
+            const { initSession, appendToSession } = await import("./agent/providers/sessionStore");
+            const COACH_APP_AGENT_ID = getCoachAppAgentId(userId);
+            let appSessionId: string | undefined;
+            if (incomingAppSessionId) {
+              await appendToSession(incomingAppSessionId, COACH_APP_AGENT_ID, userId, [
+                { role: "user" as const, content: lastUserOrigText },
+                { role: "assistant" as const, content: responseText },
+              ]).catch(() => {});
+              appSessionId = incomingAppSessionId;
+            } else {
+              appSessionId = await initSession(COACH_APP_AGENT_ID, userId, [...chatMessages, { role: "assistant" as const, content: responseText }]);
+              if (appSessionId && !cachedPromptData) {
+                setPromptData(userId, appSessionId, {
+                  resolvedGmailConnected, resolvedGmailItems, calendarEvents: resolvedCalendarEvents,
+                  userCommitments, memories, morningNoteSummary, documentsContext,
+                  proactiveQuestionContext, crossChannelContext,
+                  soulBlock, emotionalStateBlock, websiteContext,
+                });
+              }
+            }
+            if (appSessionId) {
+              res.write(`data: ${JSON.stringify({ type: "session_init", sdkSessionId: appSessionId })}\n\n`);
+            }
+          } catch { /* non-blocking - never break the response */ }
+          res.write('data: [DONE]\n\n');
+          res.end();
+          runCoachChatSideEffects(userId, messages, openai);
+          logInteraction(userId, "app_chat", "inbound", lastUserOrigText).catch(() => {});
+          logInteraction(userId, "app_chat", "outbound", responseText).catch(() => {});
+          cleanupRun();
+          return;
+        }
+
         // Multi-turn tool loop: allows the AI to chain sequential daemon ops
         // (e.g. android_browse → android_read_screen → respond) without each
         // needing its own user message. Without this loop the AI was forced to

@@ -37,6 +37,9 @@ assert.match(routingSource, /!options\.androidActive \|\| !options\.phoneRuntime
 assert.match(routesSource, /Routing notification request to Android Device Control/);
 assert.match(routesSource, /deterministicPhoneRuntimeToolCallFromRequest\(lastUserOrigText, modelRequestTools,[\s\S]*androidActive,[\s\S]*phoneRuntimeCoveredRequest/);
 assert.match(routesSource, /deterministicAndroidToolSummary\(tc\.function\.name, execResult,[\s\S]*deterministicToolCall:\s*deterministicToolCall\?\.id === tc\.id/);
+assert.match(routesSource, /getRecentNotificationObservation\(userId, 20\)/);
+assert.match(routesSource, /resolveAndroidNotificationFollowUp\(lastUserOrigText, recentNotificationObservation\)/);
+assert.match(routesSource, /appNotificationFollowUp\.kind === "summary"/);
 assert.match(routingSource, /function isYoutubeServerResearchRequest/);
 assert.match(routingSource, /function isYoutubePhoneActionRequest/);
 assert.match(routingSource, /function isMemoryPhoneBypassRequest/);
