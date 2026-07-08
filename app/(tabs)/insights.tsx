@@ -1378,7 +1378,7 @@ export default function InsightsScreen() {
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (/cancelled/i.test(message)) return;
-          throw error;
+          Alert.alert('Voice input failed', message || 'Android on-device speech recognition could not start.');
         } finally {
           nativeSpeechActiveRef.current = false;
           setIsRecording(false);
