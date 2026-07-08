@@ -1019,6 +1019,7 @@ export default function InsightsScreen() {
   const webChunksRef = useRef<Blob[]>([]);
   const sendMessageRef = useRef<(text: string, origin?: SendMessageOrigin) => void>(() => {});
   const confirmActionRef = useRef<VoiceConfirmAction>(() => Promise.resolve());
+  const inputRef = useRef('');
   const messagesRef = useRef<ChatMessage[]>([]);
   const pendingVoiceDiagnosticCopyRef = useRef(false);
   const hasScrolledRef = useRef(false);
@@ -1119,6 +1120,7 @@ export default function InsightsScreen() {
   useEffect(() => { statsRef.current = stats; }, [stats]);
   useEffect(() => { historyRef.current = history; }, [history]);
   useEffect(() => { lifeContextRef.current = lifeContext; }, [lifeContext]);
+  useEffect(() => { inputRef.current = input; }, [input]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   useEffect(() => {
@@ -1224,9 +1226,29 @@ export default function InsightsScreen() {
             });
           }, 80);
         } else {
-          // Regular mic tap: drop the transcript into the input so the user
-          // can review and edit before sending manually.
-          setInput(prev => prev.trim() ? prev.trimEnd() + ' ' + transcriptText : transcriptText);
+          const draftText = inputRef.current.trim();
+          const messageText = draftText ? `${draftText} ${transcriptText}` : transcriptText;
+          if (isStreamingRef.current) {
+            setInput(messageText);
+            return;
+          }
+          const now = new Date().toISOString();
+          sendMessageRef.current(messageText, {
+            source: 'voice',
+            voiceTrace: {
+              finalTranscript: transcriptText,
+              finishedAt: now,
+              stateTransitions: [
+                {
+                  state: 'transcription_complete',
+                  at: now,
+                  detail: draftText
+                    ? 'Chat mic transcript auto-sent with typed draft'
+                    : 'Chat mic transcript auto-sent',
+                },
+              ],
+            },
+          });
         }
       } else {
         setIsTranscribing(false);

@@ -465,7 +465,7 @@ class OutsideAppVoiceSessionService : Service() {
     private fun openJarvisIntent(): Intent {
         return Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
-            data = Uri.parse("jarvis://voice-realtime?source=outside_app")
+            data = Uri.parse("jarvis://insights?source=outside_app_voice")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         }
     }

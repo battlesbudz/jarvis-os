@@ -5,6 +5,12 @@ import {
   type LocalWorkerCapability,
 } from "./lib/localWorkerQueue";
 import type { CoachReplyInput, CoachReplyResult } from "./channels/coachAgent";
+import {
+  hasDirectOpenAIProvider as defaultHasDirectOpenAIProvider,
+  isDirectOpenAIDisabled as defaultIsDirectOpenAIDisabled,
+} from "./agent/providers/env";
+import type { AudioFormat } from "./integrations/audioClient";
+import { Buffer } from "node:buffer";
 
 export type VoiceTurnAudioFormat = "wav" | "webm" | "ogg" | "mp3" | "m4a" | "mp4";
 export type VoiceTurnAudioOutput = "device";
@@ -33,6 +39,9 @@ export interface CodexVoiceTurnDeps {
     format: string,
     timeoutMs?: number,
   ) => Promise<LocalJobSegment[]>;
+  hasDirectOpenAIProvider: () => boolean;
+  isDirectOpenAIDisabled: () => boolean;
+  speechToText: (audioBuffer: Buffer, format: AudioFormat) => Promise<string>;
   runCoachAgent: (input: CoachReplyInput) => Promise<CoachReplyResult>;
 }
 
@@ -50,6 +59,12 @@ export class CodexVoiceTurnError extends Error {
 const DEFAULT_DEPS: CodexVoiceTurnDeps = {
   isWorkerOnline: defaultIsWorkerOnline,
   queueAudioTranscriptionJob: defaultQueueAudioTranscriptionJob,
+  hasDirectOpenAIProvider: defaultHasDirectOpenAIProvider,
+  isDirectOpenAIDisabled: defaultIsDirectOpenAIDisabled,
+  speechToText: async (audioBuffer, format) => {
+    const { speechToText } = await import("./integrations/audioClient");
+    return speechToText(audioBuffer, format);
+  },
   runCoachAgent: async (input) => {
     const { runCoachAgent } = await import("./channels/coachAgent");
     return runCoachAgent(input);
@@ -101,17 +116,20 @@ export async function runCodexVoiceTurn(
       throw new CodexVoiceTurnError("MISSING_VOICE_INPUT", "Send either text or audio for the voice turn.", 400);
     }
 
-    if (!deps.isWorkerOnline(userId, "audio-transcription")) {
-      throw new CodexVoiceTurnError(
-        "LOCAL_AUDIO_TRANSCRIPTION_UNAVAILABLE",
-        "Local Whisper transcription is not online, and direct model transcription is disabled for Codex-only voice.",
-        503,
-      );
-    }
-
     const format = detectVoiceTurnAudioFormat(input.mimeType);
-    const segments = await deps.queueAudioTranscriptionJob(userId, audioBase64, format, 90_000);
-    transcript = mergeSegments(segments);
+    if (deps.isWorkerOnline(userId, "audio-transcription")) {
+      const segments = await deps.queueAudioTranscriptionJob(userId, audioBase64, format, 90_000);
+      transcript = mergeSegments(segments);
+    } else {
+      if (deps.isDirectOpenAIDisabled() || !deps.hasDirectOpenAIProvider()) {
+        throw new CodexVoiceTurnError(
+          "LOCAL_AUDIO_TRANSCRIPTION_UNAVAILABLE",
+          "Local Whisper transcription is not online, and direct OpenAI transcription is unavailable.",
+          503,
+        );
+      }
+      transcript = normalizeText(await deps.speechToText(Buffer.from(audioBase64, "base64"), format));
+    }
 
     if (!transcript) {
       throw new CodexVoiceTurnError("EMPTY_TRANSCRIPT", "No speech was detected in that voice turn.", 422);

@@ -118,9 +118,9 @@ function useDeepLinkAuth() {
 }
 
 /**
- * Handles deep link navigation (non-auth). Routes jarvis://voice-realtime to
+ * Handles deep link navigation (non-auth). Routes Telegram voice-call links to
  * the voice-realtime screen so that Telegram's "🎙 Voice call" button opens
- * the app directly to the voice session.
+ * the app directly to the voice session, while Talk Mode overlay links reopen chat.
  */
 function useDeepLinkNavigation() {
   const { isAuthenticated } = useAuth();
@@ -132,6 +132,8 @@ function useDeepLinkNavigation() {
       const path = typeof parsed.path === 'string' ? parsed.path.replace(/^\/+/, '') : '';
       if (host === 'voice-realtime' || path === 'voice-realtime') {
         router.push('/voice-realtime');
+      } else if (host === 'insights' || path === 'insights') {
+        router.push('/(tabs)/insights' as any);
       } else if (host === 'profile' || path === 'profile') {
         const focus = typeof parsed.queryParams?.focus === 'string' ? parsed.queryParams.focus : undefined;
         router.push({ pathname: '/(tabs)/profile', params: focus ? { focus } : undefined } as any);
