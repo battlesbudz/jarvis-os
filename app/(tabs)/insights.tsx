@@ -1228,6 +1228,10 @@ export default function InsightsScreen() {
         } else {
           const draftText = inputRef.current.trim();
           const messageText = draftText ? `${draftText} ${transcriptText}` : transcriptText;
+          if (isStreamingRef.current) {
+            setInput(messageText);
+            return;
+          }
           const now = new Date().toISOString();
           sendMessageRef.current(messageText, {
             source: 'voice',

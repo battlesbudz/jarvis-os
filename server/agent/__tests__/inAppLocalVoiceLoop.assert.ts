@@ -45,6 +45,12 @@ assert.match(
 );
 
 assert.match(
+  insights,
+  /if \(isStreamingRef\.current\) \{[\s\S]*?setInput\(messageText\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?sendMessageRef\.current\(messageText,/,
+  "The regular chat mic should preserve transcripts in the composer while a response is streaming",
+);
+
+assert.match(
   appLayout,
   /host === 'insights' \|\| path === 'insights'[\s\S]*?router\.push\('\/\(tabs\)\/insights' as any\)/,
   "Outside-app voice overlay deep links should reopen the JARVIS chat tab",
