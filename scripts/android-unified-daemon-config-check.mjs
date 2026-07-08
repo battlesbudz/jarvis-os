@@ -27,6 +27,10 @@ const jarvisDaemonModulePath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/JarvisDaemonModule.kt",
 );
+const nativeSpeechRecognitionBridgePath = path.join(
+  projectRoot,
+  "android/app/src/main/java/com/gameplan/daemon/NativeSpeechRecognitionBridge.kt",
+);
 const webSocketServicePath = path.join(
   projectRoot,
   "android/app/src/main/java/com/gameplan/daemon/WebSocketService.kt",
@@ -67,6 +71,10 @@ const pluginTemplateWebSocketPath = path.join(
 const pluginTemplateJarvisDaemonModulePath = path.join(
   projectRoot,
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisDaemonModule.kt",
+);
+const pluginTemplateNativeSpeechRecognitionBridgePath = path.join(
+  projectRoot,
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/NativeSpeechRecognitionBridge.kt",
 );
 const pluginTemplateJarvisVoiceInteractionPath = path.join(
   projectRoot,
@@ -238,6 +246,7 @@ const [
   nativeWrapper,
   androidControlCard,
   jarvisDaemonModule,
+  nativeSpeechRecognitionBridge,
   webSocketService,
   screenRecordHandler,
   cameraHandler,
@@ -249,6 +258,7 @@ const [
   plugin,
   pluginTemplateWebSocket,
   pluginTemplateJarvisDaemonModule,
+  pluginTemplateNativeSpeechRecognitionBridge,
   pluginTemplateJarvisVoiceInteraction,
   pluginTemplateWakeWord,
   pluginTemplateOutsideAppVoiceSession,
@@ -276,6 +286,7 @@ const [
   readFile(nativeWrapperPath, "utf8"),
   readFile(androidControlCardPath, "utf8"),
   readFile(jarvisDaemonModulePath, "utf8"),
+  readFile(nativeSpeechRecognitionBridgePath, "utf8"),
   readFile(webSocketServicePath, "utf8"),
   readFile(screenRecordHandlerPath, "utf8"),
   readFile(cameraHandlerPath, "utf8"),
@@ -287,6 +298,7 @@ const [
   readFile(pluginPath, "utf8"),
   readFile(pluginTemplateWebSocketPath, "utf8"),
   readFile(pluginTemplateJarvisDaemonModulePath, "utf8"),
+  readFile(pluginTemplateNativeSpeechRecognitionBridgePath, "utf8"),
   readFile(pluginTemplateJarvisVoiceInteractionPath, "utf8"),
   readFile(pluginTemplateWakeWordPath, "utf8"),
   readFile(pluginTemplateOutsideAppVoiceSessionPath, "utf8"),
@@ -510,10 +522,15 @@ assertIncludes(nativeWrapper, "confirmationToken?: string", "lib/android-daemon-
 assertIncludes(nativeWrapper, "setOutsideAppVoiceApproval(prompt, confirmationToken)", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "getAndroidLocalGemmaStatus", "lib/android-daemon-native.ts");
 assertIncludes(nativeWrapper, "validateAndroidLocalGemmaModel", "lib/android-daemon-native.ts");
+assertIncludes(nativeWrapper, "recognizeAndroidSpeechOnce", "lib/android-daemon-native.ts");
+assertIncludes(nativeWrapper, "JarvisNativeSpeechRecognition", "lib/android-daemon-native.ts");
+assertIncludes(nativeWrapper, "getAndroidNativeSpeechStatus", "lib/android-daemon-native.ts");
 assertExcludes(nativeWrapper, "connect(serverUrl: string, pairCode: string)", "lib/android-daemon-native.ts");
 assertIncludes(androidControlCard, "/api/channels/android-daemon/bootstrap", "AndroidDeviceControlCard.tsx");
 assertIncludes(androidControlCard, "AndroidDaemonNative.enable", "AndroidDeviceControlCard.tsx");
 assertIncludes(androidControlCard, "Enable Device Control", "AndroidDeviceControlCard.tsx");
+assertIncludes(androidControlCard, "Local Voice", "AndroidDeviceControlCard.tsx");
+assertIncludes(androidControlCard, "getAndroidNativeSpeechStatus", "AndroidDeviceControlCard.tsx");
 assertExcludes(androidControlCard, "/api/channels/daemon/code", "AndroidDeviceControlCard.tsx");
 assertExcludes(androidControlCard, "Pair code", "AndroidDeviceControlCard.tsx");
 assertExcludes(androidControlCard, "pairCode", "AndroidDeviceControlCard.tsx");
@@ -532,6 +549,8 @@ assertIncludes(jarvisDaemonModule, "fun setOutsideAppVoiceApproval(prompt: Strin
 assertIncludes(jarvisDaemonModule, "voiceOverlayPermission", "JarvisDaemonModule.kt");
 assertIncludes(jarvisDaemonModule, "fun getLocalGemmaStatus(model: String, promise: Promise)", "JarvisDaemonModule.kt");
 assertIncludes(jarvisDaemonModule, "fun validateLocalGemmaModel(model: String, promise: Promise)", "JarvisDaemonModule.kt");
+assertIncludes(jarvisDaemonModule, "fun startNativeSpeechRecognition(optionsJson: String, promise: Promise)", "JarvisDaemonModule.kt");
+assertIncludes(jarvisDaemonModule, "fun getNativeSpeechStatus(locale: String, promise: Promise)", "JarvisDaemonModule.kt");
 assertExcludes(jarvisDaemonModule, "fun connect(serverUrl: String, pairCode: String", "JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "fun enable(serverUrl: String, bootstrapToken: String", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "E_JARVIS_DAEMON_START", "plugins/android-daemon-native/JarvisDaemonModule.kt");
@@ -548,7 +567,18 @@ assertIncludes(pluginTemplateJarvisDaemonModule, "fun setOutsideAppVoiceApproval
 assertIncludes(pluginTemplateJarvisDaemonModule, "voiceOverlayPermission", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "fun getLocalGemmaStatus(model: String, promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertIncludes(pluginTemplateJarvisDaemonModule, "fun validateLocalGemmaModel(model: String, promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+assertIncludes(pluginTemplateJarvisDaemonModule, "fun startNativeSpeechRecognition(optionsJson: String, promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+assertIncludes(pluginTemplateJarvisDaemonModule, "fun getNativeSpeechStatus(locale: String, promise: Promise)", "plugins/android-daemon-native/JarvisDaemonModule.kt");
 assertExcludes(pluginTemplateJarvisDaemonModule, "fun connect(serverUrl: String, pairCode: String", "plugins/android-daemon-native/JarvisDaemonModule.kt");
+for (const [contents, source] of [
+  [nativeSpeechRecognitionBridge, "NativeSpeechRecognitionBridge.kt"],
+  [pluginTemplateNativeSpeechRecognitionBridge, "plugins/android-daemon-native/NativeSpeechRecognitionBridge.kt"],
+]) {
+  assertIncludes(contents, "SpeechRecognizer.createOnDeviceSpeechRecognizer", source);
+  assertIncludes(contents, "SpeechRecognizer.isOnDeviceRecognitionAvailable", source);
+  assertIncludes(contents, "RecognizerIntent.EXTRA_PREFER_OFFLINE", source);
+  assertIncludes(contents, "triggerModelDownload", source);
+}
 for (const [contents, source] of [
   [wakeWordService, "WakeWordService.kt"],
   [pluginTemplateWakeWord, "plugins/android-daemon-native/WakeWordService.kt"],

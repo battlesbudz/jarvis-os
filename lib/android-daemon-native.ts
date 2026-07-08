@@ -38,6 +38,46 @@ export type AndroidOutsideAppVoiceControlEvent = {
   reactActive?: boolean;
 };
 
+export type AndroidNativeSpeechStatus = {
+  available: boolean;
+  speechRecognitionAvailable?: boolean;
+  onDeviceRecognitionAvailable?: boolean;
+  microphonePermissionGranted?: boolean;
+  ttsAvailable?: boolean;
+  ttsProvider?: string;
+  locale?: string;
+  status?: string;
+  message?: string;
+  listening?: boolean;
+  modelDownloadComplete?: boolean;
+  modelDownloadScheduled?: boolean;
+};
+
+export type AndroidNativeSpeechRecognitionEvent = {
+  type?: "ready" | "speech_start" | "speech_end" | "rms" | "partial" | "final" | "error" | "cancelled" | "model_download_requested";
+  text?: string;
+  alternatives?: string[];
+  error?: string;
+  errorCode?: number;
+  message?: string;
+  recoverable?: boolean;
+  onDevice?: boolean;
+  locale?: string;
+  rmsDb?: number;
+  completedPercent?: number;
+};
+
+export type AndroidNativeSpeechRecognitionOptions = {
+  locale?: string;
+  interimResults?: boolean;
+  timeoutMs?: number;
+};
+
+export type AndroidNativeSpeechRecognitionResult = {
+  text: string;
+  alternatives: string[];
+};
+
 const unavailableStatus: AndroidDaemonStatus = {
   available: false,
   connected: false,
@@ -70,6 +110,11 @@ const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
       validateLocalGemmaModel?(model: string): Promise<string | Record<string, unknown>>;
       validateLocalGemmaModelWithOptions?(model: string, optionsJson: string): Promise<string | Record<string, unknown>>;
       smokeTestLocalGemmaModel?(model: string, optionsJson: string): Promise<string | Record<string, unknown>>;
+      getNativeSpeechStatus?(locale: string): Promise<AndroidNativeSpeechStatus>;
+      startNativeSpeechRecognition?(optionsJson: string): Promise<AndroidNativeSpeechStatus>;
+      stopNativeSpeechRecognition?(): Promise<AndroidNativeSpeechStatus>;
+      cancelNativeSpeechRecognition?(): Promise<AndroidNativeSpeechStatus>;
+      triggerNativeSpeechModelDownload?(locale: string): Promise<AndroidNativeSpeechStatus>;
     }
   | undefined;
 
@@ -161,6 +206,109 @@ export function addAndroidOutsideAppVoiceControlListener(
     return { remove: () => {} };
   }
   return DeviceEventEmitter.addListener("JarvisVoiceSessionControl", listener);
+}
+
+export async function getAndroidNativeSpeechStatus(locale = ""): Promise<AndroidNativeSpeechStatus | null> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.getNativeSpeechStatus) {
+    return null;
+  }
+  return NativeJarvisDaemon.getNativeSpeechStatus(locale);
+}
+
+export async function startAndroidNativeSpeechRecognition(
+  options: AndroidNativeSpeechRecognitionOptions = {},
+): Promise<AndroidNativeSpeechStatus | null> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.startNativeSpeechRecognition) {
+    return null;
+  }
+  return NativeJarvisDaemon.startNativeSpeechRecognition(JSON.stringify(options));
+}
+
+export async function stopAndroidNativeSpeechRecognition(): Promise<AndroidNativeSpeechStatus | null> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.stopNativeSpeechRecognition) {
+    return null;
+  }
+  return NativeJarvisDaemon.stopNativeSpeechRecognition();
+}
+
+export async function cancelAndroidNativeSpeechRecognition(): Promise<AndroidNativeSpeechStatus | null> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.cancelNativeSpeechRecognition) {
+    return null;
+  }
+  return NativeJarvisDaemon.cancelNativeSpeechRecognition();
+}
+
+export async function triggerAndroidNativeSpeechModelDownload(locale = ""): Promise<AndroidNativeSpeechStatus | null> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.triggerNativeSpeechModelDownload) {
+    return null;
+  }
+  return NativeJarvisDaemon.triggerNativeSpeechModelDownload(locale);
+}
+
+export function addAndroidNativeSpeechRecognitionListener(
+  listener: (event: AndroidNativeSpeechRecognitionEvent) => void,
+): { remove: () => void } {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon) {
+    return { remove: () => {} };
+  }
+  return DeviceEventEmitter.addListener("JarvisNativeSpeechRecognition", listener);
+}
+
+export async function recognizeAndroidSpeechOnce(
+  options: AndroidNativeSpeechRecognitionOptions = {},
+): Promise<AndroidNativeSpeechRecognitionResult> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.startNativeSpeechRecognition) {
+    throw new Error("Android on-device speech recognition is only available in the Android APK.");
+  }
+
+  const status = await getAndroidNativeSpeechStatus(options.locale ?? "");
+  if (status && !status.available) {
+    throw new Error(status.message || "Android on-device speech recognition is not available.");
+  }
+
+  return new Promise<AndroidNativeSpeechRecognitionResult>((resolve, reject) => {
+    let settled = false;
+    const timeoutMs = Math.max(options.timeoutMs ?? 60_000, 5_000);
+    let subscription: { remove: () => void } = { remove: () => {} };
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (timeout) clearTimeout(timeout);
+      subscription.remove();
+      callback();
+    };
+
+    subscription = addAndroidNativeSpeechRecognitionListener((event) => {
+      const eventType = String(event?.type ?? "");
+      if (eventType === "final") {
+        const text = String(event.text ?? "").trim();
+        const alternatives = Array.isArray(event.alternatives)
+          ? event.alternatives.map(value => String(value).trim()).filter(Boolean)
+          : [];
+        finish(() => resolve({ text, alternatives }));
+      } else if (eventType === "error") {
+        const message = event.message || event.error || "Android on-device speech recognition failed.";
+        finish(() => reject(new Error(message)));
+      } else if (eventType === "cancelled") {
+        finish(() => reject(new Error("Android speech recognition was cancelled.")));
+      }
+    });
+
+    timeout = setTimeout(() => {
+      cancelAndroidNativeSpeechRecognition().catch(() => {});
+      finish(() => reject(new Error("Android speech recognition timed out.")));
+    }, timeoutMs + 2_000);
+
+    startAndroidNativeSpeechRecognition({
+      interimResults: true,
+      ...options,
+      timeoutMs,
+    }).catch((error) => {
+      finish(() => reject(error instanceof Error ? error : new Error(String(error))));
+    });
+  });
 }
 
 export const AndroidDaemonNative = NativeJarvisDaemon;

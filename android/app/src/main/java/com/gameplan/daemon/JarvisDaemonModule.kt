@@ -18,6 +18,7 @@ import org.json.JSONObject
 class JarvisDaemonModule(
     private val reactApplicationContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactApplicationContext) {
+    private val nativeSpeechRecognitionBridge = NativeSpeechRecognitionBridge(reactApplicationContext)
 
     companion object {
         private const val VOICE_SESSION_CONTROL_EVENT = "JarvisVoiceSessionControl"
@@ -50,6 +51,7 @@ class JarvisDaemonModule(
     }
 
     override fun invalidate() {
+        nativeSpeechRecognitionBridge.destroy()
         if (activeReactContext === reactApplicationContext) activeReactContext = null
         super.invalidate()
     }
@@ -266,6 +268,31 @@ class JarvisDaemonModule(
         } else {
             promise.reject("E_LOCAL_GEMMA_SMOKE_TEST", result.error ?: "Phone Gemma smoke test failed.")
         }
+    }
+
+    @ReactMethod
+    fun getNativeSpeechStatus(locale: String, promise: Promise) {
+        promise.resolve(nativeSpeechRecognitionBridge.getStatus(locale))
+    }
+
+    @ReactMethod
+    fun startNativeSpeechRecognition(optionsJson: String, promise: Promise) {
+        nativeSpeechRecognitionBridge.start(parseOptionsJson(optionsJson), promise)
+    }
+
+    @ReactMethod
+    fun stopNativeSpeechRecognition(promise: Promise) {
+        nativeSpeechRecognitionBridge.stop(promise)
+    }
+
+    @ReactMethod
+    fun cancelNativeSpeechRecognition(promise: Promise) {
+        nativeSpeechRecognitionBridge.cancel(promise)
+    }
+
+    @ReactMethod
+    fun triggerNativeSpeechModelDownload(locale: String, promise: Promise) {
+        nativeSpeechRecognitionBridge.triggerModelDownload(locale, promise)
     }
 
     private fun parseOptionsJson(optionsJson: String): JSONObject {

@@ -10,7 +10,13 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
-import { AndroidDaemonNative, getAndroidDaemonStatus, type AndroidDaemonStatus } from "@/lib/android-daemon-native";
+import {
+  AndroidDaemonNative,
+  getAndroidDaemonStatus,
+  getAndroidNativeSpeechStatus,
+  type AndroidDaemonStatus,
+  type AndroidNativeSpeechStatus,
+} from "@/lib/android-daemon-native";
 import { apiRequest, getApiUrl } from "@/lib/query-client";
 
 type AndroidDeviceControlCardProps = {
@@ -38,12 +44,17 @@ export function AndroidDeviceControlCard({
   onUnpair,
 }: AndroidDeviceControlCardProps) {
   const [status, setStatus] = useState<AndroidDaemonStatus | null>(null);
+  const [nativeSpeechStatus, setNativeSpeechStatus] = useState<AndroidNativeSpeechStatus | null>(null);
   const [busy, setBusy] = useState<"enable" | "disconnect" | string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refreshNativeStatus = useCallback(async () => {
-    const next = await getAndroidDaemonStatus();
+    const [next, speech] = await Promise.all([
+      getAndroidDaemonStatus(),
+      getAndroidNativeSpeechStatus().catch(() => null),
+    ]);
     setStatus(next);
+    setNativeSpeechStatus(speech);
     return next;
   }, []);
 
@@ -142,6 +153,12 @@ export function AndroidDeviceControlCard({
       action: () => AndroidDaemonNative?.requestMicrophonePermission() ?? Promise.resolve(),
     },
     {
+      key: "local-voice",
+      label: "Local Voice",
+      detail: nativeSpeechStatus?.message ?? "Device speech-to-text and text-to-speech readiness.",
+      enabled: nativeSpeechStatus?.available,
+    },
+    {
       key: "voice-overlay",
       label: "Voice Overlay",
       detail: "Floating mic while JARVIS listens outside the app.",
@@ -154,7 +171,13 @@ export function AndroidDeviceControlCard({
       detail: "Unavailable until the foreground Android system prompt flow is wired.",
       disabled: true,
     },
-  ], [status?.accessibilityEnabled, status?.notificationListenerActive, status?.voiceOverlayPermission]);
+  ], [
+    nativeSpeechStatus?.available,
+    nativeSpeechStatus?.message,
+    status?.accessibilityEnabled,
+    status?.notificationListenerActive,
+    status?.voiceOverlayPermission,
+  ]);
 
   const runPermissionAction = useCallback(async (row: PermissionRow) => {
     if (!nativeAvailable || anyBusy || row.disabled || !row.action) return;

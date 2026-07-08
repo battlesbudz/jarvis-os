@@ -20,6 +20,7 @@ import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import * as Clipboard from 'expo-clipboard';
+import * as Speech from 'expo-speech';
 import { createAudioPlayer } from '@/lib/audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -292,9 +293,24 @@ export default function SettingsScreen() {
   const previewTtsVoice = useCallback(async () => {
     setTtsPreviewing(true);
     let tempUri: string | null = null;
+    const previewText = "Hi, I'm Jarvis. This is what I sound like with this voice.";
     try {
+      if (Platform.OS === 'android') {
+        await Speech.stop().catch(() => {});
+        await new Promise<void>((resolve) => {
+          Speech.speak(previewText, {
+            rate: 0.96,
+            pitch: 1,
+            onDone: resolve,
+            onStopped: resolve,
+            onError: () => resolve(),
+          });
+        });
+        return;
+      }
+
       const res = await apiRequest('POST', '/api/coach/speak', {
-        text: "Hi, I'm Jarvis. This is what I sound like with this voice.",
+        text: previewText,
         voice: ttsVoice,
       });
       if (res.ok) {
