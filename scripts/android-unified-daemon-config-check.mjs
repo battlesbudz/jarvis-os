@@ -195,13 +195,17 @@ const requiredDependencies = [
 ];
 
 function assertIncludes(contents, expected, source) {
-  if (!contents.includes(expected)) {
+  const normalizedContents = contents.replace(/\r\n/g, "\n");
+  const normalizedExpected = expected.replace(/\r\n/g, "\n");
+  if (!normalizedContents.includes(normalizedExpected)) {
     throw new Error(`${source} is missing ${expected}`);
   }
 }
 
 function assertExcludes(contents, forbidden, source) {
-  if (contents.includes(forbidden)) {
+  const normalizedContents = contents.replace(/\r\n/g, "\n");
+  const normalizedForbidden = forbidden.replace(/\r\n/g, "\n");
+  if (normalizedContents.includes(normalizedForbidden)) {
     throw new Error(`${source} must not include ${forbidden}`);
   }
 }

@@ -1224,9 +1224,17 @@ export default function InsightsScreen() {
             });
           }, 80);
         } else {
-          // Regular mic tap: drop the transcript into the input so the user
-          // can review and edit before sending manually.
-          setInput(prev => prev.trim() ? prev.trimEnd() + ' ' + transcriptText : transcriptText);
+          const now = new Date().toISOString();
+          sendMessageRef.current(transcriptText, {
+            source: 'voice',
+            voiceTrace: {
+              finalTranscript: transcriptText,
+              finishedAt: now,
+              stateTransitions: [
+                { state: 'transcription_complete', at: now, detail: 'Chat mic transcript auto-sent' },
+              ],
+            },
+          });
         }
       } else {
         setIsTranscribing(false);

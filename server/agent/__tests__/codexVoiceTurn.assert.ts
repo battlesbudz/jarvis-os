@@ -22,6 +22,10 @@ async function main() {
       queueAudioTranscriptionJob: async () => {
         throw new Error("worker should not be used for text turns");
       },
+      isDirectOpenAIDisabled: () => false,
+      speechToText: async () => {
+        throw new Error("speech-to-text should not be used for text turns");
+      },
       runCoachAgent: async (input) => {
         calls.push(input as unknown as Record<string, unknown>);
         return {
@@ -62,6 +66,10 @@ console.log("OK: text voice turns route through the Codex OAuth coach path");
         assert.equal(format, "wav");
         return [{ text: "Send a quick email to Sam.", offset: 0, duration: 0 }];
       },
+      isDirectOpenAIDisabled: () => false,
+      speechToText: async () => {
+        throw new Error("speech-to-text should not be used when the local worker is online");
+      },
       runCoachAgent: async (input) => ({
         reply: `Heard: ${input.userText}`,
         rawReply: `Heard: ${input.userText}`,
@@ -78,6 +86,40 @@ console.log("OK: text voice turns route through the Codex OAuth coach path");
 console.log("OK: audio voice turns transcribe locally before Codex OAuth coach routing");
 
 {
+  const audioBase64 = Buffer.from("fake wav").toString("base64");
+  const result = await runCodexVoiceTurn(
+    {
+      userId: "user-voice",
+      audioBase64,
+      mimeType: "audio/wav",
+    },
+    {
+      isWorkerOnline: () => false,
+      queueAudioTranscriptionJob: async () => {
+        throw new Error("local worker should not be queued when it is offline");
+      },
+      isDirectOpenAIDisabled: () => false,
+      speechToText: async (audioBuffer, format) => {
+        assert.equal(audioBuffer.toString("utf8"), "fake wav");
+        assert.equal(format, "wav");
+        return "Open the inbox and summarize urgent mail.";
+      },
+      runCoachAgent: async (input) => ({
+        reply: `Heard: ${input.userText}`,
+        rawReply: `Heard: ${input.userText}`,
+        attachments: [],
+        sdkSessionId: "voice-session-direct-stt",
+      }),
+    },
+  );
+
+  assert.equal(result.transcript, "Open the inbox and summarize urgent mail.");
+  assert.equal(result.reply, "Heard: Open the inbox and summarize urgent mail.");
+  assert.equal(result.sdkSessionId, "voice-session-direct-stt");
+}
+  console.log("OK: audio voice turns fall back to direct speech-to-text when the local worker is unavailable");
+
+{
   await assert.rejects(
     () =>
       runCodexVoiceTurn(
@@ -89,6 +131,10 @@ console.log("OK: audio voice turns transcribe locally before Codex OAuth coach r
         {
           isWorkerOnline: () => false,
           queueAudioTranscriptionJob: async () => [],
+          isDirectOpenAIDisabled: () => true,
+          speechToText: async () => {
+            throw new Error("speech-to-text should not run when direct OpenAI is disabled");
+          },
           runCoachAgent: async () => ({
             reply: "should not run",
             rawReply: "should not run",
@@ -104,7 +150,7 @@ console.log("OK: audio voice turns transcribe locally before Codex OAuth coach r
     },
   );
 }
-  console.log("OK: audio voice turns refuse direct model fallback when local transcription is unavailable");
+  console.log("OK: audio voice turns still fail fast when local and direct transcription are unavailable");
 
   const voiceScreen = readFileSync(path.join(process.cwd(), "app/voice-realtime.tsx"), "utf-8");
   assert.ok(voiceScreen.includes("/api/voice/codex-turn"), "voice screen should call the Codex turn endpoint");

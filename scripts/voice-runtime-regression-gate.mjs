@@ -163,9 +163,19 @@ expectIncludes(
   "Outside-app voice service should support a debug-triggered simulated crash path",
 );
 expectIncludes(
+  "android/app/src/main/java/com/gameplan/daemon/OutsideAppVoiceSessionService.kt",
+  "jarvis://insights?source=outside_app_voice",
+  "Outside-app voice overlay Open should return to the JARVIS chat tab",
+);
+expectIncludes(
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OutsideAppVoiceSessionService.kt",
   "ACTION_E2E_SIMULATE_CRASH",
   "Native daemon plugin copy should stay aligned with the app service simulated crash path",
+);
+expectIncludes(
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OutsideAppVoiceSessionService.kt",
+  "jarvis://insights?source=outside_app_voice",
+  "Native daemon plugin copy should keep the overlay Open target aligned with the app service",
 );
 
 expectIncludes(

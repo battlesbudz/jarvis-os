@@ -11,6 +11,7 @@ function read(relPath: string): string {
 }
 
 const insights = read("app/(tabs)/insights.tsx");
+const appLayout = read("app/_layout.tsx");
 const localVoiceLoop = read("shared/localVoiceLoop.ts");
 
 assert.match(
@@ -29,6 +30,18 @@ assert.match(
   insights,
   /setInput\(transcriptText\);[\s\S]*?sendMessageRef\.current\(transcriptText,/,
   "Talk Mode transcripts should pass through the normal composer and canonical send path",
+);
+
+assert.match(
+  insights,
+  /detail:\s*'Chat mic transcript auto-sent'/,
+  "The regular chat mic should submit a voice turn instead of only filling the composer",
+);
+
+assert.match(
+  appLayout,
+  /host === 'insights' \|\| path === 'insights'[\s\S]*?router\.push\('\/\(tabs\)\/insights' as any\)/,
+  "Outside-app voice overlay deep links should reopen the JARVIS chat tab",
 );
 
 assert.match(
