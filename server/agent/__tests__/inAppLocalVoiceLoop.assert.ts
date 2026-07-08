@@ -34,8 +34,14 @@ assert.match(
 
 assert.match(
   insights,
-  /detail:\s*'Chat mic transcript auto-sent'/,
+  /sendMessageRef\.current\(messageText,[\s\S]*?'Chat mic transcript auto-sent'/,
   "The regular chat mic should submit a voice turn instead of only filling the composer",
+);
+
+assert.match(
+  insights,
+  /const draftText = inputRef\.current\.trim\(\);[\s\S]*?const messageText = draftText \? `\$\{draftText\} \$\{transcriptText\}` : transcriptText;[\s\S]*?sendMessageRef\.current\(messageText,/,
+  "The regular chat mic should preserve typed drafts when it auto-sends a transcript",
 );
 
 assert.match(

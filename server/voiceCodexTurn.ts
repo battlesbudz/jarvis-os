@@ -5,7 +5,10 @@ import {
   type LocalWorkerCapability,
 } from "./lib/localWorkerQueue";
 import type { CoachReplyInput, CoachReplyResult } from "./channels/coachAgent";
-import { isDirectOpenAIDisabled as defaultIsDirectOpenAIDisabled } from "./agent/providers/env";
+import {
+  hasDirectOpenAIProvider as defaultHasDirectOpenAIProvider,
+  isDirectOpenAIDisabled as defaultIsDirectOpenAIDisabled,
+} from "./agent/providers/env";
 import type { AudioFormat } from "./integrations/audioClient";
 import { Buffer } from "node:buffer";
 
@@ -36,6 +39,7 @@ export interface CodexVoiceTurnDeps {
     format: string,
     timeoutMs?: number,
   ) => Promise<LocalJobSegment[]>;
+  hasDirectOpenAIProvider: () => boolean;
   isDirectOpenAIDisabled: () => boolean;
   speechToText: (audioBuffer: Buffer, format: AudioFormat) => Promise<string>;
   runCoachAgent: (input: CoachReplyInput) => Promise<CoachReplyResult>;
@@ -55,6 +59,7 @@ export class CodexVoiceTurnError extends Error {
 const DEFAULT_DEPS: CodexVoiceTurnDeps = {
   isWorkerOnline: defaultIsWorkerOnline,
   queueAudioTranscriptionJob: defaultQueueAudioTranscriptionJob,
+  hasDirectOpenAIProvider: defaultHasDirectOpenAIProvider,
   isDirectOpenAIDisabled: defaultIsDirectOpenAIDisabled,
   speechToText: async (audioBuffer, format) => {
     const { speechToText } = await import("./integrations/audioClient");
@@ -116,10 +121,10 @@ export async function runCodexVoiceTurn(
       const segments = await deps.queueAudioTranscriptionJob(userId, audioBase64, format, 90_000);
       transcript = mergeSegments(segments);
     } else {
-      if (deps.isDirectOpenAIDisabled()) {
+      if (deps.isDirectOpenAIDisabled() || !deps.hasDirectOpenAIProvider()) {
         throw new CodexVoiceTurnError(
           "LOCAL_AUDIO_TRANSCRIPTION_UNAVAILABLE",
-          "Local Whisper transcription is not online, and direct model transcription is disabled for Codex-only voice.",
+          "Local Whisper transcription is not online, and direct OpenAI transcription is unavailable.",
           503,
         );
       }
