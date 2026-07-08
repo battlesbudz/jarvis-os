@@ -547,10 +547,17 @@ export default function VoiceRealtimeScreen() {
     }
 
     setState('listening');
-    const result = await recognizeAndroidSpeechOnce({
-      interimResults: true,
-      timeoutMs: CODEX_VOICE_TURN_RECORDING_MS + 20_000,
-    });
+    let result: Awaited<ReturnType<typeof recognizeAndroidSpeechOnce>>;
+    try {
+      result = await recognizeAndroidSpeechOnce({
+        interimResults: true,
+        timeoutMs: CODEX_VOICE_TURN_RECORDING_MS + 20_000,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/cancelled/i.test(message)) return;
+      throw error;
+    }
     const text = result.text.trim();
     if (!text) {
       throw new Error('No speech was detected. Please try again and speak clearly.');
