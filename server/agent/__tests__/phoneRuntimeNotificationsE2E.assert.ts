@@ -267,6 +267,17 @@ async function main() {
   assert.match(fullFollowUpSummary?.response ?? "", /Spam Risk/);
   assert.match(fullFollowUpSummary?.response ?? "", /Gmail/);
   assert.doesNotMatch(fullFollowUpSummary?.response ?? "", /cannot summarize|restricted to/i);
+  const manyNotificationSummary = resolveAndroidNotificationFollowUp(
+    "Summarize all of them",
+    Array.from({ length: 14 }, (_, index) => ({
+      app: `App ${index + 1}`,
+      title: `Notice ${index + 1}`,
+      text: "",
+      ts: Date.now(),
+    })),
+  );
+  assert.match(manyNotificationSummary?.response ?? "", /App 14/);
+  assert.doesNotMatch(manyNotificationSummary?.response ?? "", /more beyond this summary/i);
   const soleNotification = [
     { app: "Calendar", pkg: "com.google.android.calendar", title: "Team sync", text: "Starts in 5 minutes", ts: Date.now() },
   ];

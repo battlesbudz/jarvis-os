@@ -195,7 +195,7 @@ export function summarizeAndroidNotifications(
 
   const important = entries.filter((entry) => entry.priority === "important");
   const lead = options.includeAll ? entries : important.length > 0 ? important : entries;
-  const visibleLimit = options.includeAll ? 12 : 3;
+  const visibleLimit = options.includeAll ? entries.length : 3;
   const visible = lead.slice(0, visibleLimit).map(spokenNotification);
   const remainder = entries.length - visible.length;
   const prefix = options.includeAll
