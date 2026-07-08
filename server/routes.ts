@@ -1873,7 +1873,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         const previousAssistantText = [...priorMessages].reverse()
           .find((m: any) => m.role === "assistant" && typeof m.content === "string")
           ?.content ?? "";
-        const previousTurnWasNotificationRead = /\bI checked your Android notifications\b|\bnotification shade\b|\bno current notifications\b/i.test(previousAssistantText);
+        const previousTurnWasNotificationRead = /\bI checked your Android notifications(?:\. (?:The important|There are no current notifications)| and found \d+\b|, but the phone did not return readable notification details\.)/i.test(previousAssistantText);
         const currentHasNotificationAnchor = /\b(?:notifications?|alerts?)\b/i.test(lastUserOrigText);
         const currentHasNotificationPronoun = /\b(?:it|that|this|those|these|them|one|ones|all|rest)\b/i.test(lastUserOrigText);
         const canUseRecentNotificationObservation = currentHasNotificationAnchor ||
