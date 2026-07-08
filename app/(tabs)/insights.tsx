@@ -30,6 +30,7 @@ import {
   requestRecordingPermissionsAsync,
 } from 'expo-audio';
 import type { AudioPlayer } from 'expo-audio';
+import * as Speech from 'expo-speech';
 import * as FileSystem from 'expo-file-system/legacy';
 import Colors from '@/constants/colors';
 import MarkdownText from '@/components/MarkdownText';
@@ -70,11 +71,14 @@ import { authFetch, getAuthToken } from '@/lib/auth-context';
 import { useWakeWord } from '@/lib/wake-word-context';
 import {
   addAndroidOutsideAppVoiceControlListener,
+  cancelAndroidNativeSpeechRecognition,
   endAndroidOutsideAppVoiceSession,
   getAndroidDaemonStatus,
+  recognizeAndroidSpeechOnce,
   setAndroidOutsideAppVoiceApproval,
   setAndroidOutsideAppVoiceSessionState,
   startAndroidOutsideAppVoiceSession,
+  stopAndroidNativeSpeechRecognition,
 } from '@/lib/android-daemon-native';
 import {
   buildTurnDiagnosticBundle,
@@ -989,6 +993,7 @@ export default function InsightsScreen() {
   const talkModeStartSeqRef = useRef(0);
   const outsideAppVoiceStateRef = useRef<string | null>(null);
   const isStreamingRef = useRef(false);
+  const nativeSpeechActiveRef = useRef(false);
   const startRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const stopRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const stopRecordingSilentlyRef = useRef<() => Promise<void>>(() => Promise.resolve());
@@ -1132,8 +1137,15 @@ export default function InsightsScreen() {
           setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
         }
       }
+      if (Platform.OS === 'android' && nativeSpeechActiveRef.current) {
+        cancelAndroidNativeSpeechRecognition().catch(() => {});
+        nativeSpeechActiveRef.current = false;
+      }
       soundRef.current?.remove();
       speakAbortRef.current?.abort();
+      if (Platform.OS === 'android') {
+        Speech.stop().catch(() => {});
+      }
       if (Platform.OS === 'web') {
         webAudioRef.current?.pause();
         webAudioRef.current = null;
@@ -1169,6 +1181,13 @@ export default function InsightsScreen() {
       return;
     }
 
+    if (Platform.OS === 'android' && nativeSpeechActiveRef.current) {
+      nativeSpeechActiveRef.current = false;
+      await cancelAndroidNativeSpeechRecognition().catch(() => {});
+      setIsTranscribing(false);
+      return;
+    }
+
     try {
       if (audioRecorder.isRecording) {
         await audioRecorder.stop().catch(() => {});
@@ -1182,6 +1201,63 @@ export default function InsightsScreen() {
   }, [audioRecorder, clearSilencePoll]);
 
   stopRecordingSilentlyRef.current = stopRecordingSilently;
+
+  const submitVoiceTranscript = useCallback((rawTranscript: string) => {
+    const transcriptText = rawTranscript.trim();
+    if (!transcriptText) {
+      setIsTranscribing(false);
+      if (talkModeRef.current) {
+        setInput('');
+        return;
+      }
+      Alert.alert('Could not understand', 'No speech was detected. Please try again and speak clearly.');
+      return;
+    }
+
+    setIsTranscribing(false);
+    if (talkModeRef.current) {
+      setInput(transcriptText);
+      const now = new Date().toISOString();
+      setTimeout(() => {
+        if (!talkModeRef.current) return;
+        sendMessageRef.current(transcriptText, {
+          source: 'voice',
+          voiceTrace: {
+            finalTranscript: transcriptText,
+            finishedAt: now,
+            stateTransitions: [
+              { state: 'transcription_complete', at: now, detail: 'Talk Mode transcript auto-sent' },
+            ],
+          },
+        });
+      }, 80);
+      return;
+    }
+
+    const draftText = inputRef.current.trim();
+    const messageText = draftText ? `${draftText} ${transcriptText}` : transcriptText;
+    if (isStreamingRef.current) {
+      setInput(messageText);
+      return;
+    }
+    const now = new Date().toISOString();
+    sendMessageRef.current(messageText, {
+      source: 'voice',
+      voiceTrace: {
+        finalTranscript: transcriptText,
+        finishedAt: now,
+        stateTransitions: [
+          {
+            state: 'transcription_complete',
+            at: now,
+            detail: draftText
+              ? 'Chat mic transcript auto-sent with typed draft'
+              : 'Chat mic transcript auto-sent',
+          },
+        ],
+      },
+    });
+  }, []);
 
   const transcribeAndSend = useCallback(async (base64: string) => {
     const transcribeSeq = talkModeStartSeqRef.current;
@@ -1205,65 +1281,13 @@ export default function InsightsScreen() {
         setIsTranscribing(false);
         return;
       }
-      if (data.text && data.text.trim()) {
-        setIsTranscribing(false);
-        const transcriptText = data.text.trim();
-        if (talkModeRef.current) {
-          // Talk Mode: show the transcript in the normal composer, then submit it.
-          setInput(transcriptText);
-          const now = new Date().toISOString();
-          setTimeout(() => {
-            if (!talkModeRef.current) return;
-            sendMessageRef.current(transcriptText, {
-              source: 'voice',
-              voiceTrace: {
-                finalTranscript: transcriptText,
-                finishedAt: now,
-                stateTransitions: [
-                  { state: 'transcription_complete', at: now, detail: 'Talk Mode transcript auto-sent' },
-                ],
-              },
-            });
-          }, 80);
-        } else {
-          const draftText = inputRef.current.trim();
-          const messageText = draftText ? `${draftText} ${transcriptText}` : transcriptText;
-          if (isStreamingRef.current) {
-            setInput(messageText);
-            return;
-          }
-          const now = new Date().toISOString();
-          sendMessageRef.current(messageText, {
-            source: 'voice',
-            voiceTrace: {
-              finalTranscript: transcriptText,
-              finishedAt: now,
-              stateTransitions: [
-                {
-                  state: 'transcription_complete',
-                  at: now,
-                  detail: draftText
-                    ? 'Chat mic transcript auto-sent with typed draft'
-                    : 'Chat mic transcript auto-sent',
-                },
-              ],
-            },
-          });
-        }
-      } else {
-        setIsTranscribing(false);
-        if (talkModeRef.current) {
-          setInput('');
-          return;
-        }
-        Alert.alert('Could not understand', 'No speech was detected. Please try again and speak clearly.');
-      }
+      submitVoiceTranscript(typeof data.text === 'string' ? data.text : '');
     } catch (error) {
       console.error('Failed to transcribe:', error);
       setIsTranscribing(false);
       Alert.alert('Transcription failed', 'Could not process your voice message. Please try again.');
     }
-  }, []);
+  }, [submitVoiceTranscript]);
 
   const startRecording = useCallback(async () => {
     const startedForTalkMode = talkModeRef.current;
@@ -1323,6 +1347,42 @@ export default function InsightsScreen() {
               }
             }
           }, LOCAL_VOICE_SILENCE_POLL_MS);
+        }
+      } else if (Platform.OS === 'android') {
+        const { granted } = await requestRecordingPermissionsAsync();
+        if (!granted) {
+          Alert.alert('Permission Required', 'Microphone access is needed to use voice input.');
+          return;
+        }
+        if (shouldCancelTalkModeStart()) return;
+        if (soundRef.current) {
+          soundRef.current.pause();
+          soundRef.current.remove();
+          soundRef.current = null;
+        }
+
+        nativeSpeechActiveRef.current = true;
+        setIsRecording(true);
+        try {
+          const result = await recognizeAndroidSpeechOnce({
+            interimResults: true,
+            timeoutMs: 60_000,
+          });
+          if (
+            startedForTalkMode &&
+            (talkModeStartSeqRef.current !== talkModeStartSeq || outsideAppVoiceStateRef.current === 'paused')
+          ) {
+            return;
+          }
+          submitVoiceTranscript(result.text);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (/cancelled/i.test(message)) return;
+          Alert.alert('Voice input failed', message || 'Android on-device speech recognition could not start.');
+        } finally {
+          nativeSpeechActiveRef.current = false;
+          setIsRecording(false);
+          setIsTranscribing(false);
         }
       } else {
         const { granted } = await requestRecordingPermissionsAsync();
@@ -1387,7 +1447,7 @@ export default function InsightsScreen() {
       console.error('Failed to start recording:', error);
       Alert.alert('Recording Failed', 'Could not start recording. Please check microphone permissions and try again.');
     }
-  }, [audioRecorder, clearSilencePoll]);
+  }, [audioRecorder, clearSilencePoll, submitVoiceTranscript]);
 
   startRecordingRef.current = startRecording;
 
@@ -1417,6 +1477,13 @@ export default function InsightsScreen() {
       });
       webChunksRef.current = [];
       transcribeAndSend(base64);
+    } else if (Platform.OS === 'android' && nativeSpeechActiveRef.current) {
+      setIsTranscribing(true);
+      await stopAndroidNativeSpeechRecognition().catch((error) => {
+        console.error('Failed to stop Android speech recognition:', error);
+        nativeSpeechActiveRef.current = false;
+        setIsTranscribing(false);
+      });
     } else {
       if (!audioRecorder.isRecording) {
         Alert.alert('Recording Error', 'No active recording found. Please try again.');
@@ -1568,6 +1635,11 @@ export default function InsightsScreen() {
       webAudioRef.current = null;
       webAudioCtxRef.current?.close().catch(() => {});
       webAudioCtxRef.current = null;
+    } else if (Platform.OS === 'android') {
+      Speech.stop().catch(() => {});
+      soundRef.current?.pause();
+      soundRef.current?.remove();
+      soundRef.current = null;
     } else {
       soundRef.current?.pause();
       soundRef.current?.remove();
@@ -1751,6 +1823,44 @@ export default function InsightsScreen() {
     };
 
     const trimmedText = text.slice(0, 4000);
+
+    if (Platform.OS === 'android') {
+      try {
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+        setIsTTSLoading(false);
+        await new Promise<void>((resolve) => {
+          let settled = false;
+          const finish = (result: 'done' | 'stopped' | 'error') => {
+            if (settled) return;
+            settled = true;
+            abortController.signal.removeEventListener('abort', abortHandler);
+            if (result === 'done' && isSpeakingRef.current) {
+              onPlaybackEnd();
+            } else if (result === 'error' && isSpeakingRef.current) {
+              onError();
+            }
+            resolve();
+          };
+          const abortHandler = () => {
+            Speech.stop().catch(() => {});
+            finish('stopped');
+          };
+          abortController.signal.addEventListener('abort', abortHandler);
+          Speech.stop().catch(() => {});
+          Speech.speak(trimmedText, {
+            rate: 0.96,
+            pitch: 1,
+            onDone: () => finish('done'),
+            onStopped: () => finish('stopped'),
+            onError: () => finish('error'),
+          });
+        });
+      } catch (error) {
+        console.error('[speakText] Android device TTS failed:', error);
+        onError();
+      }
+      return;
+    }
 
     const uint8ToBase64 = (bytes: Uint8Array): string => {
       const chunkSize = 8192;

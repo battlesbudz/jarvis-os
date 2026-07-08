@@ -20,6 +20,7 @@ import Colors from '@/constants/colors';
 import * as Haptics from 'expo-haptics';
 import * as WebBrowser from 'expo-web-browser';
 import * as Clipboard from 'expo-clipboard';
+import * as Speech from 'expo-speech';
 import { createAudioPlayer } from '@/lib/audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -292,9 +293,26 @@ export default function SettingsScreen() {
   const previewTtsVoice = useCallback(async () => {
     setTtsPreviewing(true);
     let tempUri: string | null = null;
+    const previewText = Platform.OS === 'android'
+      ? "Hi, I'm Jarvis. This is your Android device text-to-speech voice."
+      : "Hi, I'm Jarvis. This is what I sound like with this voice.";
     try {
+      if (Platform.OS === 'android') {
+        await Speech.stop().catch(() => {});
+        await new Promise<void>((resolve) => {
+          Speech.speak(previewText, {
+            rate: 0.96,
+            pitch: 1,
+            onDone: resolve,
+            onStopped: resolve,
+            onError: () => resolve(),
+          });
+        });
+        return;
+      }
+
       const res = await apiRequest('POST', '/api/coach/speak', {
-        text: "Hi, I'm Jarvis. This is what I sound like with this voice.",
+        text: previewText,
         voice: ttsVoice,
       });
       if (res.ok) {
@@ -1882,6 +1900,13 @@ export default function SettingsScreen() {
   const androidDaemonNeedsAccessibility = androidDaemonNativeAvailable && androidDaemonConnected && androidAssistantStatus?.accessibilityEnabled === false;
   const androidDaemonCheckingAccessibility = androidDaemonNativeAvailable && androidDaemonConnected && androidAssistantStatus?.accessibilityEnabled === undefined;
   const androidDaemonReady = androidDaemonConnected && !androidDaemonNeedsAccessibility && !androidDaemonCheckingAccessibility;
+  const selectedTtsVoiceLabel = TTS_OPENAI_VOICES.find(v => v.id === ttsVoice)?.label ?? ttsVoice;
+  const ttsPreviewButtonLabel = Platform.OS === 'android'
+    ? 'Preview device voice'
+    : `Preview ${selectedTtsVoiceLabel} voice`;
+  const ttsPreviewHint = Platform.OS === 'android'
+    ? 'Android in-app voice uses your device text-to-speech voice.'
+    : 'You can also ask Jarvis to "read that out" or "say it as a voice message" at any time';
 
   return (
     <View style={[styles.root, { paddingTop: topPad }]}>
@@ -3325,11 +3350,11 @@ export default function SettingsScreen() {
                 : <Ionicons name="volume-medium-outline" size={16} color="#7C3AED" />
               }
               <Text style={{ fontSize: 13, fontFamily: 'Inter_500Medium', color: '#7C3AED' }}>
-                {ttsPreviewing ? 'Loading…' : `Preview ${TTS_OPENAI_VOICES.find(v => v.id === ttsVoice)?.label ?? ttsVoice} voice`}
+                {ttsPreviewing ? 'Loading…' : ttsPreviewButtonLabel}
               </Text>
             </Pressable>
             <Text style={{ fontSize: 11, color: Colors.textTertiary, fontFamily: 'Inter_400Regular', textAlign: 'center', marginTop: 6 }}>
-              {'You can also ask Jarvis to "read that out" or "say it as a voice message" at any time'}
+              {ttsPreviewHint}
             </Text>
           </View>}
         </View>

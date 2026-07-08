@@ -36,6 +36,7 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { getApiUrl } from '@/lib/query-client';
 import { authFetch } from '@/lib/auth-context';
+import { cancelAndroidNativeSpeechRecognition, recognizeAndroidSpeechOnce } from '@/lib/android-daemon-native';
 
 type SpeechModule = {
   stop: () => Promise<void>;
@@ -537,6 +538,35 @@ export default function VoiceRealtimeScreen() {
     await sendCodexVoiceTurn({ audioBase64, mimeType: 'audio/wav' });
   }, [nativeRecorder, sendCodexVoiceTurn, startNativeMeterLoop, stopNativeMeterLoop]);
 
+  const recognizeAndroidCodexTurn = useCallback(async () => {
+    const { granted } = await requestRecordingPermissionsAsync();
+    if (!granted) {
+      Alert.alert('Microphone needed', 'Please grant microphone access to use voice mode.');
+      setState('idle');
+      return;
+    }
+
+    setState('listening');
+    let result: Awaited<ReturnType<typeof recognizeAndroidSpeechOnce>>;
+    try {
+      result = await recognizeAndroidSpeechOnce({
+        interimResults: true,
+        timeoutMs: CODEX_VOICE_TURN_RECORDING_MS + 20_000,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/cancelled/i.test(message)) return;
+      throw error;
+    }
+    const text = result.text.trim();
+    if (!text) {
+      throw new Error('No speech was detected. Please try again and speak clearly.');
+    }
+
+    setState('thinking');
+    await sendCodexVoiceTurn({ text });
+  }, [sendCodexVoiceTurn]);
+
   const startCodexTurn = useCallback(async () => {
     if (
       stateRef.current === 'connecting' ||
@@ -549,6 +579,8 @@ export default function VoiceRealtimeScreen() {
     try {
       if (Platform.OS === 'web') {
         await recordWebCodexTurn();
+      } else if (Platform.OS === 'android') {
+        await recognizeAndroidCodexTurn();
       } else {
         await recordNativeCodexTurn();
       }
@@ -560,7 +592,7 @@ export default function VoiceRealtimeScreen() {
       ampRef.current = 0;
       setState('idle');
     }
-  }, [recordNativeCodexTurn, recordWebCodexTurn]);
+  }, [recognizeAndroidCodexTurn, recordNativeCodexTurn, recordWebCodexTurn]);
 
   const cleanupWebSession = useCallback(() => {
     stopWebAmpMeter();
@@ -577,6 +609,9 @@ export default function VoiceRealtimeScreen() {
 
   const cleanupNativeSession = useCallback(async () => {
     stopNativeMeterLoop();
+    if (Platform.OS === 'android') {
+      await cancelAndroidNativeSpeechRecognition().catch(() => {});
+    }
     if (nativeRecorder.isRecording) {
       await nativeRecorder.stop().catch(() => {});
     }
@@ -605,6 +640,8 @@ export default function VoiceRealtimeScreen() {
     setMuted(newMuted);
     if (Platform.OS === 'web') {
       localStreamRef.current?.getAudioTracks().forEach(t => { t.enabled = !newMuted; });
+    } else if (Platform.OS === 'android' && newMuted) {
+      cancelAndroidNativeSpeechRecognition().catch(() => {});
     } else if (newMuted && nativeRecorder.isRecording) {
       stopNativeMeterLoop();
       nativeRecorder.stop().catch(() => {});
@@ -667,6 +704,9 @@ export default function VoiceRealtimeScreen() {
         cleanupWebSession();
       } else {
         stopNativeMeterLoop();
+        if (Platform.OS === 'android') {
+          cancelAndroidNativeSpeechRecognition().catch(() => {});
+        }
         if (nativeRecorder.isRecording) nativeRecorder.stop().catch(() => {});
         Speech.stop();
         setAudioModeAsync({ allowsRecording: false, playsInSilentMode: false }).catch(() => {});

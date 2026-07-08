@@ -168,6 +168,16 @@ expectIncludes(
   "Outside-app voice overlay Open should return to the JARVIS chat tab",
 );
 expectIncludes(
+  "android/app/src/main/java/com/gameplan/daemon/NativeSpeechRecognitionBridge.kt",
+  "SpeechRecognizer.createOnDeviceSpeechRecognizer",
+  "Android APK voice STT should use the on-device recognizer",
+);
+expectIncludes(
+  "android/app/src/main/java/com/gameplan/daemon/NativeSpeechRecognitionBridge.kt",
+  "RecognizerIntent.EXTRA_PREFER_OFFLINE",
+  "Android APK voice STT should request offline recognition",
+);
+expectIncludes(
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OutsideAppVoiceSessionService.kt",
   "ACTION_E2E_SIMULATE_CRASH",
   "Native daemon plugin copy should stay aligned with the app service simulated crash path",
@@ -176,6 +186,41 @@ expectIncludes(
   "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OutsideAppVoiceSessionService.kt",
   "jarvis://insights?source=outside_app_voice",
   "Native daemon plugin copy should keep the overlay Open target aligned with the app service",
+);
+expectIncludes(
+  "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/NativeSpeechRecognitionBridge.kt",
+  "SpeechRecognizer.createOnDeviceSpeechRecognizer",
+  "Native daemon plugin copy should keep Android STT local",
+);
+expectIncludes(
+  "lib/android-daemon-native.ts",
+  "recognizeAndroidSpeechOnce",
+  "React Native wrapper should expose one-shot Android local STT",
+);
+expectIncludes(
+  "app/voice-realtime.tsx",
+  "recognizeAndroidCodexTurn",
+  "Full voice route should use Android local STT before sending a Codex text turn",
+);
+expectIncludes(
+  "app/voice-realtime.tsx",
+  "await sendCodexVoiceTurn({ text })",
+  "Full Android voice route should send transcript text instead of audio bytes",
+);
+expectIncludes(
+  "app/(tabs)/insights.tsx",
+  "recognizeAndroidSpeechOnce",
+  "Talk Mode should use Android local STT",
+);
+expectIncludes(
+  "app/(tabs)/insights.tsx",
+  "Speech.speak(trimmedText",
+  "Talk Mode should use device TTS on Android",
+);
+expectIncludes(
+  "app/(tabs)/settings.tsx",
+  "Speech.speak(previewText",
+  "Android TTS preview should use device TTS",
 );
 
 expectIncludes(
