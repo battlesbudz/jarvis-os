@@ -697,6 +697,9 @@ export default function VoiceRealtimeScreen() {
         cleanupWebSession();
       } else {
         stopNativeMeterLoop();
+        if (Platform.OS === 'android') {
+          cancelAndroidNativeSpeechRecognition().catch(() => {});
+        }
         if (nativeRecorder.isRecording) nativeRecorder.stop().catch(() => {});
         Speech.stop();
         setAudioModeAsync({ allowsRecording: false, playsInSilentMode: false }).catch(() => {});
