@@ -278,6 +278,17 @@ async function main() {
   );
   assert.match(manyNotificationSummary?.response ?? "", /App 14/);
   assert.doesNotMatch(manyNotificationSummary?.response ?? "", /more beyond this summary/i);
+  const allHandsNamedSummary = resolveAndroidNotificationFollowUp(
+    "Summarize that All Hands notification",
+    Array.from({ length: 14 }, (_, index) => ({
+      app: index === 0 ? "Calendar" : `App ${index + 1}`,
+      title: index === 0 ? "All Hands" : `Notice ${index + 1}`,
+      text: index === 0 ? "Starts at 3 PM" : "",
+      ts: Date.now(),
+    })),
+  );
+  assert.equal(allHandsNamedSummary?.kind, "summary");
+  assert.doesNotMatch(allHandsNamedSummary?.response ?? "", /App 14/);
   const soleNotification = [
     { app: "Calendar", pkg: "com.google.android.calendar", title: "Team sync", text: "Starts in 5 minutes", ts: Date.now() },
   ];

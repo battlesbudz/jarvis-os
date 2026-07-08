@@ -1869,10 +1869,19 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       req.on('close', stopKeepalive);
 
       if (userId) {
+        const priorMessages = messages.slice(0, -1);
+        const previousAssistantText = [...priorMessages].reverse()
+          .find((m: any) => m.role === "assistant" && typeof m.content === "string")
+          ?.content ?? "";
+        const previousTurnWasNotificationRead = /\bI checked your Android notifications\b|\bnotification shade\b|\bno current notifications\b/i.test(previousAssistantText);
+        const currentHasNotificationAnchor = /\b(?:notifications?|alerts?)\b/i.test(lastUserOrigText);
+        const currentHasNotificationPronoun = /\b(?:it|that|this|those|these|them|one|ones|all|rest)\b/i.test(lastUserOrigText);
+        const canUseRecentNotificationObservation = currentHasNotificationAnchor ||
+          (previousTurnWasNotificationRead && currentHasNotificationPronoun);
         const recentNotificationObservation = androidActive && !memoryPhoneBypassRequest
           ? getRecentNotificationObservation(userId, 20)
           : null;
-        const appNotificationFollowUp = recentNotificationObservation
+        const appNotificationFollowUp = recentNotificationObservation && canUseRecentNotificationObservation
           ? resolveAndroidNotificationFollowUp(lastUserOrigText, recentNotificationObservation)
           : null;
         if (

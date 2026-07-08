@@ -40,6 +40,9 @@ assert.match(routesSource, /deterministicAndroidToolSummary\(tc\.function\.name,
 assert.match(routesSource, /getRecentNotificationObservation\(userId, 20\)/);
 assert.match(routesSource, /resolveAndroidNotificationFollowUp\(lastUserOrigText, recentNotificationObservation\)/);
 assert.match(routesSource, /appNotificationFollowUp\.kind === "summary"/);
+assert.match(routesSource, /previousTurnWasNotificationRead/);
+assert.match(routesSource, /canUseRecentNotificationObservation/);
+assert.match(routesSource, /recentNotificationObservation && canUseRecentNotificationObservation/);
 assert.match(routingSource, /function isYoutubeServerResearchRequest/);
 assert.match(routingSource, /function isYoutubePhoneActionRequest/);
 assert.match(routingSource, /function isMemoryPhoneBypassRequest/);

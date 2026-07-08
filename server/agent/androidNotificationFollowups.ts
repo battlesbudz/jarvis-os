@@ -76,7 +76,10 @@ function wantsNotificationSummaryFollowUp(transcript: string): boolean {
 }
 
 function wantsFullNotificationSummary(transcript: string): boolean {
-  return /\b(?:all|everything|each|every one|every single one|them all|the rest|rest)\b/i.test(transcript);
+  return /\b(?:all|everything|each|every one|every single one)\s+(?:of\s+)?(?:them|those|these|notifications?|alerts?)\b/i.test(transcript) ||
+    /\b(?:them|those|these)\s+all\b/i.test(transcript) ||
+    /\b(?:the\s+)?rest\b/i.test(transcript) ||
+    /\bevery\s+(?:notification|alert)\b/i.test(transcript);
 }
 
 function negatedNotificationCancellationAction(
