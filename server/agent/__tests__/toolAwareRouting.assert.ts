@@ -141,6 +141,12 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "search up calendar events in Philadelphia today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "What's today's cannabis news?",
   "research",
   ["research", "browser"],

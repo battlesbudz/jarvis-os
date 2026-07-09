@@ -231,6 +231,10 @@ function isPrivateCalendarEventQuery(query: string): boolean {
   return /\b(?:my|our)\s+(?:calendar\s+)?events?\b/i.test(query) || /\bcalendar\s+events?\b/i.test(query);
 }
 
+function explicitlyRequestsResearch(query: string): boolean {
+  return /\b(search\s+(up|for)?|look\s+up|lookup|google|find|research|investigate)\b/i.test(query);
+}
+
 export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
   const query = text.trim();
   if (!query) return EMPTY_PLAN;
@@ -240,7 +244,10 @@ export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
   const ruleMatches = TOOL_AWARE_RULES.filter((rule) =>
     rule.patterns.some((pattern) => pattern.test(query)),
   );
-  const shouldSuppressResearch = isPrivateCalendarEventQuery(query) && ruleMatches.some((rule) => rule.intent === "calendar");
+  const shouldSuppressResearch =
+    !explicitlyRequestsResearch(query) &&
+    isPrivateCalendarEventQuery(query) &&
+    ruleMatches.some((rule) => rule.intent === "calendar");
   const matched = shouldSuppressResearch ? ruleMatches.filter((rule) => rule.intent !== "research") : ruleMatches;
   if (matched.length === 0) {
     return {
