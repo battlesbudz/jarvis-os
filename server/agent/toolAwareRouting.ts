@@ -116,12 +116,15 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\b(?:latest|current|recent)\s+(?:[$\w.\/&-]+\s+){0,6}(?:presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)\b/i,
       /\b(?:latest|current|recent)\s+(?:on|about|for|in)\b/i,
       /\blatest\s+from\b/i,
+      /\bwhat(?:'s|\s+is)?\s+new\s+(?:today|currently|recently|now|right\s+now)\b/i,
+      /\bwhat(?:'s|\s+is)?\s+new\s+(?:in|with|about|at|for|on)\s+(?:[$\w.\/&-]+\s+){1,8}(?:today|currently|recently|now|right\s+now)\b/i,
+      /\bhow(?:'s|\s+(?:is|are))\s+(?!(?:you|we|i|it|things?)\b)(?:[$\w.\/&-]+\s+){1,8}(?:doing|performing|trending|looking)\s+(?:today|currently|recently|now|right\s+now)\b/i,
       /\bwhat(?:'s|\s+is)?\s+(?:happening|going\s+on)\s+today\b/i,
       /\bwhat\s+happened\s+today\b/i,
       /\bwhat(?:'s|\s+is)?\s+(?:happening|going\s+on)\s+(?:in|with|to|on|about|at|around|near|for)\s+(?:[$\w.\/&-]+\s+){1,8}today\b/i,
       /\bwhat\s+happened\s+(?:in|with|to|on|about|at|around|near|for)\s+(?:[$\w.\/&-]+\s+){1,8}today\b/i,
       /\b(?:stock\s+market|stocks?|markets?)\b.{0,60}\b(?:today|currently|recently|latest|now|right\s+now)\b/i,
-      /\b(?:news|updates?|sources?|articles?|events?)\s+(?:today|currently|recently|latest|on|about|for)\b/i,
+      /\b(?:news|updates?|sources?|articles?)\s+(?:today|currently|recently|latest|on|about|for)\b/i,
       /\bheadlines?\s+(?:today|currently|recently|latest)\b/i,
       /\btoday'?s?\s+(?:[$\w.\/&-]+\s+){0,6}(?:news|events?|games?|matches?|fixtures?|updates?|sources?|articles?|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\b/i,
       /\b(?:news|updates?|sources?)\b/i,
@@ -224,15 +227,21 @@ function unique<T>(values: T[]): T[] {
   return Array.from(new Set(values));
 }
 
+function isPrivateCalendarEventQuery(query: string): boolean {
+  return /\b(?:my|our)\s+(?:calendar\s+)?events?\b/i.test(query) || /\bcalendar\s+events?\b/i.test(query);
+}
+
 export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
   const query = text.trim();
   if (!query) return EMPTY_PLAN;
   const ontology = classifyActionOntology(query);
   const toolResolution = resolveToolsForAction(ontology);
 
-  const matched = TOOL_AWARE_RULES.filter((rule) =>
+  const ruleMatches = TOOL_AWARE_RULES.filter((rule) =>
     rule.patterns.some((pattern) => pattern.test(query)),
   );
+  const shouldSuppressResearch = isPrivateCalendarEventQuery(query) && ruleMatches.some((rule) => rule.intent === "calendar");
+  const matched = shouldSuppressResearch ? ruleMatches.filter((rule) => rule.intent !== "research") : ruleMatches;
   if (matched.length === 0) {
     return {
       intents: [],

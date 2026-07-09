@@ -43,6 +43,18 @@ assertRoute(
   ["calendar"],
   ["connected_accounts_list", "connected_accounts_search_tools", "connected_accounts_get_tool_schema", "connected_accounts_execute"],
 );
+{
+  const plan = classifyToolAwareRoute("calendar events for tomorrow");
+  assert(plan.intents.includes("calendar"), "private calendar events: intent detected");
+  assert(!plan.intents.includes("research"), "private calendar events: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "private calendar events: does not prioritize search_web");
+}
+{
+  const plan = classifyToolAwareRoute("what are my events for Friday?");
+  assert(plan.intents.includes("calendar"), "my events: intent detected");
+  assert(!plan.intents.includes("research"), "my events: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "my events: does not prioritize search_web");
+}
 assertRoute(
   "check my Gmail and unread email",
   "email",
@@ -184,6 +196,24 @@ assertRoute(
 );
 assertRoute(
   "what's going on today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's new today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's new with OpenAI today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "how is TSLA doing today?",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
@@ -379,6 +409,12 @@ assertRoute(
   assert(!plan.shouldPreferTool, "casual today greeting: does not prefer tool use");
   assert(!plan.intents.includes("research"), "casual today greeting: does not route as research");
   assert(plan.priorityToolNames.length === 0, "casual today greeting: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("how are you doing today?");
+  assert(!plan.shouldPreferTool, "casual how are you: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual how are you: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual how are you: no priority tools");
 }
 {
   const plan = classifyToolAwareRoute("help me write my weekly report");
