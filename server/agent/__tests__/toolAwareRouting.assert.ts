@@ -224,6 +224,12 @@ assertRoute(
   assert(!plan.intents.includes("research"), "casual today greeting: does not route as research");
   assert(plan.priorityToolNames.length === 0, "casual today greeting: no priority tools");
 }
+{
+  const plan = classifyToolAwareRoute("help me write my weekly report");
+  assert(!plan.shouldPreferTool, "weekly report writing: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "weekly report writing: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "weekly report writing: no priority tools");
+}
 assertRoute(
   "show me my GitHub pull requests",
   "github",
