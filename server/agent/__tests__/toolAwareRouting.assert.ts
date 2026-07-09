@@ -411,6 +411,24 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "who is playing today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "are the Eagles playing today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "do the Eagles play today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "who won today's Lakers game?",
   "research",
   ["research", "browser"],
@@ -625,6 +643,12 @@ assertRoute(
   assert(!plan.shouldPreferTool, "casual how are you: does not prefer tool use");
   assert(!plan.intents.includes("research"), "casual how are you: does not route as research");
   assert(plan.priorityToolNames.length === 0, "casual how are you: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("are you playing today?");
+  assert(!plan.shouldPreferTool, "casual playing question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual playing question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual playing question: no priority tools");
 }
 {
   const plan = classifyToolAwareRoute("help me write my weekly report");
