@@ -134,6 +134,18 @@ assertRoute(
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
 );
+assertRoute(
+  "what's the current TSLA price?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest Lakers score",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
 {
   const plan = classifyToolAwareRoute("Hey Jarvis how are you doing today");
   assert(!plan.shouldPreferTool, "casual today greeting: does not prefer tool use");
