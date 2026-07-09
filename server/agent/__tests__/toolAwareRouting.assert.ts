@@ -417,6 +417,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "latest OpenAI",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest Ukraine",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "watch the latest from this channel",
   "research",
   ["research", "browser"],
@@ -565,6 +577,12 @@ assertRoute(
   assert(!plan.shouldPreferTool, "current report writing: does not prefer tool use");
   assert(!plan.intents.includes("research"), "current report writing: does not route as research");
   assert(plan.priorityToolNames.length === 0, "current report writing: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("latest report");
+  assert(!plan.shouldPreferTool, "latest report document phrase: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "latest report document phrase: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "latest report document phrase: no priority tools");
 }
 {
   const plan = classifyToolAwareRoute("help me revise my current report for me");
