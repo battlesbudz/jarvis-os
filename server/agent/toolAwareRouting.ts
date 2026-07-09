@@ -118,6 +118,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\b(?:latest|current|recent)\s+(?:[$\w.-]+\s+){1,8}(?:on|about|for|in|of|at|near|around)\b/i,
       /\bwhat(?:'s|\s+is)?\s+(?:happening|going\s+on)\s+today\b/i,
       /\bwhat\s+happened\s+today\b/i,
+      /\b(?:stock\s+market|stocks?|markets?)\b.{0,60}\b(?:today|currently|recently|latest|now|right\s+now)\b/i,
       /\b(?:news|updates?|sources?|articles?|headlines?|events?)\s+(?:today|currently|recently|latest|on|about|for)\b/i,
       /\btoday'?s?\s+(?:[$\w.-]+\s+){0,6}(?:news|events?|updates?|sources?|articles?|headlines?|information|info|data|prices?|scores?|results?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\b/i,
       /\b(?:news|updates?|sources?|headlines?)\b/i,
