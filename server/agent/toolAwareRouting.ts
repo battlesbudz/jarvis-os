@@ -112,6 +112,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     intent: "research",
     patterns: [
       /\b(search\s+(up|for)?|look\s+up|lookup|google|find|research|investigate)\b/i,
+      /\b(?:latest|current|recent)\b/i,
       /\b(?:latest|current|recent)\s+(?:[$\w.-]+\s+){0,6}(?:news|events?|updates?|sources?|articles?|reports?|headlines?|information|info|data|prices?|scores?|results?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\b/i,
       /\b(?:latest|current|recent)\s+(?:[$\w.-]+\s+){0,6}(?:presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)\b/i,
       /\b(?:latest|current|recent)\s+(?:on|about|for|in)\b/i,
