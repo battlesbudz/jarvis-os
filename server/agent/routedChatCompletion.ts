@@ -126,6 +126,25 @@ export function isStrictJsonOnlyRequest(body: ChatCreateBody): boolean {
   return !candidateTexts.some((text) => directlyRequestsRuntimeStateContext(messages, text));
 }
 
+function hasPromptOnlyStrictJsonOutputContract(body: ChatCreateBody): boolean {
+  if (body.response_format) return false;
+  const messages = messagesFromBody(body);
+  if (messages.length === 0) return false;
+  const normalizedMessages = messages.map((message) => ({
+    role: String(message.role),
+    text: normalizeMessageText(message),
+  }));
+  if (
+    normalizedMessages.some(
+      (message) => (message.role === "system" || message.role === "developer") && hasStrictJsonOnlyWording(message.text),
+    )
+  ) {
+    return true;
+  }
+  const lastUserText = [...normalizedMessages].reverse().find((message) => message.role === "user")?.text ?? "";
+  return hasStrictJsonOnlyWording(lastUserText);
+}
+
 export function getUserIdFromChatBody(body: unknown): string | undefined {
   if (!body || typeof body !== "object") return undefined;
   const user = (body as { user?: unknown }).user;
@@ -142,6 +161,8 @@ export async function createRoutedChatCompletion(
   options: RoutedChatCompletionOptions = {},
   runner: RouteRunner = routeModelTurn,
 ): Promise<RuntimeExplainedChatCompletion> {
+  const strictJsonOnlyRequest = isStrictJsonOnlyRequest(body);
+  const allowRuntimeAnswerShortcuts = !hasPromptOnlyStrictJsonOutputContract(body);
   const result = await runner({
     tier: options.tier ?? "cheap",
     requestedModel: String(body.model),
@@ -153,12 +174,12 @@ export async function createRoutedChatCompletion(
     stream: false,
     userId: options.userId ?? getUserIdFromChatBody(body),
     signal: options.signal,
-    disableRuntimeStateCard: options.disableRuntimeStateCard ?? isStrictJsonOnlyRequest(body),
+    disableRuntimeStateCard: options.disableRuntimeStateCard ?? strictJsonOnlyRequest,
     logPrefix: options.logPrefix,
-    allowRuntimeIdentityShortcut: true,
-    allowRuntimeCapabilityShortcut: true,
-    allowRuntimeMemoryInspectionShortcut: true,
-    allowPhoneGemmaDiagnosticShortcut: true,
+    allowRuntimeIdentityShortcut: allowRuntimeAnswerShortcuts,
+    allowRuntimeCapabilityShortcut: allowRuntimeAnswerShortcuts,
+    allowRuntimeMemoryInspectionShortcut: allowRuntimeAnswerShortcuts,
+    allowPhoneGemmaDiagnosticShortcut: allowRuntimeAnswerShortcuts,
   });
 
   return {
