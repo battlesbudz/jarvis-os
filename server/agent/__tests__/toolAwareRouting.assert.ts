@@ -321,6 +321,12 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "today's NBA schedule",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "what are today's games?",
   "research",
   ["research", "browser"],
