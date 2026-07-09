@@ -194,6 +194,30 @@ assertRoute(
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
 );
+assertRoute(
+  "what's the price of TSLA today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "score of Lakers today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "CEO of Nvidia today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "who is the president of Mexico today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
 {
   const plan = classifyToolAwareRoute("Hey Jarvis how are you doing today");
   assert(!plan.shouldPreferTool, "casual today greeting: does not prefer tool use");

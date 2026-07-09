@@ -120,6 +120,8 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\b(?:news|updates?|sources?|articles?|reports?|headlines?)\b/i,
       /\b(?:[$\w.-]+\s+){1,6}(?:news|updates?|articles?|reports?|headlines?)\b/i,
       /\b(?:[$\w.-]+\s+){1,6}(?:events?|information|info|data|prices?|scores?|results?)\s+(?:today|currently|recently|latest|now|right\s+now)\b/i,
+      /\b(?:events?|information|info|data|prices?|scores?|results?)\s+(?:of|for)\s+(?:[$\w.-]+\s+){1,8}(?:today|currently|recently|latest|now|right\s+now)\b/i,
+      /\b(?:presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)\s+(?:of|for|at|in)\s+(?:[$\w.-]+\s+){1,8}(?:today|currently|recently|latest|now|right\s+now)\b/i,
     ],
     capabilityIds: ["research", "browser"],
     toolGroups: ["research", "browser"],
