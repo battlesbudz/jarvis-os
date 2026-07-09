@@ -166,8 +166,9 @@ function topicIntent(topic: string): RuntimeMemoryInspectionIntent {
 }
 
 function isBenignAboutYouInspectionPreamble(prefix: string): boolean {
-  if (!prefix) return true;
-  return /^(?:(?:hey|hi|hello|yo)\s+(?:jarvis|travis)?\s*)?(?:(?:i(?:m| am| was)?\s+)?just\s+wondering\s*)?(?:(?:how(?:s| is| was)\s+your\s+day|how\s+are\s+you)\s*)?$/.test(prefix);
+  const cleaned = prefix.replace(/[?!.;,:\-\u2013\u2014]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!cleaned) return true;
+  return /^(?:(?:hey|hi|hello|yo)\s+(?:jarvis|travis)?\s*)?(?:(?:i(?:m| am| was)?\s+)?just\s+wondering\s*)?(?:(?:how(?:s| is| was)\s+your\s+day|how\s+are\s+you)\s*)?$/.test(cleaned);
 }
 
 function isAboutYouMemoryInspectionRequest(normalized: string): boolean {
