@@ -363,10 +363,22 @@ assertRoute(
   assert(plan.priorityToolNames.length === 0, "current report writing: no priority tools");
 }
 {
+  const plan = classifyToolAwareRoute("help me revise my current report for me");
+  assert(!plan.shouldPreferTool, "current report writing with preposition: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "current report writing with preposition: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "current report writing with preposition: no priority tools");
+}
+{
   const plan = classifyToolAwareRoute("summarize our recent conversation");
   assert(!plan.shouldPreferTool, "recent conversation summary: does not prefer tool use");
   assert(!plan.intents.includes("research"), "recent conversation summary: does not route as research");
   assert(plan.priorityToolNames.length === 0, "recent conversation summary: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("summarize our recent conversation in detail");
+  assert(!plan.shouldPreferTool, "recent conversation summary with preposition: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "recent conversation summary with preposition: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "recent conversation summary with preposition: no priority tools");
 }
 {
   const plan = classifyToolAwareRoute("help me write a headline for my report");
