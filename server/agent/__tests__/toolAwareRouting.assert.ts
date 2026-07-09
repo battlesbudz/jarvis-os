@@ -165,6 +165,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "latest court ruling",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "current Supreme Court ruling",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "what happened today?",
   "research",
   ["research", "browser"],
@@ -352,6 +364,12 @@ assertRoute(
 );
 assertRoute(
   "who is the president of Mexico today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "court decision today",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
