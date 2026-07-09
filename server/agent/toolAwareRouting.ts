@@ -115,7 +115,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\b(?:latest|current|recent)\s+(?:[$\w.-]+\s+){0,6}(?:news|events?|updates?|sources?|articles?|reports?|headlines?|information|info|data|prices?|scores?|results?)\b/i,
       /\b(?:latest|current|recent)\s+(?:on|about|for)\b/i,
       /\b(?:news|updates?|sources?|articles?|headlines?|events?)\s+(?:today|currently|recently|latest|on|about|for)\b/i,
-      /\btoday'?s?\s+(?:[\w-]+\s+){0,6}(?:news|updates?|sources?|articles?|headlines?|events?)\b/i,
+      /\btoday'?s?\s+(?:[$\w.-]+\s+){0,6}(?:news|events?|updates?|sources?|articles?|reports?|headlines?|information|info|data|prices?|scores?|results?)\b/i,
     ],
     capabilityIds: ["research", "browser"],
     toolGroups: ["research", "browser"],
