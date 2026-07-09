@@ -236,7 +236,10 @@ function unique<T>(values: T[]): T[] {
 }
 
 function isPrivateCalendarEventQuery(query: string): boolean {
-  return /\b(?:my|our)\s+(?:calendar\s+)?events?\b/i.test(query);
+  return (
+    /\b(?:my|our)\s+(?:calendar\s+)?events?\b/i.test(query) ||
+    /\bevents?\s+(?:are\s+)?(?:on|in|for)\s+(?:my|our)\s+calendar\b/i.test(query)
+  );
 }
 
 function explicitlyRequestsResearch(query: string): boolean {

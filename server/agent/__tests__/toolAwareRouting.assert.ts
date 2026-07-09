@@ -56,6 +56,18 @@ assertRoute(
   assert(!plan.priorityToolNames.includes("search_web"), "my events: does not prioritize search_web");
 }
 {
+  const plan = classifyToolAwareRoute("what events are on my calendar today?");
+  assert(plan.intents.includes("calendar"), "events on my calendar: intent detected");
+  assert(!plan.intents.includes("research"), "events on my calendar: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "events on my calendar: no search_web");
+}
+{
+  const plan = classifyToolAwareRoute("events on our calendar today");
+  assert(plan.intents.includes("calendar"), "events on our calendar: intent detected");
+  assert(!plan.intents.includes("research"), "events on our calendar: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "events on our calendar: no search_web");
+}
+{
   const plan = classifyToolAwareRoute("concerts today in my calendar");
   assert(plan.intents.includes("calendar"), "private event-category calendar: intent detected");
   assert(!plan.intents.includes("research"), "private event-category calendar: does not route as research");
