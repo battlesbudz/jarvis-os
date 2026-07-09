@@ -106,6 +106,14 @@ async function main(): Promise<void> {
     classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Hey, can you tell me what you know about me?" }]),
     { kind: "exact_memory_inspection", query: "user profile preferences relationships work patterns goals blockers values", scopeLabel: "about you" },
   );
+  assert.deepEqual(
+    classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Can you tell me what you know about me, please?" }]),
+    { kind: "exact_memory_inspection", query: "user profile preferences relationships work patterns goals blockers values", scopeLabel: "about you" },
+  );
+  assert.deepEqual(
+    classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Can you tell me what you know about me, thanks" }]),
+    { kind: "exact_memory_inspection", query: "user profile preferences relationships work patterns goals blockers values", scopeLabel: "about you" },
+  );
   assert.equal(
     classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Can you tell me what you know about me and draft an email from it?" }]),
     null,

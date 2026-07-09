@@ -165,8 +165,12 @@ function topicIntent(topic: string): RuntimeMemoryInspectionIntent {
   };
 }
 
+function cleanBenignInspectionText(text: string): string {
+  return text.replace(/[?!.;,:\-\u2013\u2014]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function isBenignAboutYouInspectionPreamble(prefix: string): boolean {
-  const cleaned = prefix.replace(/[?!.;,:\-\u2013\u2014]+/g, " ").replace(/\s+/g, " ").trim();
+  const cleaned = cleanBenignInspectionText(prefix);
   if (!cleaned) return true;
   return /^(?:(?:hey|hi|hello|yo)(?:\s+(?:jarvis|travis))?\s*)?(?:(?:i(?:m| am| was)?\s+)?just\s+wondering\s*)?(?:(?:how(?:s| is| was)\s+your\s+day|how\s+are\s+you)\s*)?$/.test(cleaned);
 }
@@ -185,7 +189,7 @@ function isAboutYouMemoryInspectionRequest(normalized: string): boolean {
   const prefix = normalized.slice(0, matchIndex).trim();
   if (!isBenignAboutYouInspectionPreamble(prefix)) return false;
 
-  const suffix = normalized.slice(matchIndex + match[0].length).trim();
+  const suffix = cleanBenignInspectionText(normalized.slice(matchIndex + match[0].length));
   return !suffix || /^(?:please|for me|if you can|if possible|thanks|thank you)$/.test(suffix);
 }
 
