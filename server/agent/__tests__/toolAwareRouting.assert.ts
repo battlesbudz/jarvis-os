@@ -297,6 +297,12 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "current nasdaq",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "current TSLA",
   "research",
   ["research", "browser"],
@@ -448,6 +454,18 @@ assertRoute(
 );
 assertRoute(
   "btc/usd today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "s&p 500 today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "nasdaq today",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
