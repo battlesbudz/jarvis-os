@@ -207,7 +207,19 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "events in Philadelphia, PA today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "concerts in Philadelphia today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "concerts in Philadelphia, PA today",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
@@ -220,6 +232,12 @@ assertRoute(
 );
 assertRoute(
   "concerts today in Philadelphia",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "concerts today in Philadelphia, PA",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
