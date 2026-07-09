@@ -165,16 +165,41 @@ function topicIntent(topic: string): RuntimeMemoryInspectionIntent {
   };
 }
 
+function isBenignAboutYouInspectionPreamble(prefix: string): boolean {
+  if (!prefix) return true;
+  return /^(?:(?:hey|hi|hello|yo)\s+(?:jarvis|travis)?\s*)?(?:(?:i(?:m| am| was)?\s+)?just\s+wondering\s*)?(?:(?:how(?:s| is| was)\s+your\s+day|how\s+are\s+you)\s*)?$/.test(prefix);
+}
+
+function isAboutYouMemoryInspectionRequest(normalized: string): boolean {
+  if (/^(?:what do you know about me|show me what you know about me|show what you know about me|what memories do you have about me|what have i told you|show my memories|show me my memories|list my memories|show memory os|what is in my memory|whats in my memory|what is in memory os|whats in memory os)$/.test(normalized)) {
+    return true;
+  }
+
+  const match = normalized.match(
+    /\b(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:tell|show)\s+me\s+what\s+you\s+know\s+about\s+me\b/,
+  );
+  if (!match) return false;
+
+  const matchIndex = match.index ?? 0;
+  const prefix = normalized.slice(0, matchIndex).trim();
+  if (!isBenignAboutYouInspectionPreamble(prefix)) return false;
+
+  const suffix = normalized.slice(matchIndex + match[0].length).trim();
+  return !suffix || /^(?:please|for me|if you can|if possible|thanks|thank you)$/.test(suffix);
+}
+
 export function classifyRuntimeMemoryInspectionIntent(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
 ): RuntimeMemoryInspectionIntent | null {
   const rawText = latestUserText(messages);
   const normalized = normalizeForIntent(rawText);
-  if (!normalized || hasCompoundFollowUpWork(rawText)) return null;
+  if (!normalized) return null;
 
-  if (/^(?:what do you know about me|show me what you know about me|show what you know about me|what memories do you have about me|what have i told you|show my memories|show me my memories|list my memories|show memory os|what is in my memory|whats in my memory|what is in memory os|whats in memory os)$/.test(normalized)) {
+  if (isAboutYouMemoryInspectionRequest(normalized)) {
     return topicIntent("me");
   }
+
+  if (hasCompoundFollowUpWork(rawText)) return null;
 
   const topicPatterns = [
     /^(?:show|list|display|pull up)(?: me)?(?: the)?(?: my)?(?: exact)?(?: stored)? (?:memories|memory) (?:about|for|on|related to|regarding) (.+)$/i,
