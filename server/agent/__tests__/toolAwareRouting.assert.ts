@@ -165,6 +165,12 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "what's the latest in Ukraine?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "current CEO of Nvidia",
   "research",
   ["research", "browser"],

@@ -114,7 +114,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\b(search\s+(up|for)?|look\s+up|lookup|google|find|research|investigate)\b/i,
       /\b(?:latest|current|recent)\s+(?:[$\w.-]+\s+){0,6}(?:news|events?|updates?|sources?|articles?|reports?|headlines?|information|info|data|prices?|scores?|results?)\b/i,
       /\b(?:latest|current|recent)\s+(?:[$\w.-]+\s+){0,6}(?:presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)\b/i,
-      /\b(?:latest|current|recent)\s+(?:on|about|for)\b/i,
+      /\b(?:latest|current|recent)\s+(?:on|about|for|in)\b/i,
       /\b(?:news|updates?|sources?|articles?|headlines?|events?)\s+(?:today|currently|recently|latest|on|about|for)\b/i,
       /\btoday'?s?\s+(?:[$\w.-]+\s+){0,6}(?:news|events?|updates?|sources?|articles?|reports?|headlines?|information|info|data|prices?|scores?|results?)\b/i,
       /\b(?:news|updates?|sources?|headlines?)\b/i,
