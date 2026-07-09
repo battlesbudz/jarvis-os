@@ -165,6 +165,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "what happened today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's going on today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "latest Lakers score",
   "research",
   ["research", "browser"],
@@ -271,6 +283,18 @@ assertRoute(
   assert(!plan.shouldPreferTool, "weekly report writing: does not prefer tool use");
   assert(!plan.intents.includes("research"), "weekly report writing: does not route as research");
   assert(plan.priorityToolNames.length === 0, "weekly report writing: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("help me revise my current report");
+  assert(!plan.shouldPreferTool, "current report writing: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "current report writing: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "current report writing: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("summarize our recent conversation");
+  assert(!plan.shouldPreferTool, "recent conversation summary: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "recent conversation summary: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "recent conversation summary: no priority tools");
 }
 assertRoute(
   "show me my GitHub pull requests",
