@@ -345,6 +345,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "latest developments in Ukraine",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "current situation in Ukraine",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "what's the latest with Ukraine?",
   "research",
   ["research", "browser"],
