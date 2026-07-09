@@ -165,6 +165,12 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "what's today's exchange rate for USD/EUR?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "today's Lakers score",
   "research",
   ["research", "browser"],
@@ -196,6 +202,12 @@ assertRoute(
 );
 assertRoute(
   "TSLA price today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "mortgage rates today",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
