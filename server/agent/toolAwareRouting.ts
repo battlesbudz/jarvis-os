@@ -116,6 +116,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\b(?:latest|current|recent)\s+(?:[$\w.\/&-]+\s+){0,6}(?:presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)\b/i,
       /\b(?:latest|current|recent)\s+(?:on|about|for|in|with)\b/i,
       /\b(?:latest|current|recent)\s+(?:S&P\s*500|NASDAQ(?:\s+Composite)?|Dow(?:\s+Jones)?(?:\s+Industrial\s+Average)?|Russell\s*2000|[$][A-Za-z]{1,8}|[A-Z]{1,6}(?:[\/.-][A-Z]{1,6})?)\b/,
+      /\b(?:S&P\s*500|NASDAQ(?:\s+Composite)?|Dow(?:\s+Jones)?(?:\s+Industrial\s+Average)?|Russell\s*2000|[$][A-Za-z]{1,8}|[A-Z]{1,6}(?:[\/.-][A-Z]{1,6})?)\s+(?:today|currently|recently|now|right\s+now)\b/,
       /\blatest\s+from\b/i,
       /\bwhat(?:'s|\s+is)?\s+new\s+(?:today|currently|recently|now|right\s+now)\b/i,
       /\bwhat(?:'s|\s+is)?\s+new\s+(?:in|with|about|at|for|on)\s+(?:[$\w.\/&-]+\s+){1,8}(?:today|currently|recently|now|right\s+now)\b/i,
