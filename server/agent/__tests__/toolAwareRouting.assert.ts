@@ -177,6 +177,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "what happened in Ukraine today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's happening with TSLA today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "how is the stock market today?",
   "research",
   ["research", "browser"],
@@ -285,6 +297,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "headlines",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Ukraine headlines today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "what's the price of TSLA today?",
   "research",
   ["research", "browser"],
@@ -331,6 +355,18 @@ assertRoute(
   assert(!plan.shouldPreferTool, "recent conversation summary: does not prefer tool use");
   assert(!plan.intents.includes("research"), "recent conversation summary: does not route as research");
   assert(plan.priorityToolNames.length === 0, "recent conversation summary: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("help me write a headline for my report");
+  assert(!plan.shouldPreferTool, "headline writing: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "headline writing: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "headline writing: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("write five headlines for my landing page");
+  assert(!plan.shouldPreferTool, "landing page headlines: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "landing page headlines: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "landing page headlines: no priority tools");
 }
 assertRoute(
   "show me my GitHub pull requests",
