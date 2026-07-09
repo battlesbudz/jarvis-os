@@ -155,6 +155,10 @@ export async function createRoutedChatCompletion(
     signal: options.signal,
     disableRuntimeStateCard: options.disableRuntimeStateCard ?? isStrictJsonOnlyRequest(body),
     logPrefix: options.logPrefix,
+    allowRuntimeIdentityShortcut: true,
+    allowRuntimeCapabilityShortcut: true,
+    allowRuntimeMemoryInspectionShortcut: true,
+    allowPhoneGemmaDiagnosticShortcut: true,
   });
 
   return {

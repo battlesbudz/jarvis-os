@@ -4,6 +4,8 @@ import { ANDROID_LOCAL_GEMMA_MODEL } from "@shared/modelProviderCatalog";
 import { BaseProvider, isJsonObjectResponseFormat } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { buildRuntimeStateCardPrompt } from "../../state/stateCard";
+import { buildGroundedEvidencePacketPrompt } from "../../state/groundedEvidencePacket";
+import { classifyRuntimeMemoryInspectionIntent } from "../../state/runtimeMemoryInspection";
 import {
   auditLocalRuntimeResponse,
   type LocalRuntimeActionResult,
@@ -2200,6 +2202,20 @@ async function runtimeStateCardPromptFromParams(
         ? 180
         : Math.max(320, Math.floor(promptBudget * (useToolProtocol ? 0.25 : 0.32))),
     );
+    const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent(params.messages);
+    if (memoryInspectionIntent?.scopeLabel === "about you") {
+      return await buildGroundedEvidencePacketPrompt({
+        userId: params.userId ?? "",
+        requestText: latestUserText(params.messages),
+        query: memoryInspectionIntent.query,
+        activeDevice: "android",
+        activeModel: normalizeAndroidLocalGemmaModel(params.model),
+        currentContext: useToolProtocol ? "phone_gemma_tool_protocol" : "phone_gemma_chat",
+        memoryLimit: useToolProtocol ? 3 : 5,
+        commitmentLimit: useToolProtocol ? 2 : 4,
+        renderMaxChars: Math.min(useToolProtocol ? 1_500 : 1_900, Math.max(cardBudget, 1_100)),
+      });
+    }
     return await buildRuntimeStateCardPrompt({
       userId: params.userId ?? "",
       assistantName: "Jarvis",

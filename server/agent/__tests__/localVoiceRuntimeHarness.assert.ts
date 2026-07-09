@@ -11,6 +11,7 @@ import {
   type LocalVoiceToolName,
   type ScriptedLocalGemmaStep,
 } from "../../voiceLocalRuntimeHarness";
+import { _setGroundedEvidencePacketDepsForTesting } from "../../state/groundedEvidencePacket";
 
 const notificationEvents: LocalVoiceAndroidEvent[] = [{
   type: "notification",
@@ -3521,6 +3522,59 @@ async function testLocalVoiceOffersCloudBackgroundTaskAfterLocalFailure() {
   console.log("OK: local voice can offer an explicit cloud background retry without using cloud live");
 }
 
+async function testLocalVoicePersonalMemoryQuestionInjectsGroundedEvidencePacket() {
+  _setGroundedEvidencePacketDepsForTesting({
+    now: () => new Date("2026-07-09T12:00:00.000Z"),
+    loadProfileState: async (id) => ({
+      userId: id,
+      preferredName: "Justin",
+      source: "profile_store",
+    }),
+    loadSoul: async () => ({ content: "", manualOverride: null, generatedAt: null, updatedAt: null }),
+    retrieveMemoryContext: async (input) => ({
+      userId: input.userId,
+      query: input.query,
+      caller: "runtime_memory_inspection",
+      items: [{
+        memory: {
+          id: "voice-grounded-memory",
+          content: "User prefers direct answers from grounded Jarvis state.",
+          category: "communication_style",
+          tier: "long_term",
+          memoryType: "semantic",
+          relevanceScore: 90,
+          confidence: 95,
+          accessCount: 1,
+          score: 0.95,
+        },
+        provenance: [{ kind: "user_memory", id: "voice-grounded-memory", source: "canonical" }],
+      }],
+      sources: { memories: ["voice-grounded-memory"], brainChunks: [], hotState: [] },
+      provenance: [{ kind: "user_memory", id: "voice-grounded-memory", source: "canonical" }],
+      uncertainty: [],
+    }),
+    loadCommitments: async () => [],
+  });
+
+  try {
+    const gemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "You prefer direct answers." }]);
+    const result = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript: "Just wondering how was your day can you tell me what you know about me",
+      gemma,
+    });
+
+    assert.equal(result.diagnostics.outcome, "final");
+    assert.match(gemma.prompts[0]?.contextPacket ?? "", /Jarvis Grounded Evidence Packet/);
+    assert.match(gemma.prompts[0]?.contextPacket ?? "", /Use only EVIDENCE/);
+    assert.match(gemma.prompts[0]?.contextPacket ?? "", /Preferred name: Justin/);
+    assert.match(gemma.prompts[0]?.contextPacket ?? "", /direct answers from grounded Jarvis state/);
+    console.log("OK: local voice injects grounded evidence packets for personal memory questions");
+  } finally {
+    _setGroundedEvidencePacketDepsForTesting(null);
+  }
+}
+
 async function testCanonicalFinalResponseContract() {
   const result = await runLocalVoiceRuntimeHarnessTurn({
     userId: "user-local-voice",
@@ -3633,6 +3687,7 @@ async function main() {
   await testScriptedFakeLocalGemmaVariants();
   testFakeAndroidRuntimeEventCoverage();
   await testLocalVoiceOffersCloudBackgroundTaskAfterLocalFailure();
+  await testLocalVoicePersonalMemoryQuestionInjectsGroundedEvidencePacket();
   await testLocalVoiceBlocksCloudAndSecondaryModels();
   await testCanonicalFinalResponseContract();
   console.log("\nAll Local Voice Runtime harness assertions passed.");

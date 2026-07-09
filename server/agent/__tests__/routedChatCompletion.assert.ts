@@ -36,6 +36,8 @@ async function main() {
   assert.equal(capturedRequest?.maxCompletionTokens, 42);
   assert.equal(capturedRequest?.requestedModel, "gpt-4o-mini");
   assert.deepEqual(capturedRequest?.responseFormat, { type: "json_object" });
+  assert.equal(capturedRequest?.allowRuntimeMemoryInspectionShortcut, true);
+  assert.equal(capturedRequest?.allowRuntimeIdentityShortcut, true);
   assert.equal(response.model, "chatgpt-codex-oauth/auto");
   assert.equal(response.choices[0]?.message.content, '{"ok":true}');
   assert.equal(response.runtimeExplanation?.title, "Runtime-owned answer");
