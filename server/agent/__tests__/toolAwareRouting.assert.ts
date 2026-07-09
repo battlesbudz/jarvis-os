@@ -55,6 +55,12 @@ assertRoute(
   assert(!plan.intents.includes("research"), "my events: does not route as research");
   assert(!plan.priorityToolNames.includes("search_web"), "my events: does not prioritize search_web");
 }
+{
+  const plan = classifyToolAwareRoute("concerts today in my calendar");
+  assert(plan.intents.includes("calendar"), "private event-category calendar: intent detected");
+  assert(!plan.intents.includes("research"), "private event-category calendar: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "private event-category calendar: no search_web");
+}
 assertRoute(
   "check my Gmail and unread email",
   "email",
@@ -208,6 +214,18 @@ assertRoute(
 );
 assertRoute(
   "comedy shows near Philadelphia tonight",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "concerts today in Philadelphia",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "comedy shows tonight near Philadelphia",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
@@ -429,6 +447,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "latest openai",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest ukraine",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "watch the latest from this channel",
   "research",
   ["research", "browser"],
@@ -583,6 +613,17 @@ assertRoute(
   assert(!plan.shouldPreferTool, "latest report document phrase: does not prefer tool use");
   assert(!plan.intents.includes("research"), "latest report document phrase: does not route as research");
   assert(plan.priorityToolNames.length === 0, "latest report document phrase: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("latest one");
+  assert(!plan.shouldPreferTool, "latest contextual pronoun phrase: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "latest contextual pronoun phrase: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "latest contextual pronoun phrase: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("latest reply");
+  assert(!plan.intents.includes("research"), "latest reply phrase: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "latest reply phrase: no search_web");
 }
 {
   const plan = classifyToolAwareRoute("help me revise my current report for me");
