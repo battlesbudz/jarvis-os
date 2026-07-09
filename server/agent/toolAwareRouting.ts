@@ -131,7 +131,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /^\s*(?:the\s+)?headlines?\s*\??\s*$/i,
       /\b(?:[$\w.\/&-]+\s+){1,6}(?:news|updates?)\b/i,
       /\b(?:[$\w.\/&-]+\s+){1,6}(?:events?|games?|matches?|fixtures?|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\s+(?:today|currently|recently|latest|now|right\s+now)\b/i,
-      /\b(?:events?|games?|matches?|fixtures?|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\s+(?:of|for|from)\s+(?:[$\w.\/&-]+\s+){1,8}(?:today|currently|recently|latest|now|right\s+now)\b/i,
+      /\b(?:events?|games?|matches?|fixtures?|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\s+(?:of|for|from|in|on|at|near|around|about|with)\s+(?:[$\w.\/&-]+\s+){1,8}(?:today|currently|recently|latest|now|right\s+now)\b/i,
       /\b(?:presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)\s+(?:of|for|at|in)\s+(?:[$\w.\/&-]+\s+){1,8}(?:today|currently|recently|latest|now|right\s+now)\b/i,
     ],
     capabilityIds: ["research", "browser"],
@@ -228,7 +228,7 @@ function unique<T>(values: T[]): T[] {
 }
 
 function isPrivateCalendarEventQuery(query: string): boolean {
-  return /\b(?:my|our)\s+(?:calendar\s+)?events?\b/i.test(query) || /\bcalendar\s+events?\b/i.test(query);
+  return /\b(?:my|our)\s+(?:calendar\s+)?events?\b/i.test(query);
 }
 
 function explicitlyRequestsResearch(query: string): boolean {
