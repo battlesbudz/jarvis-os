@@ -77,7 +77,6 @@ export function runtimeModelLabelForRoute(entry: FallbackChainEntry | undefined)
   if (!entry) return "Unknown";
 
   if (entry.providerName === "android-local-gemma") return "Local";
-  if (entry.providerName === "local-llama") return "Local";
   if (entry.providerName === "anthropic") return "Claude";
   if (entry.providerName === "google") return "Gemini";
   if (entry.providerName === "chatgpt-codex-oauth") return "Codex";

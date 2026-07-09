@@ -361,7 +361,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
   const harnessStartedAt = Date.now();
   const activeCloudBudget =
     cloudBudget && typeof cloudBudget.budgetUsd === "number" && cloudBudget.budgetUsd > 0
-      ? cloudBudget
+      ? { ...cloudBudget, budgetUsd: cloudBudget.budgetUsd }
       : null;
   const cloudBudgetUsdPer1kTokens = activeCloudBudget?.usdPer1kTokens ?? DEFAULT_CLOUD_BUDGET_USD_PER_1K_TOKENS;
   let cloudBudgetSpentUsd = roundCloudBudgetUsd(activeCloudBudget?.spentUsd ?? 0);

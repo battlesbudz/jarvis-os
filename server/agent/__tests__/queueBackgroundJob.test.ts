@@ -152,7 +152,7 @@ async function main() {
   {
     assert.match(jobQueueSource, /validateCloudBackgroundJobInput\(jobInput\)/);
     assert.match(jobQueueSource, /cloudBackgroundValidation\.model/);
-    assert.match(jobQueueSource, /forceModel: cloudBackgroundValidation\?\.ok === true/);
+    assert.match(jobQueueSource, /forceModel: Boolean\(cloudBackgroundTask\)/);
     assert.match(jobQueueSource, /maxCloudBackgroundModelTurnsForBudget/);
     assert.match(jobQueueSource, /cloudBackgroundBudgetGuardForRun/);
     assert.match(jobQueueSource, /buildCompactCloudBackgroundResultPacket/);

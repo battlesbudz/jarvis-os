@@ -92,11 +92,13 @@ const ANDROID_APP_PACKAGE_ALIASES: Record<string, string> = {
 const ANDROID_APP_PACKAGE_STANDARD_ROOTS = new Set(["com", "org", "net", "io"]);
 const ANDROID_APP_PACKAGE_NONSTANDARD_ROOTS = new Set(["de", "me", "tv"]);
 
-const ANDROID_APP_URL_CONFIRMERS_BY_PACKAGE: Record<string, {
+type AndroidAppUrlConfirmers = {
   hostSuffixes: string[];
   schemes: string[];
   hostPathPrefixes?: Array<{ hostSuffix: string; pathPrefix: string }>;
-}> = {
+};
+
+const ANDROID_APP_URL_CONFIRMERS_BY_PACKAGE: Record<string, AndroidAppUrlConfirmers> = {
   "com.google.android.youtube": {
     hostSuffixes: ["youtube.com", "youtu.be"],
     schemes: ["youtube", "vnd.youtube"],
@@ -520,7 +522,7 @@ function hostMatchesSuffix(host: string, suffix: string): boolean {
   return host === suffix || host.endsWith(`.${suffix}`);
 }
 
-function appUrlConfirmersForTarget(appTarget: string): { hostSuffixes: string[]; schemes: string[] } | null {
+function appUrlConfirmersForTarget(appTarget: string): AndroidAppUrlConfirmers | null {
   const packageName = appPackageNameForTarget(appTarget);
   return packageName ? (ANDROID_APP_URL_CONFIRMERS_BY_PACKAGE[packageName] ?? null) : null;
 }

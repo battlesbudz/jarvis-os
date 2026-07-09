@@ -276,6 +276,7 @@ async function main() {
       ts: Date.now(),
     })),
   );
+  assert.equal(manyNotificationSummary?.kind, "summary");
   assert.match(manyNotificationSummary?.response ?? "", /App 14/);
   assert.doesNotMatch(manyNotificationSummary?.response ?? "", /more beyond this summary/i);
   const allHandsNamedSummary = resolveAndroidNotificationFollowUp(

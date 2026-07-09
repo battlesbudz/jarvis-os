@@ -47,7 +47,7 @@ async function withAbortableTimeout<T>(
   const controller = new AbortController();
   const onParentAbort = () => controller.abort(parentSignal?.reason ?? abortError("Quality loop aborted by caller"));
   const timeout = setTimeout(() => controller.abort(abortError("Quality loop timed out")), ms);
-  timeout.unref?.();
+  (timeout as { unref?: () => void }).unref?.();
   parentSignal?.addEventListener("abort", onParentAbort, { once: true });
 
   try {

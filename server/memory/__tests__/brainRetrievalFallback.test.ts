@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 import type { QueryBrainResult } from "../../brain/types";
 
 process.env.DATABASE_URL ??= "postgres://localhost/jarvis_retrieval_fallback_import_only";
@@ -12,7 +13,7 @@ async function main(): Promise<void> {
     mapBrainChunksToRetrievedMemories,
   } = await import("../retrieve");
   const retrieveSource = await import("node:fs").then((fs) =>
-    fs.readFileSync(new URL("../retrieve.ts", import.meta.url), "utf8")
+    fs.readFileSync(fileURLToPath(new URL("../retrieve.ts", import.meta.url).href), "utf8")
   );
   assert.match(
     retrieveSource,

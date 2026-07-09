@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import http from "node:http";
+import type { AddressInfo } from "node:net";
 import express from "express";
 import { setupRequestLogging } from "../httpApp";
 
@@ -32,8 +33,9 @@ async function main() {
       const address = server.address();
       assert.equal(typeof address, "object");
       assert(address);
+      const { port } = address as AddressInfo;
 
-      const response = await fetch(`http://127.0.0.1:${address.port}/api/leaky`);
+      const response = await fetch(`http://127.0.0.1:${port}/api/leaky`);
       assert.equal(response.status, 200);
       await response.json();
       await Promise.race([

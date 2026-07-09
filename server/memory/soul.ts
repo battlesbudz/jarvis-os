@@ -31,7 +31,9 @@ function approvedMemoryLifecycleFilter() {
 }
 
 function shouldIncludeNonRestrictedMemoryInSoul(memory: { content?: string | null; sourceType?: string | null }): boolean {
-  return shouldIncludeMemoryInSoul(memory) && !containsRawRestrictedContent(memory.content ?? "");
+  const content = memory.content ?? "";
+  if (!content.trim()) return false;
+  return shouldIncludeMemoryInSoul({ content, sourceType: memory.sourceType }) && !containsRawRestrictedContent(content);
 }
 
 interface SoulRecord {
@@ -337,7 +339,8 @@ export async function listSoulEditHistory(userId: string, opts?: { limit?: numbe
       ORDER BY created_at DESC
       LIMIT ${limit}
     `);
-  return (result.rows ?? []).map((row) => mapSoulEditRow(row as Record<string, unknown>));
+  const rows = (result.rows ?? []) as Record<string, unknown>[];
+  return rows.map((row) => mapSoulEditRow(row));
 }
 
 interface LifeContextData {

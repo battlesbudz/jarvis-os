@@ -81,7 +81,7 @@ async function main(): Promise<void> {
       "openai/gpt-4.1-mini",
       "quality-user",
     );
-    const preThinkRequest = captured;
+    const preThinkRequest = captured as ProviderQueryParams | null;
     assert.equal(directGuidance, "Use a concise answer.");
     assert.equal(
       preThinkRequest?.messages.some((message) => (
@@ -100,7 +100,7 @@ async function main(): Promise<void> {
       "openai/gpt-4.1-mini",
       "quality-user",
     );
-    const postCheckRequest = captured;
+    const postCheckRequest = captured as ProviderQueryParams | null;
     assert.deepEqual(directCheck, { passed: true, feedback: "" });
     assert.equal(
       postCheckRequest?.messages.some((message) => (

@@ -1044,9 +1044,13 @@ function canUseRuntimeIdentityShortcut(params: RoutedModelTurnParams): boolean {
   if (!classifyRuntimeIdentityIntent(params.messages)) return false;
   if ((params.toolChoice ?? "none") !== "required") return true;
   return (params.tools ?? []).some((tool) => {
-    const name = tool.function?.name;
+    const name = functionToolName(tool);
     return name === "memory_search" || name === "memory_get";
   });
+}
+
+function functionToolName(tool: OpenAI.Chat.Completions.ChatCompletionTool): string | undefined {
+  return tool.type === "function" ? tool.function.name : undefined;
 }
 
 function canUseRuntimeCapabilityShortcut(params: RoutedModelTurnParams): boolean {
@@ -1057,7 +1061,7 @@ function canUseRuntimeCapabilityShortcut(params: RoutedModelTurnParams): boolean
 
 function routeToolNames(params: RoutedModelTurnParams): string[] {
   return (params.tools ?? [])
-    .map((tool) => tool.function?.name)
+    .map(functionToolName)
     .filter((name): name is string => Boolean(name));
 }
 
@@ -1067,7 +1071,7 @@ function canUseRuntimeMemoryInspectionShortcut(params: RoutedModelTurnParams): b
   if (!classifyRuntimeMemoryInspectionIntent(params.messages)) return false;
   if ((params.toolChoice ?? "none") !== "required") return true;
   return (params.tools ?? []).some((tool) => {
-    const name = tool.function?.name;
+    const name = functionToolName(tool);
     return name === "memory_search" || name === "memory_get";
   });
 }
