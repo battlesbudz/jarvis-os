@@ -129,6 +129,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "What's today's cannabis news?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+{
+  const plan = classifyToolAwareRoute("Hey Jarvis how are you doing today");
+  assert(!plan.shouldPreferTool, "casual today greeting: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual today greeting: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual today greeting: no priority tools");
+}
+assertRoute(
   "show me my GitHub pull requests",
   "github",
   ["github"],
