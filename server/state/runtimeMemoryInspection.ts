@@ -175,22 +175,35 @@ function isBenignAboutYouInspectionPreamble(prefix: string): boolean {
   return /^(?:(?:hey|hi|hello|yo)(?:\s+(?:jarvis|travis))?\s*)?(?:(?:i(?:m| am| was)?\s+)?just\s+wondering\s*)?(?:(?:how(?:s| is| was)\s+your\s+day|how\s+are\s+you)\s*)?$/.test(cleaned);
 }
 
-function isAboutYouMemoryInspectionRequest(normalized: string): boolean {
-  if (/^(?:what do you know about me|show me what you know about me|show what you know about me|what memories do you have about me|what have i told you|show my memories|show me my memories|list my memories|show memory os|what is in my memory|whats in my memory|what is in memory os|whats in memory os)$/.test(normalized)) {
-    return true;
-  }
+function isBenignAboutYouInspectionSuffix(suffix: string): boolean {
+  const cleaned = cleanBenignInspectionText(suffix);
+  return !cleaned || /^(?:please|for me|if you can|if possible|thanks|thank you)$/.test(cleaned);
+}
 
-  const match = normalized.match(
-    /\b(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:tell|show)\s+me\s+what\s+you\s+know\s+about\s+me\b/,
-  );
+function hasBenignAboutYouMemoryMatch(normalized: string, pattern: RegExp): boolean {
+  const match = normalized.match(pattern);
   if (!match) return false;
 
   const matchIndex = match.index ?? 0;
   const prefix = normalized.slice(0, matchIndex).trim();
   if (!isBenignAboutYouInspectionPreamble(prefix)) return false;
 
-  const suffix = cleanBenignInspectionText(normalized.slice(matchIndex + match[0].length));
-  return !suffix || /^(?:please|for me|if you can|if possible|thanks|thank you)$/.test(suffix);
+  const suffix = normalized.slice(matchIndex + match[0].length);
+  return isBenignAboutYouInspectionSuffix(suffix);
+}
+
+function isAboutYouMemoryInspectionRequest(normalized: string): boolean {
+  if (hasBenignAboutYouMemoryMatch(
+    normalized,
+    /\b(?:what do you know about me|show me what you know about me|show what you know about me|what memories do you have about me|what have i told you|show my memories|show me my memories|list my memories|show memory os|what is in my memory|whats in my memory|what is in memory os|whats in memory os)\b/,
+  )) {
+    return true;
+  }
+
+  return hasBenignAboutYouMemoryMatch(
+    normalized,
+    /\b(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:tell|show)\s+me\s+what\s+you\s+know\s+about\s+me\b/,
+  );
 }
 
 export function classifyRuntimeMemoryInspectionIntent(
