@@ -2311,6 +2311,47 @@ async function runRuntimeMemoryInspectionBypassesSelectedPhoneGemmaAssertion(): 
     assert.match(result.textContent, /Soul\/Core Profile/);
     assert.match(result.textContent, /MemoryOS/);
     assert.match(result.textContent, /exact stored memory text/);
+
+    const voicePreambleResult = await routeModelTurn({
+      tier: "balanced",
+      messages: [
+        { role: "assistant", content: "Yes, I can hear you. How can I help you right now?" },
+        { role: "user", content: "Just wondering how was your day can you tell me what you know about me" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 256,
+      userId: "user-runtime-memory-inspection-phone",
+      logPrefix: "[ModelRouterRuntimeMemoryInspectionVoicePreambleTest]",
+      allowRuntimeMemoryInspectionShortcut: true,
+    });
+
+    assert.equal(voicePreambleResult.providerName, "jarvis-runtime");
+    assert.equal(voicePreambleResult.model, "gemma-4-e4b-it");
+    assert.match(voicePreambleResult.textContent, /MemoryOS/);
+    assert.match(voicePreambleResult.textContent, /exact stored memory text/);
+
+    const requiredToolChoiceResult = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "What do you know about me?" }],
+      toolChoice: "required",
+      tools: [{
+        type: "function",
+        function: {
+          name: "android_read_notifications",
+          description: "Read Android notifications.",
+          parameters: { type: "object", properties: {} },
+        },
+      }],
+      maxCompletionTokens: 256,
+      userId: "user-runtime-memory-inspection-phone",
+      logPrefix: "[ModelRouterRuntimeMemoryInspectionRequiredToolChoiceTest]",
+      allowRuntimeMemoryInspectionShortcut: true,
+    });
+
+    assert.equal(requiredToolChoiceResult.providerName, "jarvis-runtime");
+    assert.equal(requiredToolChoiceResult.model, "gemma-4-e4b-it");
+    assert.match(requiredToolChoiceResult.textContent, /MemoryOS/);
+    assert.match(requiredToolChoiceResult.textContent, /exact stored memory text/);
     console.log("OK: runtime memory inspection answers bypass selected Phone Gemma");
   } finally {
     _setRuntimeMemoryInspectionDepsForTesting(null);

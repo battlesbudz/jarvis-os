@@ -1069,11 +1069,7 @@ function canUseRuntimeMemoryInspectionShortcut(params: RoutedModelTurnParams): b
   if (!params.allowRuntimeMemoryInspectionShortcut) return false;
   if (params.responseFormat) return false;
   if (!classifyRuntimeMemoryInspectionIntent(params.messages)) return false;
-  if ((params.toolChoice ?? "none") !== "required") return true;
-  return (params.tools ?? []).some((tool) => {
-    const name = functionToolName(tool);
-    return name === "memory_search" || name === "memory_get";
-  });
+  return true;
 }
 
 function canUsePhoneGemmaDiagnosticShortcut(params: RoutedModelTurnParams): boolean {

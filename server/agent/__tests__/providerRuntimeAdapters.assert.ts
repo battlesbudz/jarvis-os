@@ -17,6 +17,8 @@ import {
   type RuntimeCapabilityCheck,
   type RuntimeCapabilityDeviceState,
 } from "../../state/runtimeCapability";
+import { _setGroundedEvidencePacketDepsForTesting } from "../../state/groundedEvidencePacket";
+import type { MemoryContext } from "../../memory/memoryOs";
 
 function runtimeCapabilityCheck(status: RuntimeCapabilityCheck["status"], lastCheckedAt: string): RuntimeCapabilityCheck {
   return {
@@ -1063,6 +1065,80 @@ async function testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit() {
     console.log("OK: Android Local Gemma uses current-turn tool results as identity audit evidence");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaUsesGroundedEvidencePacketForPersonalMemoryQuestions() {
+  let capturedPrompt = "";
+  const memoryContext = (query: string): MemoryContext => ({
+    userId: "user-phone-grounded",
+    query,
+    caller: "runtime_memory_inspection",
+    items: [{
+      memory: {
+        id: "grounded-memory-1",
+        content: "User prefers direct answers with clear next actions.",
+        category: "communication_style",
+        tier: "long_term",
+        memoryType: "semantic",
+        relevanceScore: 90,
+        confidence: 95,
+        accessCount: 1,
+        score: 0.95,
+      },
+      provenance: [{ kind: "user_memory", id: "grounded-memory-1", source: "canonical", label: "communication_style" }],
+    }],
+    sources: { memories: ["grounded-memory-1"], brainChunks: [], hotState: [] },
+    provenance: [{ kind: "user_memory", id: "grounded-memory-1", source: "canonical" }],
+    uncertainty: [],
+  });
+
+  _setGroundedEvidencePacketDepsForTesting({
+    now: () => new Date("2026-07-09T12:00:00.000Z"),
+    loadProfileState: async () => ({
+      userId: "user-phone-grounded",
+      preferredName: "Justin",
+      source: "profile_store",
+    }),
+    loadSoul: async () => ({ content: "", manualOverride: null, generatedAt: null, updatedAt: null }),
+    retrieveMemoryContext: async (input) => memoryContext(input.query),
+    loadCommitments: async () => [{
+      id: "grounded-commitment-1",
+      content: "Review Jarvis voice grounding PR after Codex review.",
+      dueDate: "2026-07-09",
+      status: "pending",
+      extractedAt: new Date("2026-07-09T11:00:00.000Z"),
+    }],
+  });
+  _setAndroidLocalGemmaDaemonOpForTesting(async (_userId, op) => {
+    if (op.type === "android_local_model_generate") capturedPrompt = op.prompt;
+    return {
+      ok: true,
+      data: { text: "Jarvis has your name as Justin and a preference for direct answers.", finishReason: "stop" },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "What do you know about me?" }],
+      tools: [],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-grounded",
+    }));
+
+    assert.match(capturedPrompt, /Jarvis Grounded Evidence Packet/);
+    assert.match(capturedPrompt, /Use only EVIDENCE/);
+    assert.match(capturedPrompt, /Preferred name: Justin/);
+    assert.match(capturedPrompt, /direct answers with clear next actions/);
+    assert.match(capturedPrompt, /id=commitment:grounded-commitment-1/);
+    assert.match(result.textContent, /Justin/);
+    console.log("OK: Android Local Gemma uses grounded evidence packets for personal memory questions");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+    _setGroundedEvidencePacketDepsForTesting(null);
   }
 }
 
@@ -7324,6 +7400,7 @@ async function main() {
   await testAndroidLocalGemmaConfirmsLegacyDaemonBrowseCompletion();
   await testAndroidLocalGemmaAuditsPronounConfirmationCompletions();
   await testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit();
+  await testAndroidLocalGemmaUsesGroundedEvidencePacketForPersonalMemoryQuestions();
   await testAndroidLocalGemmaSkipsCapabilityProbeWithoutAndroidTools();
   await testAndroidLocalGemmaAllowsConfirmedCompletionClaims();
   await testAndroidLocalGemmaAllowsRecentConfirmedCompletionFollowups();

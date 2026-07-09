@@ -116,6 +116,7 @@ const tests = [
   { file: "server/agent/__tests__/memorySaveTool.assert.ts" },
   { file: "server/agent/__tests__/mindTraceContextPacks.test.ts" },
   { file: "server/state/__tests__/stateCard.assert.ts" },
+  { file: "server/state/__tests__/groundedEvidencePacket.assert.ts" },
   { file: "server/state/__tests__/runtimeWorkingContextTruthAudit.assert.ts" },
   { file: "server/state/__tests__/runtimeCapability.assert.ts" },
   { file: "server/state/__tests__/runtimeMemoryInspection.assert.ts" },

@@ -165,16 +165,59 @@ function topicIntent(topic: string): RuntimeMemoryInspectionIntent {
   };
 }
 
+function cleanBenignInspectionText(text: string): string {
+  return text.replace(/[?!.;,:\-\u2013\u2014]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function isBenignAboutYouInspectionPreamble(prefix: string): boolean {
+  const cleaned = cleanBenignInspectionText(prefix);
+  if (!cleaned) return true;
+  return /^(?:(?:hey|hi|hello|yo)(?:\s+(?:jarvis|travis))?\s*)?(?:(?:i(?:m| am| was)?\s+)?just\s+wondering\s*)?(?:(?:how(?:s| is| was)\s+your\s+day|how\s+are\s+you)\s*)?$/.test(cleaned);
+}
+
+function isBenignAboutYouInspectionSuffix(suffix: string): boolean {
+  const cleaned = cleanBenignInspectionText(suffix);
+  return !cleaned || /^(?:please|for me|if you can|if possible|thanks|thank you)$/.test(cleaned);
+}
+
+function hasBenignAboutYouMemoryMatch(normalized: string, pattern: RegExp): boolean {
+  const match = normalized.match(pattern);
+  if (!match) return false;
+
+  const matchIndex = match.index ?? 0;
+  const prefix = normalized.slice(0, matchIndex).trim();
+  if (!isBenignAboutYouInspectionPreamble(prefix)) return false;
+
+  const suffix = normalized.slice(matchIndex + match[0].length);
+  return isBenignAboutYouInspectionSuffix(suffix);
+}
+
+function isAboutYouMemoryInspectionRequest(normalized: string): boolean {
+  if (hasBenignAboutYouMemoryMatch(
+    normalized,
+    /\b(?:what do you know about me|show me what you know about me|show what you know about me|what memories do you have about me|what have i told you|show my memories|show me my memories|list my memories|show memory os|what is in my memory|whats in my memory|what is in memory os|whats in memory os)\b/,
+  )) {
+    return true;
+  }
+
+  return hasBenignAboutYouMemoryMatch(
+    normalized,
+    /\b(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:tell|show)\s+me\s+what\s+you\s+know\s+about\s+me\b/,
+  );
+}
+
 export function classifyRuntimeMemoryInspectionIntent(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
 ): RuntimeMemoryInspectionIntent | null {
   const rawText = latestUserText(messages);
   const normalized = normalizeForIntent(rawText);
-  if (!normalized || hasCompoundFollowUpWork(rawText)) return null;
+  if (!normalized) return null;
 
-  if (/^(?:what do you know about me|show me what you know about me|show what you know about me|what memories do you have about me|what have i told you|show my memories|show me my memories|list my memories|show memory os|what is in my memory|whats in my memory|what is in memory os|whats in memory os)$/.test(normalized)) {
+  if (isAboutYouMemoryInspectionRequest(normalized)) {
     return topicIntent("me");
   }
+
+  if (hasCompoundFollowUpWork(rawText)) return null;
 
   const topicPatterns = [
     /^(?:show|list|display|pull up)(?: me)?(?: the)?(?: my)?(?: exact)?(?: stored)? (?:memories|memory) (?:about|for|on|related to|regarding) (.+)$/i,

@@ -36,6 +36,8 @@ async function main() {
   assert.equal(capturedRequest?.maxCompletionTokens, 42);
   assert.equal(capturedRequest?.requestedModel, "gpt-4o-mini");
   assert.deepEqual(capturedRequest?.responseFormat, { type: "json_object" });
+  assert.equal(capturedRequest?.allowRuntimeMemoryInspectionShortcut, true);
+  assert.equal(capturedRequest?.allowRuntimeIdentityShortcut, true);
   assert.equal(response.model, "chatgpt-codex-oauth/auto");
   assert.equal(response.choices[0]?.message.content, '{"ok":true}');
   assert.equal(response.runtimeExplanation?.title, "Runtime-owned answer");
@@ -122,6 +124,7 @@ async function main() {
   assert.equal((captured as Record<string, unknown> | null)?.userId, "user-json-shim");
   assert.equal((captured as Record<string, unknown> | null)?.responseFormat, undefined);
   assert.equal((captured as Record<string, unknown> | null)?.disableRuntimeStateCard, true);
+  assert.equal((captured as Record<string, unknown> | null)?.allowRuntimeMemoryInspectionShortcut, false);
   console.log("OK: routed chat completion disables runtime state cards for strict JSON-only shim calls");
 
   captured = null;
@@ -180,7 +183,11 @@ async function main() {
   );
   assert.equal((captured as Record<string, unknown> | null)?.userId, "user-json-memory-state-shim");
   assert.notEqual((captured as Record<string, unknown> | null)?.disableRuntimeStateCard, true);
-  console.log("OK: routed chat completion keeps runtime state cards for JSON-formatted memory questions");
+  assert.equal((captured as Record<string, unknown> | null)?.allowRuntimeMemoryInspectionShortcut, false);
+  assert.equal((captured as Record<string, unknown> | null)?.allowRuntimeIdentityShortcut, false);
+  assert.equal((captured as Record<string, unknown> | null)?.allowRuntimeCapabilityShortcut, false);
+  assert.equal((captured as Record<string, unknown> | null)?.allowPhoneGemmaDiagnosticShortcut, false);
+  console.log("OK: routed chat completion keeps state cards but disables shortcuts for JSON-formatted memory questions");
 
   captured = null;
   const memoryVaultShim = createRoutedOpenAIChatShim("[MemoryVaultTest]", "balanced", {

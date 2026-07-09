@@ -10,6 +10,8 @@ import {
   type CloudBackgroundEscalationDecision,
   type CloudBackgroundProviderStatus,
 } from "./agent/cloudBackgroundEscalation";
+import { buildGroundedEvidencePacketPrompt } from "./state/groundedEvidencePacket";
+import { classifyRuntimeMemoryInspectionIntent } from "./state/runtimeMemoryInspection";
 
 export type LocalVoiceModelCallKind = "local_gemma" | "cloud_model" | "secondary_llm";
 
@@ -998,12 +1000,13 @@ function screenRefreshToolForTranscript(
   return null;
 }
 
-function contextPacketFromEvents(
+async function contextPacketFromEvents(
+  userId: string,
   events: LocalVoiceAndroidEvent[],
   transcript: string,
   workingContext: LocalVoiceWorkingContext | undefined,
   now: Date,
-): string {
+): Promise<string> {
   const eventTypes = [...new Set(events.map((event) => event.type))].join(", ") || "none";
   const packet = [
     "Assistant: JARVIS",
@@ -1024,6 +1027,30 @@ function contextPacketFromEvents(
     && !requiresFreshScreenRead(transcript)
   ) {
     packet.push(`Recent screen: ${recentScreen.activeApp} - ${recentScreen.title ?? recentScreen.text}`);
+  }
+  const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent([{ role: "user", content: transcript }]);
+  if (memoryInspectionIntent?.scopeLabel === "about you") {
+    try {
+      packet.push(await buildGroundedEvidencePacketPrompt({
+        userId,
+        requestText: transcript,
+        query: memoryInspectionIntent.query,
+        activeDevice: "android",
+        activeModel: "gemma-4-e4b-it",
+        currentContext: "local_voice",
+        memoryLimit: 4,
+        commitmentLimit: 3,
+        renderMaxChars: 1_700,
+      }));
+    } catch {
+      packet.push([
+        "## Jarvis Grounded Evidence Packet",
+        "EVIDENCE:",
+        "- No grounded evidence loaded for this turn.",
+        "Uncertainty:",
+        "- Grounded evidence packet builder was unavailable.",
+      ].join("\n"));
+    }
   }
   return packet.join("\n");
 }
@@ -1798,7 +1825,7 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
 
   const modelOutput = await input.gemma.generate({
     transcript,
-    contextPacket: contextPacketFromEvents(input.androidEvents ?? [], transcript, workingContext, now),
+    contextPacket: await contextPacketFromEvents(userId, input.androidEvents ?? [], transcript, workingContext, now),
   });
 
   let canonicalResponse = "";
