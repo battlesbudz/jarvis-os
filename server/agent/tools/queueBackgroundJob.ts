@@ -7,6 +7,7 @@ import {
   CLOUD_BACKGROUND_MIN_API_KEY_BUDGET_USD,
   buildCloudBackgroundJobInput,
   isCloudBackgroundApprovalReady,
+  type CloudBackgroundJobInput,
   type CloudBackgroundProviderOption,
 } from "../cloudBackgroundEscalation";
 import { toolCallHooks, HOOK_PRIORITY } from "../toolCallHooks";
@@ -44,7 +45,8 @@ function providerLabelFromStatus(
   providerId: string,
   providerStatus: Awaited<ReturnType<typeof getProviderStatus>> | null,
 ): string {
-  const statusLabel = providerStatus?.providers[providerId]?.label;
+  const provider = providerStatus?.providers[providerId] as { label?: unknown } | undefined;
+  const statusLabel = typeof provider?.label === "string" ? provider.label : undefined;
   return String(statusLabel || catalogProviderLabel(providerId)).trim();
 }
 
@@ -321,7 +323,7 @@ Do NOT use for: quick one-sentence answers, reading today's tasks, anything answ
       return { ok: false, content: "prompt is required.", label: "Missing prompt" };
     }
 
-    let extraJobInput: Record<string, unknown> | undefined;
+    let extraJobInput: Record<string, unknown> | CloudBackgroundJobInput | undefined;
     if (taskScopedCloud) {
       if (!CLOUD_BACKGROUND_AGENT_TYPES.has(agentType)) {
         return {

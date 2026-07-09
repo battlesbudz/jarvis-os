@@ -307,7 +307,7 @@ async function main(): Promise<void> {
         communicationStyle: "concise",
         source: "profile_store",
       }),
-      loadSoul: async () => null,
+      loadSoul: async () => ({ content: "", manualOverride: null, generatedAt: null, updatedAt: new Date(0) }),
       retrieveMemoryContext: async (input) => ({
         userId,
         query: input.query,

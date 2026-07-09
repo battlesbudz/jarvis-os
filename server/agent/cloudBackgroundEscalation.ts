@@ -461,7 +461,9 @@ export function buildCloudBackgroundJobInput(input: BuildCloudBackgroundJobInput
   };
 }
 
-export function validateCloudBackgroundJobInput(input: Record<string, unknown>): CloudBackgroundJobInputValidation {
+export function validateCloudBackgroundJobInput(
+  input: Record<string, unknown> | CloudBackgroundJobInput,
+): CloudBackgroundJobInputValidation {
   const rawTask = input.cloudBackgroundTask;
   if (!rawTask || typeof rawTask !== "object" || Array.isArray(rawTask)) return null;
 

@@ -292,7 +292,7 @@ function runProductionBuild(workspaceDir: string, framework: string): void {
     return;
   }
 
-  const env = { ...process.env, HOME: os.homedir(), CI: "true", NODE_ENV: "production" };
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: os.homedir(), CI: "true", NODE_ENV: "production" };
   console.log(`[AppDelivery] running production build: ${args.join(" ")} in ${workspaceDir}`);
 
   const result = spawnSync(args[0], args.slice(1), {

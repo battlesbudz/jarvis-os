@@ -134,12 +134,13 @@ export function queueTranscriptJob(
     const job: LocalJob = { id, userId, type: "url-transcript", url, status: "pending", createdAt: Date.now(), resolve, reject };
     jobStore.set(id, job);
 
-    setTimeout(() => {
+    const timeout = setTimeout(() => {
       if (jobStore.has(id)) {
         jobStore.delete(id);
         reject(new Error("LOCAL_WORKER_TIMEOUT: Local worker did not respond within 30 seconds."));
       }
-    }, timeoutMs).unref?.();
+    }, timeoutMs);
+    (timeout as { unref?: () => void }).unref?.();
   });
 }
 
@@ -165,12 +166,13 @@ export function queueAudioTranscriptionJob(
     };
     jobStore.set(id, job);
 
-    setTimeout(() => {
+    const timeout = setTimeout(() => {
       if (jobStore.has(id)) {
         jobStore.delete(id);
         reject(new Error("LOCAL_WORKER_TIMEOUT: Local worker did not transcribe the audio in time."));
       }
-    }, timeoutMs).unref?.();
+    }, timeoutMs);
+    (timeout as { unref?: () => void }).unref?.();
   });
 }
 
@@ -212,7 +214,7 @@ export function failJob(jobId: string, token: string, error: string): boolean {
   return true;
 }
 
-setInterval(() => {
+const cleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [id, job] of jobStore) {
     if (now - job.createdAt > JOB_TTL_MS) {
@@ -220,7 +222,8 @@ setInterval(() => {
       try { job.reject(new Error("LOCAL_WORKER_TIMEOUT: Job expired.")); } catch {}
     }
   }
-}, 2 * 60 * 1000).unref?.();
+}, 2 * 60 * 1000);
+(cleanupInterval as { unref?: () => void }).unref?.();
 
 export function _resetForTests(): void {
   tokenRegistry.clear();

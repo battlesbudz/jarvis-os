@@ -63,6 +63,7 @@ const imageOnlyTemporaryCaptureEvent: LocalVoiceAndroidEvent = {
   type: "screen",
   source: "temporary_capture",
   activeApp: "YouTube",
+  text: "",
   captureId: "capture-image-only-1",
   capturePath: "/tmp/jarvis-captures/capture-image-only-1.png",
 };

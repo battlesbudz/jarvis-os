@@ -4,6 +4,8 @@ import {
   runMemoryAutoReviewForAllUsers,
 } from "../autoReview";
 
+type PendingMemoryFixture = Parameters<typeof evaluateMemoryAutoReviewDecision>[0];
+
 const baseMemory = {
   id: "m1",
   userId: "user-a",
@@ -17,7 +19,7 @@ const baseMemory = {
   reviewStatus: "pending",
   supersedesMemoryId: null,
   provenance: [],
-} as const;
+} satisfies PendingMemoryFixture;
 
 const keepDecision = evaluateMemoryAutoReviewDecision(baseMemory);
 assert.equal(keepDecision.action, "keep");

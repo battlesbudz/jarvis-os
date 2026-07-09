@@ -657,7 +657,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
             await sendMessage(chatId, textReply);
             return null;
           });
-        } else {
+        } else if ("messageId" in voiceResult) {
           deliveredTextMessageId = voiceResult.messageId ?? null;
         }
         logInteraction(userId, "telegram", "outbound", textReply).catch(() => {});
@@ -691,9 +691,9 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         progressUpdateCount,
         attachments: attachments.map((attachment) => ({
           kind: attachment.kind,
-          filename: attachment.filename,
+          filename: "filename" in attachment ? attachment.filename : undefined,
           caption: attachment.caption,
-          mimeType: attachment.mimeType,
+          mimeType: "mimeType" in attachment ? attachment.mimeType : undefined,
         })),
       },
       timing: {

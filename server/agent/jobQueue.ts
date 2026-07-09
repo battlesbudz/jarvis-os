@@ -714,7 +714,7 @@ async function cloudBackgroundApprovalGateMatches(opts: {
   userId: string;
   agentType: string;
   prompt: string;
-  task: ValidatedCloudBackgroundJobInput["task"];
+  task: ValidatedCloudBackgroundJobInput;
 }): Promise<boolean> {
   const [gate] = await db
     .select({
@@ -2512,13 +2512,14 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       state: { pendingAttachments: [] },
       ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
     };
+    const jobAgentType = job.agentType as AgentJobType;
 
     const cloudBackgroundValidation = validateCloudBackgroundJobInput(jobInput);
     if (cloudBackgroundValidation?.ok === false) {
       await failJob(job.id, cloudBackgroundValidation.message, job.userId);
       await notifyJobComplete(
         job.userId,
-        job.agentType,
+        jobAgentType,
         job.title,
         cloudBackgroundValidation.message,
         originChannel,
@@ -2541,7 +2542,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         await failJob(job.id, message, job.userId);
         await notifyJobComplete(
           job.userId,
-          job.agentType,
+          jobAgentType,
           job.title,
           message,
           originChannel,
@@ -2561,7 +2562,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         await failJob(job.id, message, job.userId);
         await notifyJobComplete(
           job.userId,
-          job.agentType,
+          jobAgentType,
           job.title,
           message,
           originChannel,
@@ -2570,8 +2571,10 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         return;
       }
     }
-    const cloudBackgroundMaxTurns = cloudBackgroundValidation?.ok
-      ? maxCloudBackgroundModelTurnsForBudget(cloudBackgroundValidation.task.budgetUsd, 6)
+    const cloudBackgroundTask = cloudBackgroundValidation?.ok ? cloudBackgroundValidation.task : null;
+    const cloudBackgroundModel = cloudBackgroundValidation?.ok ? cloudBackgroundValidation.model : undefined;
+    const cloudBackgroundMaxTurns = cloudBackgroundTask
+      ? maxCloudBackgroundModelTurnsForBudget(cloudBackgroundTask.budgetUsd, 6)
       : undefined;
     let cloudBackgroundEstimatedSpentUsd = cloudBackgroundEstimatedSpendOf(jobInput);
     const persistCloudBackgroundEstimatedSpend = async (spentUsd: number) => {
@@ -2584,25 +2587,25 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         .where(eq(schema.agentJobs.id, job.id));
     };
     const cloudBackgroundBudgetGuardForRun = () =>
-      cloudBackgroundValidation?.ok && cloudBackgroundValidation.task.providerAuthType === "api_key"
+      cloudBackgroundTask && cloudBackgroundTask.providerAuthType === "api_key"
         ? {
-            budgetUsd: cloudBackgroundValidation.task.budgetUsd,
+            budgetUsd: cloudBackgroundTask.budgetUsd,
             spentUsd: cloudBackgroundEstimatedSpentUsd,
             onSpend: persistCloudBackgroundEstimatedSpend,
           }
         : undefined;
     const markCloudBackgroundBudgetStopped = (result: SubAgentResult) => {
-      if (!cloudBackgroundValidation?.ok) return;
+      if (!cloudBackgroundTask) return;
       const summary = result.summary || "Cloud background task stopped before exceeding the approved budget.";
       const packet = buildCompactCloudBackgroundResultPacket({
         jobId: job.id,
-        providerId: cloudBackgroundValidation.task.providerId,
+        providerId: cloudBackgroundTask.providerId,
         status: "budget_stopped",
         summary,
         actions: ["Preserved the partial worker result before another model request could exceed budget."],
         partial: true,
         spentUsd: cloudBackgroundEstimatedSpentUsd,
-        budgetUsd: cloudBackgroundValidation.task.budgetUsd,
+        budgetUsd: cloudBackgroundTask.budgetUsd,
       });
       result.meta.cloudBackgroundBudgetStopped = true;
       result.meta.cloudBackgroundBudgetPacket = packet;
@@ -2622,14 +2625,11 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     // (queue_background_job, spawn_subagent) via getModelForJobType(). The model
     // arrives here via job.input.model. Other callers that omit input.model
     // preserve the original resolution path inside runSubAgent.
-    const subAgentModelOverride = cloudBackgroundValidation?.ok
-      ? cloudBackgroundValidation.model
-      : typeof jobInput.model === "string"
-        ? jobInput.model
-        : undefined;
+    const subAgentModelOverride =
+      cloudBackgroundModel ?? (typeof jobInput.model === "string" ? jobInput.model : undefined);
     const cloudBackgroundPreferredAuthType =
-      cloudBackgroundValidation?.ok && cloudBackgroundValidation.task.providerId === "openai"
-        ? cloudBackgroundValidation.task.providerAuthType
+      cloudBackgroundTask && cloudBackgroundTask.providerId === "openai"
+        ? cloudBackgroundTask.providerAuthType
         : undefined;
 
     // Prior-context injection: deep_research Phase 2 jobs carry priorContext in
@@ -2639,8 +2639,8 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       ? `## Context from prior research phase\n${priorContextRaw}\n\nUse the above as background. Do not re-research topics already covered there — build on them.`
       : undefined;
 
-    const cloudBackgroundInstructionsBlock = cloudBackgroundValidation?.ok
-      ? `## Task-scoped cloud output contract\n${cloudBackgroundValidation.task.compactVerifiedPacketInstructions}`
+    const cloudBackgroundInstructionsBlock = cloudBackgroundTask
+      ? `## Task-scoped cloud output contract\n${cloudBackgroundTask.compactVerifiedPacketInstructions}`
       : undefined;
     const subAgentExtraSystemPrompt = [
       priorContextBlock,
@@ -2653,14 +2653,14 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
       defaultTitle: job.title,
       context: ctx,
       model: subAgentModelOverride,
-      forceModel: cloudBackgroundValidation?.ok === true,
+      forceModel: Boolean(cloudBackgroundTask),
       preferredAuthType: cloudBackgroundPreferredAuthType,
       cloudBudget: cloudBackgroundBudgetGuardForRun(),
       maxTurns: cloudBackgroundMaxTurns,
       extraSystemPrompt: subAgentExtraSystemPrompt,
       approvalReceipt,
     });
-    if (cloudBackgroundValidation?.ok && sub.finishReason === "budget_stopped") {
+    if (cloudBackgroundTask && sub.finishReason === "budget_stopped") {
       markCloudBackgroundBudgetStopped(sub);
     }
 
@@ -2673,7 +2673,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     let verificationPassed: boolean | null = null;
     let verificationRetries = 0;
     let verificationReason: string | undefined;
-    const skipVerifierForTaskScopedCloudJob = cloudBackgroundValidation?.ok === true;
+    const skipVerifierForTaskScopedCloudJob = Boolean(cloudBackgroundTask);
 
     if (skipVerifierForTaskScopedCloudJob) {
       verificationReason = sub.finishReason === "budget_stopped"
@@ -2714,7 +2714,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         // passed === false: content rejected — retry if attempts remain
         correctionContext = verification.reason;
         if (attempt < MAX_JOB_VERIFY_RETRIES) {
-          if (cloudBackgroundValidation?.ok && /stopped before the next model request/i.test(sub.body)) {
+          if (cloudBackgroundTask && /stopped before the next model request/i.test(sub.body)) {
             verificationPassed = null;
             sub.meta.cloudBackgroundBudgetStopped = true;
             sub.meta.cloudBackgroundBudgetPacket = null;
@@ -2737,13 +2737,13 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             defaultTitle: job.title,
             context: ctx,
             model: subAgentModelOverride,
-            forceModel: cloudBackgroundValidation?.ok === true,
+            forceModel: Boolean(cloudBackgroundTask),
             preferredAuthType: cloudBackgroundPreferredAuthType,
             cloudBudget: cloudBackgroundBudgetGuardForRun(),
             maxTurns: cloudBackgroundMaxTurns,
             approvalReceipt,
           });
-          if (cloudBackgroundValidation?.ok && sub.finishReason === "budget_stopped") {
+          if (cloudBackgroundTask && sub.finishReason === "budget_stopped") {
             markCloudBackgroundBudgetStopped(sub);
           }
         } else {
@@ -2761,9 +2761,9 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     if (verificationReason) {
       sub.meta.verificationReason = verificationReason;
     }
-    if (cloudBackgroundValidation?.ok) {
+    if (cloudBackgroundTask) {
       sub.meta.cloudBackgroundTask = {
-        ...cloudBackgroundValidation.task,
+        ...cloudBackgroundTask,
         liveModelSwitch: false,
         estimatedSpentUsd: cloudBackgroundEstimatedSpentUsd,
         status: sub.meta.cloudBackgroundBudgetStopped ? "budget_stopped" : "complete",
@@ -3027,7 +3027,7 @@ export function startJobQueueWorker(): void {
       console.error("[JobQueue] live stale voice-paused recovery failed:", err);
     });
   }, RESOURCE_PAUSE_RECOVERY_POLL_MS);
-  resourcePauseRecoveryTimer.unref?.();
+  (resourcePauseRecoveryTimer as { unref?: () => void }).unref?.();
 
   const loop = async () => {
     if (stopRequested) return;

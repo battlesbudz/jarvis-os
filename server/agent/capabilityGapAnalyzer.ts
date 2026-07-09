@@ -334,16 +334,6 @@ memberIndices are required for every cluster. toolProposal is only required when
         continue;
       }
 
-      // Compute (userMessage, detectedReason) pairs for the source gap rows so
-      // the job completion handler can mark them addressed on build success.
-      const memberIndices: number[] = Array.isArray(cluster.memberIndices)
-        ? cluster.memberIndices.filter((i) => typeof i === 'number' && i >= 0 && i < rawGaps.length)
-        : [];
-      const capabilityGapEntries = memberIndices.map((i) => ({
-        userMessage: rawGaps[i].userMessage,
-        detectedReason: rawGaps[i].detectedReason,
-      }));
-
       const featureDescription = [
         `Tool name: ${proposal.name}`,
         `Description: ${proposal.description}`,

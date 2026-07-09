@@ -4,7 +4,7 @@ import type { ToolContext } from "../types";
 export function buildQueueBackgroundJobInput(
   agentType: AgentJobType,
   ctx: Pick<ToolContext, "channel" | "originChannelId" | "discordChannelId">,
-  extraInput?: Record<string, unknown>,
+  extraInput?: object,
 ): Record<string, unknown> {
   const routedModel = getModelForJobType(agentType);
   const jobInput: Record<string, unknown> = {

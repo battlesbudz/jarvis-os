@@ -6,11 +6,12 @@ import {
   getExpectedVoiceMiniAppUrl,
 } from "../../integrations/telegram";
 
+const mutableEnv = process.env as Record<string, string | undefined>;
 const originalPublicBaseUrl = process.env.PUBLIC_BASE_URL;
 const originalNodeEnv = process.env.NODE_ENV;
 
 try {
-  process.env.NODE_ENV = "production";
+  mutableEnv.NODE_ENV = "production";
   process.env.PUBLIC_BASE_URL = "https://app.example.com/some/path";
 
   assert.equal(
@@ -43,5 +44,5 @@ try {
   else process.env.PUBLIC_BASE_URL = originalPublicBaseUrl;
 
   if (originalNodeEnv === undefined) Reflect.deleteProperty(process.env, "NODE_ENV");
-  else process.env.NODE_ENV = originalNodeEnv;
+  else mutableEnv.NODE_ENV = originalNodeEnv;
 }

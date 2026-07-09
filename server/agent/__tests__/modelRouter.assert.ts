@@ -1350,7 +1350,8 @@ async function runProviderWideRuntimeStateCardAssertion(): Promise<void> {
       assert.equal(result.providerName, route.provider);
       assert.equal(result.model, route.expectedModel);
       assert.equal(capturedRequest?.toolChoice, "auto");
-      assert.equal(capturedRequest?.tools?.[0]?.function.name, "memory_search");
+      const capturedTool = capturedRequest?.tools?.[0];
+      assert.equal(capturedTool?.type === "function" ? capturedTool.function.name : undefined, "memory_search");
       assert.equal(capturedRequest?.messages[0]?.role, "system");
       assert.equal(
         messageContentText(capturedRequest?.messages[0]?.content),

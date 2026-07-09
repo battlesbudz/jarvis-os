@@ -96,7 +96,7 @@ function scheduleFlush(key: string, pending: PendingTelegramCoachBatch, delayMs:
       console.error("[Telegram] message batch handler failed:", error);
     });
   }, delayMs);
-  timer.unref?.();
+  (timer as { unref?: () => void }).unref?.();
   return timer;
 }
 
