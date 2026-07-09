@@ -273,6 +273,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "watch the latest from this channel",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's the latest from OpenAI?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "current CEO of Nvidia",
   "research",
   ["research", "browser"],

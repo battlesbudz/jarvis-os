@@ -115,6 +115,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\b(?:latest|current|recent)\s+(?:[$\w.\/&-]+\s+){0,6}(?:news|events?|games?|matches?|fixtures?|updates?|sources?|articles?|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\b/i,
       /\b(?:latest|current|recent)\s+(?:[$\w.\/&-]+\s+){0,6}(?:presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)\b/i,
       /\b(?:latest|current|recent)\s+(?:on|about|for|in)\b/i,
+      /\blatest\s+from\b/i,
       /\bwhat(?:'s|\s+is)?\s+(?:happening|going\s+on)\s+today\b/i,
       /\bwhat\s+happened\s+today\b/i,
       /\bwhat(?:'s|\s+is)?\s+(?:happening|going\s+on)\s+(?:in|with|to|on|about|at|around|near|for)\s+(?:[$\w.\/&-]+\s+){1,8}today\b/i,
