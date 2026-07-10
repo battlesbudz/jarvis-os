@@ -80,6 +80,18 @@ assertRoute(
   assert(!plan.priorityToolNames.includes("search_web"), "look up my calendar events: no search_web");
 }
 {
+  const plan = classifyToolAwareRoute("find my events today");
+  assert(plan.intents.includes("calendar"), "find my events: intent detected");
+  assert(!plan.intents.includes("research"), "find my events: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "find my events: no search_web");
+}
+{
+  const plan = classifyToolAwareRoute("search my events today");
+  assert(plan.intents.includes("calendar"), "search my events: intent detected");
+  assert(!plan.intents.includes("research"), "search my events: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "search my events: no search_web");
+}
+{
   const plan = classifyToolAwareRoute("what's on my schedule today?");
   assert(plan.intents.includes("calendar"), "my schedule: intent detected");
   assert(!plan.intents.includes("research"), "my schedule: does not route as research");
@@ -670,6 +682,18 @@ assertRoute(
 );
 assertRoute(
   "is Dave & Buster\u2019s open today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Walmart hours today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "McDonald's hours today",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
