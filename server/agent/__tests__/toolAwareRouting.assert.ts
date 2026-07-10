@@ -333,6 +333,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "what did OpenAI announce today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what did the president say today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "what's happening with TSLA today?",
   "research",
   ["research", "browser"],
@@ -721,6 +733,12 @@ assertRoute(
   assert(!plan.shouldPreferTool, "casual win question: does not prefer tool use");
   assert(!plan.intents.includes("research"), "casual win question: does not route as research");
   assert(plan.priorityToolNames.length === 0, "casual win question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("what did you do today?");
+  assert(!plan.shouldPreferTool, "casual what-did-you-do question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual what-did-you-do question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual what-did-you-do question: no priority tools");
 }
 {
   const plan = classifyToolAwareRoute("help me write my weekly report");
