@@ -257,6 +257,13 @@ function isPrivateCalendarEventQuery(query: string): boolean {
 const MIXED_RESEARCH_CLAUSE_SEPARATOR =
   /\s+(?:and|also|plus|then|along\s+with|together\s+with|as\s+well\s+as)\s+|\s+with\s+(?=(?:today(?:['\u2019]s|s)?\s+(?:news|updates?|headlines?|articles?|sources?)|(?:latest|current|recent)\b|(?:news|updates?|headlines?|articles?|sources?)\b))|[,;]+/i;
 
+function hasExplicitWebResearchCommand(query: string): boolean {
+  return (
+    /\b(?:search\s+(?:the\s+)?(?:web|internet)|web\s+search|google|research|investigate)\b/i.test(query) ||
+    /\b(?:search\s+(?:up|for)|look\s+up|lookup)\b.{0,80}\b(?:how\s+to|why|what|when|where|whether|sources?|articles?|docs?|documentation|online|web|internet)\b/i.test(query)
+  );
+}
+
 function hasSeparateResearchClause(query: string): boolean {
   const clauses = query
     .split(MIXED_RESEARCH_CLAUSE_SEPARATOR)
@@ -285,6 +292,7 @@ export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
   const shouldSuppressResearch =
     isPrivateCalendarEventQuery(query) &&
     ruleMatches.some((rule) => rule.intent === "calendar") &&
+    !hasExplicitWebResearchCommand(query) &&
     !hasSeparateResearchClause(query);
   const matched = shouldSuppressResearch ? ruleMatches.filter((rule) => rule.intent !== "research") : ruleMatches;
   const ontologyToolGroups = shouldSuppressResearch

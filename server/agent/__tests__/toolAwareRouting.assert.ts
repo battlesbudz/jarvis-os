@@ -80,6 +80,11 @@ assertRoute(
   assert(!plan.priorityToolNames.includes("search_web"), "look up my calendar events: no search_web");
 }
 {
+  const plan = classifyToolAwareRoute("search the web for how to export my calendar events");
+  assert(plan.intents.includes("research"), "explicit web search mentioning calendar events: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "explicit web search mentioning calendar events: search_web preserved");
+}
+{
   const plan = classifyToolAwareRoute("find my events today");
   assert(plan.intents.includes("calendar"), "find my events: intent detected");
   assert(!plan.intents.includes("research"), "find my events: does not route as research");
