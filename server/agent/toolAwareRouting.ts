@@ -254,9 +254,12 @@ function isPrivateCalendarEventQuery(query: string): boolean {
   );
 }
 
+const MIXED_RESEARCH_CLAUSE_SEPARATOR =
+  /\s+(?:and|also|plus|then|along\s+with|together\s+with|as\s+well\s+as)\s+|\s+with\s+(?=(?:today(?:['\u2019]s|s)?\s+(?:news|updates?|headlines?|articles?|sources?)|(?:latest|current|recent)\b|(?:news|updates?|headlines?|articles?|sources?)\b))|[,;]+/i;
+
 function hasSeparateResearchClause(query: string): boolean {
   const clauses = query
-    .split(/\s+(?:and|also|plus|then)\s+|[,;]+/i)
+    .split(MIXED_RESEARCH_CLAUSE_SEPARATOR)
     .map((clause) => clause.trim())
     .filter(Boolean);
 
