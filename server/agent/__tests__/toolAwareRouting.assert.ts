@@ -68,6 +68,18 @@ assertRoute(
   assert(!plan.priorityToolNames.includes("search_web"), "events on our calendar: no search_web");
 }
 {
+  const plan = classifyToolAwareRoute("find my calendar events today");
+  assert(plan.intents.includes("calendar"), "find my calendar events: intent detected");
+  assert(!plan.intents.includes("research"), "find my calendar events: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "find my calendar events: no search_web");
+}
+{
+  const plan = classifyToolAwareRoute("look up my calendar events today");
+  assert(plan.intents.includes("calendar"), "look up my calendar events: intent detected");
+  assert(!plan.intents.includes("research"), "look up my calendar events: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "look up my calendar events: no search_web");
+}
+{
   const plan = classifyToolAwareRoute("what's on my schedule today?");
   assert(plan.intents.includes("calendar"), "my schedule: intent detected");
   assert(!plan.intents.includes("research"), "my schedule: does not route as research");
@@ -90,6 +102,12 @@ assertRoute(
   assert(plan.intents.includes("calendar"), "mixed calendar and news: calendar intent detected");
   assert(plan.intents.includes("research"), "mixed calendar and news: research intent preserved");
   assert(plan.priorityToolNames.includes("search_web"), "mixed calendar and news: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today, what's today's news?");
+  assert(plan.intents.includes("calendar"), "comma mixed calendar and news: calendar intent detected");
+  assert(plan.intents.includes("research"), "comma mixed calendar and news: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "comma mixed calendar and news: search_web preserved");
 }
 assertRoute(
   "check my Gmail and unread email",

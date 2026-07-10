@@ -251,13 +251,9 @@ function isPrivateCalendarEventQuery(query: string): boolean {
   );
 }
 
-function explicitlyRequestsResearch(query: string): boolean {
-  return /\b(search\s+(up|for)?|look\s+up|lookup|google|find|research|investigate)\b/i.test(query);
-}
-
 function hasSeparateResearchClause(query: string): boolean {
   const clauses = query
-    .split(/\s+(?:and|also|plus|then)\s+|[;]+/i)
+    .split(/\s+(?:and|also|plus|then)\s+|[,;]+/i)
     .map((clause) => clause.trim())
     .filter(Boolean);
 
@@ -281,20 +277,28 @@ export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
     rule.patterns.some((pattern) => pattern.test(query)),
   );
   const shouldSuppressResearch =
-    !explicitlyRequestsResearch(query) &&
     isPrivateCalendarEventQuery(query) &&
     ruleMatches.some((rule) => rule.intent === "calendar") &&
     !hasSeparateResearchClause(query);
   const matched = shouldSuppressResearch ? ruleMatches.filter((rule) => rule.intent !== "research") : ruleMatches;
+  const ontologyToolGroups = shouldSuppressResearch
+    ? ontology.allowedToolGroups.filter((group) => group !== "research" && group !== "browser")
+    : ontology.allowedToolGroups;
+  const resolverPriorityToolNames = shouldSuppressResearch
+    ? []
+    : [...toolResolution.requiredToolNames, ...toolResolution.optionalToolNames];
+  const toolResolverReason = shouldSuppressResearch
+    ? "Private calendar lookup is limited to connected-account calendar tools."
+    : toolResolution.reason;
   if (matched.length === 0) {
     return {
       intents: [],
       capabilityIds: [],
-      toolGroups: ontology.allowedToolGroups,
-      priorityToolNames: [...toolResolution.requiredToolNames, ...toolResolution.optionalToolNames],
+      toolGroups: ontologyToolGroups,
+      priorityToolNames: resolverPriorityToolNames,
       blockedToolNames: toolResolution.blockedToolNames,
-      guidance: ontology.actionType === "unknown" ? "" : `- ${ontology.reason}\n- Tool resolver: ${toolResolution.reason}`,
-      shouldPreferTool: toolResolution.requiredToolNames.length > 0 || toolResolution.optionalToolNames.length > 0 || ontology.actionType === "blocked_physical_action",
+      guidance: ontology.actionType === "unknown" ? "" : `- ${ontology.reason}\n- Tool resolver: ${toolResolverReason}`,
+      shouldPreferTool: resolverPriorityToolNames.length > 0 || ontology.actionType === "blocked_physical_action",
       actionType: ontology.actionType,
       actor: ontology.actor,
       approvalRequired: toolResolution.approvalRequired,
@@ -305,17 +309,16 @@ export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
   return {
     intents: matched.map((rule) => rule.intent),
     capabilityIds: unique(matched.flatMap((rule) => rule.capabilityIds)),
-    toolGroups: unique([...matched.flatMap((rule) => rule.toolGroups), ...ontology.allowedToolGroups]),
+    toolGroups: unique([...matched.flatMap((rule) => rule.toolGroups), ...ontologyToolGroups]),
     priorityToolNames: unique([
       ...matched.flatMap((rule) => rule.priorityToolNames),
-      ...toolResolution.requiredToolNames,
-      ...toolResolution.optionalToolNames,
+      ...resolverPriorityToolNames,
     ]),
     blockedToolNames: toolResolution.blockedToolNames,
     guidance: [
       ...matched.map((rule) => `- ${rule.guidance}`),
       `- Action ownership: ${ontology.reason}`,
-      `- Tool resolver: ${toolResolution.reason}`,
+      `- Tool resolver: ${toolResolverReason}`,
     ].join("\n"),
     shouldPreferTool: true,
     actionType: ontology.actionType,
