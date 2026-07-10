@@ -85,6 +85,12 @@ assertRoute(
   assert(!plan.intents.includes("research"), "private event-category calendar: does not route as research");
   assert(!plan.priorityToolNames.includes("search_web"), "private event-category calendar: no search_web");
 }
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today and what's today's news?");
+  assert(plan.intents.includes("calendar"), "mixed calendar and news: calendar intent detected");
+  assert(plan.intents.includes("research"), "mixed calendar and news: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "mixed calendar and news: search_web preserved");
+}
 assertRoute(
   "check my Gmail and unread email",
   "email",
@@ -411,6 +417,12 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "today\u2019s Lakers score",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "today's NBA schedule",
   "research",
   ["research", "browser"],
@@ -604,6 +616,18 @@ assertRoute(
 );
 assertRoute(
   "is Walmart open today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "is McDonald's open today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "is Dave & Buster\u2019s open today?",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],

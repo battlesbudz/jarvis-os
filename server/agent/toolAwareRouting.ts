@@ -130,13 +130,13 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\bwhat(?:'s|\s+is)?\s+(?:happening|going\s+on)\s+(?:in|with|to|on|about|at|around|near|for)\s+(?:[$\w.\/&,-]+\s+){1,8}today\b/i,
       /\bwhat\s+happened\s+(?:in|with|to|on|about|at|around|near|for)\s+(?:[$\w.\/&,-]+\s+){1,8}today\b/i,
       /\b(?:who\s+(?:is|are)\s+playing|who\s+plays|(?:is|are)\s+(?!(?:you|we|i|it|this|that)\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}playing|(?:do|does)\s+(?!(?:you|we|i|it|this|that)\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}play)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
-      /\b(?:is|are)\s+(?!(?:you|we|i|it|this|that)\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){1,6}(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
+      /\b(?:is|are)\s+(?!(?:you|we|i|it|this|that)\b)(?:the\s+)?(?:[$\w.\/&,'\u2019-]+\s+){1,6}(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
       /\b(?:did)\s+(?!(?:you|we|i|it|this|that)\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}(?:win|lose|play)\s+(?:today|tonight|yesterday)\b/i,
       /\bwho\s+(?:won|lost)\s+(?:today|tonight|yesterday)\b/i,
       /\b(?:stock\s+market|stocks?|markets?)\b.{0,60}\b(?:today|currently|recently|latest|now|right\s+now)\b/i,
       /\b(?:news|updates?|sources?|articles?)\s+(?:today|currently|recently|latest|on|about|for)\b/i,
       /\bheadlines?\s+(?:today|currently|recently|latest)\b/i,
-      /\btoday'?s?\s+(?:[$\w.\/&-]+\s+){0,6}(?:news|events?|games?|matches?|fixtures?|schedules?|updates?|developments?|situations?|sources?|articles?|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\b/i,
+      /\btoday(?:['\u2019]s|s)?\s+(?:[$\w.\/&-]+\s+){0,6}(?:news|events?|games?|matches?|fixtures?|schedules?|updates?|developments?|situations?|sources?|articles?|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\b/i,
       /\b(?:news|updates?|sources?)\b/i,
       /^\s*(?:the\s+)?headlines?\s*\??\s*$/i,
       /\b(?:[$\w.\/&-]+\s+){1,6}(?:news|updates?)\b/i,
@@ -253,6 +253,22 @@ function explicitlyRequestsResearch(query: string): boolean {
   return /\b(search\s+(up|for)?|look\s+up|lookup|google|find|research|investigate)\b/i.test(query);
 }
 
+function hasSeparateResearchClause(query: string): boolean {
+  const clauses = query
+    .split(/\s+(?:and|also|plus|then)\s+|[;]+/i)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+
+  return clauses.some((clause) => {
+    if (isPrivateCalendarEventQuery(clause)) return false;
+    return TOOL_AWARE_RULES.some(
+      (rule) =>
+        rule.intent === "research" &&
+        rule.patterns.some((pattern) => pattern.test(clause)),
+    );
+  });
+}
+
 export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
   const query = text.trim();
   if (!query) return EMPTY_PLAN;
@@ -265,7 +281,8 @@ export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
   const shouldSuppressResearch =
     !explicitlyRequestsResearch(query) &&
     isPrivateCalendarEventQuery(query) &&
-    ruleMatches.some((rule) => rule.intent === "calendar");
+    ruleMatches.some((rule) => rule.intent === "calendar") &&
+    !hasSeparateResearchClause(query);
   const matched = shouldSuppressResearch ? ruleMatches.filter((rule) => rule.intent !== "research") : ruleMatches;
   if (matched.length === 0) {
     return {
