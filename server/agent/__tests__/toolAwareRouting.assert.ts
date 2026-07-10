@@ -783,6 +783,18 @@ assertRoute(
   assert(plan.priorityToolNames.length === 0, "casual today greeting: no priority tools");
 }
 {
+  const plan = classifyToolAwareRoute("Hello today");
+  assert(!plan.shouldPreferTool, "casual hello today: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual hello today: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual hello today: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("Hey Jarvis today");
+  assert(!plan.shouldPreferTool, "casual hey Jarvis today: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual hey Jarvis today: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual hey Jarvis today: no priority tools");
+}
+{
   const plan = classifyToolAwareRoute("how are you doing today?");
   assert(!plan.shouldPreferTool, "casual how are you: does not prefer tool use");
   assert(!plan.intents.includes("research"), "casual how are you: does not route as research");
