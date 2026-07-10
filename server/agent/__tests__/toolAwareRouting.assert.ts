@@ -573,6 +573,24 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "Ukraine today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "OpenAI today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Trump today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "latest openai",
   "research",
   ["research", "browser"],
