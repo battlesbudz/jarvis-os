@@ -848,6 +848,18 @@ assertRoute(
   assert(plan.priorityToolNames.length === 0, "casual how are you: no priority tools");
 }
 {
+  const plan = classifyToolAwareRoute("how is Sarah doing now?");
+  assert(!plan.shouldPreferTool, "personal status question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "personal status question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "personal status question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("how is mom doing now?");
+  assert(!plan.shouldPreferTool, "family status question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "family status question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "family status question: no priority tools");
+}
+{
   const plan = classifyToolAwareRoute("are you playing today?");
   assert(!plan.shouldPreferTool, "casual playing question: does not prefer tool use");
   assert(!plan.intents.includes("research"), "casual playing question: does not route as research");
@@ -876,6 +888,12 @@ assertRoute(
   assert(!plan.shouldPreferTool, "casual what-did-you-do question: does not prefer tool use");
   assert(!plan.intents.includes("research"), "casual what-did-you-do question: does not route as research");
   assert(plan.priorityToolNames.length === 0, "casual what-did-you-do question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("what did Sarah say yesterday?");
+  assert(!plan.shouldPreferTool, "personal quote follow-up: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "personal quote follow-up: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "personal quote follow-up: no priority tools");
 }
 {
   const plan = classifyToolAwareRoute("are you delayed today?");
