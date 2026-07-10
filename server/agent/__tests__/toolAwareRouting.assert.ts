@@ -429,6 +429,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "did the Lakers win today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "who won today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "who won today's Lakers game?",
   "research",
   ["research", "browser"],
@@ -579,6 +591,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "is Walmart open today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "are banks open today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "Lakers score today",
   "research",
   ["research", "browser"],
@@ -649,6 +673,18 @@ assertRoute(
   assert(!plan.shouldPreferTool, "casual playing question: does not prefer tool use");
   assert(!plan.intents.includes("research"), "casual playing question: does not route as research");
   assert(plan.priorityToolNames.length === 0, "casual playing question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("is it open today?");
+  assert(!plan.shouldPreferTool, "contextual open question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "contextual open question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "contextual open question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("did you win today?");
+  assert(!plan.shouldPreferTool, "casual win question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual win question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual win question: no priority tools");
 }
 {
   const plan = classifyToolAwareRoute("help me write my weekly report");
