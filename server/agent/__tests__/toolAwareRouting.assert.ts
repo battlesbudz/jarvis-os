@@ -380,6 +380,12 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "How is Boeing doing today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "what happened in Ukraine today?",
   "research",
   ["research", "browser"],
@@ -387,6 +393,12 @@ assertRoute(
 );
 assertRoute(
   "what did OpenAI announce today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "What did Disney announce today?",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
