@@ -890,6 +890,17 @@ assertRoute(
   assert(plan.priorityToolNames.length === 0, "casual are-you-open question: no priority tools");
 }
 {
+  const plan = classifyToolAwareRoute("will you be open tomorrow?");
+  assert(!plan.shouldPreferTool, "casual will-you-be-open question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual will-you-be-open question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual will-you-be-open question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("leave the garage door open now");
+  assert(!plan.intents.includes("research"), "local open action: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "local open action: does not prioritize web search");
+}
+{
   const plan = classifyToolAwareRoute("did you win today?");
   assert(!plan.shouldPreferTool, "casual win question: does not prefer tool use");
   assert(!plan.intents.includes("research"), "casual win question: does not route as research");
