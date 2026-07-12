@@ -51,6 +51,8 @@ const PRIVATE_SPORTS_SUBJECT_PATTERN = String.raw`(?:i|me|you|we|us|he|him|she|h
 const PRIVATE_STATUS_SHORTHAND_SUBJECT_PATTERN = String.raw`(?:is|are|am|was|were|will|would|can|could|should|do|does|did|leave|keep|make|check|tell|be|${PRIVATE_SPORTS_SUBJECT_PATTERN}|${PERSONAL_TODAY_SUBJECT_PATTERN}|(?:the\s+)?(?:garage|door|window|office|home|house|room|lights?|appliances?|car|vehicle))`;
 const PUBLIC_EVENT_CATEGORY_PATTERN = String.raw`(?:concerts?|shows?|performances?|festivals?|exhibitions?|exhibits?|plays?|musicals?|comedy\s+shows?|open\s+mics?|meetups?|fairs?|markets?|parades?|screenings?|movies?|sports\s+events?|tournaments?|classes?|workshops?)`;
 const BARE_LIVE_DATA_NOUN_PATTERN = String.raw`(?:scores?|prices?|polls?|standings?|rankings?|odds|rates?|results?|games?|matches?|fixtures?|traffic|air\s+quality|delays?|cancellations?|cancelations?|availability|population|counts?|totals?)`;
+const FIAT_CURRENCY_CODE_PATTERN = String.raw`(?:usd|eur|gbp|jpy|cad|aud|chf|cny|hkd|nzd|sek|nok|dkk|inr|brl|mxn|zar|sgd|krw|pln|try)`;
+const FIAT_CURRENCY_PAIR_PATTERN = String.raw`${FIAT_CURRENCY_CODE_PATTERN}\s*[\/.-]\s*${FIAT_CURRENCY_CODE_PATTERN}`;
 
 const TOOL_AWARE_RULES: ToolAwareRule[] = [
   {
@@ -126,11 +128,13 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\b(?:latest|current|recent)\s+(?:[$\w.\/&-]+\s+){0,6}(?:presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)\b/i,
       /\b(?:latest|current|recent)\s+(?:on|about|for|in|with)\b/i,
       /\b(?:latest|current|recent)\s+(?:S&P\s*500|NASDAQ(?:\s+Composite)?|Dow(?:\s+Jones)?(?:\s+Industrial\s+Average)?|Russell\s*2000|[$][A-Za-z]{1,8}|[A-Z]{1,6}(?:[\/.-][A-Z]{1,6})?)\b/,
+      new RegExp(String.raw`\b(?:latest|current|recent)\s+${FIAT_CURRENCY_PAIR_PATTERN}\b`, "i"),
       /\b(?:latest|current|recent)\s+(?:s&p\s*500|nasdaq(?:\s+composite)?|dow(?:\s+jones)?(?:\s+industrial\s+average)?|russell\s*2000|tsla|aapl|nvda|msft|amzn|meta|googl?|nflx|spy|qqq|spx|btc(?:\/usd)?|eth(?:\/usd)?|sol|xrp|doge|ada)\b/i,
       /\b(?:latest|current|recent)\s+(?!(?:i|me|you|we|us|they|them|he|she|it|my|our|this|that|your|their|one|ones|thing|things|stuff|item|items|reply|replies|response|responses|answer|answers|question|questions|prompt|prompts|request|requests|report|reports|draft|drafts|document|documents|doc|docs|conversation|conversations|message|messages|email|emails|inbox|calendar|events?|schedule|schedules|meeting|meetings|appointment|appointments|reminder|reminders|task|tasks|to-?dos?|note|notes)\b)(?:[A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*){0,5})\s*\??$/i,
       new RegExp(String.raw`^\s*(?!(?:[Hh]ey|[Hh]ello|[Hh]i|[Yy]o|JARVIS|Jarvis|jarvis|Travis|travis|i|me|you|we|us|they|them|he|she|it|my|our|this|that|your|their|one|ones|thing|things|stuff|item|items|reply|replies|response|responses|answer|answers|question|questions|prompt|prompts|request|requests|report|reports|draft|drafts|document|documents|doc|docs|conversation|conversations|message|messages|email|emails|inbox|calendar|events?|schedule|schedules|meeting|meetings|appointment|appointments|reminder|reminders|task|tasks|to-?dos?|note|notes|${PERSONAL_TODAY_SUBJECT_PATTERN})\b)(?:[A-Z][A-Za-z0-9&.'\u2019-]*(?:\s+[A-Z][A-Za-z0-9&.'\u2019-]*){0,5})\s+today\s*\??\s*$`),
       new RegExp(String.raw`^\s*${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:today|tonight|now|right\s+now)\s*\??\s*$`, "i"),
       /\b(?:S&P\s*500|NASDAQ(?:\s+Composite)?|Dow(?:\s+Jones)?(?:\s+Industrial\s+Average)?|Russell\s*2000|[$][A-Za-z]{1,8}|(?!I\b)[A-Z]{1,6}(?:[\/.-][A-Z]{1,6})?)\s+(?:today|currently|recently|now|right\s+now)\b/,
+      new RegExp(String.raw`\b${FIAT_CURRENCY_PAIR_PATTERN}\s+(?:today|currently|recently|now|right\s+now)\b`, "i"),
       /\b(?:s&p\s*500|nasdaq(?:\s+composite)?|dow(?:\s+jones)?(?:\s+industrial\s+average)?|russell\s*2000|tsla|aapl|nvda|msft|amzn|meta|googl?|nflx|spy|qqq|spx|btc(?:\/usd)?|eth(?:\/usd)?|sol|xrp|doge|ada)\s+(?:today|currently|recently|now|right\s+now)\b/i,
       /^\s*(?:what(?:'s|\s+is)\s+)?(?!(?:my|our|this|that)\b)(?:[$\w.\/&-]+\s+){1,6}latest\s*\??\s*$/i,
       /\blatest\s+from\b/i,

@@ -595,6 +595,14 @@ assertRoute(
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
 );
+for (const query of ["current usd/eur", "current gbp-jpy", "usd/eur today", "gbp-jpy today"] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
 for (const query of ["scores today", "prices today", "polls today", "standings today"] as const) {
   assertRoute(
     query,
