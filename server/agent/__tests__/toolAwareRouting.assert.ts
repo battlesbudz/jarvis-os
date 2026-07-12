@@ -360,6 +360,23 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 for (const query of [
+  "what is the current time in London?",
+  "current timezone in Tokyo",
+  "what time is it in Paris now?",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+{
+  const plan = classifyToolAwareRoute("what is my current time?");
+  assert(!plan.intents.includes("research"), "personal current time: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "personal current time: does not prioritize web search");
+}
+for (const query of [
   "what are the current McDonald's hours?",
   "current Dave & Buster's hours",
   "current Dave & Buster’s hours",
