@@ -288,7 +288,7 @@ function unique<T>(values: T[]): T[] {
 function isPrivateCalendarEventQuery(query: string): boolean {
   return (
     /\b(?:my|our)\s+(?:[\w.-]+\s+){0,2}calendar\b/i.test(query) ||
-    /\b(?:my|our)\s+(?:calendar\s+)?events?\b/i.test(query) ||
+    /\b(?:my|our)\s+(?:calendar\s+)?(?:events?|meetings?|appointments?)\b/i.test(query) ||
     /\bevents?\s+(?:are\s+)?(?:on|in|for)\s+(?:my|our)\s+calendar\b/i.test(query) ||
     /\b(?:my|our)\s+(?:calendar\s+)?schedule\b/i.test(query) ||
     /\bon\s+(?:my|our)\s+schedule\b/i.test(query) ||
@@ -297,8 +297,9 @@ function isPrivateCalendarEventQuery(query: string): boolean {
 }
 
 const MIXED_RESEARCH_LIVE_NOUN_PATTERN = String.raw`(?:news|stories?|docs?|documentation|updates?|headlines?|articles?|sources?|events?|games?|matches?|fixtures?|schedules?|hours?|opening\s+hours|business\s+hours|store\s+hours|videos?|uploads?|posts?|information|info|data|traffic|air\s+quality|quality|conditions?|prices?|scores?|results?|delays?|cancellations?|cancelations?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|developments?|situations?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?|${PUBLIC_EVENT_CATEGORY_PATTERN}|${PUBLIC_INCIDENT_NOUN_PATTERN})`;
+const MIXED_RESEARCH_CLAUSE_START_PATTERN = String.raw`(?:what(?:'s|\s+is)\s+(?:happening|going\s+on)\b|what\s+happened\b|(?:the\s+)?(?:latest|current|recent)\b|${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:today|tonight|now|right\s+now)\b|(?:[$\w.\/&,'\u2019-]+\s+){0,6}${MIXED_RESEARCH_LIVE_NOUN_PATTERN}\b)`;
 const MIXED_RESEARCH_CLAUSE_SEPARATOR = new RegExp(
-  String.raw`\s+(?:and|also|plus|then|along\s+with|together\s+with|as\s+well\s+as)\s+|\s+with\s+(?=(?:what(?:'s|\s+is)\s+(?:happening|going\s+on)\b|what\s+happened\b|(?:the\s+)?(?:latest|current|recent)\b|${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:today|tonight|now|right\s+now)\b|(?:[$\w.\/&,'\u2019-]+\s+){0,6}${MIXED_RESEARCH_LIVE_NOUN_PATTERN}\b))|[,;]+|[.!?]+(?:\s+|$)`,
+  String.raw`(?:\s+(?:and|also|plus|then|along\s+with|together\s+with|as\s+well\s+as)\s+|\s+with\s+|[,;]+\s*)(?=${MIXED_RESEARCH_CLAUSE_START_PATTERN})|[.!?]+(?:\s+(?=${MIXED_RESEARCH_CLAUSE_START_PATTERN})|$)`,
   "i",
 );
 

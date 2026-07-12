@@ -114,6 +114,22 @@ for (const [query, label] of [
   assert(!plan.intents.includes("research"), "find my events: does not route as research");
   assert(!plan.priorityToolNames.includes("search_web"), "find my events: no search_web");
 }
+for (const [query, label] of [
+  ["find my appointments today", "find my appointments"],
+  ["look up my meetings tomorrow", "look up my meetings"],
+  ["search our appointments this week", "search our appointments"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(plan.intents.includes("calendar"), `${label}: calendar intent detected`);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: no search_web`);
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events in Philadelphia, PA today");
+  assert(plan.intents.includes("calendar"), "calendar location comma: calendar intent detected");
+  assert(!plan.intents.includes("research"), "calendar location comma: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "calendar location comma: no search_web");
+}
 {
   const plan = classifyToolAwareRoute("search my events today");
   assert(plan.intents.includes("calendar"), "search my events: intent detected");
@@ -149,6 +165,12 @@ for (const [query, label] of [
   assert(plan.intents.includes("calendar"), "comma mixed calendar and news: calendar intent detected");
   assert(plan.intents.includes("research"), "comma mixed calendar and news: research intent preserved");
   assert(plan.priorityToolNames.includes("search_web"), "comma mixed calendar and news: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events in Philadelphia, PA today, what's today's news?");
+  assert(plan.intents.includes("calendar"), "location-comma mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "location-comma mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "location-comma mixed request: search_web preserved");
 }
 {
   const plan = classifyToolAwareRoute("what are my calendar events today along with today's news?");
