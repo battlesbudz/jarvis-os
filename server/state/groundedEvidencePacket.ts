@@ -93,6 +93,7 @@ export interface BuildGroundedEvidencePacketInput {
 export interface RenderGroundedEvidencePacketOptions {
   maxChars?: number;
   includeInstructions?: boolean;
+  compact?: boolean;
 }
 
 let groundedEvidencePacketDepsForTesting: GroundedEvidencePacketDeps | null = null;
@@ -481,10 +482,33 @@ function renderEvidenceLine(item: GroundedEvidenceItem, index: number): string {
   return `${index + 1}. [${item.domain}/${item.label}] (${metadata}) ${truncateText(item.content, 260)}`;
 }
 
+function renderCompactEvidencePacket(packet: GroundedEvidencePacket, maxChars: number): string {
+  const opening = [
+    "## Jarvis Grounded Evidence Packet",
+    "Use only EVIDENCE for personal or state claims. If a fact is absent, say Jarvis does not have it loaded.",
+    "EVIDENCE:",
+  ];
+  if (packet.evidence.length === 0) {
+    return truncateText([...opening, "- No grounded evidence loaded for this turn."].join("\n"), maxChars);
+  }
+
+  const openingText = opening.join("\n");
+  const available = Math.max(48, maxChars - openingText.length - packet.evidence.length);
+  const perItemBudget = Math.max(48, Math.floor(available / packet.evidence.length));
+  const evidenceLines = packet.evidence.map((item) => {
+    const prefix = `- [${item.domain}/${item.label}] (id=${item.id}) `;
+    const contentBudget = Math.max(12, perItemBudget - prefix.length);
+    return `${prefix}${truncateText(item.content, contentBudget)}`;
+  });
+  return truncateText([openingText, ...evidenceLines].join("\n"), maxChars);
+}
+
 export function renderGroundedEvidencePacket(
   packet: GroundedEvidencePacket,
   options: RenderGroundedEvidencePacketOptions = {},
 ): string {
+  const maxChars = options.maxChars ?? DEFAULT_RENDER_MAX_CHARS;
+  if (options.compact) return renderCompactEvidencePacket(packet, maxChars);
   const includeInstructions = options.includeInstructions ?? true;
   const lines: string[] = [
     "## Jarvis Grounded Evidence Packet",
@@ -530,13 +554,16 @@ export function renderGroundedEvidencePacket(
     lines.push("", "Uncertainty:", ...packet.uncertainty.map((entry) => `- ${entry}`));
   }
 
-  return truncateText(lines.join("\n"), options.maxChars ?? DEFAULT_RENDER_MAX_CHARS);
+  return truncateText(lines.join("\n"), maxChars);
 }
 
 export async function buildGroundedEvidencePacketPrompt(
-  input: BuildGroundedEvidencePacketInput & { renderMaxChars?: number },
+  input: BuildGroundedEvidencePacketInput & { renderMaxChars?: number; compact?: boolean },
   deps?: GroundedEvidencePacketDeps,
 ): Promise<string> {
   const packet = await buildGroundedEvidencePacket(input, deps);
-  return renderGroundedEvidencePacket(packet, { maxChars: input.renderMaxChars ?? DEFAULT_RENDER_MAX_CHARS });
+  return renderGroundedEvidencePacket(packet, {
+    maxChars: input.renderMaxChars ?? DEFAULT_RENDER_MAX_CHARS,
+    compact: input.compact,
+  });
 }
