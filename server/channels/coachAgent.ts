@@ -27,6 +27,7 @@ import { routeAutonomyRequest } from "../agent/autonomyRuntime";
 import { getCoachAppAgentId } from "../agent/coreAgentIds";
 import { createSystemApprovalOnBeforeTool } from "../agent/systemApprovalGate";
 import { getCoachAgentSessionAgentId } from "./coachAgentSession";
+import { listPendingPersonalCommitments } from "../commitments/dbCommitmentRepository";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
 
@@ -327,9 +328,7 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
     sessionResumed
       ? Promise.resolve([] as any[])
       : db.select().from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId)).limit(1),
-    db.select().from(schema.commitments)
-      .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, "pending")))
-      .orderBy(desc(schema.commitments.extractedAt)).limit(10),
+    listPendingPersonalCommitments(userId, 10),
     db.select().from(schema.userPreferences).where(eq(schema.userPreferences.userId, userId)).limit(1),
     getRecentInteractions(userId, 20),
     db.select({

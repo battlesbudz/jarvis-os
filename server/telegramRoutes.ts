@@ -32,6 +32,10 @@ import OpenAI from "openai";
 import { getOpenAIClientConfig } from "./agent/providers/env";
 import { claimAndMark } from "./lib/proactiveDedup";
 import { resolveScheduledTaskAttention } from "./lib/taskResolver";
+import {
+  listPendingPersonalCommitments,
+  personalCommitmentCondition,
+} from "./commitments/dbCommitmentRepository";
 import { routeSlashCommand, registerTelegramBotCommands, SLASH_COMMANDS } from "./channels/slashCommandRouter";
 import { activeCoachRuns } from "./runRegistry";
 import {
@@ -2317,12 +2321,7 @@ export function registerTelegramRoutes(app: Express): void {
 
 async function getCommitmentsForUser(userId: string): Promise<any[]> {
   try {
-    return await db
-      .select()
-      .from(schema.commitments)
-      .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
-      .orderBy(desc(schema.commitments.extractedAt))
-      .limit(20);
+    return await listPendingPersonalCommitments(userId, 20);
   } catch {
     return [];
   }
@@ -2580,7 +2579,7 @@ Write a concise evening recap (3-4 sentences). Acknowledge what was done, note w
         : 'No incomplete tasks this week';
 
       const allWeekCommitments = await db.select().from(schema.commitments)
-        .where(eq(schema.commitments.userId, userId)).limit(200);
+        .where(personalCommitmentCondition(userId)).limit(200);
       const weekDueCommitments = allWeekCommitments.filter((c: any) =>
         c.dueDate && c.dueDate >= startDate && c.dueDate <= endDate
       );
@@ -2622,7 +2621,7 @@ Write a concise evening recap (3-4 sentences). Acknowledge what was done, note w
         const thirtyDayStart = thirtyDaysAgoDate.toISOString().slice(0, 10);
         const allPlans = await getPlansForDateRange(userId, thirtyDayStart, endDate);
         const allCommitmentsRaw = await db.select().from(schema.commitments)
-          .where(eq(schema.commitments.userId, userId)).limit(200);
+          .where(personalCommitmentCondition(userId)).limit(200);
         const scopedCommitments30d = allCommitmentsRaw.filter((c: any) =>
           (c.dueDate && c.dueDate >= thirtyDayStart && c.dueDate <= endDate) ||
           (c.extractedAt && c.extractedAt >= new Date(thirtyDayStart) && c.extractedAt <= new Date(endDate + 'T23:59:59')) ||

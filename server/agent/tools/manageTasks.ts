@@ -1,14 +1,24 @@
 import type { AgentTool, AgentPlan } from "../types";
 import { db } from "../../db";
 import * as schema from "@shared/schema";
-import { and, eq, desc } from "drizzle-orm";
+import {
+  createOrMergeCommitmentInDb,
+  listPendingPersonalCommitments,
+  personalCommitmentCondition,
+  updateCommitmentInDb,
+} from "../../commitments/dbCommitmentRepository";
+import {
+  parseCommitmentKind,
+  parseCommitmentSignalLevel,
+  resolveCommitmentSemantics,
+} from "../../commitments/commitmentStore";
 
 // Pattern-insights util kept inside telegramRoutes for now; we lazily import
 // the helpers to avoid a circular dep with telegramRoutes.
 
 interface PatternHelpers {
-  getPlansForDateRange: (userId: string, start: string, end: string) => Promise<Array<{ date: string; tasks: unknown[] }>>;
-  computePatternInsights: (plans: Array<{ date: string; tasks: unknown[] }>, commitments?: unknown[]) => string;
+  getPlansForDateRange: (userId: string, start: string, end: string) => Promise<{ date: string; tasks: unknown[] }[]>;
+  computePatternInsights: (plans: { date: string; tasks: unknown[] }[], commitments?: unknown[]) => string;
 }
 
 async function loadPatternHelpers(): Promise<PatternHelpers> {
@@ -39,6 +49,23 @@ export const manageTasksTool: AgentTool = {
       title: { type: "string", description: "Task title (add_plan_task)" },
       content: { type: "string", description: "Commitment content (add_commitment)" },
       due_date: { type: "string", description: "YYYY-MM-DD (add_commitment, optional)" },
+      commitment_kind: {
+        type: "string",
+        enum: ["user_commitment", "user_task", "operational_incident", "notification"],
+        description:
+          "Optional add_commitment classification override. Use user_commitment/user_task for the user's own work, operational_incident for service or configuration problems, and notification for alerts or messages.",
+      },
+      signal_level: {
+        type: "string",
+        enum: ["normal", "low"],
+        description:
+          "Optional add_commitment signal override. Use low for non-actionable notification noise.",
+      },
+      dedupe_key: {
+        type: "string",
+        description:
+          "Stable topic key for an added commitment. Reuse it for repeated reports of the same issue; omit dates, counts, and changing status text.",
+      },
       commitment_id: { type: "string", description: "ID from [id:...] (complete_commitment)" },
     },
     required: ["action"],
@@ -84,17 +111,37 @@ export const manageTasksTool: AgentTool = {
           if (!args.content) {
             return { ok: false, content: "Error: content is required for add_commitment", label: "Missing content" };
           }
-          await db.insert(schema.commitments).values({
+          const requestedKind = parseCommitmentKind(args.commitment_kind);
+          const requestedSignal = parseCommitmentSignalLevel(args.signal_level);
+          if ((args.commitment_kind != null && !requestedKind) || (args.signal_level != null && !requestedSignal)) {
+            return {
+              ok: false,
+              content: "Error: add_commitment received an invalid commitment classification.",
+              label: "Invalid commitment classification",
+            };
+          }
+          const semantics = resolveCommitmentSemantics({
+            content: String(args.content),
+            sourceType: ctx.channel || "agent",
+            commitmentKind: requestedKind,
+            signalLevel: requestedSignal,
+          });
+          const result = await createOrMergeCommitmentInDb({
             userId,
             content: String(args.content ?? ""),
             dueDate: typeof args.due_date === "string" ? args.due_date : null,
+            commitmentKind: semantics.commitmentKind,
+            signalLevel: semantics.signalLevel,
+            dedupeKey: typeof args.dedupe_key === "string" ? args.dedupe_key : null,
+            sourceType: semantics.sourceType,
             sourceMessage: `Added via ${ctx.channel || "agent"}`,
           });
+          const verb = result.action === "merged" ? "Deduplicated" : "Added";
           return {
             ok: true,
-            content: `Added commitment: "${String(args.content ?? "")}"${args.due_date ? ` (due ${String(args.due_date)})` : ""}`,
-            label: "Commitment added",
-            detail: String(args.content ?? ""),
+            content: `${verb} commitment: "${result.commitment.content}"${result.commitment.dueDate ? ` (due ${result.commitment.dueDate})` : ""}`,
+            label: result.action === "merged" ? "Commitment deduplicated" : "Commitment added",
+            detail: result.commitment.content,
           };
         }
 
@@ -102,18 +149,13 @@ export const manageTasksTool: AgentTool = {
           if (!args.commitment_id) {
             return { ok: false, content: "Error: commitment_id is required for complete_commitment", label: "Missing id" };
           }
-          const updated = await db
-            .update(schema.commitments)
-            .set({ status: "done", resolvedAt: new Date() })
-            .where(
-              and(
-                eq(schema.commitments.id, String(args.commitment_id ?? "")),
-                eq(schema.commitments.userId, userId),
-                eq(schema.commitments.status, "pending")
-              )
-            )
-            .returning({ id: schema.commitments.id });
-          if (updated.length === 0) {
+          const updated = await updateCommitmentInDb({
+            userId,
+            id: String(args.commitment_id ?? ""),
+            status: "done",
+            requirePending: true,
+          });
+          if (!updated || updated.status !== "done") {
             return {
               ok: false,
               content: `No pending commitment found with id "${String(args.commitment_id ?? "")}".`,
@@ -131,12 +173,7 @@ export const manageTasksTool: AgentTool = {
         case "list_tasks": {
           const todayPlan: AgentPlan | null = ctx.state?.todayPlan ?? null;
           const planTasks: AgentPlan["tasks"] = todayPlan?.tasks ?? [];
-          const pendingCommitments = await db
-            .select()
-            .from(schema.commitments)
-            .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, "pending")))
-            .orderBy(desc(schema.commitments.extractedAt))
-            .limit(10);
+          const pendingCommitments = await listPendingPersonalCommitments(userId, 10);
 
           let listing = "";
           listing += planTasks.length > 0
@@ -165,7 +202,11 @@ export const manageTasksTool: AgentTool = {
           if (plans.length < 3) {
             return { ok: true, content: "Not enough data yet for pattern analysis (need at least a few days).", label: "Not enough data" };
           }
-          const allCommitments = await db.select().from(schema.commitments).where(eq(schema.commitments.userId, userId)).limit(200);
+          const allCommitments = await db
+            .select()
+            .from(schema.commitments)
+            .where(personalCommitmentCondition(userId))
+            .limit(200);
           const startDt = new Date(start);
           const endDt = new Date(end + "T23:59:59");
           const scopedCommitments = allCommitments.filter((c) =>

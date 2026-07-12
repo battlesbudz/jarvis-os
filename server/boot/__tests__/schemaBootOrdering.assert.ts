@@ -33,5 +33,9 @@ assert(
     source.includes('message.includes("column \\"embedding_vector\\"")'),
   "Optional pgvector fallback must tolerate missing embedding_vector after vector column creation is skipped",
 );
+assert(
+  source.includes("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT"),
+  "Schema boot must repair the users.email column required by the shared schema",
+);
 
 console.log("OK: schema boot creates tables before dependent repairs");

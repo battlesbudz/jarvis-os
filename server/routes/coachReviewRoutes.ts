@@ -4,6 +4,7 @@ import { desc, eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { userPreferences } from "@shared/schema";
 import { db } from "../db";
+import { personalCommitmentCondition } from "../commitments/dbCommitmentRepository";
 
 export function registerCoachMorningBriefRoute(app: Express): void {
   // Returns today's morning brief if one was generated and stored by the
@@ -45,7 +46,7 @@ export function registerCoachWeeklyReviewRoute(app: Express, openai: OpenAI): vo
         weekCommitments = await db
           .select()
           .from(schema.commitments)
-          .where(eq(schema.commitments.userId, userId))
+          .where(personalCommitmentCondition(userId))
           .orderBy(desc(schema.commitments.extractedAt))
           .limit(30);
         weekCommitments = weekCommitments.filter((c: any) =>

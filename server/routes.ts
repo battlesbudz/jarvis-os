@@ -59,6 +59,7 @@ import { registerCoachAudioRoutes } from "./routes/coachAudioRoutes";
 import { executePendingCoachAction, registerCoachActionConfirmationRoutes } from "./routes/coachActionConfirmationRoutes";
 import { registerCoachInsightRoutes } from "./routes/coachInsightRoutes";
 import { registerCoachSessionRoutes } from "./routes/coachSessionRoutes";
+import { listPendingPersonalCommitments } from "./commitments/dbCommitmentRepository";
 import { registerWebchatEventsRoutes } from "./routes/webchatEventsRoutes";
 import { formatRuntimeShadowPreviewSummary, previewRuntimeShadowForMessage } from "./core/runtime";
 import { buildYoutubeTranscriptCoachTools } from "./youtubeTranscriptCoachTools";
@@ -1562,12 +1563,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         userCommitments = [];
         if (userId) {
           try {
-            userCommitments = await db
-              .select()
-              .from(schema.commitments)
-              .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, 'pending')))
-              .orderBy(desc(schema.commitments.extractedAt))
-              .limit(20);
+            userCommitments = await listPendingPersonalCommitments(userId, 20);
           } catch {}
         }
 

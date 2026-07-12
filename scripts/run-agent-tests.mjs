@@ -117,6 +117,8 @@ const tests = [
   { file: "server/agent/__tests__/mindTraceContextPacks.test.ts" },
   { file: "server/state/__tests__/stateCard.assert.ts" },
   { file: "server/state/__tests__/groundedEvidencePacket.assert.ts" },
+  { file: "server/commitments/__tests__/commitmentStore.assert.ts" },
+  { file: "server/commitments/__tests__/dbCommitmentRepository.assert.ts", requiresDatabase: true },
   { file: "server/state/__tests__/runtimeWorkingContextTruthAudit.assert.ts" },
   { file: "server/state/__tests__/runtimeCapability.assert.ts" },
   { file: "server/state/__tests__/runtimeMemoryInspection.assert.ts" },
@@ -209,6 +211,22 @@ const tests = [
 
 const hasDatabase = configureDatabaseEnvForTests();
 let skipped = 0;
+
+if (hasDatabase) {
+  const prepareResult = spawnSync(process.execPath, [tsxCli, "scripts/prepare-test-database.ts"], {
+    cwd: projectRoot,
+    env: process.env,
+    stdio: "inherit",
+    shell: false,
+  });
+  if (prepareResult.error) {
+    console.error(prepareResult.error);
+    process.exit(1);
+  }
+  if (prepareResult.status !== 0) {
+    process.exit(prepareResult.status ?? 1);
+  }
+}
 
 for (const test of tests) {
   if (test.requiresDatabase && !hasDatabase) {
