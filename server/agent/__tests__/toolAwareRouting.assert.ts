@@ -971,6 +971,21 @@ assertRoute(
   assert(!plan.priorityToolNames.includes("search_web"), "local window status: does not prioritize web search");
 }
 {
+  const plan = classifyToolAwareRoute("Dinner tonight?");
+  assert(!plan.intents.includes("research"), "auto-capitalized dinner shorthand: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "auto-capitalized dinner shorthand: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("Plans tonight?");
+  assert(!plan.intents.includes("research"), "auto-capitalized plans shorthand: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "auto-capitalized plans shorthand: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("Work now?");
+  assert(!plan.intents.includes("research"), "auto-capitalized work shorthand: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "auto-capitalized work shorthand: does not prioritize web search");
+}
+{
   const plan = classifyToolAwareRoute("did you win today?");
   assert(!plan.shouldPreferTool, "casual win question: does not prefer tool use");
   assert(!plan.intents.includes("research"), "casual win question: does not route as research");
