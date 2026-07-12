@@ -136,6 +136,18 @@ async function testGroundedPacketBuildsEvidenceAndOmitsNoise(): Promise<void> {
   assert.equal(packet.evidence.some((item) => /service configuration|phone notification/i.test(item.content)), false);
   assert.ok(packet.omitted.some((entry) => /duplicate/i.test(entry)));
   assert.ok(packet.omitted.some((entry) => /non-personal or low-signal/i.test(entry)));
+  assert.equal(packet.trace?.contentFree, true);
+  assert.equal(packet.trace?.queryLength, "user profile preferences relationships work patterns goals blockers values commitments".length);
+  assert.deepEqual(
+    packet.trace?.stages.map((stage) => `${stage.source}:${stage.status}`),
+    ["runtime:loaded", "profile:loaded", "soul:loaded", "memory:loaded", "commitment:loaded"],
+  );
+  assert.deepEqual(
+    packet.trace?.stages.find((stage) => stage.source === "commitment")?.selectedIds,
+    ["commitment:real-work"],
+  );
+  assert.equal(packet.trace?.stages.find((stage) => stage.source === "commitment")?.omittedCount, 4);
+  assert.equal(JSON.stringify(packet.trace).includes("Review Jarvis voice grounding PR"), false);
 
   const rendered = renderGroundedEvidencePacket(packet, { maxChars: 5_000 });
   assert.match(rendered, /Jarvis Grounded Evidence Packet/);

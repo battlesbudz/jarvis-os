@@ -59,6 +59,15 @@ async function main(): Promise<void> {
   assert.deepEqual(context.uncertainty, []);
   assert.equal(context.items[0]?.provenance[0]?.id, "memory-os-1");
   assert.equal(context.items[0]?.memory.category, "preferences");
+  assert.equal(context.trace?.contentFree, true);
+  assert.equal(context.trace?.input.queryLength, "morning planning".length);
+  assert.equal(context.trace?.input.queryFingerprint.length, 16);
+  assert.deepEqual(context.trace?.selectedIds, ["memory-os-1"]);
+  assert.deepEqual(
+    context.trace?.stages.map((stage) => stage.stage),
+    ["primary_retrieval", "privacy_boundary", "context_selection"],
+  );
+  assert.equal(JSON.stringify(context.trace).includes("crisp morning plans"), false);
 
   const roundTrip = memoryContextItemsToRetrievedMemories(context.items);
   assert.deepEqual(roundTrip, [memory()]);
@@ -95,6 +104,7 @@ async function main(): Promise<void> {
   );
   assert.deepEqual(empty.items, []);
   assert.deepEqual(empty.uncertainty, ["No memory query was provided."]);
+  assert.equal(empty.trace?.outcome, "invalid_input");
 
   const failed = await retrieveMemoryContext(
     { userId: "memory-os-user", query: "planning", caller: "daily_command" },
@@ -106,6 +116,8 @@ async function main(): Promise<void> {
   );
   assert.deepEqual(failed.items, []);
   assert.match(failed.uncertainty[0] ?? "", /database unavailable/);
+  assert.equal(failed.trace?.outcome, "error");
+  assert.equal(failed.trace?.errorName, "Error");
 
   const restricted = memory({
     id: "restricted-summary-1",
@@ -125,6 +137,10 @@ async function main(): Promise<void> {
   );
   assert.deepEqual(cloudRestricted.items, []);
   assert.match(cloudRestricted.uncertainty.join(" "), /withheld from cloud model context/);
+  assert.equal(
+    cloudRestricted.trace?.stages.find((stage) => stage.stage === "privacy_boundary")?.candidates[0]?.disposition,
+    "withheld",
+  );
 
   const legacyRestricted = await retrieveMemoryContext(
     { userId: "memory-os-user", query: "legacy plaid", caller: "coach_context" },
@@ -223,7 +239,7 @@ async function main(): Promise<void> {
   assert.equal(underfilledCloudContext.items[0]?.memory.id, "normal-memory-after-restricted");
   assert.match(underfilledCloudContext.uncertainty.join(" "), /withheld from cloud model context/);
 
-  const fallbackCalls: Array<{ limit: number; canonicalOnly?: boolean }> = [];
+  const fallbackCalls: { limit: number; canonicalOnly?: boolean }[] = [];
   const canonicalFallbackAfterRestrictedBrain = await retrieveMemoryContext(
     {
       userId: "memory-os-user",
@@ -270,6 +286,11 @@ async function main(): Promise<void> {
     "canonical-normal-after-restricted-brain",
   );
   assert.match(canonicalFallbackAfterRestrictedBrain.uncertainty.join(" "), /withheld from cloud model context/);
+  assert.equal(canonicalFallbackAfterRestrictedBrain.trace?.fallbackUsed, true);
+  assert.deepEqual(
+    canonicalFallbackAfterRestrictedBrain.trace?.stages.map((stage) => stage.stage),
+    ["primary_retrieval", "privacy_boundary", "canonical_fallback", "context_selection"],
+  );
 
   const filteredAccessUpdates: string[][] = [];
   const filteredAccessContext = await retrieveMemoryContext(
@@ -313,6 +334,10 @@ async function main(): Promise<void> {
   assert.doesNotMatch(localRestricted.items[0]?.memory.content ?? "", /1234/);
   assert.doesNotMatch(localRestricted.items[0]?.memory.content ?? "", /\$500/);
   assert.match(localRestricted.uncertainty.join(" "), /sanitized for local model context/);
+  assert.equal(
+    localRestricted.trace?.stages.find((stage) => stage.stage === "privacy_boundary")?.candidates[0]?.disposition,
+    "sanitized",
+  );
 
   const allowedCloudRestricted = await retrieveMemoryContext(
     {

@@ -1,6 +1,11 @@
 import { eq } from "drizzle-orm";
 
-import type { MemoryContext, MemoryModelTarget } from "../memory/memoryOs";
+import {
+  fingerprintMemoryQuery,
+  type MemoryContext,
+  type MemoryModelTarget,
+  type MemoryRetrievalTrace,
+} from "../memory/memoryOs";
 import {
   canonicalCommitmentDedupeKey,
   isPersonalCommitment,
@@ -44,6 +49,24 @@ export interface GroundedEvidencePacket {
   evidence: GroundedEvidenceItem[];
   omitted: string[];
   uncertainty: string[];
+  trace?: GroundedEvidenceAssemblyTrace;
+}
+
+export interface GroundedEvidenceAssemblyTraceStage {
+  source: GroundedEvidenceDomain;
+  status: "loaded" | "empty" | "skipped" | "error";
+  loadedCount: number;
+  selectedIds: string[];
+  omittedCount: number;
+}
+
+export interface GroundedEvidenceAssemblyTrace {
+  schemaVersion: 1;
+  contentFree: true;
+  queryFingerprint: string;
+  queryLength: number;
+  stages: GroundedEvidenceAssemblyTraceStage[];
+  memoryRetrieval?: MemoryRetrievalTrace;
 }
 
 export interface GroundedCommitmentRecord {
@@ -363,25 +386,65 @@ export async function buildGroundedEvidencePacket(
   const evidence: GroundedEvidenceItem[] = [];
   const omitted: string[] = [];
   const uncertainty: string[] = [];
+  const trace: GroundedEvidenceAssemblyTrace = {
+    schemaVersion: 1,
+    contentFree: true,
+    queryFingerprint: fingerprintMemoryQuery(query),
+    queryLength: query.length,
+    stages: [],
+  };
+
+  const runtimeSelected = input.activeDevice || input.activeModel || input.currentContext
+    ? ["runtime:state"]
+    : [];
+  trace.stages.push({
+    source: "runtime",
+    status: runtimeSelected.length > 0 ? "loaded" : "empty",
+    loadedCount: runtimeSelected.length,
+    selectedIds: runtimeSelected,
+    omittedCount: 0,
+  });
 
   if (input.includeProfile !== false) {
     try {
       const loadProfile = effectiveDeps.loadProfileState ?? loadRuntimeProfileStateFromDb;
       const profile = await loadProfile(input.userId);
-      evidence.push(...profileEvidence(profile));
+      const loaded = profileEvidence(profile);
+      evidence.push(...loaded);
+      trace.stages.push({
+        source: "profile",
+        status: loaded.length > 0 ? "loaded" : "empty",
+        loadedCount: loaded.length,
+        selectedIds: loaded.map((item) => item.id),
+        omittedCount: 0,
+      });
       if (!profile) uncertainty.push("Profile store did not return a user profile.");
     } catch (error) {
       uncertainty.push(safeUncertaintyMessage("Profile store", error));
+      trace.stages.push({ source: "profile", status: "error", loadedCount: 0, selectedIds: [], omittedCount: 0 });
     }
+  } else {
+    trace.stages.push({ source: "profile", status: "skipped", loadedCount: 0, selectedIds: [], omittedCount: 0 });
   }
 
   if (input.includeSoul !== false) {
     try {
       const loadSoul = effectiveDeps.loadSoul ?? defaultLoadSoul;
-      evidence.push(...soulEvidence(await loadSoul(input.userId)));
+      const loaded = soulEvidence(await loadSoul(input.userId));
+      evidence.push(...loaded);
+      trace.stages.push({
+        source: "soul",
+        status: loaded.length > 0 ? "loaded" : "empty",
+        loadedCount: loaded.length,
+        selectedIds: loaded.map((item) => item.id),
+        omittedCount: 0,
+      });
     } catch (error) {
       uncertainty.push(safeUncertaintyMessage("Soul", error));
+      trace.stages.push({ source: "soul", status: "error", loadedCount: 0, selectedIds: [], omittedCount: 0 });
     }
+  } else {
+    trace.stages.push({ source: "soul", status: "skipped", loadedCount: 0, selectedIds: [], omittedCount: 0 });
   }
 
   if (input.includeMemory !== false && memoryLimit > 0) {
@@ -397,11 +460,23 @@ export async function buildGroundedEvidencePacket(
         modelTarget,
         allowRestrictedMemory: input.allowRestrictedMemory ?? false,
       });
-      evidence.push(...memoryEvidence(memoryContext));
+      const loaded = memoryEvidence(memoryContext);
+      evidence.push(...loaded);
       uncertainty.push(...memoryContext.uncertainty);
+      trace.memoryRetrieval = memoryContext.trace;
+      trace.stages.push({
+        source: "memory",
+        status: loaded.length > 0 ? "loaded" : "empty",
+        loadedCount: memoryContext.items.length,
+        selectedIds: loaded.map((item) => item.id),
+        omittedCount: Math.max(0, memoryContext.items.length - loaded.length),
+      });
     } catch (error) {
       uncertainty.push(safeUncertaintyMessage("MemoryOS", error));
+      trace.stages.push({ source: "memory", status: "error", loadedCount: 0, selectedIds: [], omittedCount: 0 });
     }
+  } else {
+    trace.stages.push({ source: "memory", status: "skipped", loadedCount: 0, selectedIds: [], omittedCount: 0 });
   }
 
   if (input.includeCommitments !== false && commitmentLimit > 0) {
@@ -409,11 +484,22 @@ export async function buildGroundedEvidencePacket(
       const loadCommitments = effectiveDeps.loadCommitments ?? defaultLoadCommitments;
       const rawCommitments = await loadCommitments(input.userId, Math.max(50, commitmentLimit * 6));
       const { selected, omitted: omittedCommitments } = dedupeCommitments(rawCommitments, commitmentLimit, generatedAt);
-      evidence.push(...commitmentEvidence(selected));
+      const loaded = commitmentEvidence(selected);
+      evidence.push(...loaded);
       omitted.push(...omittedCommitments);
+      trace.stages.push({
+        source: "commitment",
+        status: loaded.length > 0 ? "loaded" : "empty",
+        loadedCount: rawCommitments.length,
+        selectedIds: loaded.map((item) => item.id),
+        omittedCount: Math.max(0, rawCommitments.length - loaded.length),
+      });
     } catch (error) {
       uncertainty.push(safeUncertaintyMessage("Commitment store", error));
+      trace.stages.push({ source: "commitment", status: "error", loadedCount: 0, selectedIds: [], omittedCount: 0 });
     }
+  } else {
+    trace.stages.push({ source: "commitment", status: "skipped", loadedCount: 0, selectedIds: [], omittedCount: 0 });
   }
 
   return {
@@ -427,6 +513,7 @@ export async function buildGroundedEvidencePacket(
     evidence,
     omitted: uniqueStrings(omitted),
     uncertainty: uniqueStrings(uncertainty),
+    trace,
   };
 }
 

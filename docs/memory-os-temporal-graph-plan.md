@@ -420,6 +420,8 @@ Status note, 2026-06-05: the targeted read-path facade baseline is implemented. 
 
 Status note, 2026-06-08: Jarvis Core Runtime memory calibration previews now hand correction proposals to the Memory OS correction/provenance facade as review-only artifacts. The bridge records runtime event provenance and existing-memory citations but still returns `recorded: false`; durable Memory OS correction writes remain a later slice.
 
+Status note, 2026-07-12: Memory OS retrieval and grounded evidence assembly now expose content-free structured traces. The retrieval evaluation harness measures recall at K, precision at K, reciprocal rank, forbidden hits, retrieval misses, and evidence dropped during assembly; privacy-safe starter regressions and private trace-artifact input are available through `npm run jarvis:eval:memory-retrieval`.
+
 Implemented:
 
 - `server/memory/memoryOs.ts`
