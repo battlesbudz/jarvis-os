@@ -81,6 +81,10 @@ function testCommitmentStorageContract(): void {
   assert.match(commitmentRoutes, /req\.query\.scope/);
   assert.match(commitmentRoutes, /updateCommitmentInDb/);
   assert.match(commitmentRoutes, /commitmentKind/);
+  const manageTasks = read("server/agent/tools/manageTasks.ts");
+  assert.match(manageTasks, /resolveCommitmentSemantics/);
+  assert.match(manageTasks, /Optional add_commitment classification override/);
+  assert.doesNotMatch(manageTasks, /commitment_kind and signal_level are required/);
   const ci = read(".github/workflows/ci.yml");
   assert.match(ci, /JARVIS_TEST_DATABASE_URL/);
   assert.match(ci, /pgvector\/pgvector:pg16/);

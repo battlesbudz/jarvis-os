@@ -1,7 +1,6 @@
 import type { AgentTool, AgentPlan } from "../types";
 import { db } from "../../db";
 import * as schema from "@shared/schema";
-import { eq } from "drizzle-orm";
 import {
   createOrMergeCommitmentInDb,
   listPendingPersonalCommitments,
@@ -11,14 +10,15 @@ import {
 import {
   parseCommitmentKind,
   parseCommitmentSignalLevel,
+  resolveCommitmentSemantics,
 } from "../../commitments/commitmentStore";
 
 // Pattern-insights util kept inside telegramRoutes for now; we lazily import
 // the helpers to avoid a circular dep with telegramRoutes.
 
 interface PatternHelpers {
-  getPlansForDateRange: (userId: string, start: string, end: string) => Promise<Array<{ date: string; tasks: unknown[] }>>;
-  computePatternInsights: (plans: Array<{ date: string; tasks: unknown[] }>, commitments?: unknown[]) => string;
+  getPlansForDateRange: (userId: string, start: string, end: string) => Promise<{ date: string; tasks: unknown[] }[]>;
+  computePatternInsights: (plans: { date: string; tasks: unknown[] }[], commitments?: unknown[]) => string;
 }
 
 async function loadPatternHelpers(): Promise<PatternHelpers> {
@@ -53,13 +53,13 @@ export const manageTasksTool: AgentTool = {
         type: "string",
         enum: ["user_commitment", "user_task", "operational_incident", "notification"],
         description:
-          "Required for add_commitment. Use user_commitment/user_task for the user's own work, operational_incident for service or configuration problems, and notification for alerts or messages.",
+          "Optional add_commitment classification override. Use user_commitment/user_task for the user's own work, operational_incident for service or configuration problems, and notification for alerts or messages.",
       },
       signal_level: {
         type: "string",
         enum: ["normal", "low"],
         description:
-          "Required for add_commitment. Use low for non-actionable notification noise.",
+          "Optional add_commitment signal override. Use low for non-actionable notification noise.",
       },
       dedupe_key: {
         type: "string",
@@ -111,23 +111,29 @@ export const manageTasksTool: AgentTool = {
           if (!args.content) {
             return { ok: false, content: "Error: content is required for add_commitment", label: "Missing content" };
           }
-          const commitmentKind = parseCommitmentKind(args.commitment_kind);
-          const signalLevel = parseCommitmentSignalLevel(args.signal_level);
-          if (!commitmentKind || !signalLevel) {
+          const requestedKind = parseCommitmentKind(args.commitment_kind);
+          const requestedSignal = parseCommitmentSignalLevel(args.signal_level);
+          if ((args.commitment_kind != null && !requestedKind) || (args.signal_level != null && !requestedSignal)) {
             return {
               ok: false,
-              content: "Error: commitment_kind and signal_level are required for add_commitment.",
-              label: "Missing commitment classification",
+              content: "Error: add_commitment received an invalid commitment classification.",
+              label: "Invalid commitment classification",
             };
           }
+          const semantics = resolveCommitmentSemantics({
+            content: String(args.content),
+            sourceType: ctx.channel || "agent",
+            commitmentKind: requestedKind,
+            signalLevel: requestedSignal,
+          });
           const result = await createOrMergeCommitmentInDb({
             userId,
             content: String(args.content ?? ""),
             dueDate: typeof args.due_date === "string" ? args.due_date : null,
-            commitmentKind,
-            signalLevel,
+            commitmentKind: semantics.commitmentKind,
+            signalLevel: semantics.signalLevel,
             dedupeKey: typeof args.dedupe_key === "string" ? args.dedupe_key : null,
-            sourceType: ctx.channel || "agent",
+            sourceType: semantics.sourceType,
             sourceMessage: `Added via ${ctx.channel || "agent"}`,
           });
           const verb = result.action === "merged" ? "Deduplicated" : "Added";
