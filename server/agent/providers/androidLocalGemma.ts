@@ -2470,18 +2470,49 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-async function resolvePhoneGemmaTurnBudget(
+async function sendAbortableAndroidLocalGemmaStatusOp(
   userId: string,
   model: string,
-  requestedMaxCompletionTokens: number | undefined,
-): Promise<PhoneGemmaTurnBudget> {
-  const fallback = phoneGemmaTurnBudget(phoneGemmaContextTokens(), requestedMaxCompletionTokens);
-  try {
-    const result = await sendAndroidLocalGemmaOp(
+  signal?: AbortSignal,
+): Promise<DaemonOpResult> {
+  if (!signal) {
+    return sendAndroidLocalGemmaOp(
       userId,
       { type: "android_local_model_status", model },
       PHONE_GEMMA_STATUS_TIMEOUT_MS,
     );
+  }
+  if (signal.aborted) {
+    throw createAbortError("Phone Gemma generation was stopped before profile status was checked.");
+  }
+
+  let onAbort: (() => void) | null = null;
+  const abortPromise = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(createAbortError("Phone Gemma generation was stopped while checking profile status."));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  const statusPromise = sendAndroidLocalGemmaOp(
+    userId,
+    { type: "android_local_model_status", model },
+    PHONE_GEMMA_STATUS_TIMEOUT_MS,
+  );
+
+  try {
+    return await Promise.race([statusPromise, abortPromise]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+async function resolvePhoneGemmaTurnBudget(
+  userId: string,
+  model: string,
+  requestedMaxCompletionTokens: number | undefined,
+  signal?: AbortSignal,
+): Promise<PhoneGemmaTurnBudget> {
+  const fallback = phoneGemmaTurnBudget(phoneGemmaContextTokens(), requestedMaxCompletionTokens);
+  try {
+    const result = await sendAbortableAndroidLocalGemmaStatusOp(userId, model, signal);
     if (!result.ok) return fallback;
     const outer = daemonDataRecord(result.data);
     const nested = daemonDataRecord(outer.data);
@@ -2497,7 +2528,8 @@ async function resolvePhoneGemmaTurnBudget(
         outer.engineValidatedProfileLabel ?? nested.engineValidatedProfileLabel,
       ),
     });
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
     return fallback;
   }
 }
@@ -2558,6 +2590,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       userId,
       normalizedModel,
       params.maxCompletionTokens,
+      params.signal,
     );
 
     const useToolProtocol = shouldUseLocalToolProtocol(params);

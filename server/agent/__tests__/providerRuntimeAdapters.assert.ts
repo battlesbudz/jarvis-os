@@ -7292,6 +7292,97 @@ async function testAndroidLocalGemmaCancelsTimedOutGeneration() {
   }
 }
 
+async function testAndroidLocalGemmaSkipsStatusProbeForAlreadyAbortedRun() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        engineValidatedContextTokens: 512,
+        engineValidatedProfileId: "gpu-standard-512",
+      },
+    };
+  }, { forwardStatusOps: true });
+  const controller = new AbortController();
+  controller.abort();
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Hello" }],
+        toolChoice: "none",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone-aborted-before-status",
+        signal: controller.signal,
+      })),
+      (error: unknown) => {
+        assert(error instanceof Error);
+        assert.equal(error.name, "AbortError");
+        return true;
+      },
+    );
+    assert.equal(requests.length, 0);
+    console.log("OK: Android Local Gemma skips profile status when the run is already aborted");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaAbortsDuringStatusProbe() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  let statusStarted: () => void = () => {};
+  let finishStatus: (result: any) => void = () => {};
+  const statusStartedPromise = new Promise<void>((resolve) => {
+    statusStarted = resolve;
+  });
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    if (op.type !== "android_local_model_status") {
+      throw new Error(`Unexpected daemon op after status abort: ${op.type}`);
+    }
+    statusStarted();
+    return new Promise((resolve) => {
+      finishStatus = resolve;
+    });
+  }, { forwardStatusOps: true });
+  const controller = new AbortController();
+
+  try {
+    const turn = accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Hello" }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-aborted-during-status",
+      signal: controller.signal,
+    }));
+
+    await statusStartedPromise;
+    controller.abort();
+    const outcome = await Promise.race([
+      turn.then(() => null, (error) => error),
+      new Promise<Error>((resolve) => {
+        setTimeout(() => resolve(new Error("abort did not settle")), 100);
+      }),
+    ]);
+    finishStatus({
+      ok: true,
+      data: { engineValidatedContextTokens: 512, engineValidatedProfileId: "gpu-standard-512" },
+    });
+
+    assert(outcome instanceof Error);
+    assert.equal(outcome.name, "AbortError");
+    assert.deepEqual(requests.map((request) => request.op.type), ["android_local_model_status"]);
+    console.log("OK: Android Local Gemma aborts promptly while profile status is pending");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaCancelsGenerationWhenRunAborts() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   let generationStarted: () => void = () => {};
@@ -7705,6 +7796,8 @@ async function main() {
   await testAndroidLocalGemmaDoesNotSaveEmptyRememberCommands();
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
+  await testAndroidLocalGemmaSkipsStatusProbeForAlreadyAbortedRun();
+  await testAndroidLocalGemmaAbortsDuringStatusProbe();
   await testAndroidLocalGemmaCancelsGenerationWhenRunAborts();
   await testAndroidLocalGemmaExplainsUnbundledEngine();
   await testAndroidLocalGemmaExplainsValidationRequired();
