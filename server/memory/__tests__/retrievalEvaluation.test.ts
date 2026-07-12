@@ -38,7 +38,7 @@ function testFailureAttributionSeparatesRetrievalFromAssembly(): void {
 
   assert.equal(result.passed, false);
   assert.equal(result.metrics.recallAtK, 0.5);
-  assert.equal(result.metrics.precisionAtK, 0.5);
+  assert.equal(result.metrics.precisionAtK, 1 / 3);
   assert.equal(result.metrics.reciprocalRank, 1);
   assert.deepEqual(result.missingAtRetrievalIds, ["memory-project-decision"]);
   assert.deepEqual(result.missingAtAssemblyIds, ["memory-project-priority", "memory-project-decision"]);
@@ -103,6 +103,21 @@ function testDuplicateSlotsDoNotImproveRankOrPrecision(): void {
   assert.equal(result.metrics.retrievedCount, 3);
 }
 
+function testUnderfilledRunsUseTopKPrecisionDenominator(): void {
+  const result = evaluateRetrievalRun({
+    id: "underfilled-top-k",
+    query: "Find the expected memory",
+    expectedIds: ["memory-expected"],
+    topK: 5,
+    thresholds: { minPrecisionAtK: 0.5 },
+  }, {
+    retrieved: ["memory-expected"],
+  });
+
+  assert.equal(result.metrics.precisionAtK, 0.2);
+  assert.deepEqual(result.failureCodes, ["precision_below_threshold"]);
+}
+
 function testEmptyEvaluationArtifactsAreRejected(): void {
   assert.throws(
     () => requireRetrievalEvaluationCases([]),
@@ -120,6 +135,7 @@ function main(): void {
   testForbiddenAssemblyHitFailsEvenWithoutExpectedFacts();
   testTopKBoundaryIsAppliedBeforeDedupe();
   testDuplicateSlotsDoNotImproveRankOrPrecision();
+  testUnderfilledRunsUseTopKPrecisionDenominator();
   testEmptyEvaluationArtifactsAreRejected();
   console.log("OK: retrieval evaluation attributes ranking, filtering, and context assembly failures");
 }

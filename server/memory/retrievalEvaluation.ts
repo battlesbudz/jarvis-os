@@ -116,7 +116,9 @@ export function evaluateRetrievalRun(
   const retrievalHits = uniqueIds(retrievedIds.filter((id) => expectedSet.has(id)));
   const firstRelevantIndex = retrievedIds.findIndex((id) => expectedSet.has(id));
   const recallAtK = ratio(retrievalHits.length, expectedIds.length, 1);
-  const precisionAtK = ratio(retrievalHits.length, retrievedIds.length, expectedIds.length === 0 ? 1 : 0);
+  const precisionAtK = expectedIds.length === 0 && retrievedIds.length === 0
+    ? 1
+    : retrievalHits.length / topK;
   const reciprocalRank = expectedIds.length === 0
     ? 1
     : firstRelevantIndex === -1

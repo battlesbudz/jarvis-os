@@ -12,7 +12,7 @@ export const STARTER_RETRIEVAL_REGRESSION_CASES: RetrievalEvaluationCase[] = [
       expectedIds: ["memory-android-native-speech"],
       forbiddenIds: ["notification-spam-risk"],
       topK: 3,
-      thresholds: { minPrecisionAtK: 0.5, minReciprocalRank: 1 },
+      thresholds: { minPrecisionAtK: 1 / 3, minReciprocalRank: 1 },
     },
     run: {
       retrieved: ["memory-android-native-speech", "memory-android-ui-note"],
@@ -54,7 +54,7 @@ export const STARTER_RETRIEVAL_REGRESSION_CASES: RetrievalEvaluationCase[] = [
       expectedIds: ["memory-communication-style", "memory-current-project-priority"],
       forbiddenIds: ["notification-spam-risk", "commitment-service-health-alert"],
       topK: 5,
-      thresholds: { minPrecisionAtK: 0.5, minReciprocalRank: 1 },
+      thresholds: { minPrecisionAtK: 0.4, minReciprocalRank: 1 },
     },
     run: {
       retrieved: [
