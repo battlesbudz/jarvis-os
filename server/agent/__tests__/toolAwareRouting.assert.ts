@@ -139,6 +139,18 @@ assertRoute(
   assert(plan.priorityToolNames.includes("search_web"), "with-news mixed calendar and news: search_web preserved");
 }
 {
+  const plan = classifyToolAwareRoute("what are my calendar events today with the latest on Ukraine");
+  assert(plan.intents.includes("calendar"), "with-latest mixed calendar and news: calendar intent detected");
+  assert(plan.intents.includes("research"), "with-latest mixed calendar and news: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "with-latest mixed calendar and news: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today? what's today's news?");
+  assert(plan.intents.includes("calendar"), "sentence mixed calendar and news: calendar intent detected");
+  assert(plan.intents.includes("research"), "sentence mixed calendar and news: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "sentence mixed calendar and news: search_web preserved");
+}
+{
   const plan = classifyToolAwareRoute("what are my calendar events with Justin today?");
   assert(plan.intents.includes("calendar"), "private calendar with attendee: calendar intent detected");
   assert(!plan.intents.includes("research"), "private calendar with attendee: does not route as research");
@@ -357,6 +369,12 @@ assertRoute(
 );
 assertRoute(
   "what's going on today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what\u2019s going on today?",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
@@ -597,6 +615,12 @@ assertRoute(
 );
 assertRoute(
   "latest OpenAI",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest OpenAI model",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],

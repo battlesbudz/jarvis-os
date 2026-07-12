@@ -116,6 +116,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     patterns: [
       /\b(search\s+(up|for)?|look\s+up|lookup|google|find|research|investigate)\b/i,
       /\b(?:latest|current|recent)\s+(?:[$\w.\/&-]+\s+){0,6}(?:news|events?|games?|matches?|fixtures?|schedules?|hours?|opening\s+hours|business\s+hours|store\s+hours|updates?|developments?|situations?|sources?|articles?|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|delays?|cancellations?|cancelations?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\b/i,
+      /\b(?:latest|current|recent)\s+(?:[$\w.\/&-]+\s+){0,6}(?:models?|products?|services?|features?|capabilities?)\b/i,
       /\b(?:latest|current|recent)\s+(?:[$\w.\/&-]+\s+){0,6}(?:presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)\b/i,
       /\b(?:latest|current|recent)\s+(?:on|about|for|in|with)\b/i,
       /\b(?:latest|current|recent)\s+(?:S&P\s*500|NASDAQ(?:\s+Composite)?|Dow(?:\s+Jones)?(?:\s+Industrial\s+Average)?|Russell\s*2000|[$][A-Za-z]{1,8}|[A-Z]{1,6}(?:[\/.-][A-Z]{1,6})?)\b/,
@@ -261,7 +262,7 @@ function isPrivateCalendarEventQuery(query: string): boolean {
 }
 
 const MIXED_RESEARCH_CLAUSE_SEPARATOR =
-  /\s+(?:and|also|plus|then|along\s+with|together\s+with|as\s+well\s+as)\s+|\s+with\s+(?=(?:today(?:['\u2019]s|s)?\s+(?:news|updates?|headlines?|articles?|sources?)|(?:latest|current|recent)\b|(?:news|updates?|headlines?|articles?|sources?)\b))|[,;]+/i;
+  /\s+(?:and|also|plus|then|along\s+with|together\s+with|as\s+well\s+as)\s+|\s+with\s+(?=(?:today(?:['\u2019]s|s)?\s+(?:news|updates?|headlines?|articles?|sources?)|(?:the\s+)?(?:latest|current|recent)\b|(?:news|updates?|headlines?|articles?|sources?)\b))|[,;]+|[.!?]+(?:\s+|$)/i;
 
 function hasExplicitWebResearchCommand(query: string): boolean {
   return (
@@ -287,7 +288,7 @@ function hasSeparateResearchClause(query: string): boolean {
 }
 
 export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
-  const query = text.trim();
+  const query = text.trim().replace(/[\u2018\u2019]/g, "'");
   if (!query) return EMPTY_PLAN;
   const ontology = classifyActionOntology(query);
   const toolResolution = resolveToolsForAction(ontology);
