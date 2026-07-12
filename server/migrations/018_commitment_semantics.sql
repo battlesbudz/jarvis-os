@@ -61,7 +61,7 @@ SET
   source_type = CASE
     WHEN source_message ~* '^Added via '
       THEN trim(BOTH '_' FROM regexp_replace(lower(substring(source_message FROM 11)), '[^a-z0-9]+', '_', 'g'))
-    ELSE 'legacy'
+    ELSE 'legacy_import'
   END
 WHERE source_type = 'legacy';
 

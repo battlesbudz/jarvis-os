@@ -48,6 +48,7 @@ function testCommitmentStorageContract(): void {
     assert.match(source, /jsonb_array_elements/);
     assert.match(source, /kind:\[\^:\]\+:topic:content_/);
     assert.match(source, /updated_at IS NULL/);
+    assert.match(source, /ELSE 'legacy_import'/);
   }
 
   const repository = read("server/commitments/dbCommitmentRepository.ts");
@@ -83,6 +84,8 @@ function testCommitmentStorageContract(): void {
   const ci = read(".github/workflows/ci.yml");
   assert.match(ci, /JARVIS_TEST_DATABASE_URL/);
   assert.match(ci, /pgvector\/pgvector:pg16/);
+  const testRunner = read("scripts/run-agent-tests.mjs");
+  assert.match(testRunner, /scripts\/prepare-test-database\.ts/);
   console.log("OK: commitment storage and read paths enforce the typed contract");
 }
 

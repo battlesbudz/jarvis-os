@@ -212,6 +212,22 @@ const tests = [
 const hasDatabase = configureDatabaseEnvForTests();
 let skipped = 0;
 
+if (hasDatabase) {
+  const prepareResult = spawnSync(process.execPath, [tsxCli, "scripts/prepare-test-database.ts"], {
+    cwd: projectRoot,
+    env: process.env,
+    stdio: "inherit",
+    shell: false,
+  });
+  if (prepareResult.error) {
+    console.error(prepareResult.error);
+    process.exit(1);
+  }
+  if (prepareResult.status !== 0) {
+    process.exit(prepareResult.status ?? 1);
+  }
+}
+
 for (const test of tests) {
   if (test.requiresDatabase && !hasDatabase) {
     skipped += 1;

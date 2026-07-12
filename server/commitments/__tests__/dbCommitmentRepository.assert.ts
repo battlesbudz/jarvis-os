@@ -138,6 +138,11 @@ async function main(): Promise<void> {
       content: "Investigate an automatically reported service incident.",
       sourceMessage: "Added via heartbeat/crew",
     });
+    await db.insert(schema.commitments).values({
+      userId,
+      content: "Review the supplier agreement tomorrow.",
+      sourceMessage: "I will review the supplier agreement tomorrow.",
+    });
     const malformedHash = "a".repeat(64);
     await db.insert(schema.commitments).values({
       userId,
@@ -169,6 +174,16 @@ async function main(): Promise<void> {
       .limit(1);
     assert.equal(backfilled?.commitmentKind, "operational_incident");
     assert.equal(backfilled?.history.length, 1, "legacy inference should retain its prior classification");
+    const [legacyUserCommitment] = await db
+      .select()
+      .from(schema.commitments)
+      .where(and(
+        eq(schema.commitments.userId, userId),
+        eq(schema.commitments.content, "Review the supplier agreement tomorrow."),
+      ))
+      .limit(1);
+    assert.equal(legacyUserCommitment?.commitmentKind, "user_commitment");
+    assert.equal(legacyUserCommitment?.sourceType, "legacy_import");
     const [repaired] = await db
       .select()
       .from(schema.commitments)
