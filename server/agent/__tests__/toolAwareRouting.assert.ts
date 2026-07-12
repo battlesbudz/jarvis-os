@@ -434,6 +434,12 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "how is boeing doing today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "what happened in Ukraine today?",
   "research",
   ["research", "browser"],
@@ -447,6 +453,12 @@ assertRoute(
 );
 assertRoute(
   "What did Disney announce today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what did disney announce today?",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
@@ -849,6 +861,42 @@ assertRoute(
 );
 assertRoute(
   "headlines",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "today\u2019s top stories",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "top stories today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest stories",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "today's Ukraine stories",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Ukraine stories today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "stories about Ukraine today",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
