@@ -50,6 +50,7 @@ const PERSONAL_TODAY_SUBJECT_PATTERN = String.raw`(?:[Pp]lans?|[Ss]chedule|[Cc]a
 const PRIVATE_SPORTS_SUBJECT_PATTERN = String.raw`(?:i|me|you|we|us|he|him|she|her|it|they|them|this|that|these|those|my|mine|our|ours|your|yours|his|hers|its|their|theirs|someone|somebody|anyone|anybody|everyone|everybody|nobody|none|(?:the\s+)?(?:mom|mum|dad|mother|father|brother|sister|son|daughter|kids?|child|children|husband|wife|partner|friends?|team|group|club))`;
 const PRIVATE_STATUS_SHORTHAND_SUBJECT_PATTERN = String.raw`(?:is|are|am|was|were|will|would|can|could|should|do|does|did|leave|keep|make|check|tell|be|${PRIVATE_SPORTS_SUBJECT_PATTERN}|${PERSONAL_TODAY_SUBJECT_PATTERN}|(?:the\s+)?(?:garage|door|window|office|home|house|room|lights?|appliances?|car|vehicle))`;
 const PUBLIC_EVENT_CATEGORY_PATTERN = String.raw`(?:concerts?|shows?|performances?|festivals?|exhibitions?|exhibits?|plays?|musicals?|comedy\s+shows?|open\s+mics?|meetups?|fairs?|markets?|parades?|screenings?|movies?|sports\s+events?|tournaments?|classes?|workshops?)`;
+const BARE_LIVE_DATA_NOUN_PATTERN = String.raw`(?:scores?|prices?|polls?|standings?|rankings?|odds|rates?|results?|games?|matches?|fixtures?|traffic|air\s+quality|delays?|cancellations?|cancelations?|availability|population|counts?|totals?)`;
 
 const TOOL_AWARE_RULES: ToolAwareRule[] = [
   {
@@ -157,6 +158,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\bheadlines?\s+(?:today|currently|recently|latest)\b/i,
       /\btoday(?:['\u2019]s|s)?\s+(?:top\s+)?stories?\b/i,
       /\b(?:top\s+)?stories?\s+(?:today|currently|recently|latest|now|right\s+now)\b/i,
+      new RegExp(String.raw`^\s*${BARE_LIVE_DATA_NOUN_PATTERN}\s+(?:today|tonight|currently|recently|latest|now|right\s+now)\s*\??\s*$`, "i"),
       new RegExp(String.raw`^\s*today(?:['\u2019]s|s)\s+(?!${PERSONAL_TODAY_SUBJECT_PATTERN}\b)(?:[$\w.\/&,'\u2019-]+\s*){1,8}\??\s*$`, "i"),
       /\btoday(?:['\u2019]s|s)?\s+(?:[$\w.\/&-]+\s+){0,6}(?:news|stories?|events?|games?|matches?|fixtures?|schedules?|hours?|opening\s+hours|business\s+hours|store\s+hours|updates?|developments?|situations?|sources?|articles?|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|delays?|cancellations?|cancelations?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\b/i,
       /\b(?:news|updates?|sources?)\b/i,

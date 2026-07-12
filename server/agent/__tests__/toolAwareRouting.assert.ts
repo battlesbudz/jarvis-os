@@ -583,6 +583,19 @@ assertRoute(
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
 );
+for (const query of ["scores today", "prices today", "polls today", "standings today"] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+{
+  const plan = classifyToolAwareRoute("schedule today?");
+  assert(!plan.intents.includes("research"), "bare personal schedule: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "bare personal schedule: does not prioritize web search");
+}
 assertRoute(
   "watch the latest video from this channel",
   "research",
