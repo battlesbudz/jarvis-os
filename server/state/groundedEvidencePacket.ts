@@ -482,10 +482,30 @@ function renderEvidenceLine(item: GroundedEvidenceItem, index: number): string {
   return `${index + 1}. [${item.domain}/${item.label}] (${metadata}) ${truncateText(item.content, 260)}`;
 }
 
+function renderCompactLimits(packet: GroundedEvidencePacket, maxChars: number): string {
+  const groups = [
+    { label: "omitted", details: packet.omitted },
+    { label: "uncertainty", details: packet.uncertainty },
+  ].filter((group) => group.details.length > 0);
+  if (groups.length === 0) return "LIMITS: none reported.";
+
+  const prefix = "LIMITS: ";
+  const labelsAndSeparators = groups.reduce((total, group) => total + group.label.length + 1, 0) +
+    Math.max(0, groups.length - 1) * 2;
+  const contentBudget = Math.max(groups.length * 8, maxChars - prefix.length - labelsAndSeparators);
+  const perGroupBudget = Math.max(8, Math.floor(contentBudget / groups.length));
+  return `${prefix}${groups.map((group) => (
+    `${group.label}=${truncateText(group.details.join(" "), perGroupBudget)}`
+  )).join("; ")}`;
+}
+
 function renderCompactEvidencePacket(packet: GroundedEvidencePacket, maxChars: number): string {
+  const limitBudget = Math.min(160, Math.max(48, Math.floor(maxChars * 0.28)));
+  const limitsLine = renderCompactLimits(packet, limitBudget);
   const opening = [
     "## Jarvis Grounded Evidence Packet",
-    "Use only EVIDENCE for personal or state claims. If a fact is absent, say Jarvis does not have it loaded.",
+    "Use only EVIDENCE. Treat LIMITS as incomplete context and admit when a fact is not loaded.",
+    limitsLine,
     "EVIDENCE:",
   ];
   if (packet.evidence.length === 0) {
@@ -494,10 +514,10 @@ function renderCompactEvidencePacket(packet: GroundedEvidencePacket, maxChars: n
 
   const openingText = opening.join("\n");
   const available = Math.max(48, maxChars - openingText.length - packet.evidence.length);
-  const perItemBudget = Math.max(48, Math.floor(available / packet.evidence.length));
+  const perItemBudget = Math.max(36, Math.floor(available / packet.evidence.length));
   const evidenceLines = packet.evidence.map((item) => {
-    const prefix = `- [${item.domain}/${item.label}] (id=${item.id}) `;
-    const contentBudget = Math.max(12, perItemBudget - prefix.length);
+    const prefix = `- [${item.domain}] (id=${item.id}) `;
+    const contentBudget = Math.max(8, perItemBudget - prefix.length);
     return `${prefix}${truncateText(item.content, contentBudget)}`;
   });
   return truncateText([openingText, ...evidenceLines].join("\n"), maxChars);

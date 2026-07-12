@@ -7,6 +7,7 @@ import {
   buildGroundedEvidencePacketPrompt,
   renderGroundedEvidencePacket,
   type GroundedCommitmentRecord,
+  type GroundedEvidencePacket,
 } from "../groundedEvidencePacket";
 
 const userId = "grounded-evidence-user";
@@ -149,9 +150,46 @@ async function testGlobalTestDepsFeedPromptBuilder(): Promise<void> {
   }
 }
 
+function testCompactRendererRetainsIncompleteContextLimits(): void {
+  const packet: GroundedEvidencePacket = {
+    userId,
+    requestText: "What do you know about me?",
+    generatedAt: fixedNow.toISOString(),
+    modelTarget: "local",
+    evidence: [{
+      id: "profile:core",
+      domain: "profile",
+      label: "Core profile",
+      content: "Preferred name: Justin",
+      source: "profile_store",
+    }, {
+      id: "memory:memory-direct-style",
+      domain: "memory",
+      label: "communication_style",
+      content: "User prefers direct, pragmatic answers with clear next actions.",
+      source: "MemoryOS",
+      sourceId: "memory-direct-style",
+    }],
+    omitted: ["Omitted 4 lower-ranked pending commitment records beyond the packet limit."],
+    uncertainty: ["MemoryOS retrieval was unavailable for one source."],
+  };
+
+  const rendered = renderGroundedEvidencePacket(packet, { compact: true, maxChars: 556 });
+
+  assert.match(rendered, /id=profile:core/);
+  assert.match(rendered, /id=memory:memory-direct-style/);
+  assert.match(rendered, /omitted=/);
+  assert.match(rendered, /Omitted 4 lower-ranked/);
+  assert.match(rendered, /uncertainty=/);
+  assert.match(rendered, /MemoryOS retrieval was unavailable/);
+  assert.ok(rendered.length <= 556);
+  console.log("OK: compact grounded evidence retains omitted and uncertainty limits");
+}
+
 async function main(): Promise<void> {
   await testGroundedPacketBuildsEvidenceAndOmitsNoise();
   await testGlobalTestDepsFeedPromptBuilder();
+  testCompactRendererRetainsIncompleteContextLimits();
 }
 
 main().catch((error) => {
