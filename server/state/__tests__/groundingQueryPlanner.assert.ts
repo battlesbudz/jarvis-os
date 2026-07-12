@@ -47,6 +47,9 @@ function testIntentSpecificSources(): void {
   assert.equal(classifyGroundingIntent("What is my current preference for local voice?"), "temporal_recall");
   assert.equal(classifyGroundingIntent("What are Kubernetes tasks?"), "exact_recall");
   assert.equal(classifyGroundingIntent("Explain project goals in OKRs."), "exact_recall");
+  assert.equal(classifyGroundingIntent("What is your name?"), "exact_recall");
+  assert.equal(classifyGroundingIntent("What's the latest Android version?"), "exact_recall");
+  assert.equal(classifyGroundingIntent("Explain family relationships."), "exact_recall");
 }
 
 function testExplicitQueryAndGroundingBoundary(): void {
@@ -65,6 +68,9 @@ function testExplicitQueryAndGroundingBoundary(): void {
   assert.equal(shouldGroundPersonalMemoryRequest("How does memory recall work?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("What are Kubernetes tasks?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("Explain project goals in OKRs."), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("What is your name?"), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("What's the latest Android version?"), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("Explain family relationships."), false);
 }
 
 function main(): void {
