@@ -642,6 +642,19 @@ assertRoute(
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
 );
+for (const query of ["Ukraine articles", "cannabis articles"] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+{
+  const plan = classifyToolAwareRoute("my articles");
+  assert(!plan.intents.includes("research"), "owned articles: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "owned articles: does not prioritize web search");
+}
 for (const query of ["trump today", "spacex today"] as const) {
   assertRoute(
     query,
