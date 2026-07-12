@@ -92,6 +92,18 @@ for (const [query, label] of [
   assert(!plan.priorityToolNames.includes("search_web"), `${label}: no search_web`);
 }
 {
+  const plan = classifyToolAwareRoute("look up my school calendar latest update");
+  assert(plan.intents.includes("calendar"), "public named calendar update: calendar intent retained");
+  assert(plan.intents.includes("research"), "public named calendar update: research intent retained");
+  assert(plan.priorityToolNames.includes("search_web"), "public named calendar update: search_web retained");
+}
+{
+  const plan = classifyToolAwareRoute("look up my work calendar latest event");
+  assert(plan.intents.includes("calendar"), "private named calendar event: calendar intent detected");
+  assert(!plan.intents.includes("research"), "private named calendar event: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "private named calendar event: no search_web");
+}
+{
   const plan = classifyToolAwareRoute("search the web for how to export my calendar events");
   assert(plan.intents.includes("research"), "explicit web search mentioning calendar events: research intent preserved");
   assert(plan.priorityToolNames.includes("search_web"), "explicit web search mentioning calendar events: search_web preserved");
