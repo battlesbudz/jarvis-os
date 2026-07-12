@@ -151,6 +151,30 @@ assertRoute(
   assert(plan.priorityToolNames.includes("search_web"), "topic-news mixed request: search_web preserved");
 }
 {
+  const plan = classifyToolAwareRoute("what are my calendar events today with traffic on I-95 today");
+  assert(plan.intents.includes("calendar"), "traffic mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "traffic mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "traffic mixed request: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with air quality in Philadelphia today");
+  assert(plan.intents.includes("calendar"), "air-quality mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "air-quality mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "air-quality mixed request: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with TSLA price today");
+  assert(plan.intents.includes("calendar"), "price mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "price mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "price mixed request: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with concerts in Philadelphia today");
+  assert(plan.intents.includes("calendar"), "public-events mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "public-events mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "public-events mixed request: search_web preserved");
+}
+{
   const plan = classifyToolAwareRoute("what are my calendar events today? what's today's news?");
   assert(plan.intents.includes("calendar"), "sentence mixed calendar and news: calendar intent detected");
   assert(plan.intents.includes("research"), "sentence mixed calendar and news: research intent preserved");

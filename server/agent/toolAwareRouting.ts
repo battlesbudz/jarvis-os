@@ -261,8 +261,11 @@ function isPrivateCalendarEventQuery(query: string): boolean {
   );
 }
 
-const MIXED_RESEARCH_CLAUSE_SEPARATOR =
-  /\s+(?:and|also|plus|then|along\s+with|together\s+with|as\s+well\s+as)\s+|\s+with\s+(?=(?:(?:the\s+)?(?:latest|current|recent)\b|(?:[$\w.\/&,'\u2019-]+\s+){0,6}(?:news|updates?|headlines?|articles?|sources?)\b))|[,;]+|[.!?]+(?:\s+|$)/i;
+const MIXED_RESEARCH_LIVE_NOUN_PATTERN = String.raw`(?:news|updates?|headlines?|articles?|sources?|events?|games?|matches?|fixtures?|schedules?|hours?|opening\s+hours|business\s+hours|store\s+hours|videos?|uploads?|posts?|information|info|data|traffic|air\s+quality|quality|conditions?|prices?|scores?|results?|delays?|cancellations?|cancelations?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|developments?|situations?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?|concerts?|shows?|performances?|festivals?|exhibitions?|exhibits?|plays?|musicals?|comedy\s+shows?|open\s+mics?|meetups?|fairs?|markets?|parades?|screenings?|movies?|sports\s+events?|tournaments?|classes?|workshops?)`;
+const MIXED_RESEARCH_CLAUSE_SEPARATOR = new RegExp(
+  String.raw`\s+(?:and|also|plus|then|along\s+with|together\s+with|as\s+well\s+as)\s+|\s+with\s+(?=(?:(?:the\s+)?(?:latest|current|recent)\b|(?:[$\w.\/&,'\u2019-]+\s+){0,6}${MIXED_RESEARCH_LIVE_NOUN_PATTERN}\b))|[,;]+|[.!?]+(?:\s+|$)`,
+  "i",
+);
 
 function hasExplicitWebResearchCommand(query: string): boolean {
   return (
