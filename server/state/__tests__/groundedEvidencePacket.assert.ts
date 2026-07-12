@@ -10,6 +10,8 @@ import {
   type GroundedEvidencePacket,
 } from "../groundedEvidencePacket";
 
+process.env.JARVIS_TRACE_HMAC_KEY ??= "grounded-evidence-test-trace-key";
+
 const userId = "grounded-evidence-user";
 const fixedNow = new Date("2026-07-09T12:00:00.000Z");
 
@@ -137,16 +139,26 @@ async function testGroundedPacketBuildsEvidenceAndOmitsNoise(): Promise<void> {
   assert.ok(packet.omitted.some((entry) => /duplicate/i.test(entry)));
   assert.ok(packet.omitted.some((entry) => /non-personal or low-signal/i.test(entry)));
   assert.equal(packet.trace?.contentFree, true);
+  assert.equal(packet.trace?.identifiersOmitted, false);
+  assert.equal(packet.trace?.queryFingerprint?.length, 24);
   assert.equal(packet.trace?.queryLength, "user profile preferences relationships work patterns goals blockers values commitments".length);
   assert.deepEqual(
     packet.trace?.stages.map((stage) => `${stage.source}:${stage.status}`),
     ["runtime:loaded", "profile:loaded", "soul:loaded", "memory:loaded", "commitment:loaded"],
   );
-  assert.deepEqual(
-    packet.trace?.stages.find((stage) => stage.source === "commitment")?.selectedIds,
-    ["commitment:real-work"],
+  assert.equal(
+    packet.trace?.stages.find((stage) => stage.source === "commitment")?.selectedIds.length,
+    1,
+  );
+  assert.match(
+    packet.trace?.stages.find((stage) => stage.source === "commitment")?.selectedIds[0] ?? "",
+    /^evidence_[a-f0-9]{24}$/,
   );
   assert.equal(packet.trace?.stages.find((stage) => stage.source === "commitment")?.omittedCount, 4);
+  assert.notEqual(
+    packet.trace?.stages.find((stage) => stage.source === "memory")?.selectedIds[0],
+    "memory-direct-style",
+  );
   assert.equal(JSON.stringify(packet.trace).includes("Review Jarvis voice grounding PR"), false);
 
   const rendered = renderGroundedEvidencePacket(packet, { maxChars: 5_000 });

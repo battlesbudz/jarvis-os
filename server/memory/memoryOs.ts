@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHmac } from "node:crypto";
 
 import type { RetrievedMemory } from "./retrieve";
 import { containsRawRestrictedContent } from "./restrictedContent";
@@ -73,7 +73,7 @@ export type MemoryRetrievalTraceDisposition =
   | "limit";
 
 export type MemoryRetrievalTraceCandidate = {
-  id: string;
+  id?: string;
   source: "canonical" | "gbrain";
   rank: number;
   score: number;
@@ -90,8 +90,9 @@ export type MemoryRetrievalTraceStage = {
 export type MemoryRetrievalTrace = {
   schemaVersion: 1;
   contentFree: true;
+  identifiersOmitted: boolean;
   input: {
-    queryFingerprint: string;
+    queryFingerprint?: string;
     queryLength: number;
     caller: MemoryOsCaller | string;
     limit: number;
@@ -169,8 +170,27 @@ const defaultDeps: MemoryOsDeps = {
   },
 };
 
-export function fingerprintMemoryQuery(query: string): string {
-  return createHash("sha256").update(query.trim()).digest("hex").slice(0, 16);
+function memoryTraceHmac(scope: string, userId: string, value: string): string | undefined {
+  const key = process.env.JARVIS_TRACE_HMAC_KEY?.trim() || process.env.JWT_SECRET?.trim();
+  if (!key) return undefined;
+  return createHmac("sha256", key)
+    .update(`${scope}\0${userId.trim()}\0${value.trim()}`)
+    .digest("hex")
+    .slice(0, 24);
+}
+
+export function fingerprintMemoryQuery(query: string, userId: string): string | undefined {
+  return memoryTraceHmac("memory-query", userId, query);
+}
+
+export function opaqueMemoryTraceIdentifier(id: string, userId: string): string | undefined {
+  const digest = memoryTraceHmac("memory-id", userId, id);
+  return digest ? `memory_${digest}` : undefined;
+}
+
+export function opaqueEvidenceTraceIdentifier(id: string, userId: string): string | undefined {
+  const digest = memoryTraceHmac("evidence-id", userId, id);
+  return digest ? `evidence_${digest}` : undefined;
 }
 
 function baseRetrievalTrace(
@@ -179,11 +199,13 @@ function baseRetrievalTrace(
   outcome: MemoryRetrievalTrace["outcome"],
 ): MemoryRetrievalTrace {
   const query = input.query.trim();
+  const queryFingerprint = fingerprintMemoryQuery(query, input.userId);
   return {
     schemaVersion: 1,
     contentFree: true,
+    identifiersOmitted: queryFingerprint === undefined,
     input: {
-      queryFingerprint: fingerprintMemoryQuery(query),
+      queryFingerprint,
       queryLength: query.length,
       caller: input.caller,
       limit,
@@ -202,9 +224,10 @@ function traceCandidate(
   memory: RetrievedMemory,
   rank: number,
   disposition: MemoryRetrievalTraceDisposition,
+  userId: string,
 ): MemoryRetrievalTraceCandidate {
   return {
-    id: memory.id,
+    id: opaqueMemoryTraceIdentifier(memory.id, userId),
     source: memory.source === "gbrain" ? "gbrain" : "canonical",
     rank,
     score: Number.isFinite(memory.score) ? memory.score : 0,
@@ -512,7 +535,12 @@ export async function retrieveMemoryContext(
       stage: "primary_retrieval",
       requestedLimit: rawLimit,
       receivedCount: rawMemories.length,
-      candidates: rawMemories.map((memory, index) => traceCandidate(memory, index + 1, "candidate")),
+      candidates: rawMemories.map((memory, index) => traceCandidate(
+        memory,
+        index + 1,
+        "candidate",
+        input.userId,
+      )),
     });
     const { memories: preparedMemories, uncertainty: boundaryUncertainty } = prepareMemoriesForModelTarget(
       rawMemories,
@@ -531,7 +559,7 @@ export async function retrieveMemoryContext(
           : restricted && target === "local"
             ? "sanitized"
             : "candidate";
-        return traceCandidate(memory, index + 1, disposition);
+        return traceCandidate(memory, index + 1, disposition, input.userId);
       }),
     });
     let selectionPool = [...preparedMemories];
@@ -572,7 +600,7 @@ export async function retrieveMemoryContext(
           else if (!selectedIds.has(memory.id)) disposition = "limit";
           else if (restricted && target === "local") disposition = "sanitized";
           else disposition = "selected";
-          return traceCandidate(memory, index + 1, disposition);
+          return traceCandidate(memory, index + 1, disposition, input.userId);
         }),
       });
     }
@@ -593,9 +621,13 @@ export async function retrieveMemoryContext(
         memory,
         index + 1,
         selectedIds.has(memory.id) ? "selected" : "limit",
+        input.userId,
       )),
     });
-    trace.selectedIds = memories.map((memory) => memory.id);
+    trace.selectedIds = memories.flatMap((memory) => {
+      const id = opaqueMemoryTraceIdentifier(memory.id, input.userId);
+      return id ? [id] : [];
+    });
     trace.outcome = memories.length > 0 ? "ok" : "empty";
 
     return {

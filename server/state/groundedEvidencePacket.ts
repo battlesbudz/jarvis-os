@@ -2,6 +2,8 @@ import { eq } from "drizzle-orm";
 
 import {
   fingerprintMemoryQuery,
+  opaqueEvidenceTraceIdentifier,
+  opaqueMemoryTraceIdentifier,
   type MemoryContext,
   type MemoryModelTarget,
   type MemoryRetrievalTrace,
@@ -63,7 +65,8 @@ export interface GroundedEvidenceAssemblyTraceStage {
 export interface GroundedEvidenceAssemblyTrace {
   schemaVersion: 1;
   contentFree: true;
-  queryFingerprint: string;
+  identifiersOmitted: boolean;
+  queryFingerprint?: string;
   queryLength: number;
   stages: GroundedEvidenceAssemblyTraceStage[];
   memoryRetrieval?: MemoryRetrievalTrace;
@@ -386,13 +389,19 @@ export async function buildGroundedEvidencePacket(
   const evidence: GroundedEvidenceItem[] = [];
   const omitted: string[] = [];
   const uncertainty: string[] = [];
+  const queryFingerprint = fingerprintMemoryQuery(query, input.userId);
   const trace: GroundedEvidenceAssemblyTrace = {
     schemaVersion: 1,
     contentFree: true,
-    queryFingerprint: fingerprintMemoryQuery(query),
+    identifiersOmitted: queryFingerprint === undefined,
+    queryFingerprint,
     queryLength: query.length,
     stages: [],
   };
+  const evidenceTraceIds = (ids: string[]): string[] => ids.flatMap((id) => {
+    const opaqueId = opaqueEvidenceTraceIdentifier(id, input.userId);
+    return opaqueId ? [opaqueId] : [];
+  });
 
   const runtimeSelected = input.activeDevice || input.activeModel || input.currentContext
     ? ["runtime:state"]
@@ -401,7 +410,7 @@ export async function buildGroundedEvidencePacket(
     source: "runtime",
     status: runtimeSelected.length > 0 ? "loaded" : "empty",
     loadedCount: runtimeSelected.length,
-    selectedIds: runtimeSelected,
+    selectedIds: evidenceTraceIds(runtimeSelected),
     omittedCount: 0,
   });
 
@@ -415,7 +424,7 @@ export async function buildGroundedEvidencePacket(
         source: "profile",
         status: loaded.length > 0 ? "loaded" : "empty",
         loadedCount: loaded.length,
-        selectedIds: loaded.map((item) => item.id),
+        selectedIds: evidenceTraceIds(loaded.map((item) => item.id)),
         omittedCount: 0,
       });
       if (!profile) uncertainty.push("Profile store did not return a user profile.");
@@ -436,7 +445,7 @@ export async function buildGroundedEvidencePacket(
         source: "soul",
         status: loaded.length > 0 ? "loaded" : "empty",
         loadedCount: loaded.length,
-        selectedIds: loaded.map((item) => item.id),
+        selectedIds: evidenceTraceIds(loaded.map((item) => item.id)),
         omittedCount: 0,
       });
     } catch (error) {
@@ -468,7 +477,10 @@ export async function buildGroundedEvidencePacket(
         source: "memory",
         status: loaded.length > 0 ? "loaded" : "empty",
         loadedCount: memoryContext.items.length,
-        selectedIds: loaded.map((item) => item.id),
+        selectedIds: memoryContext.items.flatMap((item) => {
+          const id = opaqueMemoryTraceIdentifier(item.memory.id, input.userId);
+          return id ? [id] : [];
+        }),
         omittedCount: Math.max(0, memoryContext.items.length - loaded.length),
       });
     } catch (error) {
@@ -491,7 +503,7 @@ export async function buildGroundedEvidencePacket(
         source: "commitment",
         status: loaded.length > 0 ? "loaded" : "empty",
         loadedCount: rawCommitments.length,
-        selectedIds: loaded.map((item) => item.id),
+        selectedIds: evidenceTraceIds(loaded.map((item) => item.id)),
         omittedCount: Math.max(0, rawCommitments.length - loaded.length),
       });
     } catch (error) {
