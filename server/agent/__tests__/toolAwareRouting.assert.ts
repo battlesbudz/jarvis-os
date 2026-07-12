@@ -622,6 +622,19 @@ assertRoute(
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
 );
+for (const query of [
+  "recent studies on GLP-1",
+  "latest papers about sleep",
+  "recent GLP-1 studies",
+  "latest AI preprints",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
 for (const query of ["current usd/eur", "current gbp-jpy", "usd/eur today", "gbp-jpy today"] as const) {
   assertRoute(
     query,
