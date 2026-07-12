@@ -79,6 +79,18 @@ assertRoute(
   assert(!plan.intents.includes("research"), "look up my calendar events: does not route as research");
   assert(!plan.priorityToolNames.includes("search_web"), "look up my calendar events: no search_web");
 }
+for (const [query, label] of [
+  ["look up my calendar today", "look up bare calendar"],
+  ["search my calendar today", "search bare calendar"],
+  ["look up my Google Calendar events today", "look up provider calendar"],
+  ["look up my work calendar today", "look up named calendar"],
+  ["look up my Google Workspace Calendar events today", "look up multiword provider calendar"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(plan.intents.includes("calendar"), `${label}: intent detected`);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: no search_web`);
+}
 {
   const plan = classifyToolAwareRoute("search the web for how to export my calendar events");
   assert(plan.intents.includes("research"), "explicit web search mentioning calendar events: research intent preserved");

@@ -262,6 +262,7 @@ function unique<T>(values: T[]): T[] {
 
 function isPrivateCalendarEventQuery(query: string): boolean {
   return (
+    /\b(?:my|our)\s+(?:[\w.-]+\s+){0,2}calendar\b/i.test(query) ||
     /\b(?:my|our)\s+(?:calendar\s+)?events?\b/i.test(query) ||
     /\bevents?\s+(?:are\s+)?(?:on|in|for)\s+(?:my|our)\s+calendar\b/i.test(query) ||
     /\b(?:my|our)\s+(?:calendar\s+)?schedule\b/i.test(query) ||
@@ -278,7 +279,7 @@ const MIXED_RESEARCH_CLAUSE_SEPARATOR = new RegExp(
 
 function hasExplicitWebResearchCommand(query: string): boolean {
   return (
-    /\b(?:search\s+(?:the\s+)?(?:web|internet)|web\s+search|google|research|investigate)\b/i.test(query) ||
+    /\b(?:search\s+(?:the\s+)?(?:web|internet)|web\s+search|google(?!\s+(?:[\w.-]+\s+){0,2}calendar\b)|research|investigate)\b/i.test(query) ||
     /\b(?:search\s+(?:up|for)|look\s+up|lookup)\b.{0,80}\b(?:how\s+to|why|what|when|where|whether|sources?|articles?|docs?|documentation|online|web|internet)\b/i.test(query)
   );
 }
