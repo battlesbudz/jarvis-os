@@ -3,6 +3,7 @@ import type { RetrievedMemory } from "../retrieve";
 
 process.env.DATABASE_URL ??= "postgres://localhost/jarvis_memory_os_import_only";
 process.env.JARVIS_DISABLE_DIRECT_OPENAI = "1";
+process.env.JARVIS_TRACE_HMAC_KEY ??= "memory-os-test-trace-key";
 
 function memory(overrides: Partial<RetrievedMemory> = {}): RetrievedMemory {
   return {
@@ -59,6 +60,18 @@ async function main(): Promise<void> {
   assert.deepEqual(context.uncertainty, []);
   assert.equal(context.items[0]?.provenance[0]?.id, "memory-os-1");
   assert.equal(context.items[0]?.memory.category, "preferences");
+  assert.equal(context.trace?.contentFree, true);
+  assert.equal(context.trace?.input.queryLength, "morning planning".length);
+  assert.equal(context.trace?.input.queryFingerprint?.length, 24);
+  assert.equal(context.trace?.identifiersOmitted, false);
+  assert.equal(context.trace?.selectedIds.length, 1);
+  assert.match(context.trace?.selectedIds[0] ?? "", /^memory_[a-f0-9]{24}$/);
+  assert.notEqual(context.trace?.selectedIds[0], "memory-os-1");
+  assert.deepEqual(
+    context.trace?.stages.map((stage) => stage.stage),
+    ["primary_retrieval", "privacy_boundary", "context_selection"],
+  );
+  assert.equal(JSON.stringify(context.trace).includes("crisp morning plans"), false);
 
   const roundTrip = memoryContextItemsToRetrievedMemories(context.items);
   assert.deepEqual(roundTrip, [memory()]);
@@ -84,6 +97,8 @@ async function main(): Promise<void> {
   assert.equal(gbrainContext.items[0]?.provenance[0]?.source, "gbrain");
   assert.equal(gbrainContext.items[0]?.provenance[1]?.kind, "user_memory");
   assert.equal(gbrainContext.items[0]?.provenance[1]?.source, "canonical");
+  assert.equal(JSON.stringify(gbrainContext.trace).includes("memory/derived-planning"), false);
+  assert.equal(JSON.stringify(gbrainContext.trace).includes("memory-canonical-2"), false);
 
   const empty = await retrieveMemoryContext(
     { userId: "memory-os-user", query: "   ", caller: "coach_context" },
@@ -95,6 +110,7 @@ async function main(): Promise<void> {
   );
   assert.deepEqual(empty.items, []);
   assert.deepEqual(empty.uncertainty, ["No memory query was provided."]);
+  assert.equal(empty.trace?.outcome, "invalid_input");
 
   const failed = await retrieveMemoryContext(
     { userId: "memory-os-user", query: "planning", caller: "daily_command" },
@@ -106,6 +122,8 @@ async function main(): Promise<void> {
   );
   assert.deepEqual(failed.items, []);
   assert.match(failed.uncertainty[0] ?? "", /database unavailable/);
+  assert.equal(failed.trace?.outcome, "error");
+  assert.equal(failed.trace?.errorName, "Error");
 
   const restricted = memory({
     id: "restricted-summary-1",
@@ -125,6 +143,10 @@ async function main(): Promise<void> {
   );
   assert.deepEqual(cloudRestricted.items, []);
   assert.match(cloudRestricted.uncertainty.join(" "), /withheld from cloud model context/);
+  assert.equal(
+    cloudRestricted.trace?.stages.find((stage) => stage.stage === "privacy_boundary")?.candidates[0]?.disposition,
+    "withheld",
+  );
 
   const legacyRestricted = await retrieveMemoryContext(
     { userId: "memory-os-user", query: "legacy plaid", caller: "coach_context" },
@@ -223,7 +245,7 @@ async function main(): Promise<void> {
   assert.equal(underfilledCloudContext.items[0]?.memory.id, "normal-memory-after-restricted");
   assert.match(underfilledCloudContext.uncertainty.join(" "), /withheld from cloud model context/);
 
-  const fallbackCalls: Array<{ limit: number; canonicalOnly?: boolean }> = [];
+  const fallbackCalls: { limit: number; canonicalOnly?: boolean }[] = [];
   const canonicalFallbackAfterRestrictedBrain = await retrieveMemoryContext(
     {
       userId: "memory-os-user",
@@ -270,6 +292,11 @@ async function main(): Promise<void> {
     "canonical-normal-after-restricted-brain",
   );
   assert.match(canonicalFallbackAfterRestrictedBrain.uncertainty.join(" "), /withheld from cloud model context/);
+  assert.equal(canonicalFallbackAfterRestrictedBrain.trace?.fallbackUsed, true);
+  assert.deepEqual(
+    canonicalFallbackAfterRestrictedBrain.trace?.stages.map((stage) => stage.stage),
+    ["primary_retrieval", "privacy_boundary", "canonical_fallback", "context_selection"],
+  );
 
   const filteredAccessUpdates: string[][] = [];
   const filteredAccessContext = await retrieveMemoryContext(
@@ -313,6 +340,10 @@ async function main(): Promise<void> {
   assert.doesNotMatch(localRestricted.items[0]?.memory.content ?? "", /1234/);
   assert.doesNotMatch(localRestricted.items[0]?.memory.content ?? "", /\$500/);
   assert.match(localRestricted.uncertainty.join(" "), /sanitized for local model context/);
+  assert.equal(
+    localRestricted.trace?.stages.find((stage) => stage.stage === "privacy_boundary")?.candidates[0]?.disposition,
+    "sanitized",
+  );
 
   const allowedCloudRestricted = await retrieveMemoryContext(
     {
@@ -326,6 +357,26 @@ async function main(): Promise<void> {
   );
   assert.equal(allowedCloudRestricted.items.length, 1);
   assert.match(allowedCloudRestricted.items[0]?.memory.content ?? "", /123456789/);
+
+  const savedTraceKey = process.env.JARVIS_TRACE_HMAC_KEY;
+  const savedJwtSecret = process.env.JWT_SECRET;
+  delete process.env.JARVIS_TRACE_HMAC_KEY;
+  delete process.env.JWT_SECRET;
+  try {
+    const traceWithoutKey = await retrieveMemoryContext(
+      { userId: "memory-os-user", query: "planning without trace key", caller: "memory_search" },
+      { retrieveMemories: async () => [memory()] },
+    );
+    assert.equal(traceWithoutKey.trace?.identifiersOmitted, true);
+    assert.equal(traceWithoutKey.trace?.input.queryFingerprint, undefined);
+    assert.deepEqual(traceWithoutKey.trace?.selectedIds, []);
+    assert.equal(traceWithoutKey.trace?.stages[0]?.candidates[0]?.id, undefined);
+  } finally {
+    if (savedTraceKey === undefined) delete process.env.JARVIS_TRACE_HMAC_KEY;
+    else process.env.JARVIS_TRACE_HMAC_KEY = savedTraceKey;
+    if (savedJwtSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = savedJwtSecret;
+  }
 
   const correction = await recordMemoryCorrection({
     userId: "memory-os-user",

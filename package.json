@@ -45,6 +45,7 @@
     "jarvis:qa:cleanup": "node scripts/deployed-jarvis-qa-cleanup.mjs",
     "jarvis:verify:brain-vector-db": "tsx scripts/verify-brain-vector-db.ts",
     "jarvis:verify:memory-vector-db": "tsx scripts/verify-memory-vector-db.ts",
+    "jarvis:eval:memory-retrieval": "tsx scripts/run-memory-retrieval-evals.ts",
     "jarvis:check": "npm run jarvis:doctor && npm test",
     "jarvis:android-daemon:config-check": "node scripts/android-unified-daemon-config-check.mjs",
     "test": "node scripts/run-agent-tests.mjs",

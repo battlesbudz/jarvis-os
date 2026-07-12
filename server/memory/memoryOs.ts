@@ -1,3 +1,5 @@
+import { createHmac } from "node:crypto";
+
 import type { RetrievedMemory } from "./retrieve";
 import { containsRawRestrictedContent } from "./restrictedContent";
 
@@ -62,6 +64,49 @@ export type MemoryContextItem = {
   provenance: MemoryProvenanceRef[];
 };
 
+export type MemoryRetrievalTraceDisposition =
+  | "candidate"
+  | "selected"
+  | "sanitized"
+  | "withheld"
+  | "duplicate"
+  | "limit";
+
+export type MemoryRetrievalTraceCandidate = {
+  id?: string;
+  source: "canonical" | "gbrain";
+  rank: number;
+  score: number;
+  disposition: MemoryRetrievalTraceDisposition;
+};
+
+export type MemoryRetrievalTraceStage = {
+  stage: "primary_retrieval" | "privacy_boundary" | "canonical_fallback" | "context_selection";
+  requestedLimit: number;
+  receivedCount: number;
+  candidates: MemoryRetrievalTraceCandidate[];
+};
+
+export type MemoryRetrievalTrace = {
+  schemaVersion: 1;
+  contentFree: true;
+  identifiersOmitted: boolean;
+  input: {
+    queryFingerprint?: string;
+    queryLength: number;
+    caller: MemoryOsCaller | string;
+    limit: number;
+    canonicalOnly: boolean;
+    modelTarget: MemoryModelTarget;
+    allowRestrictedMemory: boolean;
+  };
+  outcome: "ok" | "empty" | "invalid_input" | "error";
+  fallbackUsed: boolean;
+  stages: MemoryRetrievalTraceStage[];
+  selectedIds: string[];
+  errorName?: string;
+};
+
 export type MemoryContext = {
   userId: string;
   query: string;
@@ -74,6 +119,7 @@ export type MemoryContext = {
   };
   provenance: MemoryProvenanceRef[];
   uncertainty: string[];
+  trace?: MemoryRetrievalTrace;
 };
 
 export type RetrieveMemoryContextInput = {
@@ -124,7 +170,80 @@ const defaultDeps: MemoryOsDeps = {
   },
 };
 
-function emptyContext(input: RetrieveMemoryContextInput, uncertainty: string[] = []): MemoryContext {
+function memoryTraceHmac(scope: string, userId: string, value: string): string | undefined {
+  const key = process.env.JARVIS_TRACE_HMAC_KEY?.trim() || process.env.JWT_SECRET?.trim();
+  if (!key) return undefined;
+  return createHmac("sha256", key)
+    .update(`${scope}\0${userId.trim()}\0${value.trim()}`)
+    .digest("hex")
+    .slice(0, 24);
+}
+
+export function fingerprintMemoryQuery(query: string, userId: string): string | undefined {
+  return memoryTraceHmac("memory-query", userId, query);
+}
+
+export function opaqueMemoryTraceIdentifier(id: string, userId: string): string | undefined {
+  const digest = memoryTraceHmac("memory-id", userId, id);
+  return digest ? `memory_${digest}` : undefined;
+}
+
+export function opaqueEvidenceTraceIdentifier(id: string, userId: string): string | undefined {
+  const digest = memoryTraceHmac("evidence-id", userId, id);
+  return digest ? `evidence_${digest}` : undefined;
+}
+
+function baseRetrievalTrace(
+  input: RetrieveMemoryContextInput,
+  limit: number,
+  outcome: MemoryRetrievalTrace["outcome"],
+): MemoryRetrievalTrace {
+  const query = input.query.trim();
+  const queryFingerprint = fingerprintMemoryQuery(query, input.userId);
+  return {
+    schemaVersion: 1,
+    contentFree: true,
+    identifiersOmitted: queryFingerprint === undefined,
+    input: {
+      queryFingerprint,
+      queryLength: query.length,
+      caller: input.caller,
+      limit,
+      canonicalOnly: input.canonicalOnly ?? false,
+      modelTarget: input.modelTarget ?? "cloud",
+      allowRestrictedMemory: input.allowRestrictedMemory ?? false,
+    },
+    outcome,
+    fallbackUsed: false,
+    stages: [],
+    selectedIds: [],
+  };
+}
+
+function traceCandidate(
+  memory: RetrievedMemory,
+  rank: number,
+  disposition: MemoryRetrievalTraceDisposition,
+  userId: string,
+): MemoryRetrievalTraceCandidate {
+  return {
+    id: opaqueMemoryTraceIdentifier(memory.id, userId),
+    source: memory.source === "gbrain" ? "gbrain" : "canonical",
+    rank,
+    score: Number.isFinite(memory.score) ? memory.score : 0,
+    disposition,
+  };
+}
+
+function emptyContext(
+  input: RetrieveMemoryContextInput,
+  uncertainty: string[] = [],
+  outcome: MemoryRetrievalTrace["outcome"] = "empty",
+  errorName?: string,
+): MemoryContext {
+  const limit = Math.max(1, Math.min(input.limit ?? 10, 50));
+  const trace = baseRetrievalTrace(input, limit, outcome);
+  if (errorName) trace.errorName = errorName;
   return {
     userId: input.userId,
     query: input.query.trim(),
@@ -137,6 +256,7 @@ function emptyContext(input: RetrieveMemoryContextInput, uncertainty: string[] =
     },
     provenance: [],
     uncertainty,
+    trace,
   };
 }
 
@@ -394,13 +514,14 @@ export async function retrieveMemoryContext(
   const skipAccessUpdate = input.skipAccessUpdate ?? false;
 
   if (!input.userId.trim()) {
-    return emptyContext(input, ["No user id was provided for memory retrieval."]);
+    return emptyContext(input, ["No user id was provided for memory retrieval."], "invalid_input");
   }
 
   if (!query) {
-    return emptyContext(input, ["No memory query was provided."]);
+    return emptyContext(input, ["No memory query was provided."], "invalid_input");
   }
 
+  const trace = baseRetrievalTrace(input, limit, "ok");
   try {
     const target = input.modelTarget ?? "cloud";
     const rawLimit = target === "runtime" || (target === "cloud" && input.allowRestrictedMemory === true)
@@ -410,11 +531,38 @@ export async function retrieveMemoryContext(
       canonicalOnly: input.canonicalOnly ?? false,
       includeRestricted: true,
     });
+    trace.stages.push({
+      stage: "primary_retrieval",
+      requestedLimit: rawLimit,
+      receivedCount: rawMemories.length,
+      candidates: rawMemories.map((memory, index) => traceCandidate(
+        memory,
+        index + 1,
+        "candidate",
+        input.userId,
+      )),
+    });
     const { memories: preparedMemories, uncertainty: boundaryUncertainty } = prepareMemoriesForModelTarget(
       rawMemories,
       target,
       input.allowRestrictedMemory ?? false,
     );
+    const preparedIds = new Set(preparedMemories.map((memory) => memory.id));
+    trace.stages.push({
+      stage: "privacy_boundary",
+      requestedLimit: limit,
+      receivedCount: preparedMemories.length,
+      candidates: rawMemories.map((memory, index) => {
+        const restricted = isRestrictedRetrievedMemory(memory);
+        const disposition: MemoryRetrievalTraceDisposition = !preparedIds.has(memory.id)
+          ? "withheld"
+          : restricted && target === "local"
+            ? "sanitized"
+            : "candidate";
+        return traceCandidate(memory, index + 1, disposition, input.userId);
+      }),
+    });
+    let selectionPool = [...preparedMemories];
     let memories = preparedMemories.slice(0, limit);
     let uncertainty = boundaryUncertainty;
     if (
@@ -433,8 +581,28 @@ export async function retrieveMemoryContext(
         target,
         input.allowRestrictedMemory ?? false,
       );
+      const beforeFallbackIds = new Set(memories.map((memory) => memory.id));
       memories = appendUniqueMemories(memories, fallbackPrepared.memories, limit);
+      selectionPool = appendUniqueMemories(selectionPool, fallbackPrepared.memories, 50);
       uncertainty = [...uncertainty, ...fallbackPrepared.uncertainty];
+      const fallbackPreparedIds = new Set(fallbackPrepared.memories.map((memory) => memory.id));
+      const selectedIds = new Set(memories.map((memory) => memory.id));
+      trace.fallbackUsed = true;
+      trace.stages.push({
+        stage: "canonical_fallback",
+        requestedLimit: fallbackLimit,
+        receivedCount: canonicalFallback.length,
+        candidates: canonicalFallback.map((memory, index) => {
+          const restricted = isRestrictedRetrievedMemory(memory);
+          let disposition: MemoryRetrievalTraceDisposition;
+          if (!fallbackPreparedIds.has(memory.id)) disposition = "withheld";
+          else if (beforeFallbackIds.has(memory.id)) disposition = "duplicate";
+          else if (!selectedIds.has(memory.id)) disposition = "limit";
+          else if (restricted && target === "local") disposition = "sanitized";
+          else disposition = "selected";
+          return traceCandidate(memory, index + 1, disposition, input.userId);
+        }),
+      });
     }
     if (!skipAccessUpdate) {
       deps.incrementAccessCount?.(uniqueMemoryIds(memories));
@@ -444,6 +612,23 @@ export async function retrieveMemoryContext(
       provenance: provenanceForMemory(memory),
     }));
     const provenance = items.flatMap((item) => item.provenance);
+    const selectedIds = new Set(memories.map((memory) => memory.id));
+    trace.stages.push({
+      stage: "context_selection",
+      requestedLimit: limit,
+      receivedCount: memories.length,
+      candidates: selectionPool.map((memory, index) => traceCandidate(
+        memory,
+        index + 1,
+        selectedIds.has(memory.id) ? "selected" : "limit",
+        input.userId,
+      )),
+    });
+    trace.selectedIds = memories.flatMap((memory) => {
+      const id = opaqueMemoryTraceIdentifier(memory.id, input.userId);
+      return id ? [id] : [];
+    });
+    trace.outcome = memories.length > 0 ? "ok" : "empty";
 
     return {
       userId: input.userId,
@@ -460,10 +645,16 @@ export async function retrieveMemoryContext(
         ...uncertainty,
         ...(memories.length === 0 ? ["No relevant memories were found."] : []),
       ],
+      trace,
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return emptyContext(input, [`Memory retrieval failed: ${detail}`]);
+    return emptyContext(
+      input,
+      [`Memory retrieval failed: ${detail}`],
+      "error",
+      error instanceof Error ? error.name : "UnknownError",
+    );
   }
 }
 

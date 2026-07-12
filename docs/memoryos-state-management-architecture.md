@@ -132,6 +132,26 @@ Planned implementation slices:
 - Route historical questions to MemoryOS.
 - Route exact audits to keyword/provenance search before semantic recall.
 
+## Retrieval Evaluation And Tracing
+
+MemoryOS returns an optional content-free retrieval trace with every facade-built context. The trace records a user-scoped keyed query fingerprint and length, caller, model privacy target, opaque candidate identifiers/ranks/scores, privacy dispositions, canonical fallback use, selected identifiers, and the final outcome. HMAC values use `JARVIS_TRACE_HMAC_KEY` or the server `JWT_SECRET`; identifiers and the query fingerprint are omitted when neither secret exists. The trace deliberately excludes the raw query, raw source IDs, and memory text so diagnostics can be copied without reproducing personal content or G-Brain page slugs.
+
+`GroundedEvidencePacket.trace` records context assembly separately: each profile, Soul, memory, commitment, and runtime source reports whether it loaded, failed, or was skipped, plus loaded/selected/omitted counts and evidence IDs. The nested MemoryOS trace makes it possible to distinguish a retrieval miss from evidence that was retrieved and then dropped during packet assembly.
+
+`server/memory/retrievalEvaluation.ts` evaluates privacy-safe golden cases with recall at K, precision at K, reciprocal rank, forbidden hits, `missingAtRetrievalIds`, and `droppedDuringAssemblyIds`. Run the starter regression cases with:
+
+```powershell
+npm run jarvis:eval:memory-retrieval
+```
+
+Pass a private JSON artifact as the first argument to evaluate exported opaque trace identifiers without committing personal memory contents:
+
+```powershell
+npm run jarvis:eval:memory-retrieval -- path/to/private-retrieval-cases.json
+```
+
+The artifact may be an array, or an object with a `cases` array, of `{ fixture, run }` records matching `RetrievalEvaluationFixture` and `RetrievalEvaluationRun`. Ranking and query-planning changes should compare against this evaluator before replacing the current hybrid retrieval path.
+
 ## State Card Builder
 
 The State Card Builder creates a compact runtime packet:
