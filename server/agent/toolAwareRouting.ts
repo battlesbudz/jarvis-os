@@ -45,6 +45,7 @@ interface ToolAwareRule {
 
 const PUBLIC_RESEARCH_SUBJECT_PATTERN = String.raw`(?:the\s+)?(?:[$][A-Za-z]{1,8}|s&p\s*500|nasdaq(?:\s+composite)?|dow(?:\s+jones)?(?:\s+industrial\s+average)?|russell\s*2000|tsla|aapl|nvda|msft|amzn|meta|googl?|nflx|spy|qqq|spx|btc(?:\/usd)?|eth(?:\/usd)?|sol|xrp|doge|ada|openai|anthropic|nvidia|tesla|microsoft|apple|amazon|google|netflix|ukraine|russia|israel|iran|china|congress|senate|supreme\s+court|white\s+house|fed|federal\s+reserve|lakers|warriors|yankees|dodgers|chiefs|eagles|presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)`;
 const GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN = String.raw`(?!(?:[Ii]|[Mm]e|[Yy]ou|[Ww]e|[Uu]s|[Tt]hey|[Tt]hem|[Hh]e|[Ss]he|[Ii]t|[Mm]y|[Oo]ur|[Yy]our|[Tt]heir|[Mm]om|[Mm]um|[Dd]ad|[Mm]other|[Ff]ather|[Bb]rother|[Ss]ister|[Ss]on|[Dd]aughter|[Hh]usband|[Ww]ife|[Pp]artner|[Ff]riend)\b)(?:[Tt]he\s+)?(?:[$A-Z][A-Za-z0-9&.'\u2019/-]*(?:\s+[A-Z][A-Za-z0-9&.'\u2019/-]*){0,5})`;
+const PERSONAL_TODAY_SUBJECT_PATTERN = String.raw`(?:plan|plans|schedule|calendar|agenda|tasks?|to-?dos?|reminders?|appointments?|meetings?|work|school|home|life|routines?|goals?|commitments?|projects?|dinner|lunch|breakfast|meals?|notes?|messages?|emails?|inbox|repl(?:y|ies)|responses?|reports?|drafts?|documents?|conversations?|weather|date|time|stats?)`;
 
 const TOOL_AWARE_RULES: ToolAwareRule[] = [
   {
@@ -150,6 +151,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\bheadlines?\s+(?:today|currently|recently|latest)\b/i,
       /\btoday(?:['\u2019]s|s)?\s+(?:top\s+)?stories?\b/i,
       /\b(?:top\s+)?stories?\s+(?:today|currently|recently|latest|now|right\s+now)\b/i,
+      new RegExp(String.raw`^\s*today(?:['\u2019]s|s)\s+(?!${PERSONAL_TODAY_SUBJECT_PATTERN}\b)(?:[$\w.\/&,'\u2019-]+\s*){1,8}\??\s*$`, "i"),
       /\btoday(?:['\u2019]s|s)?\s+(?:[$\w.\/&-]+\s+){0,6}(?:news|stories?|events?|games?|matches?|fixtures?|schedules?|hours?|opening\s+hours|business\s+hours|store\s+hours|updates?|developments?|situations?|sources?|articles?|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|delays?|cancellations?|cancelations?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\b/i,
       /\b(?:news|updates?|sources?)\b/i,
       /^\s*(?:the\s+)?headlines?\s*\??\s*$/i,

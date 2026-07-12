@@ -902,6 +902,24 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "today's Wordle answer",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "today\u2019s horoscope",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "today's NYT Connections answer",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "Ukraine headlines today",
   "research",
   ["research", "browser"],
@@ -1056,6 +1074,21 @@ assertRoute(
   const plan = classifyToolAwareRoute("Work now?");
   assert(!plan.intents.includes("research"), "auto-capitalized work shorthand: does not route as research");
   assert(!plan.priorityToolNames.includes("search_web"), "auto-capitalized work shorthand: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("today's plan");
+  assert(!plan.intents.includes("research"), "today's personal plan: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "today's personal plan: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("today's work");
+  assert(!plan.intents.includes("research"), "today's work context: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "today's work context: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("today's dinner");
+  assert(!plan.intents.includes("research"), "today's meal context: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "today's meal context: does not prioritize web search");
 }
 {
   const plan = classifyToolAwareRoute("did you win today?");
