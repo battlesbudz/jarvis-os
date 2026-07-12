@@ -1064,6 +1064,12 @@ assertRoute(
   assert(plan.priorityToolNames.length === 0, "personal status question: no priority tools");
 }
 {
+  const plan = classifyToolAwareRoute("how is Sarah doing today?");
+  assert(!plan.shouldPreferTool, "personal today status question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "personal today status question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "personal today status question: no priority tools");
+}
+{
   const plan = classifyToolAwareRoute("how is mom doing now?");
   assert(!plan.shouldPreferTool, "family status question: does not prefer tool use");
   assert(!plan.intents.includes("research"), "family status question: does not route as research");
@@ -1182,6 +1188,15 @@ for (const [query, label] of [
   const plan = classifyToolAwareRoute("Work now?");
   assert(!plan.intents.includes("research"), "auto-capitalized work shorthand: does not route as research");
   assert(!plan.priorityToolNames.includes("search_web"), "auto-capitalized work shorthand: does not prioritize web search");
+}
+for (const [query, label] of [
+  ["Dinner today?", "auto-capitalized dinner today shorthand"],
+  ["Work today?", "auto-capitalized work today shorthand"],
+  ["Plans today?", "auto-capitalized plans today shorthand"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: does not prioritize web search`);
 }
 {
   const plan = classifyToolAwareRoute("today's plan");
