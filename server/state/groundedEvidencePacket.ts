@@ -9,6 +9,12 @@ import {
   type MemoryRetrievalTrace,
 } from "../memory/memoryOs";
 import {
+  buildGroundingQueryPlan,
+  type GroundingIntent,
+  type GroundingQueryPlan,
+  type GroundingSourcePolicy,
+} from "./groundingQueryPlanner";
+import {
   canonicalCommitmentDedupeKey,
   isPersonalCommitment,
   type CommitmentKind,
@@ -48,10 +54,23 @@ export interface GroundedEvidencePacket {
   activeModel?: string;
   currentContext?: string;
   modelTarget: MemoryModelTarget;
+  queryPlan: GroundingQueryPlan;
+  contextContract: GroundedEvidenceContextContract;
   evidence: GroundedEvidenceItem[];
   omitted: string[];
   uncertainty: string[];
   trace?: GroundedEvidenceAssemblyTrace;
+}
+
+export interface GroundedEvidenceContextContract {
+  schemaVersion: 1;
+  intent: GroundingIntent;
+  sources: GroundingSourcePolicy;
+  memoryAuthority: "canonical_only";
+  claimPolicy: "evidence_only";
+  missingEvidencePolicy: "admit_not_loaded";
+  maxMemoryItems: number;
+  maxCommitmentItems: number;
 }
 
 export interface GroundedEvidenceAssemblyTraceStage {
@@ -68,8 +87,14 @@ export interface GroundedEvidenceAssemblyTrace {
   identifiersOmitted: boolean;
   queryFingerprint?: string;
   queryLength: number;
+  queryPlan: {
+    intent: GroundingIntent;
+    queryCount: number;
+    purposes: string[];
+  };
   stages: GroundedEvidenceAssemblyTraceStage[];
   memoryRetrieval?: MemoryRetrievalTrace;
+  memoryRetrievals?: MemoryRetrievalTrace[];
 }
 
 export interface GroundedCommitmentRecord {
@@ -143,7 +168,6 @@ export function _setGroundedEvidencePacketDepsForTesting(
 const DEFAULT_MEMORY_LIMIT = 6;
 const DEFAULT_COMMITMENT_LIMIT = 5;
 const DEFAULT_RENDER_MAX_CHARS = 2_200;
-const ABOUT_YOU_QUERY = "user profile preferences relationships work patterns goals blockers values commitments";
 
 function compactText(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -286,6 +310,55 @@ function memoryEvidence(context: MemoryContext): GroundedEvidenceItem[] {
   }));
 }
 
+function uniqueProvenance(items: MemoryContext["items"]): MemoryContext["provenance"] {
+  const seen = new Set<string>();
+  return items.flatMap((item) => item.provenance).filter((ref) => {
+    const key = `${ref.kind}:${ref.source}:${ref.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function mergeMemoryContexts(
+  contexts: MemoryContext[],
+  userId: string,
+  query: string,
+  limit: number,
+): MemoryContext {
+  const items: MemoryContext["items"] = [];
+  const seen = new Set<string>();
+  const maxDepth = Math.max(0, ...contexts.map((context) => context.items.length));
+  for (let rank = 0; rank < maxDepth && items.length < limit; rank += 1) {
+    for (const context of contexts) {
+      const item = context.items[rank];
+      if (!item || seen.has(item.memory.id)) continue;
+      seen.add(item.memory.id);
+      items.push(item);
+      if (items.length >= limit) break;
+    }
+  }
+
+  const provenance = uniqueProvenance(items);
+  const uncertainty = uniqueStrings(contexts.flatMap((context) => context.uncertainty));
+  return {
+    userId,
+    query,
+    caller: "runtime_memory_inspection",
+    items,
+    sources: {
+      memories: provenance.filter((ref) => ref.kind === "user_memory").map((ref) => ref.id),
+      brainChunks: provenance.filter((ref) => ref.kind === "brain_chunk").map((ref) => ref.id),
+      hotState: provenance.filter((ref) => ref.kind === "hot_state").map((ref) => ref.id),
+    },
+    provenance,
+    uncertainty: items.length > 0
+      ? uncertainty.filter((entry) => entry !== "No relevant memories were found.")
+      : uncertainty,
+    trace: contexts[0]?.trace,
+  };
+}
+
 function commitmentDedupeKey(commitment: GroundedCommitmentRecord): string {
   return compactText(commitment.dedupeKey) || canonicalCommitmentDedupeKey(commitment.content);
 }
@@ -383,19 +456,44 @@ export async function buildGroundedEvidencePacket(
   const now = effectiveDeps.now ?? (() => new Date());
   const generatedAt = now();
   const modelTarget = memoryModelTargetFromActiveModel(input.activeModel);
-  const query = compactText(input.query) || ABOUT_YOU_QUERY;
   const memoryLimit = Math.max(0, input.memoryLimit ?? DEFAULT_MEMORY_LIMIT);
   const commitmentLimit = Math.max(0, input.commitmentLimit ?? DEFAULT_COMMITMENT_LIMIT);
+  const queryPlan = buildGroundingQueryPlan({
+    requestText: input.requestText,
+    explicitQuery: input.query,
+  });
+  const sourcePolicy: GroundingSourcePolicy = {
+    profile: input.includeProfile ?? queryPlan.sources.profile,
+    soul: input.includeSoul ?? queryPlan.sources.soul,
+    memory: (input.includeMemory ?? queryPlan.sources.memory) && memoryLimit > 0,
+    commitments: (input.includeCommitments ?? queryPlan.sources.commitments) && commitmentLimit > 0,
+  };
+  const contextContract: GroundedEvidenceContextContract = {
+    schemaVersion: 1,
+    intent: queryPlan.intent,
+    sources: sourcePolicy,
+    memoryAuthority: "canonical_only",
+    claimPolicy: "evidence_only",
+    missingEvidencePolicy: "admit_not_loaded",
+    maxMemoryItems: memoryLimit,
+    maxCommitmentItems: commitmentLimit,
+  };
+  const plannedQueryText = queryPlan.queries.map((entry) => entry.query).join("\n");
   const evidence: GroundedEvidenceItem[] = [];
   const omitted: string[] = [];
   const uncertainty: string[] = [];
-  const queryFingerprint = fingerprintMemoryQuery(query, input.userId);
+  const queryFingerprint = fingerprintMemoryQuery(plannedQueryText, input.userId);
   const trace: GroundedEvidenceAssemblyTrace = {
     schemaVersion: 1,
     contentFree: true,
     identifiersOmitted: queryFingerprint === undefined,
     queryFingerprint,
-    queryLength: query.length,
+    queryLength: plannedQueryText.length,
+    queryPlan: {
+      intent: queryPlan.intent,
+      queryCount: queryPlan.queries.length,
+      purposes: queryPlan.queries.map((entry) => entry.purpose),
+    },
     stages: [],
   };
   const evidenceTraceIds = (ids: string[]): string[] => ids.flatMap((id) => {
@@ -414,7 +512,7 @@ export async function buildGroundedEvidencePacket(
     omittedCount: 0,
   });
 
-  if (input.includeProfile !== false) {
+  if (sourcePolicy.profile) {
     try {
       const loadProfile = effectiveDeps.loadProfileState ?? loadRuntimeProfileStateFromDb;
       const profile = await loadProfile(input.userId);
@@ -436,7 +534,7 @@ export async function buildGroundedEvidencePacket(
     trace.stages.push({ source: "profile", status: "skipped", loadedCount: 0, selectedIds: [], omittedCount: 0 });
   }
 
-  if (input.includeSoul !== false) {
+  if (sourcePolicy.soul) {
     try {
       const loadSoul = effectiveDeps.loadSoul ?? defaultLoadSoul;
       const loaded = soulEvidence(await loadSoul(input.userId));
@@ -456,23 +554,25 @@ export async function buildGroundedEvidencePacket(
     trace.stages.push({ source: "soul", status: "skipped", loadedCount: 0, selectedIds: [], omittedCount: 0 });
   }
 
-  if (input.includeMemory !== false && memoryLimit > 0) {
+  if (sourcePolicy.memory) {
     try {
       const retrieveMemoryContext = effectiveDeps.retrieveMemoryContext ?? defaultRetrieveMemoryContext;
-      const memoryContext = await retrieveMemoryContext({
-        userId: input.userId,
-        query,
-        limit: memoryLimit,
-        caller: "runtime_memory_inspection",
-        skipAccessUpdate: true,
-        canonicalOnly: true,
-        modelTarget,
-        allowRestrictedMemory: input.allowRestrictedMemory ?? false,
-      });
+      const memoryContexts = await Promise.all(queryPlan.queries.map((plannedQuery) => retrieveMemoryContext({
+          userId: input.userId,
+          query: plannedQuery.query,
+          limit: memoryLimit,
+          caller: "runtime_memory_inspection",
+          skipAccessUpdate: true,
+          canonicalOnly: true,
+          modelTarget,
+          allowRestrictedMemory: input.allowRestrictedMemory ?? false,
+        })));
+      const memoryContext = mergeMemoryContexts(memoryContexts, input.userId, plannedQueryText, memoryLimit);
       const loaded = memoryEvidence(memoryContext);
       evidence.push(...loaded);
       uncertainty.push(...memoryContext.uncertainty);
       trace.memoryRetrieval = memoryContext.trace;
+      trace.memoryRetrievals = memoryContexts.flatMap((context) => context.trace ? [context.trace] : []);
       trace.stages.push({
         source: "memory",
         status: loaded.length > 0 ? "loaded" : "empty",
@@ -491,7 +591,7 @@ export async function buildGroundedEvidencePacket(
     trace.stages.push({ source: "memory", status: "skipped", loadedCount: 0, selectedIds: [], omittedCount: 0 });
   }
 
-  if (input.includeCommitments !== false && commitmentLimit > 0) {
+  if (sourcePolicy.commitments) {
     try {
       const loadCommitments = effectiveDeps.loadCommitments ?? defaultLoadCommitments;
       const rawCommitments = await loadCommitments(input.userId, Math.max(50, commitmentLimit * 6));
@@ -522,6 +622,8 @@ export async function buildGroundedEvidencePacket(
     activeModel: input.activeModel,
     currentContext: input.currentContext,
     modelTarget,
+    queryPlan,
+    contextContract,
     evidence,
     omitted: uniqueStrings(omitted),
     uncertainty: uniqueStrings(uncertainty),
@@ -564,7 +666,8 @@ function renderCompactEvidencePacket(packet: GroundedEvidencePacket, maxChars: n
   const limitsLine = renderCompactLimits(packet, limitBudget);
   const opening = [
     "## Jarvis Grounded Evidence Packet",
-    "Use only EVIDENCE. Treat LIMITS as incomplete context and admit when a fact is not loaded.",
+    `Contract: intent=${packet.contextContract.intent}; claims=evidence_only; missing=admit_not_loaded.`,
+    "Use only EVIDENCE. Treat LIMITS as incomplete context.",
     limitsLine,
     "EVIDENCE:",
   ];
@@ -597,6 +700,10 @@ export function renderGroundedEvidencePacket(
     `Request: ${packet.requestText || "(empty)"}`,
     `Generated at: ${packet.generatedAt}`,
     `Model target: ${packet.modelTarget}`,
+    `Context contract: intent=${packet.contextContract.intent}; sources=${Object.entries(packet.contextContract.sources)
+      .filter(([, enabled]) => enabled)
+      .map(([source]) => source)
+      .join(",") || "none"}; memory=${packet.contextContract.memoryAuthority}; claims=${packet.contextContract.claimPolicy}; missing=${packet.contextContract.missingEvidencePolicy}`,
   ];
 
   if (packet.activeDevice || packet.activeModel || packet.currentContext) {

@@ -208,6 +208,7 @@ const tests = [
   { file: "server/memory/__tests__/vectorMigration.test.ts" },
   { file: "server/memory/__tests__/vectorStore.test.ts" },
   { file: "server/memory/__tests__/writePipeline.test.ts" },
+  { file: "server/state/__tests__/groundingQueryPlanner.assert.ts" },
 ];
 
 const hasDatabase = configureDatabaseEnvForTests();

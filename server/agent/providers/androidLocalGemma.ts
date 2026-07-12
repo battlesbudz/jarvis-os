@@ -5,6 +5,7 @@ import { BaseProvider, isJsonObjectResponseFormat } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { buildRuntimeStateCardPrompt } from "../../state/stateCard";
 import { buildGroundedEvidencePacketPrompt } from "../../state/groundedEvidencePacket";
+import { shouldGroundPersonalMemoryRequest } from "../../state/groundingQueryPlanner";
 import { classifyRuntimeMemoryInspectionIntent } from "../../state/runtimeMemoryInspection";
 import {
   auditLocalRuntimeResponse,
@@ -2267,13 +2268,14 @@ async function runtimeStateCardPromptFromParams(
         ? Math.max(useToolProtocol ? 120 : 220, Math.floor(promptBudget * (useToolProtocol ? 0.14 : 0.32)))
         : Math.max(320, Math.floor(promptBudget * (useToolProtocol ? 0.25 : 0.32))),
     );
+    const requestText = latestUserText(params.messages);
     const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent(params.messages);
-    if (memoryInspectionIntent?.scopeLabel === "about you") {
+    if (memoryInspectionIntent || shouldGroundPersonalMemoryRequest(requestText)) {
       const compactProfile = turnBudget.contextTokens <= 512;
       return await buildGroundedEvidencePacketPrompt({
         userId: params.userId ?? "",
-        requestText: latestUserText(params.messages),
-        query: memoryInspectionIntent.query,
+        requestText,
+        query: memoryInspectionIntent?.query,
         activeDevice: "android",
         activeModel: normalizeAndroidLocalGemmaModel(params.model),
         currentContext: useToolProtocol ? "phone_gemma_tool_protocol" : "phone_gemma_chat",

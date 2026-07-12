@@ -152,6 +152,14 @@ npm run jarvis:eval:memory-retrieval -- path/to/private-retrieval-cases.json
 
 The artifact may be an array, or an object with a `cases` array, of `{ fixture, run }` records matching `RetrievalEvaluationFixture` and `RetrievalEvaluationRun`. Ranking and query-planning changes should compare against this evaluator before replacing the current hybrid retrieval path.
 
+## Grounding Query Planner
+
+`server/state/groundingQueryPlanner.ts` deterministically classifies grounded personal-memory requests as broad summary, profile, temporal, relationship, commitment, or exact recall. It selects the relevant profile, Soul, MemoryOS, and commitment stores and emits at most two bounded queries. No planner model or cloud call is used.
+
+`GroundedEvidencePacket` executes those queries against canonical MemoryOS, interleaves results by rank, deduplicates memory IDs, and applies the packet evidence limit. Its context contract requires canonical-only memory, evidence-only personal claims, and an explicit admission when requested information is not loaded. Exact runtime-owned memory audits remain separate from this model-grounding path.
+
+This planner does not change canonical versus G-Brain ranking. Candidate-source fusion and reranking remain a separate evaluation-driven slice so query planning and ranking can be measured independently.
+
 ## State Card Builder
 
 The State Card Builder creates a compact runtime packet:

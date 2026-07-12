@@ -11,6 +11,7 @@ import {
   type CloudBackgroundProviderStatus,
 } from "./agent/cloudBackgroundEscalation";
 import { buildGroundedEvidencePacketPrompt } from "./state/groundedEvidencePacket";
+import { shouldGroundPersonalMemoryRequest } from "./state/groundingQueryPlanner";
 import { classifyRuntimeMemoryInspectionIntent } from "./state/runtimeMemoryInspection";
 
 export type LocalVoiceModelCallKind = "local_gemma" | "cloud_model" | "secondary_llm";
@@ -1029,12 +1030,12 @@ async function contextPacketFromEvents(
     packet.push(`Recent screen: ${recentScreen.activeApp} - ${recentScreen.title ?? recentScreen.text}`);
   }
   const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent([{ role: "user", content: transcript }]);
-  if (memoryInspectionIntent?.scopeLabel === "about you") {
+  if (memoryInspectionIntent || shouldGroundPersonalMemoryRequest(transcript)) {
     try {
       packet.push(await buildGroundedEvidencePacketPrompt({
         userId,
         requestText: transcript,
-        query: memoryInspectionIntent.query,
+        query: memoryInspectionIntent?.query,
         activeDevice: "android",
         activeModel: "gemma-4-e4b-it",
         currentContext: "local_voice",

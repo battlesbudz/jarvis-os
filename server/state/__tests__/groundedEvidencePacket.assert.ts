@@ -201,12 +201,107 @@ async function testGlobalTestDepsFeedPromptBuilder(): Promise<void> {
   }
 }
 
+async function testTemporalPlanUsesOnlyMemoryAndMergesQueries(): Promise<void> {
+  const queries: string[] = [];
+  const packet = await buildGroundedEvidencePacket({
+    userId,
+    requestText: "What was that Android speech decision from a while ago?",
+    activeModel: "Phone Gemma",
+    memoryLimit: 3,
+    commitmentLimit: 3,
+  }, {
+    now: () => fixedNow,
+    loadProfileState: async () => {
+      throw new Error("profile should be skipped");
+    },
+    loadSoul: async () => {
+      throw new Error("soul should be skipped");
+    },
+    loadCommitments: async () => {
+      throw new Error("commitments should be skipped");
+    },
+    retrieveMemoryContext: async (input) => {
+      queries.push(input.query);
+      const ids = queries.length === 1
+        ? ["memory-android-context", "memory-android-speech-decision"]
+        : ["memory-android-speech-decision", "memory-android-current-policy"];
+      return {
+        userId,
+        query: input.query,
+        caller: "runtime_memory_inspection",
+        items: ids.map((id, index) => ({
+          memory: {
+            id,
+            content: `Grounded Android decision ${index + 1}`,
+            category: "decision",
+            tier: "long_term",
+            memoryType: "semantic",
+            relevanceScore: 90 - index,
+            confidence: 90,
+            accessCount: 0,
+            score: 0.9 - index / 10,
+          },
+          provenance: [{ kind: "user_memory", id, source: "canonical" }],
+        })),
+        sources: { memories: ids, brainChunks: [], hotState: [] },
+        provenance: ids.map((id) => ({ kind: "user_memory" as const, id, source: "canonical" as const })),
+        uncertainty: [],
+      };
+    },
+  });
+
+  assert.equal(packet.queryPlan.intent, "temporal_recall");
+  assert.equal(packet.queryPlan.queries.length, 2);
+  assert.deepEqual(packet.contextContract.sources, {
+    profile: false,
+    soul: false,
+    memory: true,
+    commitments: false,
+  });
+  assert.equal(packet.contextContract.memoryAuthority, "canonical_only");
+  assert.equal(packet.contextContract.claimPolicy, "evidence_only");
+  assert.equal(queries.length, 2);
+  assert.deepEqual(
+    packet.evidence.filter((item) => item.domain === "memory").map((item) => item.sourceId),
+    ["memory-android-context", "memory-android-speech-decision", "memory-android-current-policy"],
+  );
+  assert.deepEqual(
+    packet.trace?.stages.map((stage) => `${stage.source}:${stage.status}`),
+    ["runtime:loaded", "profile:skipped", "soul:skipped", "memory:loaded", "commitment:skipped"],
+  );
+  assert.equal(packet.trace?.queryPlan.intent, "temporal_recall");
+  assert.deepEqual(packet.trace?.queryPlan.purposes, ["primary", "temporal"]);
+
+  const rendered = renderGroundedEvidencePacket(packet, { maxChars: 5_000 });
+  assert.match(rendered, /Context contract: intent=temporal_recall/);
+  assert.match(rendered, /memory=canonical_only/);
+  console.log("OK: temporal grounding plans only memory queries and merges bounded results");
+}
+
 function testCompactRendererRetainsIncompleteContextLimits(): void {
   const packet: GroundedEvidencePacket = {
     userId,
     requestText: "What do you know about me?",
     generatedAt: fixedNow.toISOString(),
     modelTarget: "local",
+    queryPlan: {
+      schemaVersion: 1,
+      intent: "broad_personal_summary",
+      queries: [{ id: "primary", purpose: "primary", query: "user profile" }],
+      sources: { profile: true, soul: true, memory: true, commitments: true },
+      canonicalOnly: true,
+      maxQueries: 2,
+    },
+    contextContract: {
+      schemaVersion: 1,
+      intent: "broad_personal_summary",
+      sources: { profile: true, soul: true, memory: true, commitments: true },
+      memoryAuthority: "canonical_only",
+      claimPolicy: "evidence_only",
+      missingEvidencePolicy: "admit_not_loaded",
+      maxMemoryItems: 2,
+      maxCommitmentItems: 0,
+    },
     evidence: [{
       id: "profile:core",
       domain: "profile",
@@ -240,6 +335,7 @@ function testCompactRendererRetainsIncompleteContextLimits(): void {
 async function main(): Promise<void> {
   await testGroundedPacketBuildsEvidenceAndOmitsNoise();
   await testGlobalTestDepsFeedPromptBuilder();
+  await testTemporalPlanUsesOnlyMemoryAndMergesQueries();
   testCompactRendererRetainsIncompleteContextLimits();
 }
 
