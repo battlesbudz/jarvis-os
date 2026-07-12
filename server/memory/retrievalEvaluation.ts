@@ -23,6 +23,11 @@ export type RetrievalEvaluationRun = {
   assembledIds?: string[];
 };
 
+export type RetrievalEvaluationCase = {
+  fixture: RetrievalEvaluationFixture;
+  run: RetrievalEvaluationRun;
+};
+
 export type RetrievalEvaluationMetrics = {
   recallAtK: number;
   precisionAtK: number;
@@ -64,6 +69,21 @@ export type RetrievalEvaluationSummary = {
   results: RetrievalEvaluationResult[];
 };
 
+export function requireRetrievalEvaluationCases(value: unknown): RetrievalEvaluationCase[] {
+  const cases = Array.isArray(value)
+    ? value
+    : value && typeof value === "object" && Array.isArray((value as { cases?: unknown }).cases)
+      ? (value as { cases: unknown[] }).cases
+      : null;
+  if (!cases) {
+    throw new Error("Retrieval evaluation input must be an array or an object with a cases array.");
+  }
+  if (cases.length === 0) {
+    throw new Error("Retrieval evaluation input must contain at least one case.");
+  }
+  return cases as RetrievalEvaluationCase[];
+}
+
 function uniqueIds(values: string[]): string[] {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
@@ -84,13 +104,16 @@ export function evaluateRetrievalRun(
   const expectedIds = uniqueIds(fixture.expectedIds);
   const expectedSet = new Set(expectedIds);
   const forbiddenSet = new Set(uniqueIds(fixture.forbiddenIds ?? []));
-  const retrievedIds = uniqueIds(run.retrieved.slice(0, topK).map(evaluationItemId));
+  const retrievedIds = run.retrieved
+    .slice(0, topK)
+    .map(evaluationItemId)
+    .filter(Boolean);
   const retrievedSet = new Set(retrievedIds);
   const assembledIds = run.assembledIds === undefined ? null : uniqueIds(run.assembledIds);
   const assembledSet = new Set(assembledIds ?? []);
   const expectedAssemblyIds = uniqueIds(fixture.expectedAssemblyIds ?? expectedIds);
 
-  const retrievalHits = retrievedIds.filter((id) => expectedSet.has(id));
+  const retrievalHits = uniqueIds(retrievedIds.filter((id) => expectedSet.has(id)));
   const firstRelevantIndex = retrievedIds.findIndex((id) => expectedSet.has(id));
   const recallAtK = ratio(retrievalHits.length, expectedIds.length, 1);
   const precisionAtK = ratio(retrievalHits.length, retrievedIds.length, expectedIds.length === 0 ? 1 : 0);
@@ -107,7 +130,7 @@ export function evaluateRetrievalRun(
   const droppedDuringAssemblyIds = assembledIds === null
     ? []
     : expectedAssemblyIds.filter((id) => retrievedSet.has(id) && !assembledSet.has(id));
-  const forbiddenAtRetrievalIds = retrievedIds.filter((id) => forbiddenSet.has(id));
+  const forbiddenAtRetrievalIds = uniqueIds(retrievedIds.filter((id) => forbiddenSet.has(id)));
   const forbiddenAtAssemblyIds = assembledIds === null
     ? []
     : assembledIds.filter((id) => forbiddenSet.has(id));
@@ -150,7 +173,7 @@ export function evaluateRetrievalRun(
 }
 
 export function summarizeRetrievalEvaluations(
-  cases: { fixture: RetrievalEvaluationFixture; run: RetrievalEvaluationRun }[],
+  cases: RetrievalEvaluationCase[],
 ): RetrievalEvaluationSummary {
   const results = cases.map(({ fixture, run }) => evaluateRetrievalRun(fixture, run));
   const divisor = Math.max(1, results.length);

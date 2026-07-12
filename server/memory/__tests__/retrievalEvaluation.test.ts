@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { STARTER_RETRIEVAL_REGRESSION_CASES } from "../evals/retrievalRegressionCases";
 import {
   evaluateRetrievalRun,
+  requireRetrievalEvaluationCases,
   summarizeRetrievalEvaluations,
 } from "../retrievalEvaluation";
 
@@ -79,9 +80,38 @@ function testTopKBoundaryIsAppliedBeforeDedupe(): void {
     retrieved: ["memory-noise", "memory-noise", "memory-expected"],
   });
 
-  assert.deepEqual(result.retrievedIds, ["memory-noise"]);
+  assert.deepEqual(result.retrievedIds, ["memory-noise", "memory-noise"]);
   assert.deepEqual(result.missingAtRetrievalIds, ["memory-expected"]);
   assert.equal(result.metrics.recallAtK, 0);
+  assert.equal(result.metrics.retrievedCount, 2);
+}
+
+function testDuplicateSlotsDoNotImproveRankOrPrecision(): void {
+  const result = evaluateRetrievalRun({
+    id: "duplicate-slot-scoring",
+    query: "Find the expected memory",
+    expectedIds: ["memory-expected"],
+    topK: 3,
+  }, {
+    retrieved: ["memory-noise", "memory-noise", "memory-expected"],
+  });
+
+  assert.deepEqual(result.retrievedIds, ["memory-noise", "memory-noise", "memory-expected"]);
+  assert.equal(result.metrics.recallAtK, 1);
+  assert.equal(result.metrics.precisionAtK, 1 / 3);
+  assert.equal(result.metrics.reciprocalRank, 1 / 3);
+  assert.equal(result.metrics.retrievedCount, 3);
+}
+
+function testEmptyEvaluationArtifactsAreRejected(): void {
+  assert.throws(
+    () => requireRetrievalEvaluationCases([]),
+    /must contain at least one case/,
+  );
+  assert.throws(
+    () => requireRetrievalEvaluationCases({ cases: [] }),
+    /must contain at least one case/,
+  );
 }
 
 function main(): void {
@@ -89,6 +119,8 @@ function main(): void {
   testFailureAttributionSeparatesRetrievalFromAssembly();
   testForbiddenAssemblyHitFailsEvenWithoutExpectedFacts();
   testTopKBoundaryIsAppliedBeforeDedupe();
+  testDuplicateSlotsDoNotImproveRankOrPrecision();
+  testEmptyEvaluationArtifactsAreRejected();
   console.log("OK: retrieval evaluation attributes ranking, filtering, and context assembly failures");
 }
 

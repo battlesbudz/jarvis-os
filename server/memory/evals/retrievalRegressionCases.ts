@@ -1,12 +1,6 @@
 import type {
-  RetrievalEvaluationFixture,
-  RetrievalEvaluationRun,
+  RetrievalEvaluationCase,
 } from "../retrievalEvaluation";
-
-export type RetrievalEvaluationCase = {
-  fixture: RetrievalEvaluationFixture;
-  run: RetrievalEvaluationRun;
-};
 
 // These starter cases are content-safe contracts. Replace the run payloads with
 // exported production trace IDs in a private artifact to benchmark live retrieval.
