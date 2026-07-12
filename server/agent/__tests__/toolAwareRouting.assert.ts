@@ -955,6 +955,12 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "nintendo switch today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "latest openai",
   "research",
   ["research", "browser"],
@@ -1164,6 +1170,19 @@ assertRoute(
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
 );
+for (const query of [
+  "school open today?",
+  "school delayed today?",
+  "schools closed today?",
+  "Philadelphia schools delayed today?",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
 assertRoute(
   "Lakers score today",
   "research",
@@ -1287,6 +1306,7 @@ assertRoute(
 for (const [query, label] of [
   ["Busy today?", "auto-capitalized busy status"],
   ["Tired today?", "auto-capitalized tired status"],
+  ["School today?", "personal school shorthand"],
 ] as const) {
   const plan = classifyToolAwareRoute(query);
   assert(!plan.shouldPreferTool, `${label}: does not prefer tool use`);
