@@ -43,6 +43,236 @@ assertRoute(
   ["calendar"],
   ["connected_accounts_list", "connected_accounts_search_tools", "connected_accounts_get_tool_schema", "connected_accounts_execute"],
 );
+{
+  const plan = classifyToolAwareRoute("calendar events for tomorrow");
+  assert(plan.intents.includes("calendar"), "private calendar events: intent detected");
+  assert(!plan.intents.includes("research"), "private calendar events: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "private calendar events: does not prioritize search_web");
+}
+{
+  const plan = classifyToolAwareRoute("what are my events for Friday?");
+  assert(plan.intents.includes("calendar"), "my events: intent detected");
+  assert(!plan.intents.includes("research"), "my events: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "my events: does not prioritize search_web");
+}
+{
+  const plan = classifyToolAwareRoute("what events are on my calendar today?");
+  assert(plan.intents.includes("calendar"), "events on my calendar: intent detected");
+  assert(!plan.intents.includes("research"), "events on my calendar: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "events on my calendar: no search_web");
+}
+{
+  const plan = classifyToolAwareRoute("events on our calendar today");
+  assert(plan.intents.includes("calendar"), "events on our calendar: intent detected");
+  assert(!plan.intents.includes("research"), "events on our calendar: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "events on our calendar: no search_web");
+}
+{
+  const plan = classifyToolAwareRoute("find my calendar events today");
+  assert(plan.intents.includes("calendar"), "find my calendar events: intent detected");
+  assert(!plan.intents.includes("research"), "find my calendar events: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "find my calendar events: no search_web");
+}
+{
+  const plan = classifyToolAwareRoute("look up my calendar events today");
+  assert(plan.intents.includes("calendar"), "look up my calendar events: intent detected");
+  assert(!plan.intents.includes("research"), "look up my calendar events: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "look up my calendar events: no search_web");
+}
+for (const [query, label] of [
+  ["look up my calendar today", "look up bare calendar"],
+  ["search my calendar today", "search bare calendar"],
+  ["look up my Google Calendar events today", "look up provider calendar"],
+  ["look up my work calendar today", "look up named calendar"],
+  ["look up my Google Workspace Calendar events today", "look up multiword provider calendar"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(plan.intents.includes("calendar"), `${label}: intent detected`);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: no search_web`);
+}
+{
+  const plan = classifyToolAwareRoute("look up my school calendar latest update");
+  assert(plan.intents.includes("calendar"), "public named calendar update: calendar intent retained");
+  assert(plan.intents.includes("research"), "public named calendar update: research intent retained");
+  assert(plan.priorityToolNames.includes("search_web"), "public named calendar update: search_web retained");
+}
+{
+  const plan = classifyToolAwareRoute("look up my work calendar latest event");
+  assert(plan.intents.includes("calendar"), "private named calendar event: calendar intent detected");
+  assert(!plan.intents.includes("research"), "private named calendar event: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "private named calendar event: no search_web");
+}
+{
+  const plan = classifyToolAwareRoute("search the web for how to export my calendar events");
+  assert(plan.intents.includes("research"), "explicit web search mentioning calendar events: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "explicit web search mentioning calendar events: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("find my events today");
+  assert(plan.intents.includes("calendar"), "find my events: intent detected");
+  assert(!plan.intents.includes("research"), "find my events: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "find my events: no search_web");
+}
+for (const [query, label] of [
+  ["find my appointments today", "find my appointments"],
+  ["look up my meetings tomorrow", "look up my meetings"],
+  ["search our appointments this week", "search our appointments"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(plan.intents.includes("calendar"), `${label}: calendar intent detected`);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: no search_web`);
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events in Philadelphia, PA today");
+  assert(plan.intents.includes("calendar"), "calendar location comma: calendar intent detected");
+  assert(!plan.intents.includes("research"), "calendar location comma: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "calendar location comma: no search_web");
+}
+{
+  const plan = classifyToolAwareRoute("search my events today");
+  assert(plan.intents.includes("calendar"), "search my events: intent detected");
+  assert(!plan.intents.includes("research"), "search my events: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "search my events: no search_web");
+}
+{
+  const plan = classifyToolAwareRoute("what's on my schedule today?");
+  assert(plan.intents.includes("calendar"), "my schedule: intent detected");
+  assert(!plan.intents.includes("research"), "my schedule: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "my schedule: no search_web");
+}
+{
+  const plan = classifyToolAwareRoute("our schedule today");
+  assert(plan.intents.includes("calendar"), "our schedule: intent detected");
+  assert(!plan.intents.includes("research"), "our schedule: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "our schedule: no search_web");
+}
+{
+  const plan = classifyToolAwareRoute("concerts today in my calendar");
+  assert(plan.intents.includes("calendar"), "private event-category calendar: intent detected");
+  assert(!plan.intents.includes("research"), "private event-category calendar: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "private event-category calendar: no search_web");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today and what's today's news?");
+  assert(plan.intents.includes("calendar"), "mixed calendar and news: calendar intent detected");
+  assert(plan.intents.includes("research"), "mixed calendar and news: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "mixed calendar and news: search_web preserved");
+}
+for (const [query, label] of [
+  ["what are my calendar events today and tell me the latest on Ukraine", "tell-me latest clause"],
+  ["what are my calendar events today and give me Ukraine news", "give-me news clause"],
+  ["what are my calendar events today and can you show me current TSLA price", "can-you-show current clause"],
+  ["what are my calendar events today and find me movie showtimes today", "find-me showtimes clause"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(plan.intents.includes("calendar"), `${label}: calendar intent detected`);
+  assert(plan.intents.includes("research"), `${label}: research intent preserved`);
+  assert(plan.priorityToolNames.includes("search_web"), `${label}: search_web preserved`);
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today, what's today's news?");
+  assert(plan.intents.includes("calendar"), "comma mixed calendar and news: calendar intent detected");
+  assert(plan.intents.includes("research"), "comma mixed calendar and news: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "comma mixed calendar and news: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events in Philadelphia, PA today, what's today's news?");
+  assert(plan.intents.includes("calendar"), "location-comma mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "location-comma mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "location-comma mixed request: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today along with today's news?");
+  assert(plan.intents.includes("calendar"), "along-with mixed calendar and news: calendar intent detected");
+  assert(plan.intents.includes("research"), "along-with mixed calendar and news: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "along-with mixed calendar and news: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with today's news?");
+  assert(plan.intents.includes("calendar"), "with-news mixed calendar and news: calendar intent detected");
+  assert(plan.intents.includes("research"), "with-news mixed calendar and news: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "with-news mixed calendar and news: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with the latest on Ukraine");
+  assert(plan.intents.includes("calendar"), "with-latest mixed calendar and news: calendar intent detected");
+  assert(plan.intents.includes("research"), "with-latest mixed calendar and news: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "with-latest mixed calendar and news: search_web preserved");
+}
+for (const [query, label] of [
+  ["what are my calendar events today with what's happening in Ukraine today", "with-contraction research clause"],
+  ["what are my calendar events today with what is happening in Ukraine today", "with-expanded research clause"],
+  ["what are my calendar events today with what happened in Ukraine today", "with-past research clause"],
+  ["what are my calendar events today with Disney today", "with-generic public today clause"],
+  ["what are my calendar events today with spacex today", "with-lowercase public today clause"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(plan.intents.includes("calendar"), `${label}: calendar intent detected`);
+  assert(plan.intents.includes("research"), `${label}: research intent preserved`);
+  assert(plan.priorityToolNames.includes("search_web"), `${label}: search_web preserved`);
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with Ukraine news");
+  assert(plan.intents.includes("calendar"), "topic-news mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "topic-news mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "topic-news mixed request: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with traffic on I-95 today");
+  assert(plan.intents.includes("calendar"), "traffic mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "traffic mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "traffic mixed request: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with air quality in Philadelphia today");
+  assert(plan.intents.includes("calendar"), "air-quality mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "air-quality mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "air-quality mixed request: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with TSLA price today");
+  assert(plan.intents.includes("calendar"), "price mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "price mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "price mixed request: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with concerts in Philadelphia today");
+  assert(plan.intents.includes("calendar"), "public-events mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "public-events mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "public-events mixed request: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with movie showtimes today");
+  assert(plan.intents.includes("calendar"), "showtimes mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "showtimes mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "showtimes mixed request: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with OpenAI today");
+  assert(plan.intents.includes("calendar"), "public-shorthand mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "public-shorthand mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "public-shorthand mixed request: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with TSLA today");
+  assert(plan.intents.includes("calendar"), "ticker-shorthand mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "ticker-shorthand mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "ticker-shorthand mixed request: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today? what's today's news?");
+  assert(plan.intents.includes("calendar"), "sentence mixed calendar and news: calendar intent detected");
+  assert(plan.intents.includes("research"), "sentence mixed calendar and news: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "sentence mixed calendar and news: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events with Justin today?");
+  assert(plan.intents.includes("calendar"), "private calendar with attendee: calendar intent detected");
+  assert(!plan.intents.includes("research"), "private calendar with attendee: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "private calendar with attendee: no search_web");
+}
 assertRoute(
   "check my Gmail and unread email",
   "email",
@@ -128,6 +358,1259 @@ assertRoute(
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
 );
+assertRoute(
+  "search up calendar events in Philadelphia today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "What's today's cannabis news?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's the current TSLA price?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's the current version of Node.js?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's the current exchange rate for USD/EUR?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what is the current traffic on I-95?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what is the current air quality in Philadelphia?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+for (const query of [
+  "what is the current time in London?",
+  "current timezone in Tokyo",
+  "what time is it in Paris now?",
+  "current time London",
+  "current time london",
+  "local time Tokyo",
+  "local time tokyo",
+  "Current time New York",
+  "local timezone Tokyo",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+{
+  const plan = classifyToolAwareRoute("what is my current time?");
+  assert(!plan.intents.includes("research"), "personal current time: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "personal current time: does not prioritize web search");
+}
+for (const [query, label] of [
+  ["current time", "bare current time"],
+  ["current time now", "current device time"],
+  ["local time here", "local device location time"],
+  ["current time please", "polite current time request"],
+  ["current time for me", "personal current time request"],
+  ["current time on my phone", "phone current time request"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: does not prioritize web search`);
+}
+for (const query of [
+  "what are the current McDonald's hours?",
+  "current Dave & Buster's hours",
+  "current Dave & Buster’s hours",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+assertRoute(
+  "air quality in Philadelphia today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "traffic on I-95 today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "events in Philadelphia today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "events in Philadelphia, PA today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "concerts in Philadelphia today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "concerts in Philadelphia, PA today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "comedy shows near Philadelphia tonight",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "concerts today in Philadelphia",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "concerts today in Philadelphia, PA",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "comedy shows tonight near Philadelphia",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+for (const query of [
+  "are there concerts today?",
+  "any movies tonight?",
+  "is there a concert tomorrow?",
+  "are there any workshops this weekend?",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+{
+  const plan = classifyToolAwareRoute("are there meetings today?");
+  assert(!plan.intents.includes("research"), "prefixed personal meetings: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "prefixed personal meetings: does not prioritize web search");
+}
+assertRoute(
+  "movies today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "new movies today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "concerts tonight",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "workshops this weekend",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "calendar events for Philadelphia today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest court ruling",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "current Supreme Court ruling",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what happened today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's going on today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what\u2019s going on today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's new today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's new with OpenAI today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "how is TSLA doing today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "How is Boeing doing today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "how is boeing doing today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what happened in Ukraine today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what did OpenAI announce today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "What did Disney announce today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what did disney announce today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what did the president say today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's happening with TSLA today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "how is the stock market today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what stocks are up today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what is the current BTC/USD price?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "current USD/EUR exchange rate",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "current S&P 500 price",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's the current S&P 500?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "current nasdaq",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "current TSLA",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+for (const query of ["Ukraine articles", "cannabis articles"] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+{
+  const plan = classifyToolAwareRoute("my articles");
+  assert(!plan.intents.includes("research"), "owned articles: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "owned articles: does not prioritize web search");
+}
+for (const query of ["trump today", "spacex today"] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+for (const query of [
+  "recent studies on GLP-1",
+  "latest papers about sleep",
+  "recent GLP-1 studies",
+  "latest AI preprints",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+for (const query of ["current usd/eur", "current gbp-jpy", "usd/eur today", "gbp-jpy today"] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+for (const query of ["scores today", "prices today", "polls today", "standings today"] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+for (const query of [
+  "covid cases today",
+  "power outage today",
+  "current covid cases",
+  "latest power outages",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+{
+  const plan = classifyToolAwareRoute("schedule today?");
+  assert(!plan.intents.includes("research"), "bare personal schedule: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "bare personal schedule: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("my cases today?");
+  assert(!plan.intents.includes("research"), "owned cases shorthand: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "owned cases shorthand: does not prioritize web search");
+}
+assertRoute(
+  "watch the latest video from this channel",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest Lakers score",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's today's TSLA price?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's today's exchange rate for USD/EUR?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "today's Lakers score",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "today\u2019s Lakers score",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "today's NBA schedule",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what are today's games?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+for (const query of [
+  "Lakers vs Celtics today",
+  "Yankees at Dodgers today",
+  "lakers versus celtics tonight",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+{
+  const plan = classifyToolAwareRoute("my team vs their team today?");
+  assert(!plan.intents.includes("research"), "private matchup shorthand: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "private matchup shorthand: does not prioritize web search");
+}
+assertRoute(
+  "who is playing today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "are the Eagles playing today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "do the Eagles play today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "did the Lakers win today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "who won today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "who won today's Lakers game?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Who is the current president of Mexico?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's the latest in Ukraine?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Ukraine latest",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "OpenAI latest",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest developments in Ukraine",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "current situation in Ukraine",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's the latest with Ukraine?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's the latest with OpenAI?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest OpenAI",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest OpenAI model",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest docs for React",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "current API documentation for Stripe",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest React docs",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest Ukraine",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Ukraine today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "OpenAI today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Trump today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Disney today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Nintendo Switch today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "nintendo switch today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest openai",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest ukraine",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "ukraine today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "openai today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "watch the latest from this channel",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's the latest from OpenAI?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "current CEO of Nvidia",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "cannabis news",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "TSLA price today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "TSLA today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "tsla today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "BTC/USD today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "btc/usd today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "s&p 500 today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "nasdaq today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "mortgage rates today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "flight delays today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "are flights delayed today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "movie showtimes today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what are the movie showtimes today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "movie times today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "screening times today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "movie showtimes near Philadelphia tonight",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "is Walmart open today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "is the Starbucks open today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "is the post office open today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Walmart open today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "SEPTA delayed today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "septa delayed today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "chipotle open today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "is McDonald's open today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "is Dave & Buster\u2019s open today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Walmart hours today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "McDonald's hours today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "are banks open today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+for (const query of [
+  "school open today?",
+  "school delayed today?",
+  "schools closed today?",
+  "Philadelphia schools delayed today?",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+assertRoute(
+  "Lakers score today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "news",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "headlines",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "today\u2019s top stories",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "top stories today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "latest stories",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "today's Ukraine stories",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Ukraine stories today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "stories about Ukraine today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "today's Wordle answer",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "today\u2019s horoscope",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "today's NYT Connections answer",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Ukraine headlines today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what's the price of TSLA today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "score of Lakers today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "CEO of Nvidia today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "who is the president of Mexico today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "court decision today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+{
+  const plan = classifyToolAwareRoute("Hey Jarvis how are you doing today");
+  assert(!plan.shouldPreferTool, "casual today greeting: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual today greeting: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual today greeting: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("Hello today");
+  assert(!plan.shouldPreferTool, "casual hello today: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual hello today: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual hello today: no priority tools");
+}
+for (const [query, label] of [
+  ["Busy today?", "auto-capitalized busy status"],
+  ["Tired today?", "auto-capitalized tired status"],
+  ["School today?", "personal school shorthand"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(!plan.shouldPreferTool, `${label}: does not prefer tool use`);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: does not prioritize web search`);
+}
+{
+  const plan = classifyToolAwareRoute("Hey Jarvis today");
+  assert(!plan.shouldPreferTool, "casual hey Jarvis today: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual hey Jarvis today: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual hey Jarvis today: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("how are you doing today?");
+  assert(!plan.shouldPreferTool, "casual how are you: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual how are you: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual how are you: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("how is Sarah doing now?");
+  assert(!plan.shouldPreferTool, "personal status question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "personal status question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "personal status question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("how is Sarah doing today?");
+  assert(!plan.shouldPreferTool, "personal today status question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "personal today status question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "personal today status question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("how is mom doing now?");
+  assert(!plan.shouldPreferTool, "family status question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "family status question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "family status question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("are you playing today?");
+  assert(!plan.shouldPreferTool, "casual playing question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual playing question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual playing question: no priority tools");
+}
+for (const [query, label] of [
+  ["does she play tomorrow?", "third-person singular play follow-up"],
+  ["do they play tomorrow?", "third-person plural play follow-up"],
+  ["is he playing tonight?", "third-person playing follow-up"],
+  ["did they win yesterday?", "third-person result follow-up"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: does not prioritize web search`);
+}
+{
+  const plan = classifyToolAwareRoute("does my son play tomorrow?");
+  assert(!plan.intents.includes("research"), "family play schedule: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "family play schedule: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is my kid playing tonight?");
+  assert(!plan.intents.includes("research"), "owned child playing status: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "owned child playing status: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("are our children playing today?");
+  assert(!plan.intents.includes("research"), "shared family playing status: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "shared family playing status: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("did my daughter win today?");
+  assert(!plan.intents.includes("research"), "family result question: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "family result question: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is it open today?");
+  assert(!plan.shouldPreferTool, "contextual open question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "contextual open question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "contextual open question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("are you open today?");
+  assert(!plan.shouldPreferTool, "casual are-you-open question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual are-you-open question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual are-you-open question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("will you be open tomorrow?");
+  assert(!plan.shouldPreferTool, "casual will-you-be-open question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual will-you-be-open question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual will-you-be-open question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("leave the garage door open now");
+  assert(!plan.intents.includes("research"), "local open action: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "local open action: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("I currently need help");
+  assert(!plan.intents.includes("research"), "first-person currently statement: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "first-person currently statement: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("I now have time");
+  assert(!plan.intents.includes("research"), "first-person now statement: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "first-person now statement: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is my garage door open now?");
+  assert(!plan.intents.includes("research"), "owned open-status question: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "owned open-status question: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is our office open today?");
+  assert(!plan.intents.includes("research"), "shared open-status question: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "shared open-status question: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is your garage door open now?");
+  assert(!plan.intents.includes("research"), "second-person owned status: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "second-person owned status: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is their office open today?");
+  assert(!plan.intents.includes("research"), "third-person owned status: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "third-person owned status: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is the garage door open now?");
+  assert(!plan.intents.includes("research"), "definite local open-status question: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "definite local open-status question: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is the window open now?");
+  assert(!plan.intents.includes("research"), "local window status: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "local window status: does not prioritize web search");
+}
+for (const [query, label] of [
+  ["garage door open today?", "local status shorthand"],
+  ["front door open now?", "modified local door status shorthand"],
+  ["Front door open now?", "auto-capitalized local door status shorthand"],
+  ["bedroom window open now?", "modified local window status shorthand"],
+  ["is front door open now?", "modified local door status question"],
+  ["is Bedroom Window open now?", "capitalized local window status question"],
+  ["red car running now?", "modified local vehicle status shorthand"],
+  ["dinner delayed today?", "personal status shorthand"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: does not prioritize web search`);
+}
+{
+  const plan = classifyToolAwareRoute("Dinner tonight?");
+  assert(!plan.intents.includes("research"), "auto-capitalized dinner shorthand: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "auto-capitalized dinner shorthand: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("Plans tonight?");
+  assert(!plan.intents.includes("research"), "auto-capitalized plans shorthand: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "auto-capitalized plans shorthand: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("Work now?");
+  assert(!plan.intents.includes("research"), "auto-capitalized work shorthand: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "auto-capitalized work shorthand: does not prioritize web search");
+}
+for (const [query, label] of [
+  ["Dinner today?", "auto-capitalized dinner today shorthand"],
+  ["Work today?", "auto-capitalized work today shorthand"],
+  ["Plans today?", "auto-capitalized plans today shorthand"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: does not prioritize web search`);
+}
+{
+  const plan = classifyToolAwareRoute("today's plan");
+  assert(!plan.intents.includes("research"), "today's personal plan: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "today's personal plan: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("today's work");
+  assert(!plan.intents.includes("research"), "today's work context: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "today's work context: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("today's dinner");
+  assert(!plan.intents.includes("research"), "today's meal context: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "today's meal context: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("did you win today?");
+  assert(!plan.shouldPreferTool, "casual win question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual win question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual win question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("what did you do today?");
+  assert(!plan.shouldPreferTool, "casual what-did-you-do question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual what-did-you-do question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual what-did-you-do question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("what did Sarah say yesterday?");
+  assert(!plan.shouldPreferTool, "personal quote follow-up: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "personal quote follow-up: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "personal quote follow-up: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("are you delayed today?");
+  assert(!plan.shouldPreferTool, "casual delayed question: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "casual delayed question: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "casual delayed question: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("help me write my weekly report");
+  assert(!plan.shouldPreferTool, "weekly report writing: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "weekly report writing: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "weekly report writing: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("help me revise my current report");
+  assert(!plan.shouldPreferTool, "current report writing: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "current report writing: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "current report writing: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("latest report");
+  assert(!plan.shouldPreferTool, "latest report document phrase: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "latest report document phrase: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "latest report document phrase: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("latest one");
+  assert(!plan.shouldPreferTool, "latest contextual pronoun phrase: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "latest contextual pronoun phrase: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "latest contextual pronoun phrase: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("latest reply");
+  assert(!plan.intents.includes("research"), "latest reply phrase: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "latest reply phrase: no search_web");
+}
+{
+  const plan = classifyToolAwareRoute("help me revise my current report for me");
+  assert(!plan.shouldPreferTool, "current report writing with preposition: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "current report writing with preposition: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "current report writing with preposition: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("summarize our recent conversation");
+  assert(!plan.shouldPreferTool, "recent conversation summary: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "recent conversation summary: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "recent conversation summary: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("summarize our recent conversation in detail");
+  assert(!plan.shouldPreferTool, "recent conversation summary with preposition: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "recent conversation summary with preposition: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "recent conversation summary with preposition: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("help me write a headline for my report");
+  assert(!plan.shouldPreferTool, "headline writing: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "headline writing: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "headline writing: no priority tools");
+}
+{
+  const plan = classifyToolAwareRoute("write five headlines for my landing page");
+  assert(!plan.shouldPreferTool, "landing page headlines: does not prefer tool use");
+  assert(!plan.intents.includes("research"), "landing page headlines: does not route as research");
+  assert(plan.priorityToolNames.length === 0, "landing page headlines: no priority tools");
+}
 assertRoute(
   "show me my GitHub pull requests",
   "github",

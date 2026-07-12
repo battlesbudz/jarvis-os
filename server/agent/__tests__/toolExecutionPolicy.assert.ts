@@ -75,4 +75,17 @@ const allTools: TestTool[] = [
   assert.equal(policy.tools.length, allTools.length, "conversational turns keep full available tools");
 }
 
+{
+  const route = classifyToolAwareRoute("Hey Jarvis how are you doing today");
+  const policy = buildToolExecutionPolicy({
+    route,
+    tools: allTools,
+    maxTurns: 20,
+    getToolName: (tool) => tool.name,
+  });
+
+  assert.equal(policy.toolChoice, "auto", "casual today voice greeting stays automatic");
+  assert.equal(policy.requiredToolNames.length, 0, "casual today voice greeting has no required tools");
+}
+
 console.log("ok - tool execution policy assertions passed");

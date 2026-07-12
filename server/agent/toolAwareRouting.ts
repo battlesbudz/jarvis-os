@@ -43,6 +43,22 @@ interface ToolAwareRule {
   guidance: string;
 }
 
+const PUBLIC_RESEARCH_SUBJECT_PATTERN = String.raw`(?:the\s+)?(?:[$][A-Za-z]{1,8}|s&p\s*500|nasdaq(?:\s+composite)?|dow(?:\s+jones)?(?:\s+industrial\s+average)?|russell\s*2000|tsla|aapl|nvda|msft|amzn|meta|googl?|nflx|spy|qqq|spx|btc(?:\/usd)?|eth(?:\/usd)?|sol|xrp|doge|ada|openai|anthropic|nvidia|tesla|microsoft|apple|amazon|google|netflix|nintendo(?:\s+switch)?|boeing|spacex|disney|trump|ukraine|russia|israel|iran|china|congress|senate|supreme\s+court|white\s+house|fed|federal\s+reserve|lakers|warriors|yankees|dodgers|chiefs|eagles|presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)`;
+const GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN = String.raw`(?!(?:[Ii]|[Mm]e|[Yy]ou|[Ww]e|[Uu]s|[Tt]hey|[Tt]hem|[Hh]e|[Ss]he|[Ii]t|[Mm]y|[Oo]ur|[Yy]our|[Tt]heir|[Mm]om|[Mm]um|[Dd]ad|[Mm]other|[Ff]ather|[Bb]rother|[Ss]ister|[Ss]on|[Dd]aughter|[Hh]usband|[Ww]ife|[Pp]artner|[Ff]riend)\b)(?:[Tt]he\s+)?(?:[$A-Z][A-Za-z0-9&.'\u2019/-]*(?:\s+[A-Z][A-Za-z0-9&.'\u2019/-]*){0,5})`;
+const PUBLIC_OPEN_STATUS_PLACE_PATTERN = String.raw`(?:starbucks|walmart|mcdonald['\u2019]?s|post\s+offices?|banks?|stores?|shops?|restaurants?|libraries|pharmacies|malls?|courthouses?|dmv|government\s+offices?)`;
+const PERSONAL_TODAY_SUBJECT_PATTERN = String.raw`(?:[Pp]lans?|[Ss]chedule|[Cc]alendar|[Aa]genda|[Tt]asks?|[Tt]o-?dos?|[Rr]eminders?|[Aa]ppointments?|[Mm]eetings?|[Ww]ork|[Ss]chool|[Hh]ome|[Ll]ife|[Rr]outines?|[Gg]oals?|[Cc]ommitments?|[Pp]rojects?|[Dd]inner|[Ll]unch|[Bb]reakfast|[Mm]eals?|[Nn]otes?|[Mm]essages?|[Ee]mails?|[Ii]nbox|[Rr]epl(?:y|ies)|[Rr]esponses?|[Rr]eports?|[Dd]rafts?|[Dd]ocuments?|[Cc]onversations?|[Ww]eather|[Dd]ate|[Tt]ime|[Ss]tats?)`;
+const PRIVATE_SPORTS_SUBJECT_PATTERN = String.raw`(?:i|me|you|we|us|he|him|she|her|it|they|them|this|that|these|those|my|mine|our|ours|your|yours|his|hers|its|their|theirs|someone|somebody|anyone|anybody|everyone|everybody|nobody|none|(?:the\s+)?(?:mom|mum|dad|mother|father|brother|sister|son|daughter|kids?|child|children|husband|wife|partner|friends?|team|group|club))`;
+const PRIVATE_STATUS_SHORTHAND_SUBJECT_PATTERN = String.raw`(?:is|are|am|was|were|will|would|can|could|should|do|does|did|leave|keep|make|check|tell|be|${PRIVATE_SPORTS_SUBJECT_PATTERN}|${PERSONAL_TODAY_SUBJECT_PATTERN}|(?:the\s+)?(?:garage|door|window|office|home|house|room|lights?|appliances?|car|vehicle))`;
+const PRIVATE_LOCAL_STATUS_SUBJECT_PATTERN = String.raw`(?:[Tt]he\s+)?(?:[$\w.\/&,'\u2019.-]+\s+){0,5}(?:[Gg]arage|[Dd]oors?|[Ww]indows?|[Oo]ffice|[Hh]ome|[Hh]ouse|[Rr]ooms?|[Ll]ights?|[Aa]ppliances?|[Cc]ars?|[Vv]ehicles?)`;
+const PRIVATE_TIME_LOCATION_SUBJECT_PATTERN = String.raw`(?:i|me|you|we|us|they|them|he|him|she|her|it|this|that|my|our|your|their|here|there|now|right\s+now|today|tonight|please|home|work|office|device|phone|watch|computer|system|app)`;
+const PUBLIC_SHOWTIME_PATTERN = String.raw`(?:movie\s+showtimes?|showtimes?|movie\s+times?|screening\s+times?)`;
+const PUBLIC_EVENT_CATEGORY_PATTERN = String.raw`(?:concerts?|shows?|performances?|festivals?|exhibitions?|exhibits?|plays?|musicals?|comedy\s+shows?|open\s+mics?|meetups?|fairs?|markets?|parades?|screenings?|movies?|sports\s+events?|tournaments?|classes?|workshops?|${PUBLIC_SHOWTIME_PATTERN})`;
+const PUBLIC_INCIDENT_NOUN_PATTERN = String.raw`(?:cases?|outages?|incidents?|alerts?|warnings?|closures?|restrictions?|advisories?)`;
+const BARE_LIVE_DATA_NOUN_PATTERN = String.raw`(?:scores?|prices?|polls?|standings?|rankings?|odds|rates?|results?|games?|matches?|fixtures?|traffic|air\s+quality|delays?|cancellations?|cancelations?|availability|population|counts?|totals?|${PUBLIC_SHOWTIME_PATTERN}|${PUBLIC_INCIDENT_NOUN_PATTERN})`;
+const FIAT_CURRENCY_CODE_PATTERN = String.raw`(?:usd|eur|gbp|jpy|cad|aud|chf|cny|hkd|nzd|sek|nok|dkk|inr|brl|mxn|zar|sgd|krw|pln|try)`;
+const FIAT_CURRENCY_PAIR_PATTERN = String.raw`${FIAT_CURRENCY_CODE_PATTERN}\s*[\/.-]\s*${FIAT_CURRENCY_CODE_PATTERN}`;
+const PUBLIC_MATCHUP_SUBJECT_PATTERN = String.raw`(?:[$\w.\/&,'\u2019.-]+\s+){0,4}[$\w.\/&,'\u2019.-]+`;
+
 const TOOL_AWARE_RULES: ToolAwareRule[] = [
   {
     intent: "weather",
@@ -112,7 +128,69 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     intent: "research",
     patterns: [
       /\b(search\s+(up|for)?|look\s+up|lookup|google|find|research|investigate)\b/i,
-      /\b(latest|current|recent|today'?s?|news|sources?|articles?|updates?)\b/i,
+      /\b(?:latest|current|recent)\s+(?:[$\w.\/&,'\u2019-]+\s+){0,6}(?:news|stories?|docs?|documentation|events?|games?|matches?|fixtures?|schedules?|hours?|opening\s+hours|business\s+hours|store\s+hours|updates?|developments?|situations?|sources?|articles?|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|delays?|cancellations?|cancelations?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\b/i,
+      new RegExp(String.raw`\b(?:latest|current|recent)\s+(?:[$\w.\/&,'\u2019-]+\s+){0,6}${PUBLIC_SHOWTIME_PATTERN}\b`, "i"),
+      new RegExp(String.raw`\b(?:latest|current|recent)\s+(?!(?:my|our|your|their|his|her)\b)(?:[$\w.\/&,'\u2019-]+\s+){0,6}${PUBLIC_INCIDENT_NOUN_PATTERN}\b`, "i"),
+      /\b(?:latest|current|recent)\s+(?:[$\w.\/&-]+\s+){0,6}(?:models?|products?|services?|features?|capabilities?)\b/i,
+      /\b(?:latest|current|recent)\s+(?:[$\w.\/&-]+\s+){0,6}(?:presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)\b/i,
+      /\b(?:latest|current|recent)\s+(?:on|about|for|in|with)\b/i,
+      /\b(?:latest|current|recent)\s+(?:S&P\s*500|NASDAQ(?:\s+Composite)?|Dow(?:\s+Jones)?(?:\s+Industrial\s+Average)?|Russell\s*2000|[$][A-Za-z]{1,8}|[A-Z]{1,6}(?:[\/.-][A-Z]{1,6})?)\b/,
+      new RegExp(String.raw`\b(?:latest|current|recent)\s+${FIAT_CURRENCY_PAIR_PATTERN}\b`, "i"),
+      /\b(?:latest|current|recent)\s+(?:s&p\s*500|nasdaq(?:\s+composite)?|dow(?:\s+jones)?(?:\s+industrial\s+average)?|russell\s*2000|tsla|aapl|nvda|msft|amzn|meta|googl?|nflx|spy|qqq|spx|btc(?:\/usd)?|eth(?:\/usd)?|sol|xrp|doge|ada)\b/i,
+      /\b(?:latest|current|recent)\s+(?!(?:i|me|you|we|us|they|them|he|she|it|my|our|this|that|your|their|one|ones|thing|things|stuff|item|items|reply|replies|response|responses|answer|answers|question|questions|prompt|prompts|request|requests|report|reports|draft|drafts|document|documents|doc|docs|conversation|conversations|message|messages|email|emails|inbox|calendar|events?|schedule|schedules|meeting|meetings|appointment|appointments|reminder|reminders|task|tasks|to-?dos?|note|notes|time(?:\s*zone)?)\b)(?:[A-Z][A-Za-z0-9&.-]*(?:\s+[A-Z][A-Za-z0-9&.-]*){0,5})\s*\??$/i,
+      new RegExp(String.raw`\b(?:current|local)\s+time(?:\s*zone)?\s+(?:in|at|for)\s+(?!${PRIVATE_TIME_LOCATION_SUBJECT_PATTERN}\b)(?:[$\w.\/&,'\u2019-]+\s*){1,6}\??\s*$`, "i"),
+      new RegExp(String.raw`\b(?:current|local)\s+time(?:\s*zone)?\s+(?!(?:(?:in|at|for|on)|${PRIVATE_TIME_LOCATION_SUBJECT_PATTERN})\b)(?:[$\w.\/&,'\u2019-]+\s*){1,6}\??\s*$`, "i"),
+      /\bwhat\s+time\s+is\s+it\s+(?:in|at)\s+(?!(?:my|our|your|their)\b)(?:[$\w.\/&,'\u2019-]+\s+){0,5}[$\w.\/&,'\u2019-]+(?:\s+(?:now|right\s+now))?\s*\??\s*$/i,
+      new RegExp(String.raw`^\s*(?!(?:[Hh]ey|[Hh]ello|[Hh]i|[Yy]o|JARVIS|Jarvis|jarvis|Travis|travis|i|me|you|we|us|they|them|he|she|it|my|our|this|that|your|their|one|ones|thing|things|stuff|item|items|reply|replies|response|responses|answer|answers|question|questions|prompt|prompts|request|requests|report|reports|draft|drafts|document|documents|doc|docs|conversation|conversations|message|messages|email|emails|inbox|calendar|events?|schedule|schedules|meeting|meetings|appointment|appointments|reminder|reminders|task|tasks|to-?dos?|note|notes|${PERSONAL_TODAY_SUBJECT_PATTERN})\b)(?:[A-Z][A-Za-z0-9&.'\u2019-]*(?:\s+[A-Z][A-Za-z0-9&.'\u2019-]*){1,5})\s+today\s*\??\s*$`),
+      new RegExp(String.raw`^\s*${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:today|tonight|now|right\s+now)\s*\??\s*$`, "i"),
+      /\b(?:S&P\s*500|NASDAQ(?:\s+Composite)?|Dow(?:\s+Jones)?(?:\s+Industrial\s+Average)?|Russell\s*2000|[$][A-Za-z]{1,8}|(?!I\b)[A-Z]{1,6}(?:[\/.-][A-Z]{1,6})?)\s+(?:today|currently|recently|now|right\s+now)\b/,
+      new RegExp(String.raw`\b${FIAT_CURRENCY_PAIR_PATTERN}\s+(?:today|currently|recently|now|right\s+now)\b`, "i"),
+      /\b(?:s&p\s*500|nasdaq(?:\s+composite)?|dow(?:\s+jones)?(?:\s+industrial\s+average)?|russell\s*2000|tsla|aapl|nvda|msft|amzn|meta|googl?|nflx|spy|qqq|spx|btc(?:\/usd)?|eth(?:\/usd)?|sol|xrp|doge|ada)\s+(?:today|currently|recently|now|right\s+now)\b/i,
+      /^\s*(?:what(?:'s|\s+is)\s+)?(?!(?:my|our|this|that)\b)(?:[$\w.\/&-]+\s+){1,6}latest\s*\??\s*$/i,
+      /\blatest\s+from\b/i,
+      /\bwhat(?:'s|\s+is)?\s+new\s+(?:today|currently|recently|now|right\s+now)\b/i,
+      /\bwhat(?:'s|\s+is)?\s+new\s+(?:in|with|about|at|for|on)\s+(?:[$\w.\/&,-]+\s+){1,8}(?:today|currently|recently|now|right\s+now)\b/i,
+      new RegExp(String.raw`\bhow(?:'s|\s+(?:is|are))\s+${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:doing|performing|trending|looking)\s+(?:today|currently|recently|now|right\s+now)\b`, "i"),
+      /\bwhat(?:'s|\s+is)?\s+(?:happening|going\s+on)\s+today\b/i,
+      /\bwhat\s+happened\s+today\b/i,
+      /\bwhat(?:'s|\s+is)?\s+(?:happening|going\s+on)\s+(?:in|with|to|on|about|at|around|near|for)\s+(?:[$\w.\/&,-]+\s+){1,8}today\b/i,
+      /\bwhat\s+happened\s+(?:in|with|to|on|about|at|around|near|for)\s+(?:[$\w.\/&,-]+\s+){1,8}today\b/i,
+      new RegExp(String.raw`\bwhat\s+did\s+${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:announce|say|report|release|publish|post|decide|rule|order|sign|launch|introduce|unveil|confirm|deny|approve|reject|win|lose)\s+(?:today|tonight|yesterday|now|right\s+now)\b`, "i"),
+      new RegExp(String.raw`\bwhat\s+did\s+${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}\s+(?:announce|report|release|publish|post|launch|introduce|unveil)\s+(?:today|tonight|yesterday|now|right\s+now)\b`, "i"),
+      new RegExp(String.raw`^\s*(?!${PRIVATE_STATUS_SHORTHAND_SUBJECT_PATTERN}\b)(?:the\s+)?${PUBLIC_MATCHUP_SUBJECT_PATTERN}\s+(?:vs\.?|versus|at|@)\s+(?!${PRIVATE_STATUS_SHORTHAND_SUBJECT_PATTERN}\b)(?:the\s+)?${PUBLIC_MATCHUP_SUBJECT_PATTERN}\s+(?:today|tonight|tomorrow|now|right\s+now)\s*\??\s*$`, "i"),
+      new RegExp(String.raw`\b(?:who\s+(?:is|are)\s+playing|who\s+plays|(?:is|are)\s+(?!${PRIVATE_SPORTS_SUBJECT_PATTERN}\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}playing|(?:do|does)\s+(?!${PRIVATE_SPORTS_SUBJECT_PATTERN}\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}play)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`, "i"),
+      new RegExp(String.raw`\b(?:is|are)\s+${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`, "i"),
+      new RegExp(String.raw`\b(?:is|are)\s+the\s+${PUBLIC_OPEN_STATUS_PLACE_PATTERN}\s+(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`, "i"),
+      new RegExp(String.raw`\b(?:is|are)\s+(?!${PRIVATE_LOCAL_STATUS_SUBJECT_PATTERN}\b)${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}\s+(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`),
+      new RegExp(String.raw`\b(?:is|are)\s+(?!${PRIVATE_LOCAL_STATUS_SUBJECT_PATTERN}\b)(?!(?:you|we|i|it|this|that|my|our|your|their|his|her|the)\b)(?:[$\w.\/&,'\u2019-]+\s+){1,6}(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`, "i"),
+      new RegExp(String.raw`\b(?:is|are)\s+(?!${PRIVATE_LOCAL_STATUS_SUBJECT_PATTERN}\b)(?!(?:you|we|i|it|this|that|my|our|your|their|his|her|the)\b)(?:[$\w.\/&,'\u2019-]+\s+){1,6}(?:delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`, "i"),
+      new RegExp(String.raw`^\s*${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:open|closed|delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\s*\??\s*$`, "i"),
+      new RegExp(String.raw`^\s*(?!(?:my|our|your|their)\b)(?:[$\w.\/&,'\u2019.-]+\s+){0,4}(?:schools?|school\s+districts?|campuses?)\s+(?:open|closed|delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\s*\??\s*$`, "i"),
+      new RegExp(String.raw`^\s*(?!${PRIVATE_STATUS_SHORTHAND_SUBJECT_PATTERN}\b)(?!${PRIVATE_LOCAL_STATUS_SUBJECT_PATTERN}\b)(?:[$\w.\/&,'\u2019.-]+\s+){1,6}(?:open|closed|delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\s*\??\s*$`, "i"),
+      new RegExp(String.raw`\bdid\s+(?!${PRIVATE_SPORTS_SUBJECT_PATTERN}\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}(?:win|lose|play)\s+(?:today|tonight|yesterday)\b`, "i"),
+      /\bwho\s+(?:won|lost)\s+(?:today|tonight|yesterday)\b/i,
+      /\b(?:stock\s+market|stocks?|markets?)\b.{0,60}\b(?:today|currently|recently|latest|now|right\s+now)\b/i,
+      /\b(?:news|updates?|sources?|articles?)\s+(?:today|currently|recently|latest|on|about|for)\b/i,
+      /\bheadlines?\s+(?:today|currently|recently|latest)\b/i,
+      /\btoday(?:['\u2019]s|s)?\s+(?:top\s+)?stories?\b/i,
+      /\b(?:top\s+)?stories?\s+(?:today|currently|recently|latest|now|right\s+now)\b/i,
+      new RegExp(String.raw`^\s*${BARE_LIVE_DATA_NOUN_PATTERN}\s+(?:today|tonight|currently|recently|latest|now|right\s+now)\s*\??\s*$`, "i"),
+      new RegExp(String.raw`^\s*today(?:['\u2019]s|s)\s+(?!${PERSONAL_TODAY_SUBJECT_PATTERN}\b)(?:[$\w.\/&,'\u2019-]+\s*){1,8}\??\s*$`, "i"),
+      /\btoday(?:['\u2019]s|s)?\s+(?:[$\w.\/&-]+\s+){0,6}(?:news|stories?|events?|games?|matches?|fixtures?|schedules?|hours?|opening\s+hours|business\s+hours|store\s+hours|updates?|developments?|situations?|sources?|articles?|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|delays?|cancellations?|cancelations?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\b/i,
+      new RegExp(String.raw`\btoday(?:['\u2019]s|s)?\s+(?:[$\w.\/&,'\u2019-]+\s+){0,6}${PUBLIC_SHOWTIME_PATTERN}\b`, "i"),
+      /\b(?:news|updates?|sources?)\b/i,
+      /^\s*(?:the\s+)?headlines?\s*\??\s*$/i,
+      /\b(?:[$\w.\/&-]+\s+){1,6}(?:news|updates?)\b/i,
+      /^\s*(?!(?:my|our|your|their|his|her)\b)(?:[$\w.\/&,'\u2019-]+\s+){1,6}articles?\s*\??\s*$/i,
+      /\b(?:[$\w.\/&,'\u2019-]+\s+){1,6}(?:stories?|events?|games?|matches?|fixtures?|schedules?|hours?|opening\s+hours|business\s+hours|store\s+hours|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|delays?|cancellations?|cancelations?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|developments?|situations?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\s+(?:today|currently|recently|latest|now|right\s+now)\b/i,
+      new RegExp(String.raw`\b(?:[$\w.\/&,'\u2019-]+\s+){0,6}${PUBLIC_SHOWTIME_PATTERN}\s+(?:today|tonight|tomorrow|currently|recently|latest|now|right\s+now)\b`, "i"),
+      new RegExp(String.raw`\b(?!(?:my|our|your|their|his|her)\b)(?:[$\w.\/&,'\u2019-]+\s+){1,6}${PUBLIC_INCIDENT_NOUN_PATTERN}\s+(?:today|tonight|currently|recently|latest|now|right\s+now)\b`, "i"),
+      /\b(?:stories?|events?|games?|matches?|fixtures?|schedules?|hours?|opening\s+hours|business\s+hours|store\s+hours|headlines?|videos?|uploads?|posts?|information|info|data|traffic|quality|conditions?|prices?|scores?|results?|delays?|cancellations?|cancelations?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|developments?|situations?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?)\s+(?:of|for|from|in|on|at|near|around|about|with)\s+(?:[$\w.\/&,-]+\s+){1,8}(?:today|currently|recently|latest|now|right\s+now)\b/i,
+      new RegExp(String.raw`\b${PUBLIC_SHOWTIME_PATTERN}\s+(?:of|for|from|in|on|at|near|around|about|with)\s+(?:[$\w.\/&,'\u2019-]+\s+){1,8}(?:today|tonight|tomorrow|currently|recently|latest|now|right\s+now)\b`, "i"),
+      new RegExp(String.raw`^\s*(?:(?:are|is)\s+there\s+)?(?:(?:any|an?|some)\s+)?(?:new\s+)?${PUBLIC_EVENT_CATEGORY_PATTERN}\s+(?:today|tonight|tomorrow|this\s+(?:weekend|week|month))\s*\??\s*$`, "i"),
+      new RegExp(String.raw`\b${PUBLIC_EVENT_CATEGORY_PATTERN}\s+(?:in|near|around|at)\s+(?:[$\w.\/&,-]+\s+){1,8}(?:today|tonight|tomorrow|this\s+(?:weekend|week|month))\b`, "i"),
+      new RegExp(String.raw`\b${PUBLIC_EVENT_CATEGORY_PATTERN}\s+(?:today|tonight|tomorrow|this\s+(?:weekend|week|month))\s+(?:in|near|around|at)\s+(?!(?:my|our)\b)(?:[$\w.\/&,-]+\s+){0,7}[$\w.\/&,-]+\s*\??$`, "i"),
+      /\b(?:presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)\s+(?:of|for|at|in)\s+(?:[$\w.\/&,-]+\s+){1,8}(?:today|currently|recently|latest|now|right\s+now)\b/i,
     ],
     capabilityIds: ["research", "browser"],
     toolGroups: ["research", "browser"],
@@ -207,24 +285,82 @@ function unique<T>(values: T[]): T[] {
   return Array.from(new Set(values));
 }
 
+function isPrivateCalendarEventQuery(query: string): boolean {
+  return (
+    /\b(?:my|our)\s+(?:[\w.-]+\s+){0,2}calendar\b/i.test(query) ||
+    /\b(?:my|our)\s+(?:calendar\s+)?(?:events?|meetings?|appointments?)\b/i.test(query) ||
+    /\bevents?\s+(?:are\s+)?(?:on|in|for)\s+(?:my|our)\s+calendar\b/i.test(query) ||
+    /\b(?:my|our)\s+(?:calendar\s+)?schedule\b/i.test(query) ||
+    /\bon\s+(?:my|our)\s+schedule\b/i.test(query) ||
+    /\bschedule\s+(?:on|in|for)\s+(?:my|our)\s+calendar\b/i.test(query)
+  );
+}
+
+const MIXED_RESEARCH_LIVE_NOUN_PATTERN = String.raw`(?:news|stories?|docs?|documentation|updates?|headlines?|articles?|sources?|events?|games?|matches?|fixtures?|schedules?|hours?|opening\s+hours|business\s+hours|store\s+hours|videos?|uploads?|posts?|information|info|data|traffic|air\s+quality|quality|conditions?|prices?|scores?|results?|delays?|cancellations?|cancelations?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|developments?|situations?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?|${PUBLIC_EVENT_CATEGORY_PATTERN}|${PUBLIC_INCIDENT_NOUN_PATTERN})`;
+const MIXED_RESEARCH_COMMAND_PREFIX_PATTERN = String.raw`(?:(?:(?:can|could|would|will)\s+you\s+|please\s+)?(?:tell|give|show|find|get|bring|check)\s+(?:(?:me|us)\s+)?)?`;
+const MIXED_RESEARCH_CLAUSE_START_PATTERN = String.raw`${MIXED_RESEARCH_COMMAND_PREFIX_PATTERN}(?:what(?:'s|\s+is)\s+(?:happening|going\s+on)\b|what\s+happened\b|(?:the\s+)?(?:latest|current|recent)\b|${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:today|tonight|now|right\s+now)\b|(?:[$\w.\/&,'\u2019-]+\s+){0,6}${MIXED_RESEARCH_LIVE_NOUN_PATTERN}\b)`;
+const MIXED_RESEARCH_CLAUSE_SEPARATOR = new RegExp(
+  String.raw`(?:\s+(?:and|also|plus|then|along\s+with|together\s+with|as\s+well\s+as)\s+|\s+with\s+|[,;]+\s*)(?=${MIXED_RESEARCH_CLAUSE_START_PATTERN})|[.!?]+(?:\s+(?=${MIXED_RESEARCH_CLAUSE_START_PATTERN})|$)`,
+  "i",
+);
+
+function hasExplicitWebResearchCommand(query: string): boolean {
+  return (
+    /\b(?:search\s+(?:the\s+)?(?:web|internet)|web\s+search|google(?!\s+(?:[\w.-]+\s+){0,2}calendar\b)|research|investigate)\b/i.test(query) ||
+    /\b(?:search\s+(?:up|for)|look\s+up|lookup)\b.{0,80}\b(?:how\s+to|why|what|when|where|whether|sources?|articles?|docs?|documentation|online|web|internet)\b/i.test(query) ||
+    /\b(?:search(?:\s+(?:up|for))?|look\s+up|lookup)\b.{0,80}\b(?:latest|current|recent)\s+(?:[$\w.\/&,'\u2019-]+\s+){0,5}(?:updates?|news|announcements?|changes?|information|info)\b/i.test(query)
+  );
+}
+
+function hasSeparateResearchClause(query: string): boolean {
+  const clauses = query
+    .split(MIXED_RESEARCH_CLAUSE_SEPARATOR)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+
+  return clauses.some((clause) => {
+    if (isPrivateCalendarEventQuery(clause)) return false;
+    return TOOL_AWARE_RULES.some(
+      (rule) =>
+        rule.intent === "research" &&
+        rule.patterns.some((pattern) => pattern.test(clause)),
+    );
+  });
+}
+
 export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
-  const query = text.trim();
+  const query = text.trim().replace(/[\u2018\u2019]/g, "'");
   if (!query) return EMPTY_PLAN;
   const ontology = classifyActionOntology(query);
   const toolResolution = resolveToolsForAction(ontology);
 
-  const matched = TOOL_AWARE_RULES.filter((rule) =>
+  const ruleMatches = TOOL_AWARE_RULES.filter((rule) =>
     rule.patterns.some((pattern) => pattern.test(query)),
   );
+  const shouldSuppressResearch =
+    isPrivateCalendarEventQuery(query) &&
+    ruleMatches.some((rule) => rule.intent === "calendar") &&
+    !hasExplicitWebResearchCommand(query) &&
+    !hasSeparateResearchClause(query);
+  const matched = shouldSuppressResearch ? ruleMatches.filter((rule) => rule.intent !== "research") : ruleMatches;
+  const ontologyToolGroups = shouldSuppressResearch
+    ? ontology.allowedToolGroups.filter((group) => group !== "research" && group !== "browser")
+    : ontology.allowedToolGroups;
+  const resolverPriorityToolNames = shouldSuppressResearch
+    ? []
+    : [...toolResolution.requiredToolNames, ...toolResolution.optionalToolNames];
+  const toolResolverReason = shouldSuppressResearch
+    ? "Private calendar lookup is limited to connected-account calendar tools."
+    : toolResolution.reason;
   if (matched.length === 0) {
     return {
       intents: [],
       capabilityIds: [],
-      toolGroups: ontology.allowedToolGroups,
-      priorityToolNames: [...toolResolution.requiredToolNames, ...toolResolution.optionalToolNames],
+      toolGroups: ontologyToolGroups,
+      priorityToolNames: resolverPriorityToolNames,
       blockedToolNames: toolResolution.blockedToolNames,
-      guidance: ontology.actionType === "unknown" ? "" : `- ${ontology.reason}\n- Tool resolver: ${toolResolution.reason}`,
-      shouldPreferTool: toolResolution.requiredToolNames.length > 0 || toolResolution.optionalToolNames.length > 0 || ontology.actionType === "blocked_physical_action",
+      guidance: ontology.actionType === "unknown" ? "" : `- ${ontology.reason}\n- Tool resolver: ${toolResolverReason}`,
+      shouldPreferTool: resolverPriorityToolNames.length > 0 || ontology.actionType === "blocked_physical_action",
       actionType: ontology.actionType,
       actor: ontology.actor,
       approvalRequired: toolResolution.approvalRequired,
@@ -235,17 +371,16 @@ export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
   return {
     intents: matched.map((rule) => rule.intent),
     capabilityIds: unique(matched.flatMap((rule) => rule.capabilityIds)),
-    toolGroups: unique([...matched.flatMap((rule) => rule.toolGroups), ...ontology.allowedToolGroups]),
+    toolGroups: unique([...matched.flatMap((rule) => rule.toolGroups), ...ontologyToolGroups]),
     priorityToolNames: unique([
       ...matched.flatMap((rule) => rule.priorityToolNames),
-      ...toolResolution.requiredToolNames,
-      ...toolResolution.optionalToolNames,
+      ...resolverPriorityToolNames,
     ]),
     blockedToolNames: toolResolution.blockedToolNames,
     guidance: [
       ...matched.map((rule) => `- ${rule.guidance}`),
       `- Action ownership: ${ontology.reason}`,
-      `- Tool resolver: ${toolResolution.reason}`,
+      `- Tool resolver: ${toolResolverReason}`,
     ].join("\n"),
     shouldPreferTool: true,
     actionType: ontology.actionType,
