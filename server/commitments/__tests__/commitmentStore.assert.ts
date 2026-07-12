@@ -86,6 +86,12 @@ function testCommitmentStorageContract(): void {
   assert.match(ci, /pgvector\/pgvector:pg16/);
   const testRunner = read("scripts/run-agent-tests.mjs");
   assert.match(testRunner, /scripts\/prepare-test-database\.ts/);
+  const testDatabasePreparer = read("scripts/prepare-test-database.ts");
+  assert.match(testDatabasePreparer, /JARVIS_TEST_DATABASE_URL/);
+  assert.match(testDatabasePreparer, /drizzle-kit/);
+  assert.match(testDatabasePreparer, /CREATE EXTENSION IF NOT EXISTS vector/);
+  assert.match(testDatabasePreparer, /\[drizzleCli, "push", "--force"\]/);
+  assert.match(testDatabasePreparer, /await import\("\.\.\/server\/db"\)/);
   console.log("OK: commitment storage and read paths enforce the typed contract");
 }
 
