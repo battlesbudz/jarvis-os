@@ -450,6 +450,24 @@ assertRoute(
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
 );
+for (const query of [
+  "are there concerts today?",
+  "any movies tonight?",
+  "is there a concert tomorrow?",
+  "are there any workshops this weekend?",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+{
+  const plan = classifyToolAwareRoute("are there meetings today?");
+  assert(!plan.intents.includes("research"), "prefixed personal meetings: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "prefixed personal meetings: does not prioritize web search");
+}
 assertRoute(
   "movies today",
   "research",
