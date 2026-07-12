@@ -1051,6 +1051,16 @@ assertRoute(
   assert(!plan.intents.includes("research"), "casual playing question: does not route as research");
   assert(plan.priorityToolNames.length === 0, "casual playing question: no priority tools");
 }
+for (const [query, label] of [
+  ["does she play tomorrow?", "third-person singular play follow-up"],
+  ["do they play tomorrow?", "third-person plural play follow-up"],
+  ["is he playing tonight?", "third-person playing follow-up"],
+  ["did they win yesterday?", "third-person result follow-up"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: does not prioritize web search`);
+}
 {
   const plan = classifyToolAwareRoute("does my son play tomorrow?");
   assert(!plan.intents.includes("research"), "family play schedule: does not route as research");
