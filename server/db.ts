@@ -103,12 +103,14 @@ export async function ensureTablesExist() {
         password TEXT,
         google_id TEXT UNIQUE,
         display_name TEXT,
+        email TEXT,
         created_at TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
     await db.execute(sql`ALTER TABLE users ALTER COLUMN password DROP NOT NULL`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id TEXT UNIQUE`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT`).catch(handleSchemaStepError);
+    await db.execute(sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT`).catch(handleSchemaStepError);
 
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS plans (
