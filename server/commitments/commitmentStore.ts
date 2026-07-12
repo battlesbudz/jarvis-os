@@ -110,6 +110,8 @@ function explicitTopicKey(value: string): string {
   return value
     .trim()
     .toLowerCase()
+    .replace(/^kind:[^:]+:/, "")
+    .replace(/^(?:topic[:_])+/, "")
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .slice(0, 120);

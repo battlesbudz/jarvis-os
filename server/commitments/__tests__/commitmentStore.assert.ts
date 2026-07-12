@@ -138,6 +138,14 @@ function testCanonicalCommitmentKeys(): void {
     "topic:service_config_missing_secret",
   );
   assert.equal(
+    canonicalCommitmentDedupeKey("First wording", "topic:service_config_missing_secret"),
+    "topic:service_config_missing_secret",
+  );
+  assert.equal(
+    canonicalCommitmentDedupeKey("First wording", "topic:topic_service_config_missing_secret"),
+    "topic:service_config_missing_secret",
+  );
+  assert.equal(
     canonicalCommitmentDedupeKey("  Review   the checklist tomorrow. "),
     canonicalCommitmentDedupeKey("review the CHECKLIST tomorrow."),
   );
@@ -148,6 +156,14 @@ function testCanonicalCommitmentKeys(): void {
   assert.notEqual(
     scopedCommitmentDedupeKey("user_task", "Review the checklist.", "review-checklist"),
     scopedCommitmentDedupeKey("operational_incident", "Review the checklist.", "review-checklist"),
+  );
+  assert.equal(
+    scopedCommitmentDedupeKey(
+      "user_task",
+      "Review the checklist.",
+      "kind:operational_incident:topic:review_checklist",
+    ),
+    "kind:user_task:topic:review_checklist",
   );
   console.log("OK: commitment dedupe keys are stable and domain-independent");
 }
