@@ -93,6 +93,7 @@ export interface BuildGroundedEvidencePacketInput {
 export interface RenderGroundedEvidencePacketOptions {
   maxChars?: number;
   includeInstructions?: boolean;
+  compact?: boolean;
 }
 
 let groundedEvidencePacketDepsForTesting: GroundedEvidencePacketDeps | null = null;
@@ -481,10 +482,53 @@ function renderEvidenceLine(item: GroundedEvidenceItem, index: number): string {
   return `${index + 1}. [${item.domain}/${item.label}] (${metadata}) ${truncateText(item.content, 260)}`;
 }
 
+function renderCompactLimits(packet: GroundedEvidencePacket, maxChars: number): string {
+  const groups = [
+    { label: "omitted", details: packet.omitted },
+    { label: "uncertainty", details: packet.uncertainty },
+  ].filter((group) => group.details.length > 0);
+  if (groups.length === 0) return "LIMITS: none reported.";
+
+  const prefix = "LIMITS: ";
+  const labelsAndSeparators = groups.reduce((total, group) => total + group.label.length + 1, 0) +
+    Math.max(0, groups.length - 1) * 2;
+  const contentBudget = Math.max(groups.length * 8, maxChars - prefix.length - labelsAndSeparators);
+  const perGroupBudget = Math.max(8, Math.floor(contentBudget / groups.length));
+  return `${prefix}${groups.map((group) => (
+    `${group.label}=${truncateText(group.details.join(" "), perGroupBudget)}`
+  )).join("; ")}`;
+}
+
+function renderCompactEvidencePacket(packet: GroundedEvidencePacket, maxChars: number): string {
+  const limitBudget = Math.min(160, Math.max(48, Math.floor(maxChars * 0.28)));
+  const limitsLine = renderCompactLimits(packet, limitBudget);
+  const opening = [
+    "## Jarvis Grounded Evidence Packet",
+    "Use only EVIDENCE. Treat LIMITS as incomplete context and admit when a fact is not loaded.",
+    limitsLine,
+    "EVIDENCE:",
+  ];
+  if (packet.evidence.length === 0) {
+    return truncateText([...opening, "- No grounded evidence loaded for this turn."].join("\n"), maxChars);
+  }
+
+  const openingText = opening.join("\n");
+  const available = Math.max(48, maxChars - openingText.length - packet.evidence.length);
+  const perItemBudget = Math.max(36, Math.floor(available / packet.evidence.length));
+  const evidenceLines = packet.evidence.map((item) => {
+    const prefix = `- [${item.domain}] (id=${item.id}) `;
+    const contentBudget = Math.max(8, perItemBudget - prefix.length);
+    return `${prefix}${truncateText(item.content, contentBudget)}`;
+  });
+  return truncateText([openingText, ...evidenceLines].join("\n"), maxChars);
+}
+
 export function renderGroundedEvidencePacket(
   packet: GroundedEvidencePacket,
   options: RenderGroundedEvidencePacketOptions = {},
 ): string {
+  const maxChars = options.maxChars ?? DEFAULT_RENDER_MAX_CHARS;
+  if (options.compact) return renderCompactEvidencePacket(packet, maxChars);
   const includeInstructions = options.includeInstructions ?? true;
   const lines: string[] = [
     "## Jarvis Grounded Evidence Packet",
@@ -530,13 +574,16 @@ export function renderGroundedEvidencePacket(
     lines.push("", "Uncertainty:", ...packet.uncertainty.map((entry) => `- ${entry}`));
   }
 
-  return truncateText(lines.join("\n"), options.maxChars ?? DEFAULT_RENDER_MAX_CHARS);
+  return truncateText(lines.join("\n"), maxChars);
 }
 
 export async function buildGroundedEvidencePacketPrompt(
-  input: BuildGroundedEvidencePacketInput & { renderMaxChars?: number },
+  input: BuildGroundedEvidencePacketInput & { renderMaxChars?: number; compact?: boolean },
   deps?: GroundedEvidencePacketDeps,
 ): Promise<string> {
   const packet = await buildGroundedEvidencePacket(input, deps);
-  return renderGroundedEvidencePacket(packet, { maxChars: input.renderMaxChars ?? DEFAULT_RENDER_MAX_CHARS });
+  return renderGroundedEvidencePacket(packet, {
+    maxChars: input.renderMaxChars ?? DEFAULT_RENDER_MAX_CHARS,
+    compact: input.compact,
+  });
 }

@@ -548,6 +548,177 @@ async function testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp() {
   }
 }
 
+async function testAndroidLocalGemmaFitsValidated512TokenProfileBeforeGeneration() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    if (op.type === "android_local_model_status") {
+      return {
+        ok: true,
+        data: {
+          engineValidatedContextTokens: 512,
+          engineValidatedProfileId: "gpu-standard-512",
+          engineValidatedProfileLabel: "GPU standard 512",
+        },
+      };
+    }
+    return {
+      ok: true,
+      data: { text: "Profile-aware local answer.", finishReason: "stop" },
+    };
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "system", content: `Keep the answer grounded. ${"older context ".repeat(180)}` },
+        { role: "user", content: "LATEST_512_USER_REQUEST: What do you know about me?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-512",
+    }));
+
+    assert.equal(result.textContent, "Profile-aware local answer.");
+    assert.deepEqual(requests.map((request) => request.op.type), [
+      "android_local_model_status",
+      "android_local_model_generate",
+    ]);
+    const generateOp = requests[1].op;
+    assert.equal(generateOp.contextTokens, 512);
+    assert.equal(generateOp.maxTokens, 128);
+    assert.match(generateOp.prompt, /LATEST_512_USER_REQUEST/);
+    const nativePromptCeiling = (generateOp.contextTokens - generateOp.maxTokens - 64) * 3;
+    assert.ok(
+      generateOp.prompt.length <= nativePromptCeiling,
+      `prompt length ${generateOp.prompt.length} should fit native ceiling ${nativePromptCeiling}`,
+    );
+    console.log("OK: Android Local Gemma fits prompts to the validated 512-token profile before generation");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaFitsToolProtocolInsideValidated512TokenProfile() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    if (op.type === "android_local_model_status") {
+      return {
+        ok: true,
+        data: {
+          engineValidatedContextTokens: 512,
+          engineValidatedProfileId: "gpu-standard-512",
+        },
+      };
+    }
+    return {
+      ok: true,
+      data: {
+        text: JSON.stringify({
+          type: "tool_calls",
+          tool_calls: [{ name: "daemon_action", arguments: { action: "android_screenshot" } }],
+        }),
+        finishReason: "stop",
+      },
+    };
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Can you screenshot my phone?" }],
+      tools: [{
+        type: "function",
+        function: {
+          name: "daemon_action",
+          description: "Perform an Android daemon action.",
+          parameters: {
+            type: "object",
+            properties: {
+              action: { type: "string", enum: ["android_read_screen", "android_screenshot", "android_tap"] },
+            },
+            required: ["action"],
+          },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "lookup_memory",
+          description: "Look up a local memory entry.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "get_youtube_transcript",
+          description: "Fetch a transcript for a YouTube URL.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-tool-512",
+    }));
+
+    assert.equal(result.finishReason, "tool_calls");
+    const generateOp = requests.find((request) => request.op.type === "android_local_model_generate")!.op;
+    assert.match(generateOp.prompt, /Return ONLY one JSON object/);
+    assert.match(generateOp.prompt, /Tool call:/);
+    assert.match(generateOp.prompt, /Final:/);
+    assert.match(generateOp.prompt, /Available tools:/);
+    assert.match(generateOp.prompt, /daemon_action/);
+    assert.match(generateOp.prompt, /Can you screenshot my phone\?/);
+    assert.ok(generateOp.prompt.length <= (512 - 128 - 64) * 3);
+    console.log("OK: Android Local Gemma fits its tool protocol inside the validated 512-token profile");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaFallsBackWhenValidatedProfileStatusIsUnavailable() {
+  const previousContextTokens = process.env.ANDROID_LOCAL_GEMMA_CONTEXT_TOKENS;
+  process.env.ANDROID_LOCAL_GEMMA_CONTEXT_TOKENS = "1024";
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    if (op.type === "android_local_model_status") {
+      return { ok: false, error: "Older APK does not expose local model status." };
+    }
+    return {
+      ok: true,
+      data: { text: "Fallback local answer.", finishReason: "stop" },
+    };
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Can you still answer locally?" }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-status-fallback",
+    }));
+
+    assert.equal(result.textContent, "Fallback local answer.");
+    assert.deepEqual(requests.map((request) => request.op.type), [
+      "android_local_model_status",
+      "android_local_model_generate",
+    ]);
+    assert.equal(requests[1].op.contextTokens, 1024);
+    assert.ok(requests[1].op.prompt.length <= (1024 - 128 - 64) * 3);
+    console.log("OK: Android Local Gemma falls back to configured budgets when profile status is unavailable");
+  } finally {
+    if (previousContextTokens === undefined) delete process.env.ANDROID_LOCAL_GEMMA_CONTEXT_TOKENS;
+    else process.env.ANDROID_LOCAL_GEMMA_CONTEXT_TOKENS = previousContextTokens;
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaStateCardOmitsDisabledTools() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -1070,6 +1241,7 @@ async function testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit() {
 
 async function testAndroidLocalGemmaUsesGroundedEvidencePacketForPersonalMemoryQuestions() {
   let capturedPrompt = "";
+  let capturedGenerateOp: any = null;
   const memoryContext = (query: string): MemoryContext => ({
     userId: "user-phone-grounded",
     query,
@@ -1111,12 +1283,25 @@ async function testAndroidLocalGemmaUsesGroundedEvidencePacketForPersonalMemoryQ
     }],
   });
   _setAndroidLocalGemmaDaemonOpForTesting(async (_userId, op) => {
-    if (op.type === "android_local_model_generate") capturedPrompt = op.prompt;
+    if (op.type === "android_local_model_status") {
+      return {
+        ok: true,
+        data: {
+          engineValidatedContextTokens: 512,
+          engineValidatedProfileId: "gpu-standard-512",
+          engineValidatedProfileLabel: "GPU standard 512",
+        },
+      };
+    }
+    if (op.type === "android_local_model_generate") {
+      capturedGenerateOp = op;
+      capturedPrompt = op.prompt;
+    }
     return {
       ok: true,
       data: { text: "Jarvis has your name as Justin and a preference for direct answers.", finishReason: "stop" },
     };
-  });
+  }, { forwardStatusOps: true });
 
   try {
     const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
@@ -1134,6 +1319,8 @@ async function testAndroidLocalGemmaUsesGroundedEvidencePacketForPersonalMemoryQ
     assert.match(capturedPrompt, /Preferred name: Justin/);
     assert.match(capturedPrompt, /direct answers with clear next actions/);
     assert.match(capturedPrompt, /id=commitment:grounded-commitment-1/);
+    const nativePromptCeiling = (capturedGenerateOp.contextTokens - capturedGenerateOp.maxTokens - 64) * 3;
+    assert.ok(capturedPrompt.length <= nativePromptCeiling);
     assert.match(result.textContent, /Justin/);
     console.log("OK: Android Local Gemma uses grounded evidence packets for personal memory questions");
   } finally {
@@ -2474,17 +2661,24 @@ async function testAndroidLocalGemmaOmitsCodeProposalSystemPromptForPhoneActions
 }
 
 async function testAndroidLocalGemmaPreservesToolContinuationWhenTrimming() {
-  const previousBudget = process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
-  process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = "1200";
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
 
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
     requests.push({ userId, op, timeoutMs });
+    if (op.type === "android_local_model_status") {
+      return {
+        ok: true,
+        data: {
+          engineValidatedContextTokens: 512,
+          engineValidatedProfileId: "gpu-standard-512",
+        },
+      };
+    }
     return {
       ok: true,
       data: { text: JSON.stringify({ type: "final", content: "I read the local tool result." }), finishReason: "stop" },
     };
-  });
+  }, { forwardStatusOps: true });
 
   try {
     const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
@@ -2519,6 +2713,20 @@ async function testAndroidLocalGemmaPreservesToolContinuationWhenTrimming() {
             required: ["action"],
           },
         },
+      }, {
+        type: "function",
+        function: {
+          name: "lookup_memory",
+          description: "Look up a local memory entry.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "get_youtube_transcript",
+          description: "Fetch a transcript for a YouTube URL.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
       }],
       toolChoice: "auto",
       maxCompletionTokens: 128,
@@ -2527,13 +2735,19 @@ async function testAndroidLocalGemmaPreservesToolContinuationWhenTrimming() {
     }));
 
     assert.equal(result.textContent, "I read the local tool result.");
-    assert.match(requests[0].op.prompt, /CURRENT_TOOL_REQUEST/);
-    assert.match(requests[0].op.prompt, /daemon_action/);
-    assert.match(requests[0].op.prompt, /TOOL_RESULT_TAIL_MARKER/);
+    const generateOp = requests.find((request) => request.op.type === "android_local_model_generate")!.op;
+    assert.equal(generateOp.contextTokens, 512);
+    assert.ok(generateOp.prompt.length <= (512 - 128 - 64) * 3);
+    assert.doesNotMatch(generateOp.prompt, /Earlier prompt context omitted/);
+    assert.match(generateOp.prompt, /Return ONLY one JSON object/);
+    assert.match(generateOp.prompt, /Tool call:/);
+    assert.match(generateOp.prompt, /Final:/);
+    assert.match(generateOp.prompt, /Available tools:/);
+    assert.match(generateOp.prompt, /CURRENT_TOOL_REQUEST/);
+    assert.match(generateOp.prompt, /daemon_action/);
+    assert.match(generateOp.prompt, /TOOL_RESULT_TAIL_MARKER/);
     console.log("OK: Android Local Gemma preserves tool continuation context when trimming");
   } finally {
-    if (previousBudget === undefined) delete process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
-    else process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = previousBudget;
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
 }
@@ -7119,6 +7333,97 @@ async function testAndroidLocalGemmaCancelsTimedOutGeneration() {
   }
 }
 
+async function testAndroidLocalGemmaSkipsStatusProbeForAlreadyAbortedRun() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: {
+        engineValidatedContextTokens: 512,
+        engineValidatedProfileId: "gpu-standard-512",
+      },
+    };
+  }, { forwardStatusOps: true });
+  const controller = new AbortController();
+  controller.abort();
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Hello" }],
+        toolChoice: "none",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone-aborted-before-status",
+        signal: controller.signal,
+      })),
+      (error: unknown) => {
+        assert(error instanceof Error);
+        assert.equal(error.name, "AbortError");
+        return true;
+      },
+    );
+    assert.equal(requests.length, 0);
+    console.log("OK: Android Local Gemma skips profile status when the run is already aborted");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaAbortsDuringStatusProbe() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  let statusStarted: () => void = () => {};
+  let finishStatus: (result: any) => void = () => {};
+  const statusStartedPromise = new Promise<void>((resolve) => {
+    statusStarted = resolve;
+  });
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    if (op.type !== "android_local_model_status") {
+      throw new Error(`Unexpected daemon op after status abort: ${op.type}`);
+    }
+    statusStarted();
+    return new Promise((resolve) => {
+      finishStatus = resolve;
+    });
+  }, { forwardStatusOps: true });
+  const controller = new AbortController();
+
+  try {
+    const turn = accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Hello" }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-aborted-during-status",
+      signal: controller.signal,
+    }));
+
+    await statusStartedPromise;
+    controller.abort();
+    const outcome = await Promise.race([
+      turn.then(() => null, (error) => error),
+      new Promise<Error>((resolve) => {
+        setTimeout(() => resolve(new Error("abort did not settle")), 100);
+      }),
+    ]);
+    finishStatus({
+      ok: true,
+      data: { engineValidatedContextTokens: 512, engineValidatedProfileId: "gpu-standard-512" },
+    });
+
+    assert(outcome instanceof Error);
+    assert.equal(outcome.name, "AbortError");
+    assert.deepEqual(requests.map((request) => request.op.type), ["android_local_model_status"]);
+    console.log("OK: Android Local Gemma aborts promptly while profile status is pending");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaCancelsGenerationWhenRunAborts() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   let generationStarted: () => void = () => {};
@@ -7388,6 +7693,9 @@ async function main() {
   await testGoogleToolResponseMapsOpenAIToolCallIdsToFunctionNames();
   await testOpenAICompatibleUsesLocalUserCredential();
   await testAndroidLocalGemmaUsesAndroidAppDaemonGenerateOp();
+  await testAndroidLocalGemmaFitsValidated512TokenProfileBeforeGeneration();
+  await testAndroidLocalGemmaFitsToolProtocolInsideValidated512TokenProfile();
+  await testAndroidLocalGemmaFallsBackWhenValidatedProfileStatusIsUnavailable();
   await testAndroidLocalGemmaStateCardOmitsDisabledTools();
   await testAndroidLocalGemmaAuditsFalseNotificationDenials();
   await testAndroidLocalGemmaDoesNotAuditUnavailableNotificationDenials();
@@ -7529,6 +7837,8 @@ async function main() {
   await testAndroidLocalGemmaDoesNotSaveEmptyRememberCommands();
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
+  await testAndroidLocalGemmaSkipsStatusProbeForAlreadyAbortedRun();
+  await testAndroidLocalGemmaAbortsDuringStatusProbe();
   await testAndroidLocalGemmaCancelsGenerationWhenRunAborts();
   await testAndroidLocalGemmaExplainsUnbundledEngine();
   await testAndroidLocalGemmaExplainsValidationRequired();

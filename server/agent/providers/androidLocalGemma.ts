@@ -30,6 +30,9 @@ type ChatCompletionFunctionParameters = ChatCompletionFunctionTool["function"]["
 type AndroidLocalGemmaDaemonOp = (
   userId: string,
   op: {
+    type: "android_local_model_status";
+    model?: string;
+  } | {
     type: "android_local_model_generate";
     requestId?: string;
     model: string;
@@ -47,6 +50,7 @@ type AndroidLocalGemmaDaemonOp = (
 ) => Promise<DaemonOpResult>;
 
 let daemonOpForTesting: AndroidLocalGemmaDaemonOp | null = null;
+let forwardStatusOpsForTesting = false;
 
 const DEFAULT_PHONE_GEMMA_TIMEOUT_MS = 60_000;
 const DEFAULT_PHONE_GEMMA_CONTEXT_TOKENS = 2048;
@@ -54,6 +58,10 @@ const DEFAULT_PHONE_GEMMA_MAX_COMPLETION_TOKENS = 128;
 const DEFAULT_PHONE_GEMMA_ALLOW_CPU_FALLBACK = false;
 const DEFAULT_PHONE_GEMMA_PROMPT_CHAR_BUDGET = 3_600;
 const DEFAULT_PHONE_GEMMA_TOOL_LIST_CHAR_BUDGET = 1_600;
+// Keep these aligned with LocalGemmaInferenceEngine.trimPromptForContext on Android.
+const PHONE_GEMMA_PROMPT_CHARS_PER_CONTEXT_TOKEN = 3;
+const PHONE_GEMMA_PROMPT_CONTEXT_RESERVE_TOKENS = 64;
+const PHONE_GEMMA_STATUS_TIMEOUT_MS = 5_000;
 const MAX_TOOL_DESCRIPTION_CHARS = 180;
 const MAX_TOOL_ARGUMENT_NAMES = 12;
 const MIN_REQUIRED_PROMPT_SECTION_CHARS = 80;
@@ -186,6 +194,15 @@ type LocalGemmaStructuredOutput =
   | { type: "final"; content: string }
   | { type: "tool_calls"; toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall[] };
 
+interface PhoneGemmaTurnBudget {
+  contextTokens: number;
+  maxCompletionTokens: number;
+  promptCharBudget: number;
+  toolListCharBudget: number;
+  validatedProfileId?: string;
+  validatedProfileLabel?: string;
+}
+
 function androidLocalGemmaEnv(name: string): string | undefined {
   switch (name) {
     case "ANDROID_LOCAL_GEMMA_ALLOW_CPU_FALLBACK":
@@ -237,12 +254,49 @@ function phoneGemmaAllowCpuFallback(): boolean {
   return boolEnv("ANDROID_LOCAL_GEMMA_ALLOW_CPU_FALLBACK", DEFAULT_PHONE_GEMMA_ALLOW_CPU_FALLBACK);
 }
 
-function phoneGemmaPromptCharBudget(): number {
-  return intEnv("ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET", DEFAULT_PHONE_GEMMA_PROMPT_CHAR_BUDGET, 1_200, 12_000);
+function phoneGemmaPromptCharBudgetCeiling(): number {
+  return intEnv("ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET", DEFAULT_PHONE_GEMMA_PROMPT_CHAR_BUDGET, 384, 12_000);
 }
 
-function phoneGemmaToolListCharBudget(): number {
-  return intEnv("ANDROID_LOCAL_GEMMA_TOOL_LIST_CHAR_BUDGET", DEFAULT_PHONE_GEMMA_TOOL_LIST_CHAR_BUDGET, 500, 6_000);
+function phoneGemmaToolListCharBudgetCeiling(): number {
+  return intEnv("ANDROID_LOCAL_GEMMA_TOOL_LIST_CHAR_BUDGET", DEFAULT_PHONE_GEMMA_TOOL_LIST_CHAR_BUDGET, 120, 6_000);
+}
+
+function phoneGemmaTurnBudget(
+  contextTokens: number,
+  requestedMaxCompletionTokens: number | undefined,
+  validatedProfile: Pick<PhoneGemmaTurnBudget, "validatedProfileId" | "validatedProfileLabel"> = {},
+): PhoneGemmaTurnBudget {
+  const maxCompletionTokens = Math.min(
+    phoneGemmaMaxCompletionTokens(requestedMaxCompletionTokens),
+    Math.max(16, contextTokens - PHONE_GEMMA_PROMPT_CONTEXT_RESERVE_TOKENS - 128),
+  );
+  const nativePromptCharBudget = Math.max(
+    128,
+    contextTokens - maxCompletionTokens - PHONE_GEMMA_PROMPT_CONTEXT_RESERVE_TOKENS,
+  ) * PHONE_GEMMA_PROMPT_CHARS_PER_CONTEXT_TOKEN;
+  const promptCharBudget = Math.min(phoneGemmaPromptCharBudgetCeiling(), nativePromptCharBudget);
+  const toolListCharBudget = Math.min(
+    phoneGemmaToolListCharBudgetCeiling(),
+    Math.max(120, Math.floor(promptCharBudget * 0.35)),
+  );
+  return {
+    contextTokens,
+    maxCompletionTokens,
+    promptCharBudget,
+    toolListCharBudget,
+    ...validatedProfile,
+  };
+}
+
+function fitPhoneGemmaPromptToBudget(prompt: string, maxChars: number): string {
+  if (prompt.length <= maxChars) return prompt;
+  const marker = "\n\n[Earlier prompt context omitted to fit the validated Phone Gemma profile.]\n\n";
+  const bodyBudget = maxChars - marker.length;
+  if (bodyBudget <= 160) return prompt.slice(-maxChars).trimStart();
+  const headChars = Math.floor(bodyBudget * 0.42);
+  const tailChars = bodyBudget - headChars;
+  return `${prompt.slice(0, headChars).trimEnd()}${marker}${prompt.slice(-tailChars).trimStart()}`;
 }
 
 function shouldCancelTimedOutGeneration(result: DaemonOpResult): boolean {
@@ -255,8 +309,12 @@ function createAbortError(message: string): Error {
   return error;
 }
 
-export function _setAndroidLocalGemmaDaemonOpForTesting(fn: AndroidLocalGemmaDaemonOp | null): void {
+export function _setAndroidLocalGemmaDaemonOpForTesting(
+  fn: AndroidLocalGemmaDaemonOp | null,
+  options: { forwardStatusOps?: boolean } = {},
+): void {
   daemonOpForTesting = fn;
+  forwardStatusOpsForTesting = Boolean(fn && options.forwardStatusOps);
 }
 
 function normalizeAndroidLocalGemmaModel(model: string): string {
@@ -2116,13 +2174,13 @@ function toolRelevanceScore(tool: OpenAI.Chat.Completions.ChatCompletionTool, re
 function toolSpecsForPrompt(
   tools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
   requestText: string,
-  budgetLimit: number = phoneGemmaToolListCharBudget(),
+  budgetLimit: number,
 ): string {
   const toolList = (tools || [])
     .filter(isFunctionTool)
     .sort((a, b) => toolRelevanceScore(b, requestText) - toolRelevanceScore(a, requestText));
 
-  const budget = Math.max(160, Math.min(phoneGemmaToolListCharBudget(), budgetLimit));
+  const budget = Math.max(64, budgetLimit);
   const lines: string[] = [];
   let used = 0;
   let omitted = 0;
@@ -2145,7 +2203,9 @@ function toolSpecsForPrompt(
   }
 
   if (omitted > 0) {
-    lines.push(`- ${omitted} lower-relevance tool${omitted === 1 ? "" : "s"} omitted to keep the phone-local prompt small.`);
+    const summary = `- ${omitted} lower-relevance tool${omitted === 1 ? "" : "s"} omitted to keep the phone-local prompt small.`;
+    const remaining = budget - used - (lines.length > 0 ? 1 : 0);
+    if (remaining >= 16) lines.push(truncateText(summary, remaining));
   }
 
   return lines.join("\n");
@@ -2165,7 +2225,11 @@ function availableFunctionToolNamesForTurn(params: ProviderQueryParams): string[
   return Array.from(availableFunctionToolNames(toolsForLocalTurn(params)));
 }
 
-function runtimeStateCardFallback(params: ProviderQueryParams, useToolProtocol: boolean): string {
+function runtimeStateCardFallback(
+  params: ProviderQueryParams,
+  useToolProtocol: boolean,
+  maxChars: number,
+): string {
   const tools = availableFunctionToolNamesForTurn(params);
   return [
     "## Jarvis Runtime State Card",
@@ -2187,23 +2251,25 @@ function runtimeStateCardFallback(params: ProviderQueryParams, useToolProtocol: 
     "",
     "Uncertainty:",
     "- Full runtime state card was unavailable; minimal state was supplied.",
-  ].join("\n");
+  ].join("\n").slice(0, maxChars).trimEnd();
 }
 
 async function runtimeStateCardPromptFromParams(
   params: ProviderQueryParams,
   useToolProtocol: boolean,
+  turnBudget: PhoneGemmaTurnBudget,
 ): Promise<string> {
   try {
-    const promptBudget = phoneGemmaPromptCharBudget();
+    const promptBudget = turnBudget.promptCharBudget;
     const cardBudget = Math.min(
       useToolProtocol ? 1_200 : 1_600,
-      promptBudget <= 1_400
-        ? 180
+      promptBudget <= 1_200
+        ? Math.max(useToolProtocol ? 120 : 220, Math.floor(promptBudget * (useToolProtocol ? 0.14 : 0.32)))
         : Math.max(320, Math.floor(promptBudget * (useToolProtocol ? 0.25 : 0.32))),
     );
     const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent(params.messages);
     if (memoryInspectionIntent?.scopeLabel === "about you") {
+      const compactProfile = turnBudget.contextTokens <= 512;
       return await buildGroundedEvidencePacketPrompt({
         userId: params.userId ?? "",
         requestText: latestUserText(params.messages),
@@ -2211,9 +2277,12 @@ async function runtimeStateCardPromptFromParams(
         activeDevice: "android",
         activeModel: normalizeAndroidLocalGemmaModel(params.model),
         currentContext: useToolProtocol ? "phone_gemma_tool_protocol" : "phone_gemma_chat",
-        memoryLimit: useToolProtocol ? 3 : 5,
-        commitmentLimit: useToolProtocol ? 2 : 4,
-        renderMaxChars: Math.min(useToolProtocol ? 1_500 : 1_900, Math.max(cardBudget, 1_100)),
+        memoryLimit: compactProfile ? 2 : useToolProtocol ? 3 : 5,
+        commitmentLimit: compactProfile ? 1 : useToolProtocol ? 2 : 4,
+        compact: promptBudget <= 1_200,
+        renderMaxChars: promptBudget <= 1_200
+          ? Math.max(useToolProtocol ? 240 : 420, Math.floor(promptBudget * (useToolProtocol ? 0.3 : 0.58)))
+          : Math.min(useToolProtocol ? 1_500 : 1_900, Math.max(cardBudget, 1_100)),
       });
     }
     return await buildRuntimeStateCardPrompt({
@@ -2230,27 +2299,47 @@ async function runtimeStateCardPromptFromParams(
       renderMaxChars: cardBudget,
     });
   } catch {
-    return runtimeStateCardFallback(params, useToolProtocol);
+    const fallbackBudget = Math.max(120, Math.floor(turnBudget.promptCharBudget * (useToolProtocol ? 0.14 : 0.32)));
+    return runtimeStateCardFallback(params, useToolProtocol, fallbackBudget);
   }
 }
 
-function toolPromptFromParams(params: ProviderQueryParams, runtimeStateCardPrompt = ""): string {
+function toolPromptFromParams(
+  params: ProviderQueryParams,
+  turnBudget: PhoneGemmaTurnBudget,
+  runtimeStateCardPrompt = "",
+): string {
   const requestText = latestUserText(params.messages);
-  const promptBudget = phoneGemmaPromptCharBudget();
+  const promptBudget = turnBudget.promptCharBudget;
   const conversationReserve = hasActiveToolContinuation(params.messages) ? 240 : MIN_REQUIRED_PROMPT_SECTION_CHARS;
   const hasCallableTools = hasCallableLocalToolsForTurn(params);
-  const baseIntro = [
-    "You are Jarvis running entirely through Android Local Gemma on the user's phone; Gemma is the engine, not your name.",
-    "Return ONLY one JSON object. Tool results are authoritative.",
-    "Call only Available tools; never invent names like identify_user, google_search, or android_view_screenshot.",
-    `Tool call: {"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
-    `Final: {"type":"final","content":"your reply to the user"}`,
-    params.toolChoice === "required" && hasCallableTools
-      ? "A tool call is required for this turn. Do not return a final answer."
-      : "Use tools only when they are necessary to satisfy the user's request.",
-  ].join("\n");
+  const compactProtocol = promptBudget <= 1_200;
+  const baseIntro = compactProtocol
+    ? [
+        "You are Jarvis using Phone Gemma locally.",
+        "Return ONLY one JSON object. Tool results are authoritative. Use only Available tools.",
+        `Tool call: {"type":"tool_calls","tool_calls":[{"name":"NAME","arguments":{}}]}`,
+        `Final: {"type":"final","content":"REPLY"}`,
+        params.toolChoice === "required" && hasCallableTools
+          ? "A tool call is required. Do not return a final answer."
+          : "Use a tool only when needed.",
+      ].join("\n")
+    : [
+        "You are Jarvis running entirely through Android Local Gemma on the user's phone; Gemma is the engine, not your name.",
+        "Return ONLY one JSON object. Tool results are authoritative.",
+        "Call only Available tools; never invent names like identify_user, google_search, or android_view_screenshot.",
+        `Tool call: {"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
+        `Final: {"type":"final","content":"your reply to the user"}`,
+        params.toolChoice === "required" && hasCallableTools
+          ? "A tool call is required for this turn. Do not return a final answer."
+          : "Use tools only when they are necessary to satisfy the user's request.",
+      ].join("\n");
   const toolListBudget = promptBudget - baseIntro.length - runtimeStateCardPrompt.length - conversationReserve - 128;
-  const toolSpecs = toolSpecsForPrompt(toolsForLocalTurn(params), requestText, toolListBudget);
+  const toolSpecs = toolSpecsForPrompt(
+    toolsForLocalTurn(params),
+    requestText,
+    Math.min(turnBudget.toolListCharBudget, Math.max(64, toolListBudget)),
+  );
   const intro = [
     baseIntro,
     runtimeStateCardPrompt,
@@ -2268,7 +2357,11 @@ function toolPromptFromParams(params: ProviderQueryParams, runtimeStateCardPromp
   ].join("\n");
 }
 
-function chatPromptFromParams(params: ProviderQueryParams, runtimeStateCardPrompt = ""): string {
+function chatPromptFromParams(
+  params: ProviderQueryParams,
+  turnBudget: PhoneGemmaTurnBudget,
+  runtimeStateCardPrompt = "",
+): string {
   const intro = [
     "You are Jarvis running entirely through Android Local Gemma on the user's phone; Gemma is the engine, not your name.",
     "You are the user's Jarvis assistant.",
@@ -2279,7 +2372,7 @@ function chatPromptFromParams(params: ProviderQueryParams, runtimeStateCardPromp
     `Local model: ${normalizeAndroidLocalGemmaModel(params.model)}.`,
     runtimeStateCardPrompt,
   ].filter(Boolean).join("\n");
-  const promptBudget = phoneGemmaPromptCharBudget();
+  const promptBudget = turnBudget.promptCharBudget;
   const conversationBudget = Math.max(MIN_REQUIRED_PROMPT_SECTION_CHARS, promptBudget - intro.length - 16);
   return [
     intro,
@@ -2354,9 +2447,104 @@ async function sendAndroidLocalGemmaOp(
   op: Parameters<AndroidLocalGemmaDaemonOp>[1],
   timeoutMs: number,
 ): Promise<DaemonOpResult> {
-  if (daemonOpForTesting) return daemonOpForTesting(userId, op, timeoutMs);
+  if (daemonOpForTesting) {
+    if (op.type === "android_local_model_status" && !forwardStatusOpsForTesting) {
+      return {
+        ok: true,
+        data: {
+          engineValidatedContextTokens: phoneGemmaContextTokens(),
+          engineValidatedProfileId: "test-default",
+          engineValidatedProfileLabel: "Test default",
+        },
+      };
+    }
+    return daemonOpForTesting(userId, op, timeoutMs);
+  }
   const { sendDaemonOp } = await import("../../daemon/bridge");
   return sendDaemonOp(userId, op, timeoutMs);
+}
+
+function daemonDataRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function positiveInteger(value: unknown): number | undefined {
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string"
+      ? Number.parseInt(value, 10)
+      : Number.NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+async function sendAbortableAndroidLocalGemmaStatusOp(
+  userId: string,
+  model: string,
+  signal?: AbortSignal,
+): Promise<DaemonOpResult> {
+  if (!signal) {
+    return sendAndroidLocalGemmaOp(
+      userId,
+      { type: "android_local_model_status", model },
+      PHONE_GEMMA_STATUS_TIMEOUT_MS,
+    );
+  }
+  if (signal.aborted) {
+    throw createAbortError("Phone Gemma generation was stopped before profile status was checked.");
+  }
+
+  let onAbort: (() => void) | null = null;
+  const abortPromise = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(createAbortError("Phone Gemma generation was stopped while checking profile status."));
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  const statusPromise = sendAndroidLocalGemmaOp(
+    userId,
+    { type: "android_local_model_status", model },
+    PHONE_GEMMA_STATUS_TIMEOUT_MS,
+  );
+
+  try {
+    return await Promise.race([statusPromise, abortPromise]);
+  } finally {
+    if (onAbort) signal.removeEventListener("abort", onAbort);
+  }
+}
+
+async function resolvePhoneGemmaTurnBudget(
+  userId: string,
+  model: string,
+  requestedMaxCompletionTokens: number | undefined,
+  signal?: AbortSignal,
+): Promise<PhoneGemmaTurnBudget> {
+  const fallback = phoneGemmaTurnBudget(phoneGemmaContextTokens(), requestedMaxCompletionTokens);
+  try {
+    const result = await sendAbortableAndroidLocalGemmaStatusOp(userId, model, signal);
+    if (!result.ok) return fallback;
+    const outer = daemonDataRecord(result.data);
+    const nested = daemonDataRecord(outer.data);
+    const contextTokens = positiveInteger(
+      outer.engineValidatedContextTokens ?? nested.engineValidatedContextTokens,
+    );
+    if (!contextTokens || contextTokens < 512 || contextTokens > 4096) return fallback;
+    return phoneGemmaTurnBudget(contextTokens, requestedMaxCompletionTokens, {
+      validatedProfileId: optionalString(
+        outer.engineValidatedProfileId ?? nested.engineValidatedProfileId,
+      ),
+      validatedProfileLabel: optionalString(
+        outer.engineValidatedProfileLabel ?? nested.engineValidatedProfileLabel,
+      ),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
+    return fallback;
+  }
 }
 
 async function cancelAndroidLocalGemmaGeneration(userId: string, requestId?: string): Promise<void> {
@@ -2410,19 +2598,26 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       throw new Error("Android Local Gemma requires an authenticated user and the Jarvis Android app device control connection.");
     }
     const userId = params.userId;
+    const normalizedModel = normalizeAndroidLocalGemmaModel(params.model);
+    const turnBudget = await resolvePhoneGemmaTurnBudget(
+      userId,
+      normalizedModel,
+      params.maxCompletionTokens,
+      params.signal,
+    );
 
     const useToolProtocol = shouldUseLocalToolProtocol(params);
-    const runtimeStateCardPrompt = await runtimeStateCardPromptFromParams(params, useToolProtocol);
-    const prompt = (useToolProtocol
-      ? toolPromptFromParams(params, runtimeStateCardPrompt)
-      : chatPromptFromParams(params, runtimeStateCardPrompt)
+    const runtimeStateCardPrompt = await runtimeStateCardPromptFromParams(params, useToolProtocol, turnBudget);
+    const assembledPrompt = (useToolProtocol
+      ? toolPromptFromParams(params, turnBudget, runtimeStateCardPrompt)
+      : chatPromptFromParams(params, turnBudget, runtimeStateCardPrompt)
     ).trim();
+    const prompt = fitPhoneGemmaPromptToBudget(assembledPrompt, turnBudget.promptCharBudget);
     if (!prompt) {
       throw new Error("Android Local Gemma received an empty prompt.");
     }
 
     const requestId = `phone-gemma-${randomUUID()}`;
-    const normalizedModel = normalizeAndroidLocalGemmaModel(params.model);
     markPhoneGemmaGenerationStarted({
       userId,
       requestId,
@@ -2437,8 +2632,8 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
             requestId,
             model: normalizedModel,
             prompt,
-            contextTokens: phoneGemmaContextTokens(),
-            maxTokens: phoneGemmaMaxCompletionTokens(params.maxCompletionTokens),
+            contextTokens: turnBudget.contextTokens,
+            maxTokens: turnBudget.maxCompletionTokens,
             allowCpuFallback: phoneGemmaAllowCpuFallback(),
           },
           phoneGemmaTimeoutMs(),
