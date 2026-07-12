@@ -925,6 +925,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "Disney today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "Nintendo Switch today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "latest openai",
   "research",
   ["research", "browser"],
@@ -1253,6 +1265,15 @@ assertRoute(
   assert(!plan.shouldPreferTool, "casual hello today: does not prefer tool use");
   assert(!plan.intents.includes("research"), "casual hello today: does not route as research");
   assert(plan.priorityToolNames.length === 0, "casual hello today: no priority tools");
+}
+for (const [query, label] of [
+  ["Busy today?", "auto-capitalized busy status"],
+  ["Tired today?", "auto-capitalized tired status"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(!plan.shouldPreferTool, `${label}: does not prefer tool use`);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: does not prioritize web search`);
 }
 {
   const plan = classifyToolAwareRoute("Hey Jarvis today");
