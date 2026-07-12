@@ -47,6 +47,7 @@ const PUBLIC_RESEARCH_SUBJECT_PATTERN = String.raw`(?:the\s+)?(?:[$][A-Za-z]{1,8
 const GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN = String.raw`(?!(?:[Ii]|[Mm]e|[Yy]ou|[Ww]e|[Uu]s|[Tt]hey|[Tt]hem|[Hh]e|[Ss]he|[Ii]t|[Mm]y|[Oo]ur|[Yy]our|[Tt]heir|[Mm]om|[Mm]um|[Dd]ad|[Mm]other|[Ff]ather|[Bb]rother|[Ss]ister|[Ss]on|[Dd]aughter|[Hh]usband|[Ww]ife|[Pp]artner|[Ff]riend)\b)(?:[Tt]he\s+)?(?:[$A-Z][A-Za-z0-9&.'\u2019/-]*(?:\s+[A-Z][A-Za-z0-9&.'\u2019/-]*){0,5})`;
 const PUBLIC_OPEN_STATUS_PLACE_PATTERN = String.raw`(?:starbucks|walmart|mcdonald['\u2019]?s|post\s+offices?|banks?|stores?|shops?|restaurants?|libraries|pharmacies|malls?|courthouses?|dmv|government\s+offices?)`;
 const PERSONAL_TODAY_SUBJECT_PATTERN = String.raw`(?:plan|plans|schedule|calendar|agenda|tasks?|to-?dos?|reminders?|appointments?|meetings?|work|school|home|life|routines?|goals?|commitments?|projects?|dinner|lunch|breakfast|meals?|notes?|messages?|emails?|inbox|repl(?:y|ies)|responses?|reports?|drafts?|documents?|conversations?|weather|date|time|stats?)`;
+const PRIVATE_SPORTS_SUBJECT_PATTERN = String.raw`(?:you|we|i|it|this|that|my|our|your|their|his|her|(?:the\s+)?(?:mom|mum|dad|mother|father|brother|sister|son|daughter|kids?|child|children|husband|wife|partner|friends?))`;
 
 const TOOL_AWARE_RULES: ToolAwareRule[] = [
   {
@@ -140,7 +141,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\bwhat\s+happened\s+(?:in|with|to|on|about|at|around|near|for)\s+(?:[$\w.\/&,-]+\s+){1,8}today\b/i,
       new RegExp(String.raw`\bwhat\s+did\s+${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:announce|say|report|release|publish|post|decide|rule|order|sign|launch|introduce|unveil|confirm|deny|approve|reject|win|lose)\s+(?:today|tonight|yesterday|now|right\s+now)\b`, "i"),
       new RegExp(String.raw`\bwhat\s+did\s+${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}\s+(?:announce|report|release|publish|post|launch|introduce|unveil)\s+(?:today|tonight|yesterday|now|right\s+now)\b`, "i"),
-      /\b(?:who\s+(?:is|are)\s+playing|who\s+plays|(?:is|are)\s+(?!(?:you|we|i|it|this|that)\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}playing|(?:do|does)\s+(?!(?:you|we|i|it|this|that)\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}play)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
+      new RegExp(String.raw`\b(?:who\s+(?:is|are)\s+playing|who\s+plays|(?:is|are)\s+(?!${PRIVATE_SPORTS_SUBJECT_PATTERN}\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}playing|(?:do|does)\s+(?!${PRIVATE_SPORTS_SUBJECT_PATTERN}\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}play)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`, "i"),
       new RegExp(String.raw`\b(?:is|are)\s+${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`, "i"),
       new RegExp(String.raw`\b(?:is|are)\s+the\s+${PUBLIC_OPEN_STATUS_PLACE_PATTERN}\s+(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`, "i"),
       new RegExp(String.raw`\b(?:is|are)\s+${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}\s+(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`),
@@ -148,7 +149,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\b(?:is|are)\s+(?!(?:you|we|i|it|this|that|my|our|your|their|his|her|the)\b)(?:[$\w.\/&,'\u2019-]+\s+){1,6}(?:delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
       new RegExp(String.raw`^\s*${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:open|closed|delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\s*\??\s*$`, "i"),
       new RegExp(String.raw`^\s*${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}\s+(?:open|closed|delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\s*\??\s*$`),
-      /\b(?:did)\s+(?!(?:you|we|i|it|this|that)\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}(?:win|lose|play)\s+(?:today|tonight|yesterday)\b/i,
+      new RegExp(String.raw`\bdid\s+(?!${PRIVATE_SPORTS_SUBJECT_PATTERN}\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}(?:win|lose|play)\s+(?:today|tonight|yesterday)\b`, "i"),
       /\bwho\s+(?:won|lost)\s+(?:today|tonight|yesterday)\b/i,
       /\b(?:stock\s+market|stocks?|markets?)\b.{0,60}\b(?:today|currently|recently|latest|now|right\s+now)\b/i,
       /\b(?:news|updates?|sources?|articles?)\s+(?:today|currently|recently|latest|on|about|for)\b/i,

@@ -1022,6 +1022,26 @@ assertRoute(
   assert(plan.priorityToolNames.length === 0, "casual playing question: no priority tools");
 }
 {
+  const plan = classifyToolAwareRoute("does my son play tomorrow?");
+  assert(!plan.intents.includes("research"), "family play schedule: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "family play schedule: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is my kid playing tonight?");
+  assert(!plan.intents.includes("research"), "owned child playing status: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "owned child playing status: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("are our children playing today?");
+  assert(!plan.intents.includes("research"), "shared family playing status: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "shared family playing status: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("did my daughter win today?");
+  assert(!plan.intents.includes("research"), "family result question: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "family result question: does not prioritize web search");
+}
+{
   const plan = classifyToolAwareRoute("is it open today?");
   assert(!plan.shouldPreferTool, "contextual open question: does not prefer tool use");
   assert(!plan.intents.includes("research"), "contextual open question: does not route as research");
