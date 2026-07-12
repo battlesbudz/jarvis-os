@@ -1349,6 +1349,12 @@ for (const [query, label] of [
 }
 for (const [query, label] of [
   ["garage door open today?", "local status shorthand"],
+  ["front door open now?", "modified local door status shorthand"],
+  ["Front door open now?", "auto-capitalized local door status shorthand"],
+  ["bedroom window open now?", "modified local window status shorthand"],
+  ["is front door open now?", "modified local door status question"],
+  ["is Bedroom Window open now?", "capitalized local window status question"],
+  ["red car running now?", "modified local vehicle status shorthand"],
   ["dinner delayed today?", "personal status shorthand"],
 ] as const) {
   const plan = classifyToolAwareRoute(query);
