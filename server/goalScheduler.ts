@@ -10,6 +10,7 @@
 import { db } from "./db";
 import { eq, and, desc } from "drizzle-orm";
 import * as schema from "@shared/schema";
+import { pendingPersonalCommitmentCondition } from "./commitments/dbCommitmentRepository";
 import {
   calculateGoalPacing,
   normalizeGoalPacingMode,
@@ -195,7 +196,7 @@ async function getNearestCommitmentDeadlineDays(userId: string, dateKey: string)
     const rows = await db
       .select({ dueDate: schema.commitments.dueDate })
       .from(schema.commitments)
-      .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, "pending")))
+      .where(pendingPersonalCommitmentCondition(userId))
       .limit(100);
     let nearest: number | null = null;
     for (const row of rows) {

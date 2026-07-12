@@ -40,25 +40,37 @@ function memoryContext(query: string): MemoryContext {
 
 const noisyCommitments: GroundedCommitmentRecord[] = [
   {
-    id: "discord-1",
-    content: "TRIAGE RECORD: Five Jarvis Agent Health Summary alerts report DISCORD_BOT_TOKEN is not configured.",
+    id: "incident-1",
+    content: "Investigate a repeated service configuration health alert.",
     dueDate: "2026-05-22",
     status: "pending",
     extractedAt: new Date("2026-05-22T12:00:00.000Z"),
+    commitmentKind: "operational_incident",
+    signalLevel: "normal",
+    dedupeKey: "topic:service_configuration_health",
+    sourceType: "heartbeat_crew",
   },
   {
-    id: "discord-2",
-    content: "Consolidated triage: duplicate Agent Health Summary alerts for the same DISCORD_BOT_TOKEN issue.",
+    id: "incident-2",
+    content: "Verify the same service configuration warning and restart the worker.",
     dueDate: "2026-05-23",
     status: "pending",
     extractedAt: new Date("2026-05-23T12:00:00.000Z"),
+    commitmentKind: "operational_incident",
+    signalLevel: "normal",
+    dedupeKey: "topic:service_configuration_health",
+    sourceType: "heartbeat_crew",
   },
   {
-    id: "spam-risk",
-    content: "Acknowledge notification: Missed call from Spam Risk.",
+    id: "notification-1",
+    content: "Acknowledge an informational phone notification.",
     dueDate: null,
     status: "pending",
     extractedAt: new Date("2026-07-09T11:00:00.000Z"),
+    commitmentKind: "notification",
+    signalLevel: "low",
+    dedupeKey: "topic:informational_phone_notification",
+    sourceType: "android_notification",
   },
   {
     id: "real-work",
@@ -66,6 +78,21 @@ const noisyCommitments: GroundedCommitmentRecord[] = [
     dueDate: "2026-07-09",
     status: "pending",
     extractedAt: new Date("2026-07-09T10:00:00.000Z"),
+    commitmentKind: "user_task",
+    signalLevel: "normal",
+    dedupeKey: "topic:review_voice_grounding",
+    sourceType: "agent",
+  },
+  {
+    id: "real-work-duplicate",
+    content: "Review the voice grounding change after the clean automated review.",
+    dueDate: "2026-07-09",
+    status: "pending",
+    extractedAt: new Date("2026-07-09T09:00:00.000Z"),
+    commitmentKind: "user_task",
+    signalLevel: "normal",
+    dedupeKey: "topic:review_voice_grounding",
+    sourceType: "agent",
   },
 ];
 
@@ -106,16 +133,16 @@ async function testGroundedPacketBuildsEvidenceAndOmitsNoise(): Promise<void> {
   assert.ok(packet.evidence.some((item) => item.id === "soul:summary"));
   assert.ok(packet.evidence.some((item) => item.id === "memory:memory-direct-style"));
   assert.ok(packet.evidence.some((item) => item.id === "commitment:real-work"));
-  assert.equal(packet.evidence.some((item) => /DISCORD_BOT_TOKEN|Spam Risk/i.test(item.content)), false);
+  assert.equal(packet.evidence.some((item) => /service configuration|phone notification/i.test(item.content)), false);
   assert.ok(packet.omitted.some((entry) => /duplicate/i.test(entry)));
-  assert.ok(packet.omitted.some((entry) => /low-signal/i.test(entry)));
+  assert.ok(packet.omitted.some((entry) => /non-personal or low-signal/i.test(entry)));
 
   const rendered = renderGroundedEvidencePacket(packet, { maxChars: 5_000 });
   assert.match(rendered, /Jarvis Grounded Evidence Packet/);
   assert.match(rendered, /Use only EVIDENCE/);
   assert.match(rendered, /id=profile:core/);
   assert.match(rendered, /Review Jarvis voice grounding PR/);
-  assert.doesNotMatch(rendered, /Missed call from Spam Risk/);
+  assert.doesNotMatch(rendered, /informational phone notification/);
   console.log("OK: grounded evidence packet loads profile, memory, commitments, and omits noisy duplicates");
 }
 

@@ -1280,6 +1280,10 @@ async function testAndroidLocalGemmaUsesGroundedEvidencePacketForPersonalMemoryQ
       dueDate: "2026-07-09",
       status: "pending",
       extractedAt: new Date("2026-07-09T11:00:00.000Z"),
+      commitmentKind: "user_commitment",
+      signalLevel: "normal",
+      dedupeKey: "topic:review_voice_grounding",
+      sourceType: "message_extract",
     }],
   });
   _setAndroidLocalGemmaDaemonOpForTesting(async (_userId, op) => {

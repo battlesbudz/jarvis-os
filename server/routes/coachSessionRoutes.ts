@@ -1,12 +1,10 @@
 import type { Express, Request, Response } from "express";
 import type OpenAI from "openai";
-import { and, desc, eq } from "drizzle-orm";
-import * as schema from "@shared/schema";
 import { activeCoachRuns } from "../runRegistry";
-import { db } from "../db";
 import { getSoulPromptBlock } from "../memory/soul";
 import { buildUntrustedSoulContext, BUDGET_PRESETS } from "../memory/contextBuilder";
 import { buildCoachSystemPrompt } from "../services/aiCoachContextService";
+import { listPendingPersonalCommitments } from "../commitments/dbCommitmentRepository";
 
 export function registerCoachSessionRoutes(app: Express, openai: OpenAI): void {
   app.post("/api/chat/abort", async (req: Request, res: Response) => {
@@ -42,12 +40,7 @@ export function registerCoachSessionRoutes(app: Express, openai: OpenAI): void {
 
       let userCommitments: any[] = [];
       try {
-        userCommitments = await db
-          .select()
-          .from(schema.commitments)
-          .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, "pending")))
-          .orderBy(desc(schema.commitments.extractedAt))
-          .limit(10);
+        userCommitments = await listPendingPersonalCommitments(userId, 10);
       } catch {}
 
       const soulBlock = buildUntrustedSoulContext(

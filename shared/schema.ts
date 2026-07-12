@@ -193,6 +193,18 @@ export const composioConnectedAccounts = pgTable("composio_connected_accounts", 
   primaryKey({ columns: [table.userId, table.connectedAccountId] }),
 ]);
 
+export interface CommitmentRevision {
+  content: string;
+  dueDate: string | null;
+  status: string;
+  commitmentKind: string;
+  signalLevel: string;
+  dedupeKey: string;
+  sourceType: string;
+  sourceMessage: string | null;
+  recordedAt: string;
+}
+
 export const commitments = pgTable("commitments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
@@ -202,6 +214,12 @@ export const commitments = pgTable("commitments", {
   extractedAt: timestamp("extracted_at").defaultNow().notNull(),
   resolvedAt: timestamp("resolved_at"),
   sourceMessage: text("source_message"),
+  commitmentKind: varchar("commitment_kind").notNull().default("user_commitment"),
+  signalLevel: varchar("signal_level").notNull().default("normal"),
+  dedupeKey: varchar("dedupe_key"),
+  sourceType: varchar("source_type").notNull().default("legacy"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  history: jsonb("history").$type<CommitmentRevision[]>().notNull().default(sql`'[]'::jsonb`),
 });
 
 export const userMemories = pgTable("user_memories", {

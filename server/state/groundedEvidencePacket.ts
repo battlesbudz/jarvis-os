@@ -1,6 +1,12 @@
-import { and, desc, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import type { MemoryContext, MemoryModelTarget } from "../memory/memoryOs";
+import {
+  canonicalCommitmentDedupeKey,
+  isPersonalCommitment,
+  type CommitmentKind,
+  type CommitmentSignalLevel,
+} from "../commitments/commitmentStore";
 import {
   loadRuntimeProfileStateFromDb,
   memoryModelTargetFromActiveModel,
@@ -48,6 +54,10 @@ export interface GroundedCommitmentRecord {
   extractedAt?: Date | string | null;
   resolvedAt?: Date | string | null;
   sourceMessage?: string | null;
+  commitmentKind?: CommitmentKind | string;
+  signalLevel?: CommitmentSignalLevel | string;
+  dedupeKey?: string | null;
+  sourceType?: string;
 }
 
 type SoulGroundingRecord = {
@@ -181,25 +191,8 @@ async function defaultRetrieveMemoryContext(input: {
 
 async function defaultLoadCommitments(userId: string, limit: number): Promise<GroundedCommitmentRecord[]> {
   if (typeof process !== "undefined" && !process.env.DATABASE_URL) return [];
-
-  const [{ db }, schema] = await Promise.all([
-    import("../db"),
-    import("@shared/schema"),
-  ]);
-  return db
-    .select({
-      id: schema.commitments.id,
-      content: schema.commitments.content,
-      dueDate: schema.commitments.dueDate,
-      status: schema.commitments.status,
-      extractedAt: schema.commitments.extractedAt,
-      resolvedAt: schema.commitments.resolvedAt,
-      sourceMessage: schema.commitments.sourceMessage,
-    })
-    .from(schema.commitments)
-    .where(and(eq(schema.commitments.userId, userId), eq(schema.commitments.status, "pending")))
-    .orderBy(desc(schema.commitments.extractedAt))
-    .limit(limit);
+  const { listPendingPersonalCommitments } = await import("../commitments/dbCommitmentRepository");
+  return listPendingPersonalCommitments(userId, limit);
 }
 
 function profileEvidence(profile: RuntimeProfileState | null): GroundedEvidenceItem[] {
@@ -267,41 +260,8 @@ function memoryEvidence(context: MemoryContext): GroundedEvidenceItem[] {
   }));
 }
 
-function normalizedCommitmentKey(content: string): string {
-  const normalized = content
-    .toLowerCase()
-    .replace(/['"`]/g, "")
-    .replace(/[a-f0-9]{8}-[a-f0-9-]{27,}/gi, " ")
-    .replace(/\b\d{4}-\d{2}-\d{2}(?:t[\d:.z-]+)?\b/gi, " ")
-    .replace(/[^a-z0-9]+/g, " ")
-    .replace(/\b(?:the|a|an|and|or|to|of|for|with|as|one|single|same|duplicate|duplicates|duplicated|consolidated|triage|record|issue|items|alerts|notifications|notification|inbox|treat|all|five|5)\b/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return normalized.slice(0, 180);
-}
-
-function commitmentIncidentKey(content: string): string | null {
-  const text = content.toLowerCase();
-  if (/\bdiscord_bot_token\b/.test(text) || (/\bdiscord\b/.test(text) && /\bbot\s+token\b/.test(text))) {
-    return "incident:discord_bot_token";
-  }
-  if (/\btelegram\b/.test(text) && /\bhealth\s+check\b/.test(text)) return "incident:telegram_health_check";
-  if (/\breplit\b/.test(text) && /\busage\s+limit\b/.test(text)) return "notification:replit_usage_limit";
-  if (/\bgithub\b/.test(text) && /\bpersonal\s+access\s+token\b/.test(text)) return "notification:github_pat";
-  if (/\bbuildasoil\b/.test(text) || /\bpromotional\s+email\b/.test(text)) return "notification:promotion";
-  if (/\bspam\s+risk\b/.test(text)) return "notification:spam_risk";
-  return null;
-}
-
 function commitmentDedupeKey(commitment: GroundedCommitmentRecord): string {
-  return commitmentIncidentKey(commitment.content) ?? normalizedCommitmentKey(commitment.content);
-}
-
-function isLowSignalCommitment(commitment: GroundedCommitmentRecord): boolean {
-  const text = commitment.content.toLowerCase();
-  return Boolean(commitmentIncidentKey(commitment.content)) ||
-    /\b(?:acknowledge|acknowledged|dismiss|dismissed|archive|archived)\b/.test(text) ||
-    /\b(?:promotional|sale ending|spam risk|health summary|health check failed)\b/.test(text);
+  return compactText(commitment.dedupeKey) || canonicalCommitmentDedupeKey(commitment.content);
 }
 
 function dueDateRank(dueDate: string | null | undefined, todayKey: string): number {
@@ -319,7 +279,7 @@ function extractedAtMs(value: Date | string | null | undefined): number {
 }
 
 function rankCommitment(commitment: GroundedCommitmentRecord, todayKey: string): number {
-  return dueDateRank(commitment.dueDate, todayKey) - (isLowSignalCommitment(commitment) ? 120 : 0);
+  return dueDateRank(commitment.dueDate, todayKey);
 }
 
 function dedupeCommitments(
@@ -328,8 +288,9 @@ function dedupeCommitments(
   now: Date,
 ): { selected: GroundedCommitmentRecord[]; omitted: string[] } {
   const todayKey = now.toISOString().slice(0, 10);
+  const personalCommitments = commitments.filter(isPersonalCommitment);
   const groups = new Map<string, GroundedCommitmentRecord[]>();
-  for (const commitment of commitments) {
+  for (const commitment of personalCommitments) {
     const key = commitmentDedupeKey(commitment);
     if (!key) continue;
     const group = groups.get(key) ?? [];
@@ -349,16 +310,16 @@ function dedupeCommitments(
       return extractedAtMs(b.extractedAt) - extractedAtMs(a.extractedAt);
     });
 
-  const selected = canonical.filter((commitment) => !isLowSignalCommitment(commitment)).slice(0, limit);
-  const duplicateCount = commitments.length - groups.size;
-  const lowSignalCount = canonical.filter(isLowSignalCommitment).length;
-  const overflowCount = canonical.filter((commitment) => !isLowSignalCommitment(commitment)).length - selected.length;
+  const selected = canonical.slice(0, limit);
+  const duplicateCount = personalCommitments.length - groups.size;
+  const excludedCount = commitments.length - personalCommitments.length;
+  const overflowCount = canonical.length - selected.length;
   const omitted: string[] = [];
   if (duplicateCount > 0) {
     omitted.push(`Collapsed ${duplicateCount} duplicate pending commitment record(s).`);
   }
-  if (lowSignalCount > 0) {
-    omitted.push(`Omitted ${lowSignalCount} low-signal alert or notification commitment record(s).`);
+  if (excludedCount > 0) {
+    omitted.push(`Omitted ${excludedCount} non-personal or low-signal commitment record(s) based on stored metadata.`);
   }
   if (overflowCount > 0) {
     omitted.push(`Omitted ${overflowCount} lower-ranked pending commitment record(s) beyond the packet limit.`);
@@ -370,9 +331,9 @@ function commitmentEvidence(commitments: GroundedCommitmentRecord[]): GroundedEv
   return commitments.map((commitment) => ({
     id: evidenceId("commitment", commitment.id),
     domain: "commitment",
-    label: "Pending commitment",
+    label: commitment.commitmentKind === "user_task" ? "Pending task" : "Pending commitment",
     content: commitment.content,
-    source: "commitments",
+    source: commitment.sourceType || "commitments",
     sourceId: commitment.id,
     dueDate: commitment.dueDate,
     status: commitment.status,
