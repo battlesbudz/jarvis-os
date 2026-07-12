@@ -168,6 +168,16 @@ for (const [query, label] of [
   assert(plan.intents.includes("research"), "with-latest mixed calendar and news: research intent preserved");
   assert(plan.priorityToolNames.includes("search_web"), "with-latest mixed calendar and news: search_web preserved");
 }
+for (const [query, label] of [
+  ["what are my calendar events today with what's happening in Ukraine today", "with-contraction research clause"],
+  ["what are my calendar events today with what is happening in Ukraine today", "with-expanded research clause"],
+  ["what are my calendar events today with what happened in Ukraine today", "with-past research clause"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(plan.intents.includes("calendar"), `${label}: calendar intent detected`);
+  assert(plan.intents.includes("research"), `${label}: research intent preserved`);
+  assert(plan.priorityToolNames.includes("search_web"), `${label}: search_web preserved`);
+}
 {
   const plan = classifyToolAwareRoute("what are my calendar events today with Ukraine news");
   assert(plan.intents.includes("calendar"), "topic-news mixed request: calendar intent detected");
