@@ -349,6 +349,18 @@ assertRoute(
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
 );
+for (const query of [
+  "what are the current McDonald's hours?",
+  "current Dave & Buster's hours",
+  "current Dave & Buster’s hours",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
 assertRoute(
   "air quality in Philadelphia today",
   "research",
