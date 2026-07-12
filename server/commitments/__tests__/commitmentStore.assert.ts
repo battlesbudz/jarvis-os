@@ -49,6 +49,11 @@ function testCommitmentStorageContract(): void {
     assert.match(source, /kind:\[\^:\]\+:topic:content_/);
     assert.match(source, /updated_at IS NULL/);
     assert.match(source, /ELSE 'legacy_import'/);
+    assert.match(source, /\^Added via agent/);
+    assert.match(source, /\(notification\|alert\)/);
+  }
+  for (const migration of [rootMigration, serverMigration]) {
+    assert.doesNotMatch(migration, /replit|github|spam risk|buildasoil/i);
   }
 
   const repository = read("server/commitments/dbCommitmentRepository.ts");

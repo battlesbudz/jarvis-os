@@ -143,6 +143,12 @@ async function main(): Promise<void> {
       content: "Review the supplier agreement tomorrow.",
       sourceMessage: "I will review the supplier agreement tomorrow.",
     });
+    const legacyGeneratedAlertContent = "Acknowledge and dismiss the duplicate status notification.";
+    await db.insert(schema.commitments).values({
+      userId,
+      content: legacyGeneratedAlertContent,
+      sourceMessage: "Added via agent",
+    });
     const malformedHash = "a".repeat(64);
     await db.insert(schema.commitments).values({
       userId,
@@ -184,6 +190,23 @@ async function main(): Promise<void> {
       .limit(1);
     assert.equal(legacyUserCommitment?.commitmentKind, "user_commitment");
     assert.equal(legacyUserCommitment?.sourceType, "legacy_import");
+    const [legacyGeneratedAlert] = await db
+      .select()
+      .from(schema.commitments)
+      .where(and(
+        eq(schema.commitments.userId, userId),
+        eq(schema.commitments.content, legacyGeneratedAlertContent),
+      ))
+      .limit(1);
+    assert.equal(legacyGeneratedAlert?.commitmentKind, "notification");
+    assert.equal(legacyGeneratedAlert?.signalLevel, "low");
+    assert.equal(legacyGeneratedAlert?.sourceType, "agent");
+    assert.equal(legacyGeneratedAlert?.history.length, 1);
+    const personalRowsAfterBackfill = await listPendingPersonalCommitments(userId);
+    assert.ok(
+      personalRowsAfterBackfill.every((row) => row.id !== legacyGeneratedAlert?.id),
+      "legacy generated alerts should stay out of personal commitments",
+    );
     const [repaired] = await db
       .select()
       .from(schema.commitments)

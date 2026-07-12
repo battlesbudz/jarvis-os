@@ -257,6 +257,11 @@ export async function ensureTablesExist() {
         history = CASE
           WHEN source_message ~* '^Added via (heartbeat|crew|monitoring)(/|$)'
             OR source_message ~* '^Added via .*(notification|inbox)'
+            OR (
+              source_message ~* '^Added via agent([[:space:]/_-]|$)'
+              AND content ~* '^[[:space:]]*(acknowledge(d)?|dismiss(ed)?|archive(d)?)([[:space:][:punct:]]|$)'
+              AND content ~* '(notification|alert)'
+            )
             THEN COALESCE(history, '[]'::jsonb) || jsonb_build_array(jsonb_build_object(
               'content', content,
               'dueDate', due_date,
@@ -274,6 +279,11 @@ export async function ensureTablesExist() {
         commitment_kind = CASE
           WHEN source_message ~* '^Added via .*(notification|inbox)'
             OR (source_message ~* '^Added via (heartbeat|crew|monitoring)(/|$)' AND content ~* '^[[:space:]]*(acknowledge|dismiss|archive)')
+            OR (
+              source_message ~* '^Added via agent([[:space:]/_-]|$)'
+              AND content ~* '^[[:space:]]*(acknowledge(d)?|dismiss(ed)?|archive(d)?)([[:space:][:punct:]]|$)'
+              AND content ~* '(notification|alert)'
+            )
             THEN 'notification'
           WHEN source_message ~* '^Added via (heartbeat|crew|monitoring)(/|$)'
             THEN 'operational_incident'
@@ -282,6 +292,11 @@ export async function ensureTablesExist() {
         signal_level = CASE
           WHEN source_message ~* '^Added via .*(notification|inbox)'
             OR (source_message ~* '^Added via (heartbeat|crew|monitoring)(/|$)' AND content ~* '^[[:space:]]*(acknowledge|dismiss|archive)')
+            OR (
+              source_message ~* '^Added via agent([[:space:]/_-]|$)'
+              AND content ~* '^[[:space:]]*(acknowledge(d)?|dismiss(ed)?|archive(d)?)([[:space:][:punct:]]|$)'
+              AND content ~* '(notification|alert)'
+            )
             THEN 'low'
           ELSE signal_level
         END,
