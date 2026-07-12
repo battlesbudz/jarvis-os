@@ -211,6 +211,12 @@ for (const [query, label] of [
   assert(plan.priorityToolNames.includes("search_web"), "public-events mixed request: search_web preserved");
 }
 {
+  const plan = classifyToolAwareRoute("what are my calendar events today with movie showtimes today");
+  assert(plan.intents.includes("calendar"), "showtimes mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "showtimes mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "showtimes mixed request: search_web preserved");
+}
+{
   const plan = classifyToolAwareRoute("what are my calendar events today with OpenAI today");
   assert(plan.intents.includes("calendar"), "public-shorthand mixed request: calendar intent detected");
   assert(plan.intents.includes("research"), "public-shorthand mixed request: research intent preserved");
@@ -1022,6 +1028,36 @@ assertRoute(
 );
 assertRoute(
   "are flights delayed today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "movie showtimes today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "what are the movie showtimes today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "movie times today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "screening times today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "movie showtimes near Philadelphia tonight",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
