@@ -709,6 +709,23 @@ assertRoute(
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
 );
+for (const query of [
+  "Lakers vs Celtics today",
+  "Yankees at Dodgers today",
+  "lakers versus celtics tonight",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
+{
+  const plan = classifyToolAwareRoute("my team vs their team today?");
+  assert(!plan.intents.includes("research"), "private matchup shorthand: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "private matchup shorthand: does not prioritize web search");
+}
 assertRoute(
   "who is playing today?",
   "research",

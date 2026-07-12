@@ -54,6 +54,7 @@ const PUBLIC_INCIDENT_NOUN_PATTERN = String.raw`(?:cases?|outages?|incidents?|al
 const BARE_LIVE_DATA_NOUN_PATTERN = String.raw`(?:scores?|prices?|polls?|standings?|rankings?|odds|rates?|results?|games?|matches?|fixtures?|traffic|air\s+quality|delays?|cancellations?|cancelations?|availability|population|counts?|totals?|${PUBLIC_INCIDENT_NOUN_PATTERN})`;
 const FIAT_CURRENCY_CODE_PATTERN = String.raw`(?:usd|eur|gbp|jpy|cad|aud|chf|cny|hkd|nzd|sek|nok|dkk|inr|brl|mxn|zar|sgd|krw|pln|try)`;
 const FIAT_CURRENCY_PAIR_PATTERN = String.raw`${FIAT_CURRENCY_CODE_PATTERN}\s*[\/.-]\s*${FIAT_CURRENCY_CODE_PATTERN}`;
+const PUBLIC_MATCHUP_SUBJECT_PATTERN = String.raw`(?:[$\w.\/&,'\u2019.-]+\s+){0,4}[$\w.\/&,'\u2019.-]+`;
 
 const TOOL_AWARE_RULES: ToolAwareRule[] = [
   {
@@ -151,6 +152,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\bwhat\s+happened\s+(?:in|with|to|on|about|at|around|near|for)\s+(?:[$\w.\/&,-]+\s+){1,8}today\b/i,
       new RegExp(String.raw`\bwhat\s+did\s+${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:announce|say|report|release|publish|post|decide|rule|order|sign|launch|introduce|unveil|confirm|deny|approve|reject|win|lose)\s+(?:today|tonight|yesterday|now|right\s+now)\b`, "i"),
       new RegExp(String.raw`\bwhat\s+did\s+${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}\s+(?:announce|report|release|publish|post|launch|introduce|unveil)\s+(?:today|tonight|yesterday|now|right\s+now)\b`, "i"),
+      new RegExp(String.raw`^\s*(?!${PRIVATE_STATUS_SHORTHAND_SUBJECT_PATTERN}\b)(?:the\s+)?${PUBLIC_MATCHUP_SUBJECT_PATTERN}\s+(?:vs\.?|versus|at|@)\s+(?!${PRIVATE_STATUS_SHORTHAND_SUBJECT_PATTERN}\b)(?:the\s+)?${PUBLIC_MATCHUP_SUBJECT_PATTERN}\s+(?:today|tonight|tomorrow|now|right\s+now)\s*\??\s*$`, "i"),
       new RegExp(String.raw`\b(?:who\s+(?:is|are)\s+playing|who\s+plays|(?:is|are)\s+(?!${PRIVATE_SPORTS_SUBJECT_PATTERN}\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}playing|(?:do|does)\s+(?!${PRIVATE_SPORTS_SUBJECT_PATTERN}\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}play)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`, "i"),
       new RegExp(String.raw`\b(?:is|are)\s+${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`, "i"),
       new RegExp(String.raw`\b(?:is|are)\s+the\s+${PUBLIC_OPEN_STATUS_PLACE_PATTERN}\s+(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`, "i"),
