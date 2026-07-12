@@ -643,6 +643,20 @@ async function testAndroidLocalGemmaFitsToolProtocolInsideValidated512TokenProfi
             required: ["action"],
           },
         },
+      }, {
+        type: "function",
+        function: {
+          name: "lookup_memory",
+          description: "Look up a local memory entry.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "get_youtube_transcript",
+          description: "Fetch a transcript for a YouTube URL.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
       }],
       toolChoice: "auto",
       maxCompletionTokens: 128,
@@ -2647,17 +2661,24 @@ async function testAndroidLocalGemmaOmitsCodeProposalSystemPromptForPhoneActions
 }
 
 async function testAndroidLocalGemmaPreservesToolContinuationWhenTrimming() {
-  const previousBudget = process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
-  process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = "1200";
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
 
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
     requests.push({ userId, op, timeoutMs });
+    if (op.type === "android_local_model_status") {
+      return {
+        ok: true,
+        data: {
+          engineValidatedContextTokens: 512,
+          engineValidatedProfileId: "gpu-standard-512",
+        },
+      };
+    }
     return {
       ok: true,
       data: { text: JSON.stringify({ type: "final", content: "I read the local tool result." }), finishReason: "stop" },
     };
-  });
+  }, { forwardStatusOps: true });
 
   try {
     const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
@@ -2692,6 +2713,20 @@ async function testAndroidLocalGemmaPreservesToolContinuationWhenTrimming() {
             required: ["action"],
           },
         },
+      }, {
+        type: "function",
+        function: {
+          name: "lookup_memory",
+          description: "Look up a local memory entry.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
+      }, {
+        type: "function",
+        function: {
+          name: "get_youtube_transcript",
+          description: "Fetch a transcript for a YouTube URL.",
+          parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] },
+        },
       }],
       toolChoice: "auto",
       maxCompletionTokens: 128,
@@ -2700,13 +2735,19 @@ async function testAndroidLocalGemmaPreservesToolContinuationWhenTrimming() {
     }));
 
     assert.equal(result.textContent, "I read the local tool result.");
-    assert.match(requests[0].op.prompt, /CURRENT_TOOL_REQUEST/);
-    assert.match(requests[0].op.prompt, /daemon_action/);
-    assert.match(requests[0].op.prompt, /TOOL_RESULT_TAIL_MARKER/);
+    const generateOp = requests.find((request) => request.op.type === "android_local_model_generate")!.op;
+    assert.equal(generateOp.contextTokens, 512);
+    assert.ok(generateOp.prompt.length <= (512 - 128 - 64) * 3);
+    assert.doesNotMatch(generateOp.prompt, /Earlier prompt context omitted/);
+    assert.match(generateOp.prompt, /Return ONLY one JSON object/);
+    assert.match(generateOp.prompt, /Tool call:/);
+    assert.match(generateOp.prompt, /Final:/);
+    assert.match(generateOp.prompt, /Available tools:/);
+    assert.match(generateOp.prompt, /CURRENT_TOOL_REQUEST/);
+    assert.match(generateOp.prompt, /daemon_action/);
+    assert.match(generateOp.prompt, /TOOL_RESULT_TAIL_MARKER/);
     console.log("OK: Android Local Gemma preserves tool continuation context when trimming");
   } finally {
-    if (previousBudget === undefined) delete process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET;
-    else process.env.ANDROID_LOCAL_GEMMA_PROMPT_CHAR_BUDGET = previousBudget;
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
 }

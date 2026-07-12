@@ -2180,7 +2180,7 @@ function toolSpecsForPrompt(
     .filter(isFunctionTool)
     .sort((a, b) => toolRelevanceScore(b, requestText) - toolRelevanceScore(a, requestText));
 
-  const budget = Math.max(120, budgetLimit);
+  const budget = Math.max(64, budgetLimit);
   const lines: string[] = [];
   let used = 0;
   let omitted = 0;
@@ -2203,7 +2203,9 @@ function toolSpecsForPrompt(
   }
 
   if (omitted > 0) {
-    lines.push(`- ${omitted} lower-relevance tool${omitted === 1 ? "" : "s"} omitted to keep the phone-local prompt small.`);
+    const summary = `- ${omitted} lower-relevance tool${omitted === 1 ? "" : "s"} omitted to keep the phone-local prompt small.`;
+    const remaining = budget - used - (lines.length > 0 ? 1 : 0);
+    if (remaining >= 16) lines.push(truncateText(summary, remaining));
   }
 
   return lines.join("\n");
@@ -2311,21 +2313,32 @@ function toolPromptFromParams(
   const promptBudget = turnBudget.promptCharBudget;
   const conversationReserve = hasActiveToolContinuation(params.messages) ? 240 : MIN_REQUIRED_PROMPT_SECTION_CHARS;
   const hasCallableTools = hasCallableLocalToolsForTurn(params);
-  const baseIntro = [
-    "You are Jarvis running entirely through Android Local Gemma on the user's phone; Gemma is the engine, not your name.",
-    "Return ONLY one JSON object. Tool results are authoritative.",
-    "Call only Available tools; never invent names like identify_user, google_search, or android_view_screenshot.",
-    `Tool call: {"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
-    `Final: {"type":"final","content":"your reply to the user"}`,
-    params.toolChoice === "required" && hasCallableTools
-      ? "A tool call is required for this turn. Do not return a final answer."
-      : "Use tools only when they are necessary to satisfy the user's request.",
-  ].join("\n");
+  const compactProtocol = promptBudget <= 1_200;
+  const baseIntro = compactProtocol
+    ? [
+        "You are Jarvis using Phone Gemma locally.",
+        "Return ONLY one JSON object. Tool results are authoritative. Use only Available tools.",
+        `Tool call: {"type":"tool_calls","tool_calls":[{"name":"NAME","arguments":{}}]}`,
+        `Final: {"type":"final","content":"REPLY"}`,
+        params.toolChoice === "required" && hasCallableTools
+          ? "A tool call is required. Do not return a final answer."
+          : "Use a tool only when needed.",
+      ].join("\n")
+    : [
+        "You are Jarvis running entirely through Android Local Gemma on the user's phone; Gemma is the engine, not your name.",
+        "Return ONLY one JSON object. Tool results are authoritative.",
+        "Call only Available tools; never invent names like identify_user, google_search, or android_view_screenshot.",
+        `Tool call: {"type":"tool_calls","tool_calls":[{"name":"tool_name","arguments":{"key":"value"}}]}`,
+        `Final: {"type":"final","content":"your reply to the user"}`,
+        params.toolChoice === "required" && hasCallableTools
+          ? "A tool call is required for this turn. Do not return a final answer."
+          : "Use tools only when they are necessary to satisfy the user's request.",
+      ].join("\n");
   const toolListBudget = promptBudget - baseIntro.length - runtimeStateCardPrompt.length - conversationReserve - 128;
   const toolSpecs = toolSpecsForPrompt(
     toolsForLocalTurn(params),
     requestText,
-    Math.min(turnBudget.toolListCharBudget, Math.max(120, toolListBudget)),
+    Math.min(turnBudget.toolListCharBudget, Math.max(64, toolListBudget)),
   );
   const intro = [
     baseIntro,
