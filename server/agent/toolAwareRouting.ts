@@ -139,8 +139,8 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       new RegExp(String.raw`\bwhat\s+did\s+${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:announce|say|report|release|publish|post|decide|rule|order|sign|launch|introduce|unveil|confirm|deny|approve|reject|win|lose)\s+(?:today|tonight|yesterday|now|right\s+now)\b`, "i"),
       new RegExp(String.raw`\b[Ww]hat\s+did\s+${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}\s+(?:announce|report|release|publish|post|launch|introduce|unveil)\s+(?:today|tonight|yesterday|now|right\s+now)\b`),
       /\b(?:who\s+(?:is|are)\s+playing|who\s+plays|(?:is|are)\s+(?!(?:you|we|i|it|this|that)\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}playing|(?:do|does)\s+(?!(?:you|we|i|it|this|that)\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}play)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
-      /\b(?:is|are)\s+(?!(?:you|we|i|it|this|that|my|our|your|their|his|her)\b)(?:the\s+)?(?:[$\w.\/&,'\u2019-]+\s+){1,6}(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
-      /\b(?:is|are)\s+(?!(?:you|we|i|it|this|that|my|our|your|their|his|her)\b)(?:the\s+)?(?:[$\w.\/&,'\u2019-]+\s+){1,6}(?:delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
+      /\b(?:is|are)\s+(?!(?:you|we|i|it|this|that|my|our|your|their|his|her|the)\b)(?:[$\w.\/&,'\u2019-]+\s+){1,6}(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
+      /\b(?:is|are)\s+(?!(?:you|we|i|it|this|that|my|our|your|their|his|her|the)\b)(?:[$\w.\/&,'\u2019-]+\s+){1,6}(?:delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
       new RegExp(String.raw`^\s*${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:open|closed|delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\s*\??\s*$`, "i"),
       new RegExp(String.raw`^\s*${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}\s+(?:open|closed|delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\s*\??\s*$`),
       /\b(?:did)\s+(?!(?:you|we|i|it|this|that)\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}(?:win|lose|play)\s+(?:today|tonight|yesterday)\b/i,
@@ -262,7 +262,7 @@ function isPrivateCalendarEventQuery(query: string): boolean {
 }
 
 const MIXED_RESEARCH_CLAUSE_SEPARATOR =
-  /\s+(?:and|also|plus|then|along\s+with|together\s+with|as\s+well\s+as)\s+|\s+with\s+(?=(?:today(?:['\u2019]s|s)?\s+(?:news|updates?|headlines?|articles?|sources?)|(?:the\s+)?(?:latest|current|recent)\b|(?:news|updates?|headlines?|articles?|sources?)\b))|[,;]+|[.!?]+(?:\s+|$)/i;
+  /\s+(?:and|also|plus|then|along\s+with|together\s+with|as\s+well\s+as)\s+|\s+with\s+(?=(?:(?:the\s+)?(?:latest|current|recent)\b|(?:[$\w.\/&,'\u2019-]+\s+){0,6}(?:news|updates?|headlines?|articles?|sources?)\b))|[,;]+|[.!?]+(?:\s+|$)/i;
 
 function hasExplicitWebResearchCommand(query: string): boolean {
   return (

@@ -145,6 +145,12 @@ assertRoute(
   assert(plan.priorityToolNames.includes("search_web"), "with-latest mixed calendar and news: search_web preserved");
 }
 {
+  const plan = classifyToolAwareRoute("what are my calendar events today with Ukraine news");
+  assert(plan.intents.includes("calendar"), "topic-news mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "topic-news mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "topic-news mixed request: search_web preserved");
+}
+{
   const plan = classifyToolAwareRoute("what are my calendar events today? what's today's news?");
   assert(plan.intents.includes("calendar"), "sentence mixed calendar and news: calendar intent detected");
   assert(plan.intents.includes("research"), "sentence mixed calendar and news: research intent preserved");
@@ -953,6 +959,16 @@ assertRoute(
   const plan = classifyToolAwareRoute("is their office open today?");
   assert(!plan.intents.includes("research"), "third-person owned status: does not route as research");
   assert(!plan.priorityToolNames.includes("search_web"), "third-person owned status: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is the garage door open now?");
+  assert(!plan.intents.includes("research"), "definite local open-status question: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "definite local open-status question: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is the window open now?");
+  assert(!plan.intents.includes("research"), "local window status: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "local window status: does not prioritize web search");
 }
 {
   const plan = classifyToolAwareRoute("did you win today?");
