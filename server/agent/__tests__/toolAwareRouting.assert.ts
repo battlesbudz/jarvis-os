@@ -172,6 +172,8 @@ for (const [query, label] of [
   ["what are my calendar events today with what's happening in Ukraine today", "with-contraction research clause"],
   ["what are my calendar events today with what is happening in Ukraine today", "with-expanded research clause"],
   ["what are my calendar events today with what happened in Ukraine today", "with-past research clause"],
+  ["what are my calendar events today with Disney today", "with-generic public today clause"],
+  ["what are my calendar events today with spacex today", "with-lowercase public today clause"],
 ] as const) {
   const plan = classifyToolAwareRoute(query);
   assert(plan.intents.includes("calendar"), `${label}: calendar intent detected`);
@@ -622,6 +624,14 @@ assertRoute(
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],
 );
+for (const query of ["trump today", "spacex today"] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
 for (const query of [
   "recent studies on GLP-1",
   "latest papers about sleep",
