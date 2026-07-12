@@ -175,6 +175,18 @@ assertRoute(
   assert(plan.priorityToolNames.includes("search_web"), "public-events mixed request: search_web preserved");
 }
 {
+  const plan = classifyToolAwareRoute("what are my calendar events today with OpenAI today");
+  assert(plan.intents.includes("calendar"), "public-shorthand mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "public-shorthand mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "public-shorthand mixed request: search_web preserved");
+}
+{
+  const plan = classifyToolAwareRoute("what are my calendar events today with TSLA today");
+  assert(plan.intents.includes("calendar"), "ticker-shorthand mixed request: calendar intent detected");
+  assert(plan.intents.includes("research"), "ticker-shorthand mixed request: research intent preserved");
+  assert(plan.priorityToolNames.includes("search_web"), "ticker-shorthand mixed request: search_web preserved");
+}
+{
   const plan = classifyToolAwareRoute("what are my calendar events today? what's today's news?");
   assert(plan.intents.includes("calendar"), "sentence mixed calendar and news: calendar intent detected");
   assert(plan.intents.includes("research"), "sentence mixed calendar and news: research intent preserved");
@@ -801,6 +813,18 @@ assertRoute(
 );
 assertRoute(
   "is Walmart open today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "is the Starbucks open today?",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "is the post office open today?",
   "research",
   ["research", "browser"],
   ["search_web", "research_topic", "browser_navigate"],

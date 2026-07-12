@@ -45,6 +45,7 @@ interface ToolAwareRule {
 
 const PUBLIC_RESEARCH_SUBJECT_PATTERN = String.raw`(?:the\s+)?(?:[$][A-Za-z]{1,8}|s&p\s*500|nasdaq(?:\s+composite)?|dow(?:\s+jones)?(?:\s+industrial\s+average)?|russell\s*2000|tsla|aapl|nvda|msft|amzn|meta|googl?|nflx|spy|qqq|spx|btc(?:\/usd)?|eth(?:\/usd)?|sol|xrp|doge|ada|openai|anthropic|nvidia|tesla|microsoft|apple|amazon|google|netflix|ukraine|russia|israel|iran|china|congress|senate|supreme\s+court|white\s+house|fed|federal\s+reserve|lakers|warriors|yankees|dodgers|chiefs|eagles|presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)`;
 const GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN = String.raw`(?!(?:[Ii]|[Mm]e|[Yy]ou|[Ww]e|[Uu]s|[Tt]hey|[Tt]hem|[Hh]e|[Ss]he|[Ii]t|[Mm]y|[Oo]ur|[Yy]our|[Tt]heir|[Mm]om|[Mm]um|[Dd]ad|[Mm]other|[Ff]ather|[Bb]rother|[Ss]ister|[Ss]on|[Dd]aughter|[Hh]usband|[Ww]ife|[Pp]artner|[Ff]riend)\b)(?:[Tt]he\s+)?(?:[$A-Z][A-Za-z0-9&.'\u2019/-]*(?:\s+[A-Z][A-Za-z0-9&.'\u2019/-]*){0,5})`;
+const PUBLIC_OPEN_STATUS_PLACE_PATTERN = String.raw`(?:starbucks|walmart|mcdonald['\u2019]?s|post\s+offices?|banks?|stores?|shops?|restaurants?|libraries|pharmacies|malls?|courthouses?|dmv|government\s+offices?)`;
 const PERSONAL_TODAY_SUBJECT_PATTERN = String.raw`(?:plan|plans|schedule|calendar|agenda|tasks?|to-?dos?|reminders?|appointments?|meetings?|work|school|home|life|routines?|goals?|commitments?|projects?|dinner|lunch|breakfast|meals?|notes?|messages?|emails?|inbox|repl(?:y|ies)|responses?|reports?|drafts?|documents?|conversations?|weather|date|time|stats?)`;
 
 const TOOL_AWARE_RULES: ToolAwareRule[] = [
@@ -140,6 +141,9 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       new RegExp(String.raw`\bwhat\s+did\s+${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:announce|say|report|release|publish|post|decide|rule|order|sign|launch|introduce|unveil|confirm|deny|approve|reject|win|lose)\s+(?:today|tonight|yesterday|now|right\s+now)\b`, "i"),
       new RegExp(String.raw`\bwhat\s+did\s+${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}\s+(?:announce|report|release|publish|post|launch|introduce|unveil)\s+(?:today|tonight|yesterday|now|right\s+now)\b`, "i"),
       /\b(?:who\s+(?:is|are)\s+playing|who\s+plays|(?:is|are)\s+(?!(?:you|we|i|it|this|that)\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}playing|(?:do|does)\s+(?!(?:you|we|i|it|this|that)\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}play)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
+      new RegExp(String.raw`\b(?:is|are)\s+${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`, "i"),
+      new RegExp(String.raw`\b(?:is|are)\s+the\s+${PUBLIC_OPEN_STATUS_PLACE_PATTERN}\s+(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`, "i"),
+      new RegExp(String.raw`\b(?:is|are)\s+${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}\s+(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b`),
       /\b(?:is|are)\s+(?!(?:you|we|i|it|this|that|my|our|your|their|his|her|the)\b)(?:[$\w.\/&,'\u2019-]+\s+){1,6}(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
       /\b(?:is|are)\s+(?!(?:you|we|i|it|this|that|my|our|your|their|his|her|the)\b)(?:[$\w.\/&,'\u2019-]+\s+){1,6}(?:delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
       new RegExp(String.raw`^\s*${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:open|closed|delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\s*\??\s*$`, "i"),
@@ -267,7 +271,7 @@ function isPrivateCalendarEventQuery(query: string): boolean {
 
 const MIXED_RESEARCH_LIVE_NOUN_PATTERN = String.raw`(?:news|stories?|updates?|headlines?|articles?|sources?|events?|games?|matches?|fixtures?|schedules?|hours?|opening\s+hours|business\s+hours|store\s+hours|videos?|uploads?|posts?|information|info|data|traffic|air\s+quality|quality|conditions?|prices?|scores?|results?|delays?|cancellations?|cancelations?|rulings?|decisions?|orders?|opinions?|judg(?:e)?ments?|verdicts?|developments?|situations?|versions?|releases?|rates?|values?|rankings?|standings?|polls?|odds?|availability|status|population|counts?|totals?|concerts?|shows?|performances?|festivals?|exhibitions?|exhibits?|plays?|musicals?|comedy\s+shows?|open\s+mics?|meetups?|fairs?|markets?|parades?|screenings?|movies?|sports\s+events?|tournaments?|classes?|workshops?)`;
 const MIXED_RESEARCH_CLAUSE_SEPARATOR = new RegExp(
-  String.raw`\s+(?:and|also|plus|then|along\s+with|together\s+with|as\s+well\s+as)\s+|\s+with\s+(?=(?:(?:the\s+)?(?:latest|current|recent)\b|(?:[$\w.\/&,'\u2019-]+\s+){0,6}${MIXED_RESEARCH_LIVE_NOUN_PATTERN}\b))|[,;]+|[.!?]+(?:\s+|$)`,
+  String.raw`\s+(?:and|also|plus|then|along\s+with|together\s+with|as\s+well\s+as)\s+|\s+with\s+(?=(?:(?:the\s+)?(?:latest|current|recent)\b|${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:today|tonight|now|right\s+now)\b|(?:[$\w.\/&,'\u2019-]+\s+){0,6}${MIXED_RESEARCH_LIVE_NOUN_PATTERN}\b))|[,;]+|[.!?]+(?:\s+|$)`,
   "i",
 );
 
