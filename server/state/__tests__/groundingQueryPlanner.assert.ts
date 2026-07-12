@@ -43,6 +43,10 @@ function testIntentSpecificSources(): void {
   assert.equal(commitments.sources.profile, false);
 
   assert.equal(classifyGroundingIntent("What is my timezone?"), "profile_recall");
+  assert.equal(classifyGroundingIntent("What is my current timezone?"), "profile_recall");
+  assert.equal(classifyGroundingIntent("What is my current preference for local voice?"), "temporal_recall");
+  assert.equal(classifyGroundingIntent("What are Kubernetes tasks?"), "exact_recall");
+  assert.equal(classifyGroundingIntent("Explain project goals in OKRs."), "exact_recall");
 }
 
 function testExplicitQueryAndGroundingBoundary(): void {
@@ -57,6 +61,10 @@ function testExplicitQueryAndGroundingBoundary(): void {
   assert.equal(shouldGroundPersonalMemoryRequest("Show memories about native speech."), true);
   assert.equal(shouldGroundPersonalMemoryRequest("What do you know about Kubernetes?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("How are you today?"), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("How do I debug an Android memory leak?"), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("How does memory recall work?"), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("What are Kubernetes tasks?"), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("Explain project goals in OKRs."), false);
 }
 
 function main(): void {

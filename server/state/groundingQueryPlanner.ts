@@ -62,20 +62,24 @@ function normalized(value: string): string {
 
 export function classifyGroundingIntent(requestText: string): GroundingIntent {
   const text = normalized(requestText);
+  const hasPersonalAnchor = /\b(?:i|ive|im|me|my|mine|myself)\b/.test(text);
   if (/\b(?:what do you know about me|(?:tell|show) me what you know about me|what have i told you|what do you remember about me|whats in my memory|what is in my memory|show my memories|list my memories)\b/.test(text)) {
     return "broad_personal_summary";
   }
-  if (/\b(?:my\s+)?(?:commitments?|tasks?|goals?|blockers?|deadlines?|due dates?|pending work)\b/.test(text)) {
+  if (hasPersonalAnchor && /\b(?:commitments?|tasks?|goals?|blockers?|deadlines?|due dates?|pending work)\b/.test(text)) {
     return "commitment_status";
   }
   if (/\b(?:relationship|relationships|family|friend|friends|partner|spouse|brother|sister|mother|father|parent|parents|collaborator|coworker|co-worker|person i told you about)\b/.test(text) ||
     /\bwhat did i tell you about (?:him|her|them|that person|my )\b/.test(text)) {
     return "relationship_recall";
   }
+  if (/\b(?:my\s+)?(?:profile|preferred name|name|timezone|time zone|language|communication style)\b/.test(text)) {
+    return "profile_recall";
+  }
   if (/\b(?:a while ago|previously|before|last time|used to|current|currently|latest|newest|most recent|still|change[sd]?|decid(?:e|ed)|decision|supersed(?:e|ed|es))\b/.test(text)) {
     return "temporal_recall";
   }
-  if (/\b(?:my\s+)?(?:profile|preferred name|name|timezone|time zone|language|communication style|preferences?|values?)\b/.test(text)) {
+  if (hasPersonalAnchor && /\b(?:preferences?|values?)\b/.test(text)) {
     return "profile_recall";
   }
   return "exact_recall";
@@ -85,7 +89,17 @@ export function shouldGroundPersonalMemoryRequest(requestText: string): boolean 
   const text = normalized(requestText);
   if (!text) return false;
   if (classifyGroundingIntent(text) !== "exact_recall") return true;
-  return /\b(?:memory|memories|remember|recall|what have i told you|what did i (?:say|tell|decide)|did i tell you|do you know my|based on what you know about me)\b/.test(text);
+  if (/\b(?:what have i told you|what did i (?:say|tell|decide)|did i tell you|do you know my|based on what you know about me)\b/.test(text)) {
+    return true;
+  }
+  if (/\b(?:show|list|display|search|find|check|inspect|pull up)\b.{0,40}\b(?:my\s+)?(?:memory|memories)\b/.test(text)) {
+    return true;
+  }
+  if (/\b(?:my|jarvis|your)\s+(?:stored\s+)?(?:memory|memories)\b/.test(text)) {
+    return true;
+  }
+  return /\b(?:remember|recall)\b/.test(text) &&
+    /\b(?:i|ive|im|me|my|mine|myself|we|our|us|told you|discussed|decided)\b/.test(text);
 }
 
 function temporalSupportQuery(requestText: string): string {
