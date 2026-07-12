@@ -896,6 +896,18 @@ assertRoute(
   ["search_web", "research_topic", "browser_navigate"],
 );
 assertRoute(
+  "septa delayed today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
+  "chipotle open today",
+  "research",
+  ["research", "browser"],
+  ["search_web", "research_topic", "browser_navigate"],
+);
+assertRoute(
   "is McDonald's open today?",
   "research",
   ["research", "browser"],
@@ -1173,6 +1185,14 @@ for (const [query, label] of [
   const plan = classifyToolAwareRoute("is the window open now?");
   assert(!plan.intents.includes("research"), "local window status: does not route as research");
   assert(!plan.priorityToolNames.includes("search_web"), "local window status: does not prioritize web search");
+}
+for (const [query, label] of [
+  ["garage door open today?", "local status shorthand"],
+  ["dinner delayed today?", "personal status shorthand"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: does not prioritize web search`);
 }
 {
   const plan = classifyToolAwareRoute("Dinner tonight?");

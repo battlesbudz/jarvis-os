@@ -48,6 +48,7 @@ const GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN = String.raw`(?!(?:[Ii]|[Mm]e|[Yy]ou
 const PUBLIC_OPEN_STATUS_PLACE_PATTERN = String.raw`(?:starbucks|walmart|mcdonald['\u2019]?s|post\s+offices?|banks?|stores?|shops?|restaurants?|libraries|pharmacies|malls?|courthouses?|dmv|government\s+offices?)`;
 const PERSONAL_TODAY_SUBJECT_PATTERN = String.raw`(?:[Pp]lans?|[Ss]chedule|[Cc]alendar|[Aa]genda|[Tt]asks?|[Tt]o-?dos?|[Rr]eminders?|[Aa]ppointments?|[Mm]eetings?|[Ww]ork|[Ss]chool|[Hh]ome|[Ll]ife|[Rr]outines?|[Gg]oals?|[Cc]ommitments?|[Pp]rojects?|[Dd]inner|[Ll]unch|[Bb]reakfast|[Mm]eals?|[Nn]otes?|[Mm]essages?|[Ee]mails?|[Ii]nbox|[Rr]epl(?:y|ies)|[Rr]esponses?|[Rr]eports?|[Dd]rafts?|[Dd]ocuments?|[Cc]onversations?|[Ww]eather|[Dd]ate|[Tt]ime|[Ss]tats?)`;
 const PRIVATE_SPORTS_SUBJECT_PATTERN = String.raw`(?:i|me|you|we|us|he|him|she|her|it|they|them|this|that|these|those|my|mine|our|ours|your|yours|his|hers|its|their|theirs|someone|somebody|anyone|anybody|everyone|everybody|nobody|none|(?:the\s+)?(?:mom|mum|dad|mother|father|brother|sister|son|daughter|kids?|child|children|husband|wife|partner|friends?|team|group|club))`;
+const PRIVATE_STATUS_SHORTHAND_SUBJECT_PATTERN = String.raw`(?:is|are|am|was|were|will|would|can|could|should|do|does|did|leave|keep|make|check|tell|be|${PRIVATE_SPORTS_SUBJECT_PATTERN}|${PERSONAL_TODAY_SUBJECT_PATTERN}|(?:the\s+)?(?:garage|door|window|office|home|house|room|lights?|appliances?|car|vehicle))`;
 const PUBLIC_EVENT_CATEGORY_PATTERN = String.raw`(?:concerts?|shows?|performances?|festivals?|exhibitions?|exhibits?|plays?|musicals?|comedy\s+shows?|open\s+mics?|meetups?|fairs?|markets?|parades?|screenings?|movies?|sports\s+events?|tournaments?|classes?|workshops?)`;
 
 const TOOL_AWARE_RULES: ToolAwareRule[] = [
@@ -148,7 +149,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\b(?:is|are)\s+(?!(?:you|we|i|it|this|that|my|our|your|their|his|her|the)\b)(?:[$\w.\/&,'\u2019-]+\s+){1,6}(?:open|closed)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
       /\b(?:is|are)\s+(?!(?:you|we|i|it|this|that|my|our|your|their|his|her|the)\b)(?:[$\w.\/&,'\u2019-]+\s+){1,6}(?:delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\b/i,
       new RegExp(String.raw`^\s*${PUBLIC_RESEARCH_SUBJECT_PATTERN}\s+(?:open|closed|delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\s*\??\s*$`, "i"),
-      new RegExp(String.raw`^\s*${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}\s+(?:open|closed|delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\s*\??\s*$`),
+      new RegExp(String.raw`^\s*(?!${PRIVATE_STATUS_SHORTHAND_SUBJECT_PATTERN}\b)(?:[$\w.\/&,'\u2019.-]+\s+){1,6}(?:open|closed|delayed|cancelled|canceled|on\s+time|running)\s+(?:today|tonight|tomorrow|now|right\s+now)\s*\??\s*$`, "i"),
       new RegExp(String.raw`\bdid\s+(?!${PRIVATE_SPORTS_SUBJECT_PATTERN}\b)(?:the\s+)?(?:[$\w.\/&,-]+\s+){0,5}(?:win|lose|play)\s+(?:today|tonight|yesterday)\b`, "i"),
       /\bwho\s+(?:won|lost)\s+(?:today|tonight|yesterday)\b/i,
       /\b(?:stock\s+market|stocks?|markets?)\b.{0,60}\b(?:today|currently|recently|latest|now|right\s+now)\b/i,
