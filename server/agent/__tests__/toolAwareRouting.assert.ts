@@ -621,10 +621,28 @@ for (const query of ["scores today", "prices today", "polls today", "standings t
     ["search_web", "research_topic", "browser_navigate"],
   );
 }
+for (const query of [
+  "covid cases today",
+  "power outage today",
+  "current covid cases",
+  "latest power outages",
+] as const) {
+  assertRoute(
+    query,
+    "research",
+    ["research", "browser"],
+    ["search_web", "research_topic", "browser_navigate"],
+  );
+}
 {
   const plan = classifyToolAwareRoute("schedule today?");
   assert(!plan.intents.includes("research"), "bare personal schedule: does not route as research");
   assert(!plan.priorityToolNames.includes("search_web"), "bare personal schedule: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("my cases today?");
+  assert(!plan.intents.includes("research"), "owned cases shorthand: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "owned cases shorthand: does not prioritize web search");
 }
 assertRoute(
   "watch the latest video from this channel",
