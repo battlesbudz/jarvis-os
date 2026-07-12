@@ -925,6 +925,36 @@ assertRoute(
   assert(!plan.priorityToolNames.includes("search_web"), "local open action: does not prioritize web search");
 }
 {
+  const plan = classifyToolAwareRoute("I currently need help");
+  assert(!plan.intents.includes("research"), "first-person currently statement: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "first-person currently statement: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("I now have time");
+  assert(!plan.intents.includes("research"), "first-person now statement: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "first-person now statement: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is my garage door open now?");
+  assert(!plan.intents.includes("research"), "owned open-status question: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "owned open-status question: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is our office open today?");
+  assert(!plan.intents.includes("research"), "shared open-status question: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "shared open-status question: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is your garage door open now?");
+  assert(!plan.intents.includes("research"), "second-person owned status: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "second-person owned status: does not prioritize web search");
+}
+{
+  const plan = classifyToolAwareRoute("is their office open today?");
+  assert(!plan.intents.includes("research"), "third-person owned status: does not route as research");
+  assert(!plan.priorityToolNames.includes("search_web"), "third-person owned status: does not prioritize web search");
+}
+{
   const plan = classifyToolAwareRoute("did you win today?");
   assert(!plan.shouldPreferTool, "casual win question: does not prefer tool use");
   assert(!plan.intents.includes("research"), "casual win question: does not route as research");
