@@ -371,6 +371,12 @@ for (const query of [
   "what is the current time in London?",
   "current timezone in Tokyo",
   "what time is it in Paris now?",
+  "current time London",
+  "current time london",
+  "local time Tokyo",
+  "local time tokyo",
+  "Current time New York",
+  "local timezone Tokyo",
 ] as const) {
   assertRoute(
     query,
@@ -383,6 +389,18 @@ for (const query of [
   const plan = classifyToolAwareRoute("what is my current time?");
   assert(!plan.intents.includes("research"), "personal current time: does not route as research");
   assert(!plan.priorityToolNames.includes("search_web"), "personal current time: does not prioritize web search");
+}
+for (const [query, label] of [
+  ["current time", "bare current time"],
+  ["current time now", "current device time"],
+  ["local time here", "local device location time"],
+  ["current time please", "polite current time request"],
+  ["current time for me", "personal current time request"],
+  ["current time on my phone", "phone current time request"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(!plan.intents.includes("research"), `${label}: does not route as research`);
+  assert(!plan.priorityToolNames.includes("search_web"), `${label}: does not prioritize web search`);
 }
 for (const query of [
   "what are the current McDonald's hours?",
