@@ -423,12 +423,18 @@ function shiftedUtcDateKey(date: Date, days: number): string {
   return isoDateKey(shifted);
 }
 
-function requestedCommitmentDueDates(query: string, now: Date): Set<string> {
+function requestedCommitmentDueDateFilter(query: string, now: Date): {
+  dates: Set<string>;
+  overdue: boolean;
+} {
   const normalizedQuery = query.toLowerCase();
   const dates = new Set(normalizedQuery.match(/\b\d{4}-\d{2}-\d{2}\b/g) ?? []);
   if (/\b(?:today|tonight)\b/.test(normalizedQuery)) dates.add(isoDateKey(now));
   if (/\btomorrow\b/.test(normalizedQuery)) dates.add(shiftedUtcDateKey(now, 1));
-  return dates;
+  return {
+    dates,
+    overdue: /\boverdue\b/.test(normalizedQuery),
+  };
 }
 
 function dedupeCommitments(
@@ -439,7 +445,7 @@ function dedupeCommitments(
 ): { selected: GroundedCommitmentRecord[]; omitted: string[] } {
   const todayKey = now.toISOString().slice(0, 10);
   const queryTerms = commitmentQueryTerms(query);
-  const requestedDueDates = requestedCommitmentDueDates(query, now);
+  const requestedDueDate = requestedCommitmentDueDateFilter(query, now);
   const personalCommitments = commitments.filter(isPersonalCommitment);
   const groups = new Map<string, GroundedCommitmentRecord[]>();
   for (const commitment of personalCommitments) {
@@ -458,9 +464,15 @@ function dedupeCommitments(
       if (rankDiff !== 0) return rankDiff;
       return extractedAtMs(b.extractedAt) - extractedAtMs(a.extractedAt);
     })[0]!);
-  const dateMatched = requestedDueDates.size === 0
+  const hasDateFilter = requestedDueDate.overdue || requestedDueDate.dates.size > 0;
+  const dateMatched = !hasDateFilter
     ? canonical
-    : canonical.filter((commitment) => Boolean(commitment.dueDate && requestedDueDates.has(commitment.dueDate)));
+    : canonical.filter((commitment) => Boolean(
+      commitment.dueDate && (
+        requestedDueDate.dates.has(commitment.dueDate) ||
+        (requestedDueDate.overdue && commitment.dueDate < todayKey)
+      )
+    ));
   const topicMatched = queryTerms.length === 0
     ? dateMatched
     : dateMatched.filter((commitment) => commitmentTopicScore(commitment, queryTerms) > 0);

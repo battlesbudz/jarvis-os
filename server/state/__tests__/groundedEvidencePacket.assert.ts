@@ -383,6 +383,23 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
     ["tomorrow-task"],
   );
   assert.equal(tomorrowPacket.evidence.some((item) => item.sourceId === "unrelated-overdue"), false);
+
+  const overduePacket = await buildGroundedEvidencePacket({
+    userId,
+    requestText: "Do I have any overdue tasks?",
+    activeModel: "Phone Gemma",
+    memoryLimit: 2,
+    commitmentLimit: 4,
+  }, {
+    now: () => fixedNow,
+    retrieveMemoryContext: retrieveEmptyMemoryContext,
+    loadCommitments: async () => commitments,
+  });
+  assert.deepEqual(
+    overduePacket.evidence.filter((item) => item.domain === "commitment").map((item) => item.sourceId),
+    ["unrelated-overdue"],
+  );
+  assert.equal(overduePacket.evidence.some((item) => item.sourceId === "tomorrow-task"), false);
   console.log("OK: topic commitment grounding filters unrelated overdue work");
 }
 
