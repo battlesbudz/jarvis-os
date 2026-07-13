@@ -1367,6 +1367,20 @@ async function testAndroidLocalGemmaUsesGroundedEvidencePacketForPersonalMemoryQ
     assert.match(temporalResult.textContent, /Justin/);
 
     capturedPrompt = "";
+    const personalFactResult = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "What is my birthday?" }],
+      tools: [],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-grounded",
+    }));
+    assert.match(capturedPrompt, /Jarvis Grounded Evidence Packet/);
+    assert.match(capturedPrompt, /intent=exact_recall/);
+    assert.match(personalFactResult.textContent, /Justin/);
+
+    capturedPrompt = "";
     const exactInspectionResult = await accumulateTurn(new AndroidLocalGemmaProvider().query({
       model: "android-local-gemma/gemma-4-e4b-it",
       messages: [{ role: "user", content: "Show exact memories about DoorDash" }],

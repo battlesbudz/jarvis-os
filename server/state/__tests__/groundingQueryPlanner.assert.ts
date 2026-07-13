@@ -91,6 +91,9 @@ function testExplicitQueryAndGroundingBoundary(): void {
   assert.equal(shouldGroundPersonalMemoryRequest("Remember I need to call Sam"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("How do I recall an Outlook email?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("Can you recall my birthday?"), true);
+  assert.equal(shouldGroundPersonalMemoryRequest("What's my favorite color?"), true);
+  assert.equal(shouldGroundPersonalMemoryRequest("What is my birthday?"), true);
+  assert.equal(shouldGroundPersonalMemoryRequest("When is my birthday?"), true);
   assert.equal(shouldGroundPersonalMemoryRequest("Please recall what I decided about Android speech"), true);
   assert.equal(shouldGroundPersonalMemoryRequest("Show memories about native speech."), true);
   assert.equal(shouldGroundPersonalMemoryRequest("What do you know about Kubernetes?"), false);
@@ -104,6 +107,8 @@ function testExplicitQueryAndGroundingBoundary(): void {
   assert.equal(shouldGroundPersonalMemoryRequest("Explain family relationships."), false);
   assert.equal(shouldGroundPersonalMemoryRequest("What's on my current screen?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("What are my current notifications?"), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("What is my current location?"), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("What is my IP address?"), false);
 }
 
 function main(): void {

@@ -122,6 +122,9 @@ export function shouldGroundPersonalMemoryRequest(requestText: string): boolean 
   if (/\b(?:my|jarvis|your)\s+(?:stored\s+)?(?:memory|memories)\b/.test(text)) {
     return true;
   }
+  const asksForPersonalFact = /^(?:what(?:s| is| was| are| were)|when(?:s| is| was)|where(?:s| is| was)|who(?:s| is| was))\s+my\b/.test(text);
+  const asksForLiveDeviceState = /\b(?:current screen|on my screen|current notifications?|notifications? (?:right now|currently)|battery(?: level| percentage| status)?|clipboard|current location|live location|foreground app|active app|ip address|network status|connection status|device status|phone doing)\b/.test(text);
+  if (asksForPersonalFact && !asksForLiveDeviceState) return true;
   const hasPersonalRecallAnchor = /\b(?:i|ive|im|me|my|mine|myself|we|our|ours|us|told you|discussed|decided)\b/.test(text);
   const hasExplicitRecallAsk = /\b(?:do|did|can|could|would)\s+you\s+(?:remember|recall)\b/.test(text) ||
     /^\s*(?:please\s+)?(?:remember|recall)\s+(?:what|when|where|why|how|whether|if)\b/.test(text);

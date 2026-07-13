@@ -12,7 +12,10 @@ import {
 } from "./agent/cloudBackgroundEscalation";
 import { buildGroundedEvidencePacketPrompt } from "./state/groundedEvidencePacket";
 import { shouldGroundPersonalMemoryRequest } from "./state/groundingQueryPlanner";
-import { classifyRuntimeMemoryInspectionIntent } from "./state/runtimeMemoryInspection";
+import {
+  answerRuntimeMemoryInspectionQuestion,
+  classifyRuntimeMemoryInspectionIntent,
+} from "./state/runtimeMemoryInspection";
 
 export type LocalVoiceModelCallKind = "local_gemma" | "cloud_model" | "secondary_llm";
 
@@ -1817,6 +1820,32 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
       workingContext,
       diagnostics: runtimeStatus.diagnostics,
     };
+  }
+
+  const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent([{ role: "user", content: transcript }]);
+  if (memoryInspectionIntent && memoryInspectionIntent.scopeLabel !== "about you") {
+    const runtimeInspection = await answerRuntimeMemoryInspectionQuestion({
+      messages: [{ role: "user", content: transcript }],
+      userId,
+      route: undefined,
+    });
+    const canonicalResponse = runtimeInspection?.textContent.trim();
+    if (canonicalResponse) {
+      return {
+        transcript,
+        canonicalResponse,
+        chatOutput: canonicalResponse,
+        ttsOutput: canonicalResponse,
+        responseCount: 1,
+        modelCalls,
+        androidExecutions: [...androidRuntime.executions],
+        workingContext,
+        diagnostics: {
+          outcome: "runtime_memory_inspection",
+          modelOutputType: "runtime_direct",
+        },
+      };
+    }
   }
 
   recordModelCall(modelCalls, {
