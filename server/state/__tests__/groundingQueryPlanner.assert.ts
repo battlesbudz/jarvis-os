@@ -99,6 +99,7 @@ function testExplicitQueryAndGroundingBoundary(): void {
   assert.equal(shouldGroundPersonalMemoryRequest("Show stored memories about native speech."), true);
   assert.equal(shouldGroundPersonalMemoryRequest("Search memory leaks in my Android app."), false);
   assert.equal(shouldGroundPersonalMemoryRequest("Check memory usage."), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("How do I debug my memory leak?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("What do you know about Kubernetes?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("How are you today?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("How do I debug an Android memory leak?"), false);

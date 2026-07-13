@@ -3617,7 +3617,7 @@ async function testLocalVoicePersonalMemoryQuestionInjectsGroundedEvidencePacket
     const technicalMemoryGemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "Here is how to inspect memory usage." }]);
     const technicalMemoryResult = await runLocalVoiceRuntimeHarnessTurn({
       userId: "user-local-voice",
-      transcript: "Search memory leaks in my Android app.",
+      transcript: "How do I debug my memory leak?",
       gemma: technicalMemoryGemma,
     });
     assert.equal(technicalMemoryResult.diagnostics.outcome, "final");

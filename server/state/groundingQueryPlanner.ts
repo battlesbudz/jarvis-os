@@ -119,7 +119,8 @@ export function shouldGroundPersonalMemoryRequest(requestText: string): boolean 
   if (/\b(?:show|list|display|search|find|check|inspect|pull up)\b.{0,40}\b(?:my\s+(?:stored\s+)?|stored\s+|jarvis\s+(?:stored\s+)?|your\s+(?:stored\s+)?)(?:memory|memories)\b/.test(text)) {
     return true;
   }
-  if (/\b(?:my|jarvis|your)\s+(?:stored\s+)?(?:memory|memories)\b/.test(text)) {
+  if (/\b(?:jarvis|your)\s+(?:stored\s+)?(?:memory|memories)\b/.test(text) ||
+    /\bmy\s+(?:stored\s+memory|memories)\b/.test(text)) {
     return true;
   }
   const asksForPersonalFact = /^(?:what(?:s| is| was| are| were)|when(?:s| is| was)|where(?:s| is| was)|who(?:s| is| was))\s+my\b/.test(text);
