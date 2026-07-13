@@ -63,9 +63,11 @@ function normalized(value: string): string {
 export function classifyGroundingIntent(requestText: string): GroundingIntent {
   const text = normalized(requestText);
   const hasPersonalAnchor = /\b(?:i|ive|im|me|my|mine|myself)\b/.test(text);
-  const hasHistoricalAnchor = hasPersonalAnchor ||
-    /\b(?:remember|recall|my memor(?:y|ies)|we discussed|we decided|i told you|you told me)\b/.test(text) ||
+  const hasHistoricalAnchor =
+    /\b(?:remember|recall|my memor(?:y|ies)|we discussed|we decided|i decid(?:e|ed)|i told you|you told me)\b/.test(text) ||
     /\bthat(?:\s+[a-z0-9_-]+){0,4}\s+(?:thing|decision|choice|plan)\b/.test(text);
+  const hasPersonalTemporalSubject = hasPersonalAnchor &&
+    /\b(?:preferences?|decisions?|choices?|plans?|polic(?:y|ies)|approach|setup|configuration|workflow|work patterns?|values?)\b/.test(text);
   const hasCommitmentAnchor = /\bmy\s+(?:current\s+|pending\s+)?(?:commitments?|tasks?|goals?|blockers?|deadlines?|due dates?|pending work)\b/.test(text) ||
     /\b(?:commitments?|tasks?|goals?|blockers?|deadlines?|due dates?|pending work)\b.{0,24}\b(?:do i have|i have|ive set|i need|im working)\b/.test(text);
   const hasProfileAnchor = /\bmy\s+(?:current\s+)?(?:profile|preferred name|name|timezone|time zone|language|communication style|preferences?|values?)\b/.test(text) ||
@@ -76,14 +78,14 @@ export function classifyGroundingIntent(requestText: string): GroundingIntent {
   if (hasCommitmentAnchor) {
     return "commitment_status";
   }
-  if ((hasHistoricalAnchor && /\b(?:relationship|relationships|family|friend|friends|partner|spouse|brother|sister|mother|father|parent|parents|collaborator|coworker|co-worker|person i told you about)\b/.test(text)) ||
+  if (((hasPersonalAnchor || hasHistoricalAnchor) && /\b(?:relationship|relationships|family|friend|friends|partner|spouse|brother|sister|mother|father|parent|parents|collaborator|coworker|co-worker|person i told you about)\b/.test(text)) ||
     /\bwhat did i tell you about (?:him|her|them|that person|my )\b/.test(text)) {
     return "relationship_recall";
   }
   if (hasProfileAnchor && /\b(?:profile|preferred name|name|timezone|time zone|language|communication style)\b/.test(text)) {
     return "profile_recall";
   }
-  if (hasHistoricalAnchor && /\b(?:a while ago|previously|before|last time|used to|current|currently|latest|newest|most recent|still|change[sd]?|decid(?:e|ed)|decision|supersed(?:e|ed|es))\b/.test(text)) {
+  if ((hasHistoricalAnchor || hasPersonalTemporalSubject) && /\b(?:a while ago|previously|before|last time|used to|current|currently|latest|newest|most recent|still|change[sd]?|decid(?:e|ed)|decision|supersed(?:e|ed|es))\b/.test(text)) {
     return "temporal_recall";
   }
   if (hasProfileAnchor && /\b(?:preferences?|values?)\b/.test(text)) {

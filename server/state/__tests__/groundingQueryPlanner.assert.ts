@@ -50,6 +50,8 @@ function testIntentSpecificSources(): void {
   assert.equal(classifyGroundingIntent("What is your name?"), "exact_recall");
   assert.equal(classifyGroundingIntent("What's the latest Android version?"), "exact_recall");
   assert.equal(classifyGroundingIntent("Explain family relationships."), "exact_recall");
+  assert.equal(classifyGroundingIntent("What's on my current screen?"), "exact_recall");
+  assert.equal(classifyGroundingIntent("What are my current notifications?"), "exact_recall");
 }
 
 function testExplicitQueryAndGroundingBoundary(): void {
@@ -71,6 +73,8 @@ function testExplicitQueryAndGroundingBoundary(): void {
   assert.equal(shouldGroundPersonalMemoryRequest("What is your name?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("What's the latest Android version?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("Explain family relationships."), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("What's on my current screen?"), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("What are my current notifications?"), false);
 }
 
 function main(): void {
