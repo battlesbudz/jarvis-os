@@ -10,7 +10,11 @@ import {
   type RuntimeExplanation,
   type RuntimeExplanationSource,
 } from "../core/runtime/runtimeExplanation";
-import type { MemoryContext } from "../memory/memoryOs";
+import {
+  explainMemoryAnswer,
+  type MemoryAnswerExplanation,
+  type MemoryContext,
+} from "../memory/memoryOs";
 import {
   loadRuntimeProfileStateFromDb,
   type RuntimeProfileState,
@@ -20,6 +24,7 @@ export type RuntimeMemoryInspectionIntent = {
   kind: "exact_memory_inspection";
   query: string;
   scopeLabel: string;
+  explanationRequested?: true;
 };
 
 type SoulInspectionRecord = {
@@ -73,6 +78,14 @@ function latestUserText(messages: OpenAI.Chat.Completions.ChatCompletionMessageP
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message?.role === "user") return textFromContent(message.content);
+  }
+  return "";
+}
+
+function latestAssistantText(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): string {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "assistant") return textFromContent(message.content);
   }
   return "";
 }
@@ -165,6 +178,51 @@ function topicIntent(topic: string): RuntimeMemoryInspectionIntent {
   };
 }
 
+function priorMemoryStatement(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): string {
+  const assistantText = latestAssistantText(messages);
+  const matches = [...assistantText.matchAll(/\(MemoryOS\/[^)\r\n]+\)\s*\r?\n([^\r\n]+)/g)];
+  return cleanText(matches.at(-1)?.[1] ?? "").slice(0, 800);
+}
+
+function explanationIntent(
+  rawText: string,
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+): RuntimeMemoryInspectionIntent | null {
+  const cleaned = cleanText(rawText);
+  const patterns: Array<{ pattern: RegExp; personalRequired: boolean }> = [
+    { pattern: /^(?:why|how) do you remember (?:that )?(.+)$/i, personalRequired: false },
+    { pattern: /^(?:why|how) do you know (?:that )?(.+)$/i, personalRequired: true },
+    { pattern: /^(?:why|how) do you (?:believe|think|say) (?:that )?(.+)$/i, personalRequired: true },
+    { pattern: /^what makes you (?:believe|think|say) (?:that )?(.+)$/i, personalRequired: true },
+    { pattern: /^where did you (?:learn|hear|get) (?:that )?(.+)$/i, personalRequired: true },
+  ];
+
+  for (const { pattern, personalRequired } of patterns) {
+    const match = cleaned.match(pattern);
+    if (!match?.[1]) continue;
+    const captured = cleanText(match[1]);
+    const deictic = /^(?:that|this|it|that memory|this memory|that fact|this fact)$/i.test(captured);
+    if (deictic) {
+      const priorStatement = priorMemoryStatement(messages);
+      if (!priorStatement) return null;
+      return {
+        kind: "exact_memory_inspection",
+        query: priorStatement,
+        scopeLabel: "that memory",
+        explanationRequested: true,
+      };
+    }
+    const normalizedCaptured = normalizeForIntent(captured);
+    if (personalRequired && !/\b(?:i|im|ive|id|me|my|mine|we|us|our|ours)\b/i.test(normalizedCaptured)) {
+      return null;
+    }
+    return { ...topicIntent(captured), explanationRequested: true };
+  }
+  return null;
+}
+
 function cleanBenignInspectionText(text: string): string {
   return text.replace(/[?!.;,:\-\u2013\u2014]+/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -218,6 +276,9 @@ export function classifyRuntimeMemoryInspectionIntent(
   }
 
   if (hasCompoundFollowUpWork(rawText)) return null;
+
+  const explanation = explanationIntent(rawText, messages);
+  if (explanation) return explanation;
 
   const topicPatterns = [
     /^(?:show|list|display|pull up)(?: me)?(?: the)?(?: my)?(?: exact)?(?: stored)? (?:memories|memory) (?:about|for|on|related to|regarding) (.+)$/i,
@@ -350,7 +411,11 @@ function compactProvenance(item: MemoryContext["items"][number]): string {
   return `MemoryOS/${ref.id}`;
 }
 
-function renderMemoryItems(context: MemoryContext, scopeLabel: string): string[] {
+function renderMemoryItems(
+  context: MemoryContext,
+  scopeLabel: string,
+  explanation: MemoryAnswerExplanation,
+): string[] {
   const lines: string[] = ["## MemoryOS"];
   if (context.items.length === 0) {
     lines.push(`- No matching MemoryOS memories found for ${scopeLabel}.`);
@@ -359,10 +424,13 @@ function renderMemoryItems(context: MemoryContext, scopeLabel: string): string[]
 
   context.items.forEach((item, index) => {
     const memory = item.memory;
+    const canonicalId = item.provenance.find((ref) => ref.kind === "user_memory")?.id ?? memory.id;
+    const evidence = explanation.evidence.find((candidate) => candidate.memoryId === canonicalId);
     lines.push(
       `${index + 1}. [${memory.tier}/${memory.memoryType}] [${memory.category}] (${compactProvenance(item)})`,
       memory.content,
     );
+    if (evidence) lines.push(`Why Jarvis knows this: ${evidence.whyJarvisLearnedIt}`);
   });
 
   return lines;
@@ -695,15 +763,18 @@ export async function answerRuntimeMemoryInspectionQuestion(
     notes.push("MemoryOS was unavailable.");
   }
   memoryContext = filterMemoryContextForInspection(memoryContext, intent);
+  const memoryExplanation = await explainMemoryAnswer({ context: memoryContext });
 
   notes.push(...memoryContext.uncertainty
     .map(sanitizeMemoryUncertainty)
     .filter((note): note is string => Boolean(note)));
 
   const lines = [
-    `Here is a limited MemoryOS inspection for ${intent.scopeLabel}: up to ${DEFAULT_MEMORY_LIMIT} matching records. It may not include every stored memory.`,
+    intent.explanationRequested
+      ? `Here is the MemoryOS evidence behind ${intent.scopeLabel}: up to ${DEFAULT_MEMORY_LIMIT} matching records. It may not include every stored memory.`
+      : `Here is a limited MemoryOS inspection for ${intent.scopeLabel}: up to ${DEFAULT_MEMORY_LIMIT} matching records. It may not include every stored memory.`,
     "",
-    ...renderMemoryItems(memoryContext, intent.scopeLabel),
+    ...renderMemoryItems(memoryContext, intent.scopeLabel, memoryExplanation),
   ];
   if (includeCoreProfile) {
     lines.splice(2, 0, ...renderCoreProfile(profile, soul), "");

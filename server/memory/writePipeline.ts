@@ -667,61 +667,100 @@ export async function approvePendingMemoryWrite(input: {
       reason: "Edited memory content contains raw restricted details.",
     };
   }
-  const existingResult = await db.execute<PendingMemoryApprovalCandidateRow>(sql`
-    SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id
-    FROM user_memories
-    WHERE id = ${input.memoryId}
-      AND user_id = ${input.userId}
-      AND pending_review = TRUE
-      AND review_status = 'pending'
-    LIMIT 1
-  `);
-  const existingRow = (existingResult.rows ?? [])[0];
-  if (!existingRow?.content) return { approved: false, supersededMemoryId: null };
-  if (hasRestrictedApprovalMetadata(existingRow)) {
+  const approval = await db.transaction(async (tx) => {
+    const existingResult = await tx.execute<PendingMemoryApprovalCandidateRow>(sql`
+      SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id
+      FROM user_memories
+      WHERE id = ${input.memoryId}
+        AND user_id = ${input.userId}
+        AND pending_review = TRUE
+        AND review_status = 'pending'
+      LIMIT 1
+      FOR UPDATE
+    `);
+    const existingRow = (existingResult.rows ?? [])[0];
+    if (!existingRow?.content) {
+      return { approved: false as const, supersededMemoryId: null, reason: undefined };
+    }
+    if (hasRestrictedApprovalMetadata(existingRow)) {
+      return {
+        approved: false as const,
+        supersededMemoryId: null,
+        reason: "Pending memory source is restricted.",
+      };
+    }
+    if (!content && containsRawRestrictedContent(existingRow.content)) {
+      return {
+        approved: false as const,
+        supersededMemoryId: null,
+        reason: "Pending memory content contains raw restricted details.",
+      };
+    }
+
+    if (existingRow.supersedes_memory_id) {
+      const sourceResult = await tx.execute<{ id: string }>(sql`
+        SELECT id
+        FROM user_memories
+        WHERE id = ${existingRow.supersedes_memory_id}
+          AND user_id = ${input.userId}
+          AND pending_review = FALSE
+          AND review_status IN ('active', 'kept', 'edited')
+        LIMIT 1
+        FOR UPDATE
+      `);
+      if ((sourceResult.rows ?? []).length === 0) {
+        return {
+          approved: false as const,
+          supersededMemoryId: null,
+          reason: "The memory being corrected changed before approval. Refresh MemoryOS and review again.",
+        };
+      }
+    }
+
+    const setContent = content ? sql`, content = ${content}` : sql``;
+    const result = await tx.execute<{ id: string; supersedes_memory_id: string | null }>(sql`
+      UPDATE user_memories
+      SET pending_review = FALSE,
+          review_status = ${input.status}
+          ${setContent}
+      WHERE id = ${input.memoryId}
+        AND user_id = ${input.userId}
+        AND pending_review = TRUE
+        AND review_status = 'pending'
+      RETURNING id, supersedes_memory_id
+    `);
+    const row = (result.rows ?? [])[0];
+    if (!row) return { approved: false as const, supersededMemoryId: null, reason: undefined };
+
+    if (row.supersedes_memory_id) {
+      const superseded = await tx.execute<{ id: string }>(sql`
+        UPDATE user_memories
+        SET review_status = 'superseded',
+            corrected_by_memory_id = ${row.id}
+        WHERE user_id = ${input.userId}
+          AND id = ${row.supersedes_memory_id}
+          AND pending_review = FALSE
+          AND review_status IN ('active', 'kept', 'edited')
+        RETURNING id
+      `);
+      if ((superseded.rows ?? []).length === 0) {
+        throw new Error("Memory correction supersession lost its source-row lock.");
+      }
+    }
+
     return {
-      approved: false,
-      supersededMemoryId: null,
-      reason: "Pending memory source is restricted.",
+      approved: true as const,
+      supersededMemoryId: row.supersedes_memory_id ?? null,
+      approvedMemoryId: row.id,
     };
-  }
-  const existingContent = existingRow.content;
-  if (!content && containsRawRestrictedContent(existingContent)) {
-    return {
-      approved: false,
-      supersededMemoryId: null,
-      reason: "Pending memory content contains raw restricted details.",
-    };
-  }
-  const setContent = content ? sql`, content = ${content}` : sql``;
-  const result = await db.execute<{ id: string; supersedes_memory_id: string | null }>(sql`
-    UPDATE user_memories
-    SET pending_review = FALSE,
-        review_status = ${input.status}
-        ${setContent}
-    WHERE id = ${input.memoryId}
-      AND user_id = ${input.userId}
-      AND pending_review = TRUE
-      AND review_status = 'pending'
-    RETURNING id, supersedes_memory_id
-  `);
-  const row = (result.rows ?? [])[0];
-  if (!row) return { approved: false, supersededMemoryId: null };
+  });
+  if (!approval.approved) return approval;
 
   if (content) {
-    await refreshApprovedMemoryEmbedding(input.userId, row.id, content);
+    await refreshApprovedMemoryEmbedding(input.userId, approval.approvedMemoryId, content);
   }
 
-  const [supersession] = buildApprovedMemorySupersessions([row]);
-  if (supersession) {
-    await defaultMemoryWriteDeps.markMemoriesSuperseded(
-      input.userId,
-      [supersession.supersedesMemoryId],
-      supersession.approvedMemoryId,
-    );
-  }
-
-  return { approved: true, supersededMemoryId: row.supersedes_memory_id ?? null };
+  return { approved: true, supersededMemoryId: approval.supersededMemoryId };
 }
 
 export async function keepPendingMemoryWrites(input: {
@@ -734,32 +773,58 @@ export async function keepPendingMemoryWrites(input: {
     return { approved: 0, memoryIds: [], supersededMemoryIds: [] };
   }
 
-  const pendingResult = memoryIds
-    ? await db.execute<PendingMemoryApprovalCandidateRow>(sql`
-      SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id
-      FROM user_memories
-      WHERE user_id = ${userId}
-        AND id = ANY(${memoryIds}::varchar[])
-        AND pending_review = TRUE
-        AND review_status = 'pending'
-    `)
-    : await db.execute<PendingMemoryApprovalCandidateRow>(sql`
-      SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id
-      FROM user_memories
-      WHERE user_id = ${userId}
-        AND pending_review = TRUE
-        AND review_status = 'pending'
-    `);
-  const pendingRows = (pendingResult.rows ?? []) as PendingMemoryApprovalCandidateRow[];
-  const safeMemoryIds = pendingRows
-    .filter((row) => !hasRestrictedApprovalMetadata(row))
-    .filter((row) => !containsRawRestrictedContent(row.content ?? ""))
-    .map((row) => row.id);
-  if (safeMemoryIds.length === 0) {
-    return { approved: 0, memoryIds: [], supersededMemoryIds: [] };
-  }
+  const rows = await db.transaction(async (tx) => {
+    const pendingResult = memoryIds
+      ? await tx.execute<PendingMemoryApprovalCandidateRow>(sql`
+        SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id
+        FROM user_memories
+        WHERE user_id = ${userId}
+          AND id = ANY(${memoryIds}::varchar[])
+          AND pending_review = TRUE
+          AND review_status = 'pending'
+        ORDER BY extracted_at DESC
+        FOR UPDATE
+      `)
+      : await tx.execute<PendingMemoryApprovalCandidateRow>(sql`
+        SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id
+        FROM user_memories
+        WHERE user_id = ${userId}
+          AND pending_review = TRUE
+          AND review_status = 'pending'
+        ORDER BY extracted_at DESC
+        FOR UPDATE
+      `);
+    const pendingRows = (pendingResult.rows ?? []) as PendingMemoryApprovalCandidateRow[];
+    const safeRows = pendingRows
+      .filter((row) => !hasRestrictedApprovalMetadata(row))
+      .filter((row) => !containsRawRestrictedContent(row.content ?? ""));
+    const approvableRows: PendingMemoryApprovalCandidateRow[] = [];
+    const claimedSourceIds = new Set<string>();
+    for (const row of safeRows) {
+      if (!row.supersedes_memory_id) {
+        approvableRows.push(row);
+        continue;
+      }
+      if (claimedSourceIds.has(row.supersedes_memory_id)) continue;
+      const sourceResult = await tx.execute<{ id: string }>(sql`
+        SELECT id
+        FROM user_memories
+        WHERE id = ${row.supersedes_memory_id}
+          AND user_id = ${userId}
+          AND pending_review = FALSE
+          AND review_status IN ('active', 'kept', 'edited')
+        LIMIT 1
+        FOR UPDATE
+      `);
+      if ((sourceResult.rows ?? []).length > 0) {
+        claimedSourceIds.add(row.supersedes_memory_id);
+        approvableRows.push(row);
+      }
+    }
+    const safeMemoryIds = approvableRows.map((row) => row.id);
+    if (safeMemoryIds.length === 0) return [];
 
-  const result = await db.execute<ApprovedPendingMemoryWriteRow>(sql`
+    const result = await tx.execute<ApprovedPendingMemoryWriteRow>(sql`
       UPDATE user_memories
       SET pending_review = FALSE,
           review_status = 'kept'
@@ -769,16 +834,25 @@ export async function keepPendingMemoryWrites(input: {
         AND review_status = 'pending'
       RETURNING id, supersedes_memory_id
     `);
-
-  const rows = (result.rows ?? []) as ApprovedPendingMemoryWriteRow[];
+    const approvedRows = (result.rows ?? []) as ApprovedPendingMemoryWriteRow[];
+    for (const supersession of buildApprovedMemorySupersessions(approvedRows)) {
+      const superseded = await tx.execute<{ id: string }>(sql`
+        UPDATE user_memories
+        SET review_status = 'superseded',
+            corrected_by_memory_id = ${supersession.approvedMemoryId}
+        WHERE user_id = ${userId}
+          AND id = ${supersession.supersedesMemoryId}
+          AND pending_review = FALSE
+          AND review_status IN ('active', 'kept', 'edited')
+        RETURNING id
+      `);
+      if ((superseded.rows ?? []).length === 0) {
+        throw new Error("Bulk memory correction supersession lost its source-row lock.");
+      }
+    }
+    return approvedRows;
+  });
   const supersessions = buildApprovedMemorySupersessions(rows);
-  for (const supersession of supersessions) {
-    await defaultMemoryWriteDeps.markMemoriesSuperseded(
-      userId,
-      [supersession.supersedesMemoryId],
-      supersession.approvedMemoryId,
-    );
-  }
 
   return {
     approved: rows.length,

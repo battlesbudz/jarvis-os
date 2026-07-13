@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import type { RetrievedMemory } from "../retrieve";
+import type { MemoryCorrectionInput } from "../memoryOs";
+import type { MemoryWriteInput } from "../writePipeline";
 
 process.env.DATABASE_URL ??= "postgres://localhost/jarvis_memory_os_import_only";
 process.env.JARVIS_DISABLE_DIRECT_OPENAI = "1";
@@ -24,6 +26,7 @@ async function main(): Promise<void> {
   const {
     retrieveMemoryContext,
     memoryContextItemsToRetrievedMemories,
+    explainMemoryAnswer,
     recordMemoryCorrection,
     buildMemoryCorrectionReview,
   } = await import("../memoryOs");
@@ -403,6 +406,52 @@ async function main(): Promise<void> {
   assert.equal(allowedCloudRestricted.items.length, 1);
   assert.match(allowedCloudRestricted.items[0]?.memory.content ?? "", /123456789/);
 
+  const answerExplanation = await explainMemoryAnswer({
+    answer: "You prefer crisp morning plans.",
+    context: {
+      ...context,
+      items: [{
+        memory: memory({
+          source: "canonical",
+          sourceId: "memory-os-1",
+          sourceType: "conversation",
+          sourceRef: "chat-turn-42",
+          retrieval: {
+            strategy: "rrf",
+            fusionScore: 0.03,
+            sources: [
+              { source: "canonical", sourceId: "memory-os-1", rank: 1, score: 0.93 },
+              { source: "gbrain", sourceId: "memory/planning:0", rank: 2, score: 88 },
+            ],
+          },
+        }),
+        provenance: [
+          { kind: "brain_chunk", id: "memory/planning:0", source: "gbrain" },
+          { kind: "user_memory", id: "memory-os-1", source: "canonical" },
+        ],
+      }],
+      provenance: [
+        { kind: "brain_chunk", id: "memory/planning:0", source: "gbrain" },
+        { kind: "user_memory", id: "memory-os-1", source: "canonical" },
+      ],
+      sources: {
+        memories: ["memory-os-1"],
+        brainChunks: ["memory/planning:0"],
+        hotState: [],
+      },
+    },
+  });
+  assert.equal(answerExplanation.available, true);
+  assert.equal(answerExplanation.answer, "You prefer crisp morning plans.");
+  assert.equal(answerExplanation.evidence[0]?.memoryId, "memory-os-1");
+  assert.equal(answerExplanation.evidence[0]?.authority, "canonical");
+  assert.match(answerExplanation.evidence[0]?.whyJarvisLearnedIt ?? "", /conversation context/);
+  assert.match(answerExplanation.evidence[0]?.whyJarvisLearnedIt ?? "", /G-Brain/);
+  assert.deepEqual(
+    answerExplanation.evidence[0]?.provenance.map((ref) => `${ref.kind}:${ref.id}`),
+    ["brain_chunk:memory/planning:0", "user_memory:memory-os-1"],
+  );
+
   const savedTraceKey = process.env.JARVIS_TRACE_HMAC_KEY;
   const savedJwtSecret = process.env.JWT_SECRET;
   delete process.env.JARVIS_TRACE_HMAC_KEY;
@@ -423,7 +472,8 @@ async function main(): Promise<void> {
     else process.env.JWT_SECRET = savedJwtSecret;
   }
 
-  const correction = await recordMemoryCorrection({
+  const correctionWriteInputs: MemoryWriteInput[] = [];
+  const correctionInput: MemoryCorrectionInput = {
     userId: "memory-os-user",
     operation: "correct_existing_memory",
     currentMemoryId: "memory-os-1",
@@ -453,11 +503,37 @@ async function main(): Promise<void> {
         label: "preferences",
       },
     ],
+  };
+  const correction = await recordMemoryCorrection(correctionInput, {
+    loadCurrentMemory: async (loadedUserId, memoryId) => {
+      assert.equal(loadedUserId, "memory-os-user");
+      assert.equal(memoryId, "memory-os-1");
+      return {
+        id: "memory-os-1",
+        content: "The user starts daily planning at 9:00.",
+        category: "preferences",
+        tier: "long_term",
+        memoryType: "semantic",
+        confidence: 91,
+      };
+    },
+    findCorrectionBySource: async () => null,
+    writeMemory: async (input) => {
+      correctionWriteInputs.push(input);
+      return {
+        status: "review_required",
+        reason: "Queued for review.",
+        insertedMemoryId: "memory-os-correction-1",
+        supersededMemoryIds: [],
+        oneTimeReviewTip: false,
+      };
+    },
   });
 
-  assert.equal(correction.recorded, false);
+  assert.equal(correction.recorded, true);
   assert.equal(correction.reviewOnly, true);
   assert.equal(correction.status, "review_required");
+  assert.equal(correction.correctionMemoryId, "memory-os-correction-1");
   assert.equal(correction.operation, "correct_existing_memory");
   assert.equal(correction.currentMemoryId, "memory-os-1");
   assert.equal(correction.proposedContent, "The user starts daily planning at 8:30.");
@@ -469,6 +545,73 @@ async function main(): Promise<void> {
       "user_memory:canonical:memory-os-1",
     ],
   );
+  assert.equal(correctionWriteInputs[0]?.trigger, "inferred");
+  assert.equal(correctionWriteInputs[0]?.reviewEnabled, true);
+  assert.equal(correctionWriteInputs[0]?.supersedesMemoryId, "memory-os-1");
+  assert.equal(correctionWriteInputs[0]?.confidence, 94);
+
+  let duplicateWriteCalled = false;
+  const duplicateCorrection = await recordMemoryCorrection(correctionInput, {
+    loadCurrentMemory: async () => {
+      throw new Error("an already processed source event must bypass stale source-memory validation");
+    },
+    findCorrectionBySource: async () => ({
+      id: "memory-os-correction-existing",
+      pendingReview: true,
+      reviewStatus: "pending",
+    }),
+    writeMemory: async () => {
+      duplicateWriteCalled = true;
+      throw new Error("duplicate correction must not write again");
+    },
+  });
+  assert.equal(duplicateWriteCalled, false);
+  assert.equal(duplicateCorrection.recorded, false);
+  assert.equal(duplicateCorrection.correctionMemoryId, "memory-os-correction-existing");
+  assert.equal(duplicateCorrection.status, "review_required");
+
+  let raceLookupCount = 0;
+  const racedCorrection = await recordMemoryCorrection(correctionInput, {
+    loadCurrentMemory: async () => ({
+      id: "memory-os-1",
+      content: "The user starts daily planning at 9:00.",
+      category: "preferences",
+      tier: "long_term",
+      memoryType: "semantic",
+      confidence: 91,
+    }),
+    findCorrectionBySource: async () => {
+      raceLookupCount += 1;
+      return raceLookupCount === 1
+        ? null
+        : { id: "memory-os-correction-race", pendingReview: true, reviewStatus: "pending" };
+    },
+    writeMemory: async () => {
+      throw Object.assign(new Error("duplicate correction source"), { code: "23505" });
+    },
+  });
+  assert.equal(raceLookupCount, 2);
+  assert.equal(racedCorrection.recorded, false);
+  assert.equal(racedCorrection.correctionMemoryId, "memory-os-correction-race");
+  assert.equal(racedCorrection.status, "review_required");
+
+  const staleCorrection = await recordMemoryCorrection(correctionInput, {
+    loadCurrentMemory: async () => ({
+      id: "memory-os-1",
+      content: "The user already changed daily planning to 8:45.",
+      category: "preferences",
+      tier: "long_term",
+      memoryType: "semantic",
+      confidence: 95,
+    }),
+    findCorrectionBySource: async () => null,
+    writeMemory: async () => {
+      throw new Error("stale correction must not be queued");
+    },
+  });
+  assert.equal(staleCorrection.recorded, false);
+  assert.equal(staleCorrection.status, "conflict");
+  assert.match(staleCorrection.uncertainty.join(" "), /changed since the correction was prepared/);
 
   const invalidCorrection = buildMemoryCorrectionReview({
     userId: "",
@@ -484,6 +627,7 @@ async function main(): Promise<void> {
   assert.equal(invalidCorrection.recorded, false);
   assert.equal(invalidCorrection.reviewOnly, true);
   assert.equal(invalidCorrection.status, "invalid");
+  assert.equal(invalidCorrection.correctionMemoryId, null);
   assert.match(invalidCorrection.uncertainty.join(" "), /No user id/);
   assert.match(invalidCorrection.uncertainty.join(" "), /No proposed memory correction content/);
   assert.match(invalidCorrection.uncertainty.join(" "), /without an existing memory id/);

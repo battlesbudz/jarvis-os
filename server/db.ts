@@ -412,6 +412,12 @@ export async function ensureTablesExist() {
     await db.execute(sql`CREATE INDEX IF NOT EXISTS user_memories_user_review_idx ON user_memories(user_id, review_status)`).catch(handleSchemaStepError);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS user_memories_user_sensitivity_idx ON user_memories(user_id, sensitivity)`).catch(handleSchemaStepError);
     await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS user_memories_runtime_correction_source_uidx
+      ON user_memories(user_id, source_type, source_ref)
+      WHERE source_type = 'runtime_memory_correction'
+        AND source_ref IS NOT NULL
+    `).catch(handleSchemaStepError);
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS memory_working_context (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -2035,6 +2041,12 @@ export async function ensureTablesExist() {
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS sensitivity VARCHAR NOT NULL DEFAULT 'normal'`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS provenance JSONB NOT NULL DEFAULT '[]'::jsonb`).catch(handleSchemaStepError);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS user_memories_user_sensitivity_idx ON user_memories(user_id, sensitivity)`).catch(handleSchemaStepError);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS user_memories_runtime_correction_source_uidx
+      ON user_memories(user_id, source_type, source_ref)
+      WHERE source_type = 'runtime_memory_correction'
+        AND source_ref IS NOT NULL
+    `).catch(handleSchemaStepError);
     // Optional pgvector index for canonical user_memories. If the extension is
     // unavailable, JSONB embeddings and FTS retrieval remain the fallback path.
     await db.execute(sql`CREATE EXTENSION IF NOT EXISTS vector`).catch(handleOptionalVectorSchemaStepError);
