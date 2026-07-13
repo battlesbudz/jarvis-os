@@ -954,13 +954,14 @@ export const defaultWorkingContextDeps: WorkingContextDeps = {
   },
   async expireNonCompactingWorkingContext(now, scopeTypes) {
     if (scopeTypes.length === 0) return 0;
+    const scopeTypeArray = sql.join(scopeTypes.map((scopeType) => sql`${scopeType}`), sql`, `);
     const result = await db.execute<{ id: string }>(sql`
       UPDATE memory_working_context
       SET state = 'stale',
           content = '',
           updated_at = ${now}
       WHERE expires_at <= ${now}
-        AND scope_type = ANY(${scopeTypes}::varchar[])
+        AND scope_type = ANY(ARRAY[${scopeTypeArray}]::varchar[])
         AND state IN ('active', 'compacting')
       RETURNING id
     `);

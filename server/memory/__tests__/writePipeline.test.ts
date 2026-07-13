@@ -190,8 +190,13 @@ async function testDefaultCompactionClaimsExpiredContextBeforeInsert(): Promise<
   );
   assert.match(
     source,
-    /expireNonCompactingWorkingContext[\s\S]*SET state = 'stale',[\s\S]*content = ''[\s\S]*scope_type = ANY\(\$\{scopeTypes\}::varchar\[\]\)/,
-    "default working context compaction should scrub expired local runtime observations instead of preserving raw active rows",
+    /expireNonCompactingWorkingContext[\s\S]*scopeTypes\.map\(\(scopeType\) => sql`\$\{scopeType\}`\)[\s\S]*scope_type = ANY\(ARRAY\[\$\{scopeTypeArray\}\]::varchar\[\]\)/,
+    "default working context compaction should bind scope types as a parameterized PostgreSQL array",
+  );
+  assert.doesNotMatch(
+    source,
+    /scope_type = ANY\(\$\{scopeTypes\}::varchar\[\]\)/,
+    "default working context compaction must not interpolate a JavaScript array as a PostgreSQL array literal",
   );
   assert.match(
     source,
