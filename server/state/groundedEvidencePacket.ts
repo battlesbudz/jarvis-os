@@ -131,7 +131,7 @@ export interface GroundedEvidencePacketDeps {
     modelTarget?: MemoryModelTarget;
     allowRestrictedMemory?: boolean;
   }) => Promise<MemoryContext>;
-  loadCommitments?: (userId: string, limit: number) => Promise<GroundedCommitmentRecord[]>;
+  loadCommitments?: (userId: string, limit?: number) => Promise<GroundedCommitmentRecord[]>;
   now?: () => Date;
 }
 
@@ -239,10 +239,10 @@ async function defaultRetrieveMemoryContext(input: {
   return retrieveMemoryContext(input);
 }
 
-async function defaultLoadCommitments(userId: string, limit: number): Promise<GroundedCommitmentRecord[]> {
+async function defaultLoadCommitments(userId: string): Promise<GroundedCommitmentRecord[]> {
   if (typeof process !== "undefined" && !process.env.DATABASE_URL) return [];
   const { listPendingPersonalCommitments } = await import("../commitments/dbCommitmentRepository");
-  return listPendingPersonalCommitments(userId, limit);
+  return listPendingPersonalCommitments(userId);
 }
 
 function profileEvidence(profile: RuntimeProfileState | null): GroundedEvidenceItem[] {
@@ -707,7 +707,7 @@ export async function buildGroundedEvidencePacket(
   if (sourcePolicy.commitments) {
     try {
       const loadCommitments = effectiveDeps.loadCommitments ?? defaultLoadCommitments;
-      const rawCommitments = await loadCommitments(input.userId, Math.max(50, commitmentLimit * 6));
+      const rawCommitments = await loadCommitments(input.userId);
       const { selected, omitted: omittedCommitments } = dedupeCommitments(
         rawCommitments,
         commitmentLimit,

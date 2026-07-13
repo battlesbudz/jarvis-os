@@ -377,6 +377,48 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
     );
   }
 
+  const longBacklog: GroundedCommitmentRecord[] = [
+    ...Array.from({ length: 55 }, (_, index) => ({
+      id: `recent-unrelated-${index}`,
+      content: `Prepare unrelated report ${index}.`,
+      dueDate: "2026-07-09",
+      status: "pending" as const,
+      extractedAt: `2026-07-09T${String(index % 24).padStart(2, "0")}:00:00.000Z`,
+      commitmentKind: "user_task" as const,
+      signalLevel: "normal" as const,
+    })),
+    {
+      id: "older-android-archive",
+      content: "Verify the Android archive migration.",
+      dueDate: "2026-07-20",
+      status: "pending",
+      extractedAt: "2026-06-01T12:00:00.000Z",
+      commitmentKind: "user_task",
+      signalLevel: "normal",
+    },
+  ];
+  let requestedCommitmentLimit: number | undefined | null = null;
+  const olderTopicPacket = await buildGroundedEvidencePacket({
+    userId,
+    requestText: "Do I have any pending tasks for the Android archive?",
+    activeModel: "Phone Gemma",
+    memoryLimit: 2,
+    commitmentLimit: 1,
+  }, {
+    now: () => fixedNow,
+    loadProfileState: async () => ({ userId, timezone: "America/New_York", source: "profile_store" }),
+    retrieveMemoryContext: retrieveEmptyMemoryContext,
+    loadCommitments: async (_userId, limit) => {
+      requestedCommitmentLimit = limit;
+      return typeof limit === "number" ? longBacklog.slice(0, limit) : longBacklog;
+    },
+  });
+  assert.equal(requestedCommitmentLimit, undefined, "grounding should filter the complete pending commitment set");
+  assert.deepEqual(
+    olderTopicPacket.evidence.filter((item) => item.domain === "commitment").map((item) => item.sourceId),
+    ["older-android-archive"],
+  );
+
   const tomorrowPacket = await buildGroundedEvidencePacket({
     userId,
     requestText: "Do I have any tasks due tomorrow?",

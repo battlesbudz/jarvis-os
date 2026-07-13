@@ -1243,28 +1243,46 @@ async function testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit() {
 async function testAndroidLocalGemmaUsesGroundedEvidencePacketForPersonalMemoryQuestions() {
   let capturedPrompt = "";
   let capturedGenerateOp: any = null;
-  const memoryContext = (query: string): MemoryContext => ({
-    userId: "user-phone-grounded",
-    query,
-    caller: "runtime_memory_inspection",
-    items: [{
-      memory: {
-        id: "grounded-memory-1",
-        content: "User prefers direct answers with clear next actions.",
-        category: "communication_style",
-        tier: "long_term",
-        memoryType: "semantic",
-        relevanceScore: 90,
-        confidence: 95,
-        accessCount: 1,
-        score: 0.95,
+  const memoryContext = (query: string): MemoryContext => {
+    const isDoorDash = /doordash/i.test(query);
+    return {
+      userId: "user-phone-grounded",
+      query,
+      caller: "runtime_memory_inspection",
+      items: [{
+        memory: {
+          id: isDoorDash ? "grounded-doordash-memory" : "grounded-memory-1",
+          content: isDoorDash
+            ? "User does not want DoorDash alerts treated as automatically important."
+            : "User prefers direct answers with clear next actions.",
+          category: "communication_style",
+          tier: "long_term",
+          memoryType: "semantic",
+          relevanceScore: 90,
+          confidence: 95,
+          accessCount: 1,
+          score: 0.95,
+        },
+        provenance: [{
+          kind: "user_memory",
+          id: isDoorDash ? "grounded-doordash-memory" : "grounded-memory-1",
+          source: "canonical",
+          label: "communication_style",
+        }],
+      }],
+      sources: {
+        memories: [isDoorDash ? "grounded-doordash-memory" : "grounded-memory-1"],
+        brainChunks: [],
+        hotState: [],
       },
-      provenance: [{ kind: "user_memory", id: "grounded-memory-1", source: "canonical", label: "communication_style" }],
-    }],
-    sources: { memories: ["grounded-memory-1"], brainChunks: [], hotState: [] },
-    provenance: [{ kind: "user_memory", id: "grounded-memory-1", source: "canonical" }],
-    uncertainty: [],
-  });
+      provenance: [{
+        kind: "user_memory",
+        id: isDoorDash ? "grounded-doordash-memory" : "grounded-memory-1",
+        source: "canonical",
+      }],
+      uncertainty: [],
+    };
+  };
 
   _setGroundedEvidencePacketDepsForTesting({
     now: () => new Date("2026-07-09T12:00:00.000Z"),
@@ -1391,6 +1409,21 @@ async function testAndroidLocalGemmaUsesGroundedEvidencePacketForPersonalMemoryQ
       userId: "user-phone-grounded",
     }));
     assert.doesNotMatch(capturedPrompt, /Jarvis Grounded Evidence Packet/);
+
+    capturedPrompt = "";
+    await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Show exact memories about DoorDash" }],
+      tools: [],
+      toolChoice: "none",
+      responseFormat: { type: "json_object" },
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-grounded",
+    }));
+    assert.match(capturedPrompt, /Jarvis Grounded Evidence Packet/);
+    assert.match(capturedPrompt, /intent=exact_recall/);
+    assert.match(capturedPrompt, /DoorDash alerts treated as automatically important/);
 
     capturedPrompt = "";
     const exactInspectionResult = await accumulateTurn(new AndroidLocalGemmaProvider().query({

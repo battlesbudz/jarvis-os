@@ -2267,14 +2267,14 @@ async function runtimeStateCardPromptFromParams(
     );
     const requestText = latestUserText(params.messages);
     const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent(params.messages);
-    const shouldBuildGroundedPacket = memoryInspectionIntent?.scopeLabel === "about you" ||
-      (!memoryInspectionIntent && shouldGroundPersonalMemoryRequest(requestText));
+    const shouldBuildGroundedPacket = Boolean(memoryInspectionIntent) ||
+      shouldGroundPersonalMemoryRequest(requestText);
     if (shouldBuildGroundedPacket) {
       const compactProfile = turnBudget.contextTokens <= 512;
       return await buildGroundedEvidencePacketPrompt({
         userId: params.userId ?? "",
         requestText,
-        query: memoryInspectionIntent?.scopeLabel === "about you" ? memoryInspectionIntent.query : undefined,
+        query: memoryInspectionIntent?.query,
         activeDevice: "android",
         activeModel: normalizeAndroidLocalGemmaModel(params.model),
         currentContext: useToolProtocol ? "phone_gemma_tool_protocol" : "phone_gemma_chat",
