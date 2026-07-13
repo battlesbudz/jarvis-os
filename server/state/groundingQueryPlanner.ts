@@ -116,7 +116,7 @@ export function shouldGroundPersonalMemoryRequest(requestText: string): boolean 
   if (/\b(?:what have i told you|what did i (?:say|tell|decide)|did i tell you|do you know my|based on what you know about me)\b/.test(text)) {
     return true;
   }
-  if (/\b(?:show|list|display|search|find|check|inspect|pull up)\b.{0,40}\b(?:my\s+)?(?:memory|memories)\b/.test(text)) {
+  if (/\b(?:show|list|display|search|find|check|inspect|pull up)\b.{0,40}\b(?:my\s+(?:stored\s+)?|stored\s+|jarvis\s+(?:stored\s+)?|your\s+(?:stored\s+)?)(?:memory|memories)\b/.test(text)) {
     return true;
   }
   if (/\b(?:my|jarvis|your)\s+(?:stored\s+)?(?:memory|memories)\b/.test(text)) {

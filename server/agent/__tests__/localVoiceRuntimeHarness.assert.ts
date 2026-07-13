@@ -3614,6 +3614,15 @@ async function testLocalVoicePersonalMemoryQuestionInjectsGroundedEvidencePacket
     assert.equal(personalFactResult.diagnostics.outcome, "final");
     assert.match(personalFactGemma.prompts[0]?.contextPacket ?? "", /Jarvis Grounded Evidence Packet/);
 
+    const technicalMemoryGemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "Here is how to inspect memory usage." }]);
+    const technicalMemoryResult = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript: "Search memory leaks in my Android app.",
+      gemma: technicalMemoryGemma,
+    });
+    assert.equal(technicalMemoryResult.diagnostics.outcome, "final");
+    assert.doesNotMatch(technicalMemoryGemma.prompts[0]?.contextPacket ?? "", /Jarvis Grounded Evidence Packet/);
+
     const exactInspectionGemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "Audit path owns this request." }]);
     const exactInspectionResult = await runLocalVoiceRuntimeHarnessTurn({
       userId: "user-local-voice",
