@@ -100,6 +100,51 @@ async function main(): Promise<void> {
   assert.equal(JSON.stringify(gbrainContext.trace).includes("memory/derived-planning"), false);
   assert.equal(JSON.stringify(gbrainContext.trace).includes("memory-canonical-2"), false);
 
+  const fusedContext = await retrieveMemoryContext(
+    { userId: "memory-os-user", query: "fused planning", caller: "gbrain_retrieval" },
+    {
+      retrieveMemories: async () => [
+        memory({
+          id: "memory-fused-1",
+          source: "canonical",
+          sourceId: "memory-fused-1",
+          sourceRefs: [{ kind: "user_memory", id: "memory-fused-1" }],
+          retrieval: {
+            strategy: "rrf",
+            fusionScore: 0.03,
+            sources: [
+              { source: "canonical", sourceId: "memory-fused-1", rank: 1, score: 0.9 },
+              { source: "gbrain", sourceId: "memory/fused-planning:0", rank: 2, score: 88 },
+            ],
+          },
+        }),
+      ],
+    },
+  );
+  assert.deepEqual(fusedContext.sources.memories, ["memory-fused-1"]);
+  assert.deepEqual(fusedContext.sources.brainChunks, ["memory/fused-planning:0"]);
+  assert.deepEqual(
+    fusedContext.items[0]?.provenance.map((ref) => ref.kind),
+    ["brain_chunk", "user_memory"],
+  );
+
+  const degradedContext = await retrieveMemoryContext(
+    { userId: "memory-os-user", query: "degraded planning", caller: "memory_search" },
+    {
+      retrieveMemories: async () => [
+        memory({
+          retrieval: {
+            strategy: "rrf",
+            fusionScore: 0.02,
+            degradedSources: ["gbrain"],
+            sources: [{ source: "canonical", sourceId: "memory-os-1", rank: 1, score: 0.9 }],
+          },
+        }),
+      ],
+    },
+  );
+  assert.match(degradedContext.uncertainty.join(" "), /G-Brain retrieval was unavailable/);
+
   const empty = await retrieveMemoryContext(
     { userId: "memory-os-user", query: "   ", caller: "coach_context" },
     {

@@ -18,6 +18,21 @@ import { containsRawRestrictedContent } from "./restrictedContent";
 
 const EMBED_MODEL = "text-embedding-3-small";
 const EMBED_DIMENSIONS = 1536;
+const RECIPROCAL_RANK_FUSION_K = 60;
+
+export type MemoryRetrievalSource = "canonical" | "gbrain";
+
+export type MemoryRetrievalRanking = {
+  strategy: "rrf";
+  fusionScore: number;
+  degradedSources?: MemoryRetrievalSource[];
+  sources: Array<{
+    source: MemoryRetrievalSource;
+    sourceId: string;
+    rank: number;
+    score: number;
+  }>;
+};
 
 export interface RetrievedMemory {
   id: string;
@@ -36,6 +51,7 @@ export interface RetrievedMemory {
   source?: "canonical" | "gbrain";
   sourceId?: string;
   sourceRefs?: QueryBrainResult["chunks"][number]["citations"];
+  retrieval?: MemoryRetrievalRanking;
 }
 
 type MemoryRow = MemoryVectorRow;
@@ -281,6 +297,97 @@ export function mapBrainChunksToRetrievedMemories(chunks: QueryBrainResult["chun
   });
 }
 
+type RankedMemoryCandidate = {
+  memory: RetrievedMemory;
+  source: MemoryRetrievalSource;
+  sourceId: string;
+  rank: number;
+};
+
+function uniqueSourceRefs(
+  candidates: RankedMemoryCandidate[],
+): QueryBrainResult["chunks"][number]["citations"] {
+  const refs = candidates.flatMap((candidate) => candidate.memory.sourceRefs ?? []);
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    const key = `${ref.kind}:${ref.id}:${ref.sourceType ?? ""}:${ref.sourceRef ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function retrievalSourceId(memory: RetrievedMemory, source: MemoryRetrievalSource): string {
+  return source === "gbrain" ? memory.sourceId ?? memory.id : memory.id;
+}
+
+export function fuseRetrievedMemoryCandidates(
+  canonical: RetrievedMemory[],
+  gbrain: RetrievedMemory[],
+): RetrievedMemory[] {
+  const groups = new Map<string, RankedMemoryCandidate[]>();
+  const addCandidates = (memories: RetrievedMemory[], source: MemoryRetrievalSource): void => {
+    memories.forEach((memory, index) => {
+      const candidates = groups.get(memory.id) ?? [];
+      candidates.push({
+        memory,
+        source,
+        sourceId: retrievalSourceId(memory, source),
+        rank: index + 1,
+      });
+      groups.set(memory.id, candidates);
+    });
+  };
+  addCandidates(canonical, "canonical");
+  addCandidates(gbrain, "gbrain");
+
+  return [...groups.entries()]
+    .map(([id, candidates]) => {
+      const canonicalCandidates = candidates.filter((candidate) => candidate.source === "canonical");
+      const brainCandidates = candidates.filter((candidate) => candidate.source === "gbrain");
+      const canonicalBest = canonicalCandidates.sort((a, b) => a.rank - b.rank)[0];
+      const brainBest = brainCandidates.sort((a, b) => a.rank - b.rank)[0];
+      const fusionScore = [canonicalBest, brainBest]
+        .filter((candidate): candidate is RankedMemoryCandidate => Boolean(candidate))
+        .reduce((score, candidate) => score + 1 / (RECIPROCAL_RANK_FUSION_K + candidate.rank), 0);
+      const winner = canonicalBest ?? brainBest!;
+      const sourceRefs = uniqueSourceRefs(candidates);
+      const provenance = candidates.flatMap((candidate) => candidate.memory.provenance ?? []);
+      const memory: RetrievedMemory = {
+        ...winner.memory,
+        id,
+        source: winner.source,
+        sourceId: winner.sourceId,
+        score: fusionScore,
+        ...(sourceRefs.length > 0 ? { sourceRefs } : {}),
+        ...(provenance.length > 0 ? { provenance } : {}),
+        retrieval: {
+          strategy: "rrf",
+          fusionScore,
+          sources: candidates.map((candidate) => ({
+            source: candidate.source,
+            sourceId: candidate.sourceId,
+            rank: candidate.rank,
+            score: candidate.memory.score,
+          })),
+        },
+      };
+      return {
+        memory,
+        fusionScore,
+        hasCanonical: Boolean(canonicalBest),
+        bestRank: Math.min(...candidates.map((candidate) => candidate.rank)),
+      };
+    })
+    .sort((a, b) =>
+      b.fusionScore - a.fusionScore ||
+      Number(b.hasCanonical) - Number(a.hasCanonical) ||
+      a.bestRank - b.bestRank ||
+      a.memory.id.localeCompare(b.memory.id)
+    )
+    .map((result) => result.memory);
+}
+
 /**
  * Batch-increment access_count + last_referenced_at for a set of memory IDs.
  * Fire-and-forget (errors are logged but not re-thrown).
@@ -298,12 +405,72 @@ export function batchIncrementAccessCount(ids: string[]): void {
 }
 
 export function applyAccessUpdateForRetrievedMemories(
-  memories: Pick<RetrievedMemory, "id">[],
+  memories: RetrievedMemory[],
   skipAccessUpdate: boolean,
   increment: (ids: string[]) => void = batchIncrementAccessCount,
 ): void {
   if (skipAccessUpdate) return;
-  increment(memories.map((memory) => memory.id));
+  const ids = memories.flatMap((memory) => {
+    if (memory.source !== "gbrain") return [memory.id];
+    const canonicalCitation = memory.sourceRefs?.find((citation) => citation.kind === "user_memory");
+    return canonicalCitation ? [canonicalCitation.id] : [];
+  });
+  const uniqueIds = [...new Set(ids.filter(Boolean))];
+  if (uniqueIds.length > 0) increment(uniqueIds);
+}
+
+export type MemoryRetrievalSourceLoaders = {
+  canonical: () => Promise<RetrievedMemory[]>;
+  gbrain: () => Promise<RetrievedMemory[]>;
+};
+
+export async function loadAndFuseRetrievedMemories(
+  loaders: MemoryRetrievalSourceLoaders,
+  limit: number,
+  skipAccessUpdate: boolean,
+  options: RetrievedMemoryFilterOptions = {},
+  increment: (ids: string[]) => void = batchIncrementAccessCount,
+): Promise<RetrievedMemory[]> {
+  const [canonicalResult, brainResult] = await Promise.allSettled([
+    Promise.resolve().then(loaders.canonical),
+    Promise.resolve().then(loaders.gbrain),
+  ]);
+  if (canonicalResult.status === "rejected") {
+    console.warn("[MemoryRetrieve] canonical retrieval failed during source fusion:", canonicalResult.reason);
+  }
+  if (brainResult.status === "rejected") {
+    console.warn("[MemoryRetrieve] G-Brain retrieval failed during source fusion:", brainResult.reason);
+  }
+  if (canonicalResult.status === "rejected" && brainResult.status === "rejected") {
+    throw new AggregateError(
+      [canonicalResult.reason, brainResult.reason],
+      "Canonical and G-Brain retrieval both failed.",
+    );
+  }
+
+  const canonical = canonicalResult.status === "fulfilled" ? canonicalResult.value : [];
+  const gbrain = brainResult.status === "fulfilled" ? brainResult.value : [];
+  const degradedSources: MemoryRetrievalSource[] = [
+    ...(canonicalResult.status === "rejected" ? ["canonical" as const] : []),
+    ...(brainResult.status === "rejected" ? ["gbrain" as const] : []),
+  ];
+  const selected = filterRestrictedRetrievedMemories(
+    fuseRetrievedMemoryCandidates(canonical, gbrain),
+    options,
+  )
+    .slice(0, Math.max(0, limit))
+    .map((memory) =>
+      degradedSources.length === 0
+        ? memory
+        : {
+            ...memory,
+            retrieval: memory.retrieval
+              ? { ...memory.retrieval, degradedSources }
+              : undefined,
+          },
+    );
+  applyAccessUpdateForRetrievedMemories(selected, skipAccessUpdate, increment);
+  return selected;
 }
 
 export function rankMemoryRowsForRetrieval(
@@ -337,6 +504,8 @@ export function rankMemoryRowsForRetrieval(
       score,
       sensitivity: String(r.sensitivity || "normal"),
       provenance: Array.isArray(r.provenance) ? r.provenance : [],
+      source: "canonical",
+      sourceId: r.id,
     };
   });
 
@@ -478,30 +647,27 @@ export async function retrieveRelevantMemories(
   if (!q) return [];
 
   if (process.env.JARVIS_BRAIN_RETRIEVAL === "1") {
-    try {
-      const { queryBrain } = await import("../brain/adapter");
-      const brainRetrievalLimit = options.includeRestricted === true
-        ? limit
-        : Math.min(50, Math.max(limit, limit * 4));
-      const derived = await queryBrain({
+    const candidateLimit = Math.min(50, Math.max(limit, limit * 4));
+    return loadAndFuseRetrievedMemories({
+      canonical: () => retrieveCanonicalRelevantMemories(
         userId,
-        actorId: "memory-retrieve",
-        query: q,
-        topK: brainRetrievalLimit,
-        approvalFilter: "approved_only",
-      });
-
-      const mapped = filterRestrictedRetrievedMemories(
-        mapBrainChunksToRetrievedMemories(derived.chunks),
+        q,
+        candidateLimit,
+        true,
         options,
-      ).slice(0, limit);
-      if (mapped.length > 0) {
-        applyAccessUpdateForRetrievedMemories(mapped, skipAccessUpdate);
-        return mapped;
-      }
-    } catch (err) {
-      console.warn("[MemoryRetrieve] derived brain retrieval failed; falling back to legacy retrieval:", err);
-    }
+      ),
+      gbrain: async () => {
+        const { queryBrain } = await import("../brain/adapter");
+        const derived = await queryBrain({
+          userId,
+          actorId: "memory-retrieve",
+          query: q,
+          topK: candidateLimit,
+          approvalFilter: "approved_only",
+        });
+        return mapBrainChunksToRetrievedMemories(derived.chunks);
+      },
+    }, limit, skipAccessUpdate, options);
   }
 
   return retrieveCanonicalRelevantMemories(userId, q, limit, skipAccessUpdate, options);
