@@ -204,6 +204,7 @@ const tests = [
   { file: "server/memory/__tests__/memoryOs.test.ts" },
   { file: "server/memory/__tests__/retrievalEvaluation.test.ts" },
   { file: "server/memory/__tests__/retrieveVectorScoring.test.ts" },
+  { file: "server/memory/__tests__/retrievalFusion.test.ts" },
   { file: "server/memory/__tests__/soulEditAudit.assert.ts" },
   { file: "server/memory/__tests__/vectorDbVerification.test.ts" },
   { file: "server/memory/__tests__/vectorMigration.test.ts" },

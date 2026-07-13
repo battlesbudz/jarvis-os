@@ -2,7 +2,7 @@
 
 Status: active implementation plan.
 
-Last updated: 2026-06-05.
+Last updated: 2026-07-13.
 
 G-Brain is Jarvis's derived second-brain layer. It does not replace canonical memory. It projects reviewed, durable source data into page/chunk/link structures optimized for recall, provenance, and later temporal reasoning.
 
@@ -58,7 +58,7 @@ Capabilities:
 - project approved `user_memories`
 - retire expired, discarded, pending, stale, and orphaned projected memory pages
 - query G-Brain with Postgres full-text search
-- fall back from memory retrieval to legacy retrieval when G-Brain is empty or unavailable
+- fuse approved G-Brain and canonical memory candidates while preserving one-source fallback
 
 ### Slice 2: People Projection And Links
 
@@ -210,6 +210,12 @@ Implementation notes:
 - Coach prompt context and daily command planning route through `buildAiContextSections`, which now retrieves memories through the Memory OS facade.
 - Named Agent SDK first-turn global memory context now retrieves relevant user memories through the Memory OS facade for agents with global-memory access.
 - The facade exposes planned write/explanation/correction entrypoints as unavailable stubs so later slices have named integration points without implying those flows are complete.
+
+### Completed Slice: Canonical And G-Brain Retrieval Fusion
+
+When `JARVIS_BRAIN_RETRIEVAL=1`, canonical memory and approved G-Brain candidates are retrieved as peers and combined with reciprocal-rank fusion. Canonical rows remain authoritative when both sources cite the same memory ID, while G-Brain chunk provenance remains attached to the selected result.
+
+The fused path preserves restricted-memory filtering, falls back when one source is unavailable, reports degraded-source uncertainty through Memory OS, and increments access counts only for final selected canonical IDs. Retrieval evaluation coverage compares the fused ranking with the previous G-Brain-first baseline.
 
 ### Completed Slice: Memory Embedding Health Monitoring
 

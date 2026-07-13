@@ -17,8 +17,8 @@ async function main(): Promise<void> {
   );
   assert.match(
     retrieveSource,
-    /brainRetrievalLimit[\s\S]*Math\.min\(50, Math\.max\(limit, limit \* 4\)\)[\s\S]*topK: brainRetrievalLimit/,
-    "derived G-Brain retrieval should over-fetch before restricted filtering",
+    /candidateLimit\s*=\s*Math\.min\(50, Math\.max\(limit, limit \* 4\)\)[\s\S]*topK: candidateLimit/,
+    "canonical and G-Brain retrieval should over-fetch before fusion and restricted filtering",
   );
 
   const chunks: QueryBrainResult["chunks"] = [
@@ -80,8 +80,8 @@ async function main(): Promise<void> {
   });
   assert.deepEqual(
     incrementCalls,
-    [["memory-canonical-1", "synthetic-page:1", "restricted-memory-1"]],
-    "access updates should receive mapped canonical and synthetic ids",
+    [["memory-canonical-1", "restricted-memory-1"]],
+    "access updates should receive only canonical ids cited by selected results",
   );
 
   applyAccessUpdateForRetrievedMemories(mapped, true, (ids) => {

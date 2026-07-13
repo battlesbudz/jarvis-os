@@ -468,37 +468,41 @@ export function buildMemoryCorrectionReview(input?: MemoryCorrectionInput): Memo
 }
 
 function provenanceForMemory(memory: RetrievedMemory): MemoryProvenanceRef[] {
-  if (memory.source === "gbrain") {
-    const refs: MemoryProvenanceRef[] = [
-      {
-        kind: "brain_chunk",
-        id: memory.sourceId ?? memory.id,
-        source: "gbrain",
-        label: memory.category,
-      },
-    ];
-
-    const canonicalCitation = memory.sourceRefs?.find((citation) => citation.kind === "user_memory");
-    if (canonicalCitation) {
-      refs.push({
-        kind: "user_memory",
-        id: canonicalCitation.id,
-        source: "canonical",
-        label: memory.category,
-      });
-    }
-
-    return uniqueRefs(refs);
+  const refs: MemoryProvenanceRef[] = [];
+  const rankedBrainSources = memory.retrieval?.sources.filter((source) => source.source === "gbrain") ?? [];
+  if (rankedBrainSources.length > 0) {
+    refs.push(...rankedBrainSources.map((source) => ({
+      kind: "brain_chunk" as const,
+      id: source.sourceId,
+      source: "gbrain" as const,
+      label: memory.category,
+    })));
+  } else if (memory.source === "gbrain") {
+    refs.push({
+      kind: "brain_chunk",
+      id: memory.sourceId ?? memory.id,
+      source: "gbrain",
+      label: memory.category,
+    });
   }
 
-  return [
-    {
+  if (memory.source !== "gbrain") {
+    refs.push({
       kind: "user_memory",
       id: memory.id,
       source: "canonical",
       label: memory.category,
-    },
-  ];
+    });
+  }
+  refs.push(...(memory.sourceRefs ?? [])
+    .filter((citation) => citation.kind === "user_memory")
+    .map((citation) => ({
+      kind: "user_memory" as const,
+      id: citation.id,
+      source: "canonical" as const,
+      label: memory.category,
+    })));
+  return uniqueRefs(refs);
 }
 
 export function memoryContextItemsToRetrievedMemories(items: MemoryContextItem[]): RetrievedMemory[] {
@@ -547,6 +551,12 @@ export async function retrieveMemoryContext(
       target,
       input.allowRestrictedMemory ?? false,
     );
+    const degradedSources = [...new Set(rawMemories.flatMap(
+      (memory) => memory.retrieval?.degradedSources ?? [],
+    ))];
+    const retrievalUncertainty = degradedSources.map((source) =>
+      `${source === "gbrain" ? "G-Brain" : "Canonical memory"} retrieval was unavailable; results use the remaining source.`
+    );
     const preparedIds = new Set(preparedMemories.map((memory) => memory.id));
     trace.stages.push({
       stage: "privacy_boundary",
@@ -564,7 +574,7 @@ export async function retrieveMemoryContext(
     });
     let selectionPool = [...preparedMemories];
     let memories = preparedMemories.slice(0, limit);
-    let uncertainty = boundaryUncertainty;
+    let uncertainty = [...boundaryUncertainty, ...retrievalUncertainty];
     if (
       memories.length < limit &&
       !input.canonicalOnly &&
