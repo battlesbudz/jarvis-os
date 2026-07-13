@@ -383,13 +383,17 @@ function rankCommitment(commitment: GroundedCommitmentRecord, todayKey: string):
 
 const COMMITMENT_QUERY_STOP_WORDS = new Set([
   "a", "about", "all", "an", "any", "are", "blocker", "blockers", "can", "check",
-  "commitment", "commitments", "could", "current", "currently", "date", "dates",
-  "deadline", "deadlines", "did", "display", "do", "does", "due", "for", "give",
+  "commitment", "commitments", "could", "current", "currently", "date", "dates", "day",
+  "days", "deadline", "deadlines", "did", "display", "do", "does", "due", "for", "give",
   "goal", "goals", "have", "i", "is", "list", "me", "my", "need", "of", "on",
-  "open", "our", "overdue", "pending", "please", "related", "remaining", "show",
+  "open", "our", "overdue", "pending", "please", "related", "remaining", "show", "this",
   "status", "still", "summarize", "summary", "task", "tasks", "tell", "the", "there",
-  "today", "tomorrow", "tonight", "to", "unfinished", "us", "we", "what", "which",
-  "work", "working", "you",
+  "today", "tomorrow", "tonight", "to", "unfinished", "upcoming", "us", "we", "week",
+  "weekday", "weekdays", "weekend", "weekends", "weeks", "what", "which", "work",
+  "working", "month", "months", "year", "years", "next", "later", "soon", "you",
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+  "january", "february", "march", "april", "may", "june", "july", "august",
+  "september", "october", "november", "december",
 ]);
 
 function commitmentQueryTerms(query: string): string[] {

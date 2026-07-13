@@ -347,7 +347,12 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
   assert.equal(packet.evidence.some((item) => item.sourceId === "unrelated-overdue"), false);
   assert.match(packet.omitted.join(" "), /3 pending commitment record\(s\) that did not match the requested topic/);
 
-  for (const requestText of ["List my tasks", "Show my commitments"]) {
+  for (const requestText of [
+    "List my tasks",
+    "Show my commitments",
+    "What are my tasks this week?",
+    "What are my tasks next Friday?",
+  ]) {
     const genericPacket = await buildGroundedEvidencePacket({
       userId,
       requestText,
