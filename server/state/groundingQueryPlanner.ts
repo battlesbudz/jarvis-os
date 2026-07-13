@@ -60,6 +60,15 @@ function normalized(value: string): string {
   return compactText(value).toLowerCase().replace(/[\u2019']/g, "");
 }
 
+export function looksLikeMemorySaveRequest(text: string): boolean {
+  return /^\s*(?:please\s+)?remember\s+(?:that|this)\b(?=[\s:,-]+\S)/i.test(text) ||
+    /^\s*(?:can|could|would)\s+you\s+(?:please\s+)?remember\s+(?:that|this)\b(?=[\s:,-]+\S)/i.test(text) ||
+    /^\s*(?:please\s+)?remember\s+my\b(?=[^?]*?(?::|=|\b(?:is|are|means?)\b))/i.test(text) ||
+    /^\s*(?:can|could|would)\s+you\s+(?:please\s+)?remember\s+my\b(?=[^?]*?(?::|=|\b(?:is|are|means?)\b))/i.test(text) ||
+    /^\s*(?:please\s+)?(?:save|store|add|write)\b.{0,80}\b(?:memory|memories)\b/i.test(text) ||
+    /^\s*(?:please\s+)?(?:correct|update)\s+(?:your\s+)?(?:memory|memories)\b/i.test(text);
+}
+
 export function classifyGroundingIntent(requestText: string): GroundingIntent {
   const text = normalized(requestText);
   const hasPersonalAnchor = /\b(?:i|ive|im|me|my|mine|myself)\b/.test(text);
@@ -101,6 +110,7 @@ export function classifyGroundingIntent(requestText: string): GroundingIntent {
 export function shouldGroundPersonalMemoryRequest(requestText: string): boolean {
   const text = normalized(requestText);
   if (!text) return false;
+  if (looksLikeMemorySaveRequest(requestText)) return false;
   if (classifyGroundingIntent(text) !== "exact_recall") return true;
   if (/\b(?:what have i told you|what did i (?:say|tell|decide)|did i tell you|do you know my|based on what you know about me)\b/.test(text)) {
     return true;

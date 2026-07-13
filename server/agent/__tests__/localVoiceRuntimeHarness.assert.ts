@@ -3588,6 +3588,15 @@ async function testLocalVoicePersonalMemoryQuestionInjectsGroundedEvidencePacket
     });
     assert.equal(exactInspectionResult.diagnostics.outcome, "final");
     assert.doesNotMatch(exactInspectionGemma.prompts[0]?.contextPacket ?? "", /Jarvis Grounded Evidence Packet/);
+
+    const memorySaveGemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "I will save that." }]);
+    const memorySaveResult = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript: "Remember that my birthday is Jan 1",
+      gemma: memorySaveGemma,
+    });
+    assert.equal(memorySaveResult.diagnostics.outcome, "final");
+    assert.doesNotMatch(memorySaveGemma.prompts[0]?.contextPacket ?? "", /Jarvis Grounded Evidence Packet/);
     console.log("OK: local voice injects grounded evidence packets for personal memory questions");
   } finally {
     _setGroundedEvidencePacketDepsForTesting(null);

@@ -388,7 +388,8 @@ const COMMITMENT_QUERY_STOP_WORDS = new Set([
   "goal", "goals", "have", "i", "is", "list", "me", "my", "need", "of", "on",
   "open", "our", "overdue", "pending", "please", "related", "remaining", "show",
   "status", "still", "summarize", "summary", "task", "tasks", "tell", "the", "there",
-  "to", "unfinished", "us", "we", "what", "which", "work", "working", "you",
+  "today", "tomorrow", "tonight", "to", "unfinished", "us", "we", "what", "which",
+  "work", "working", "you",
 ]);
 
 function commitmentQueryTerms(query: string): string[] {
@@ -412,6 +413,24 @@ function commitmentTopicScore(commitment: GroundedCommitmentRecord, queryTerms: 
   return queryTerms.reduce((score, term) => score + (searchableTerms.has(term) ? 1 : 0), 0);
 }
 
+function isoDateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function shiftedUtcDateKey(date: Date, days: number): string {
+  const shifted = new Date(date);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return isoDateKey(shifted);
+}
+
+function requestedCommitmentDueDates(query: string, now: Date): Set<string> {
+  const normalizedQuery = query.toLowerCase();
+  const dates = new Set(normalizedQuery.match(/\b\d{4}-\d{2}-\d{2}\b/g) ?? []);
+  if (/\b(?:today|tonight)\b/.test(normalizedQuery)) dates.add(isoDateKey(now));
+  if (/\btomorrow\b/.test(normalizedQuery)) dates.add(shiftedUtcDateKey(now, 1));
+  return dates;
+}
+
 function dedupeCommitments(
   commitments: GroundedCommitmentRecord[],
   limit: number,
@@ -420,6 +439,7 @@ function dedupeCommitments(
 ): { selected: GroundedCommitmentRecord[]; omitted: string[] } {
   const todayKey = now.toISOString().slice(0, 10);
   const queryTerms = commitmentQueryTerms(query);
+  const requestedDueDates = requestedCommitmentDueDates(query, now);
   const personalCommitments = commitments.filter(isPersonalCommitment);
   const groups = new Map<string, GroundedCommitmentRecord[]>();
   for (const commitment of personalCommitments) {
@@ -438,9 +458,12 @@ function dedupeCommitments(
       if (rankDiff !== 0) return rankDiff;
       return extractedAtMs(b.extractedAt) - extractedAtMs(a.extractedAt);
     })[0]!);
-  const topicMatched = queryTerms.length === 0
+  const dateMatched = requestedDueDates.size === 0
     ? canonical
-    : canonical.filter((commitment) => commitmentTopicScore(commitment, queryTerms) > 0);
+    : canonical.filter((commitment) => Boolean(commitment.dueDate && requestedDueDates.has(commitment.dueDate)));
+  const topicMatched = queryTerms.length === 0
+    ? dateMatched
+    : dateMatched.filter((commitment) => commitmentTopicScore(commitment, queryTerms) > 0);
   const ranked = topicMatched
     .sort((a, b) => {
       const topicDiff = commitmentTopicScore(b, queryTerms) - commitmentTopicScore(a, queryTerms);
@@ -453,7 +476,8 @@ function dedupeCommitments(
   const selected = ranked.slice(0, limit);
   const duplicateCount = personalCommitments.length - groups.size;
   const excludedCount = commitments.length - personalCommitments.length;
-  const topicExcludedCount = canonical.length - topicMatched.length;
+  const dateExcludedCount = canonical.length - dateMatched.length;
+  const topicExcludedCount = dateMatched.length - topicMatched.length;
   const overflowCount = ranked.length - selected.length;
   const omitted: string[] = [];
   if (duplicateCount > 0) {
@@ -461,6 +485,9 @@ function dedupeCommitments(
   }
   if (excludedCount > 0) {
     omitted.push(`Omitted ${excludedCount} non-personal or low-signal commitment record(s) based on stored metadata.`);
+  }
+  if (dateExcludedCount > 0) {
+    omitted.push(`Omitted ${dateExcludedCount} pending commitment record(s) outside the requested due date.`);
   }
   if (topicExcludedCount > 0) {
     omitted.push(`Omitted ${topicExcludedCount} pending commitment record(s) that did not match the requested topic.`);

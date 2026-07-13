@@ -308,6 +308,15 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
       commitmentKind: "user_commitment",
       signalLevel: "normal",
     },
+    {
+      id: "tomorrow-task",
+      content: "Call the packaging supplier.",
+      dueDate: "2026-07-10",
+      status: "pending",
+      extractedAt: "2026-07-09T09:00:00.000Z",
+      commitmentKind: "user_task",
+      signalLevel: "normal",
+    },
   ];
   const retrieveEmptyMemoryContext = async (input: { query: string }): Promise<MemoryContext> => ({
     userId,
@@ -336,7 +345,7 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
     ["android-daemon"],
   );
   assert.equal(packet.evidence.some((item) => item.sourceId === "unrelated-overdue"), false);
-  assert.match(packet.omitted.join(" "), /2 pending commitment record\(s\) that did not match the requested topic/);
+  assert.match(packet.omitted.join(" "), /3 pending commitment record\(s\) that did not match the requested topic/);
 
   for (const requestText of ["List my tasks", "Show my commitments"]) {
     const genericPacket = await buildGroundedEvidencePacket({
@@ -357,6 +366,23 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
       `${requestText} should retain broad due-date ranking`,
     );
   }
+
+  const tomorrowPacket = await buildGroundedEvidencePacket({
+    userId,
+    requestText: "Do I have any tasks due tomorrow?",
+    activeModel: "Phone Gemma",
+    memoryLimit: 2,
+    commitmentLimit: 1,
+  }, {
+    now: () => fixedNow,
+    retrieveMemoryContext: retrieveEmptyMemoryContext,
+    loadCommitments: async () => commitments,
+  });
+  assert.deepEqual(
+    tomorrowPacket.evidence.filter((item) => item.domain === "commitment").map((item) => item.sourceId),
+    ["tomorrow-task"],
+  );
+  assert.equal(tomorrowPacket.evidence.some((item) => item.sourceId === "unrelated-overdue"), false);
   console.log("OK: topic commitment grounding filters unrelated overdue work");
 }
 

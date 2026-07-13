@@ -83,6 +83,9 @@ function testExplicitQueryAndGroundingBoundary(): void {
   assert.equal(plan.queries.length, 2);
 
   assert.equal(shouldGroundPersonalMemoryRequest("Do you remember what I decided about Android speech?"), true);
+  assert.equal(shouldGroundPersonalMemoryRequest("Remember that my birthday is Jan 1"), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("Can you remember that my birthday is Jan 1?"), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("Do you remember that my birthday is Jan 1?"), true);
   assert.equal(shouldGroundPersonalMemoryRequest("Show memories about native speech."), true);
   assert.equal(shouldGroundPersonalMemoryRequest("What do you know about Kubernetes?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("How are you today?"), false);

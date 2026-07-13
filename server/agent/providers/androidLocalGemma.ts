@@ -5,7 +5,10 @@ import { BaseProvider, isJsonObjectResponseFormat } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { buildRuntimeStateCardPrompt } from "../../state/stateCard";
 import { buildGroundedEvidencePacketPrompt } from "../../state/groundedEvidencePacket";
-import { shouldGroundPersonalMemoryRequest } from "../../state/groundingQueryPlanner";
+import {
+  looksLikeMemorySaveRequest,
+  shouldGroundPersonalMemoryRequest,
+} from "../../state/groundingQueryPlanner";
 import { classifyRuntimeMemoryInspectionIntent } from "../../state/runtimeMemoryInspection";
 import {
   auditLocalRuntimeResponse,
@@ -1554,15 +1557,6 @@ function isHiddenPhoneUrlToolCall(
   const args = toolArgumentsObject(toolCall.function.arguments);
   if (!args) return false;
   return normalizeDaemonActionArguments(args).action === "android_browse";
-}
-
-function looksLikeMemorySaveRequest(text: string): boolean {
-  return /^\s*(?:please\s+)?remember\s+(?:that|this)\b(?=[\s:,-]+\S)/i.test(text) ||
-    /^\s*(?:can|could|would)\s+you\s+(?:please\s+)?remember\s+(?:that|this)\b(?=[\s:,-]+\S)/i.test(text) ||
-    /^\s*(?:please\s+)?remember\s+my\b(?=[^?]*?(?::|=|\b(?:is|are|means?)\b))/i.test(text) ||
-    /^\s*(?:can|could|would)\s+you\s+(?:please\s+)?remember\s+my\b(?=[^?]*?(?::|=|\b(?:is|are|means?)\b))/i.test(text) ||
-    /^\s*(?:please\s+)?(?:save|store|add|write)\b.{0,80}\b(?:memory|memories)\b/i.test(text) ||
-    /^\s*(?:please\s+)?(?:correct|update)\s+(?:your\s+)?(?:memory|memories)\b/i.test(text);
 }
 
 function isStandaloneWhoAmIRequest(text: string): boolean {
