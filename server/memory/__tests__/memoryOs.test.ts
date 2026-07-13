@@ -515,6 +515,10 @@ async function main(): Promise<void> {
         tier: "long_term",
         memoryType: "semantic",
         confidence: 91,
+        sourceType: "manual",
+        sourceRef: "runtime-memory-event-original",
+        sensitivity: "normal",
+        provenance: [],
       };
     },
     findCorrectionBySource: async () => null,
@@ -579,6 +583,10 @@ async function main(): Promise<void> {
       tier: "long_term",
       memoryType: "semantic",
       confidence: 91,
+      sourceType: "manual",
+      sourceRef: "runtime-memory-event-original",
+      sensitivity: "normal",
+      provenance: [],
     }),
     findCorrectionBySource: async () => {
       raceLookupCount += 1;
@@ -603,6 +611,10 @@ async function main(): Promise<void> {
       tier: "long_term",
       memoryType: "semantic",
       confidence: 95,
+      sourceType: "manual",
+      sourceRef: "runtime-memory-event-newer",
+      sensitivity: "normal",
+      provenance: [],
     }),
     findCorrectionBySource: async () => null,
     writeMemory: async () => {
@@ -612,6 +624,37 @@ async function main(): Promise<void> {
   assert.equal(staleCorrection.recorded, false);
   assert.equal(staleCorrection.status, "conflict");
   assert.match(staleCorrection.uncertainty.join(" "), /changed since the correction was prepared/);
+
+  let restrictedCorrectionWriteCalled = false;
+  const restrictedCorrection = await recordMemoryCorrection(correctionInput, {
+    loadCurrentMemory: async () => ({
+      id: "memory-os-1",
+      content: "The user starts daily planning at 9:00.",
+      category: "preferences",
+      tier: "long_term",
+      memoryType: "semantic",
+      confidence: 91,
+      sourceType: "restricted_summary",
+      sourceRef: "plaid-weekly-summary",
+      sensitivity: "restricted_summary",
+      provenance: [{
+        sourceType: "plaid_transaction_rollup",
+        sourceRef: "rollup-2026-07-13",
+        sensitivity: "restricted_summary",
+        restricted: true,
+      }],
+    }),
+    findCorrectionBySource: async () => null,
+    writeMemory: async () => {
+      restrictedCorrectionWriteCalled = true;
+      throw new Error("restricted corrections must not enter normal Memory Review");
+    },
+  });
+  assert.equal(restrictedCorrectionWriteCalled, false);
+  assert.equal(restrictedCorrection.recorded, false);
+  assert.equal(restrictedCorrection.status, "excluded");
+  assert.match(restrictedCorrection.reason, /restricted-source workflow/);
+  assert.match(restrictedCorrection.uncertainty.join(" "), /cannot downgrade restricted metadata/);
 
   const missingSnapshotCorrection = buildMemoryCorrectionReview({
     ...correctionInput,

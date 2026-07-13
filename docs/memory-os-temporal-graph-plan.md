@@ -424,7 +424,7 @@ Status note, 2026-07-12: Memory OS retrieval and grounded evidence assembly now 
 
 Status note, 2026-07-12: grounded local-model context now uses a deterministic query planner with broad, profile, temporal, relationship, commitment, and exact-recall intents. It selects only relevant state stores, runs no more than two canonical memory queries, interleaves/deduplicates bounded results, and supplies an evidence-only context contract to Phone Gemma and local voice.
 
-Status note, 2026-07-13: answer-level MemoryOS explanations now expose the exact supporting records, source chain, confidence, and approved G-Brain contribution. Exact runtime inspections render those reasons directly, including bounded personal questions such as why Jarvis remembers a preference. Memory corrections now enter the existing pending-review write pipeline idempotently, reject stale source-memory edits, and set supersession links only after the replacement is approved.
+Status note, 2026-07-13: answer-level MemoryOS explanations now expose the exact supporting records, source chain, confidence, and approved G-Brain contribution. Exact runtime inspections render those reasons directly, including bounded personal questions such as why Jarvis remembers a preference. Memory corrections now enter the existing pending-review write pipeline idempotently, reject stale source-memory edits, and set supersession links only after the replacement is approved. Restricted memories are rejected from this normal correction path so their sensitivity and source provenance cannot be downgraded; they remain owned by the restricted-source workflow.
 
 Implemented:
 
@@ -434,6 +434,7 @@ Implemented:
 - expose answer-level evidence explanations through runtime memory inspection
 - queue correction/provenance proposals through authenticated Memory Review without activating them
 - preserve stale-write detection, source-event idempotency, and approval-time supersession
+- keep restricted memories out of normal correction review so privacy metadata cannot be downgraded
 - keep current behavior as fallback
 
 Outcome:

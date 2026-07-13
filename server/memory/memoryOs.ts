@@ -81,6 +81,10 @@ export type MemoryCorrectionCurrentMemory = {
   tier: string;
   memoryType: string;
   confidence: number;
+  sourceType: string | null;
+  sourceRef: string | null;
+  sensitivity: string;
+  provenance: unknown[];
 };
 
 export type ExistingMemoryCorrection = {
@@ -385,13 +389,24 @@ function isRestrictedProvenanceRef(value: unknown): boolean {
     isRestrictedSourceType(sourceRef);
 }
 
-function isRestrictedRetrievedMemory(memory: RetrievedMemory): boolean {
+function isRestrictedMemoryRecord(memory: {
+  content: string;
+  sourceType?: unknown;
+  sourceRef?: unknown;
+  sensitivity?: unknown;
+  provenance?: unknown;
+  sourceRefs?: unknown;
+}): boolean {
   return cleanSingleLine(memory.sensitivity).toLowerCase() === "restricted_summary" ||
     isRestrictedSourceType(memory.sourceType) ||
     isRestrictedSourceType(memory.sourceRef) ||
     containsRawRestrictedContent(memory.content) ||
     (Array.isArray(memory.provenance) && memory.provenance.some(isRestrictedProvenanceRef)) ||
     (Array.isArray(memory.sourceRefs) && memory.sourceRefs.some(isRestrictedProvenanceRef));
+}
+
+function isRestrictedRetrievedMemory(memory: RetrievedMemory): boolean {
+  return isRestrictedMemoryRecord(memory);
 }
 
 function sanitizeRestrictedMemoryContent(content: string): string {
@@ -807,6 +822,10 @@ const defaultMemoryCorrectionDeps: MemoryCorrectionDeps = {
         tier: schema.userMemories.tier,
         memoryType: schema.userMemories.memoryType,
         confidence: schema.userMemories.confidence,
+        sourceType: schema.userMemories.sourceType,
+        sourceRef: schema.userMemories.sourceRef,
+        sensitivity: schema.userMemories.sensitivity,
+        provenance: schema.userMemories.provenance,
       })
       .from(schema.userMemories)
       .where(drizzle.and(
@@ -892,6 +911,13 @@ export async function recordMemoryCorrection(
         status: "conflict",
         reason: "The memory being corrected is no longer an active canonical memory.",
         uncertainty: ["Refresh MemoryOS before preparing another correction."],
+      });
+    }
+    if (isRestrictedMemoryRecord(currentMemory)) {
+      return correctionResult(review, {
+        status: "excluded",
+        reason: "Restricted memories must be corrected through their restricted-source workflow.",
+        uncertainty: ["No correction was queued because normal Memory Review cannot downgrade restricted metadata."],
       });
     }
     if (
