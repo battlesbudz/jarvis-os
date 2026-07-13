@@ -9,6 +9,12 @@ import {
   type MemoryRetrievalTrace,
 } from "../memory/memoryOs";
 import {
+  buildGroundingQueryPlan,
+  type GroundingIntent,
+  type GroundingQueryPlan,
+  type GroundingSourcePolicy,
+} from "./groundingQueryPlanner";
+import {
   canonicalCommitmentDedupeKey,
   isPersonalCommitment,
   type CommitmentKind,
@@ -48,10 +54,23 @@ export interface GroundedEvidencePacket {
   activeModel?: string;
   currentContext?: string;
   modelTarget: MemoryModelTarget;
+  queryPlan: GroundingQueryPlan;
+  contextContract: GroundedEvidenceContextContract;
   evidence: GroundedEvidenceItem[];
   omitted: string[];
   uncertainty: string[];
   trace?: GroundedEvidenceAssemblyTrace;
+}
+
+export interface GroundedEvidenceContextContract {
+  schemaVersion: 1;
+  intent: GroundingIntent;
+  sources: GroundingSourcePolicy;
+  memoryAuthority: "canonical_only";
+  claimPolicy: "evidence_only";
+  missingEvidencePolicy: "admit_not_loaded";
+  maxMemoryItems: number;
+  maxCommitmentItems: number;
 }
 
 export interface GroundedEvidenceAssemblyTraceStage {
@@ -68,8 +87,14 @@ export interface GroundedEvidenceAssemblyTrace {
   identifiersOmitted: boolean;
   queryFingerprint?: string;
   queryLength: number;
+  queryPlan: {
+    intent: GroundingIntent;
+    queryCount: number;
+    purposes: string[];
+  };
   stages: GroundedEvidenceAssemblyTraceStage[];
   memoryRetrieval?: MemoryRetrievalTrace;
+  memoryRetrievals?: MemoryRetrievalTrace[];
 }
 
 export interface GroundedCommitmentRecord {
@@ -106,7 +131,7 @@ export interface GroundedEvidencePacketDeps {
     modelTarget?: MemoryModelTarget;
     allowRestrictedMemory?: boolean;
   }) => Promise<MemoryContext>;
-  loadCommitments?: (userId: string, limit: number) => Promise<GroundedCommitmentRecord[]>;
+  loadCommitments?: (userId: string, limit?: number) => Promise<GroundedCommitmentRecord[]>;
   now?: () => Date;
 }
 
@@ -143,7 +168,6 @@ export function _setGroundedEvidencePacketDepsForTesting(
 const DEFAULT_MEMORY_LIMIT = 6;
 const DEFAULT_COMMITMENT_LIMIT = 5;
 const DEFAULT_RENDER_MAX_CHARS = 2_200;
-const ABOUT_YOU_QUERY = "user profile preferences relationships work patterns goals blockers values commitments";
 
 function compactText(value: unknown): string {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -215,10 +239,10 @@ async function defaultRetrieveMemoryContext(input: {
   return retrieveMemoryContext(input);
 }
 
-async function defaultLoadCommitments(userId: string, limit: number): Promise<GroundedCommitmentRecord[]> {
+async function defaultLoadCommitments(userId: string): Promise<GroundedCommitmentRecord[]> {
   if (typeof process !== "undefined" && !process.env.DATABASE_URL) return [];
   const { listPendingPersonalCommitments } = await import("../commitments/dbCommitmentRepository");
-  return listPendingPersonalCommitments(userId, limit);
+  return listPendingPersonalCommitments(userId);
 }
 
 function profileEvidence(profile: RuntimeProfileState | null): GroundedEvidenceItem[] {
@@ -286,6 +310,55 @@ function memoryEvidence(context: MemoryContext): GroundedEvidenceItem[] {
   }));
 }
 
+function uniqueProvenance(items: MemoryContext["items"]): MemoryContext["provenance"] {
+  const seen = new Set<string>();
+  return items.flatMap((item) => item.provenance).filter((ref) => {
+    const key = `${ref.kind}:${ref.source}:${ref.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function mergeMemoryContexts(
+  contexts: MemoryContext[],
+  userId: string,
+  query: string,
+  limit: number,
+): MemoryContext {
+  const items: MemoryContext["items"] = [];
+  const seen = new Set<string>();
+  const maxDepth = Math.max(0, ...contexts.map((context) => context.items.length));
+  for (let rank = 0; rank < maxDepth && items.length < limit; rank += 1) {
+    for (const context of contexts) {
+      const item = context.items[rank];
+      if (!item || seen.has(item.memory.id)) continue;
+      seen.add(item.memory.id);
+      items.push(item);
+      if (items.length >= limit) break;
+    }
+  }
+
+  const provenance = uniqueProvenance(items);
+  const uncertainty = uniqueStrings(contexts.flatMap((context) => context.uncertainty));
+  return {
+    userId,
+    query,
+    caller: "runtime_memory_inspection",
+    items,
+    sources: {
+      memories: provenance.filter((ref) => ref.kind === "user_memory").map((ref) => ref.id),
+      brainChunks: provenance.filter((ref) => ref.kind === "brain_chunk").map((ref) => ref.id),
+      hotState: provenance.filter((ref) => ref.kind === "hot_state").map((ref) => ref.id),
+    },
+    provenance,
+    uncertainty: items.length > 0
+      ? uncertainty.filter((entry) => entry !== "No relevant memories were found.")
+      : uncertainty,
+    trace: contexts[0]?.trace,
+  };
+}
+
 function commitmentDedupeKey(commitment: GroundedCommitmentRecord): string {
   return compactText(commitment.dedupeKey) || canonicalCommitmentDedupeKey(commitment.content);
 }
@@ -308,12 +381,98 @@ function rankCommitment(commitment: GroundedCommitmentRecord, todayKey: string):
   return dueDateRank(commitment.dueDate, todayKey);
 }
 
+const COMMITMENT_QUERY_STOP_WORDS = new Set([
+  "a", "about", "all", "an", "any", "are", "blocker", "blockers", "can", "check",
+  "commitment", "commitments", "could", "current", "currently", "date", "dates", "day",
+  "days", "deadline", "deadlines", "did", "display", "do", "does", "due", "for", "give",
+  "goal", "goals", "have", "i", "is", "list", "me", "my", "need", "of", "on",
+  "open", "our", "overdue", "pending", "please", "related", "remaining", "show", "this",
+  "status", "still", "summarize", "summary", "task", "tasks", "tell", "the", "there",
+  "today", "tomorrow", "tonight", "to", "unfinished", "upcoming", "us", "we", "week",
+  "weekday", "weekdays", "weekend", "weekends", "weeks", "what", "which", "work",
+  "working", "month", "months", "year", "years", "next", "later", "soon", "you",
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+  "january", "february", "march", "april", "may", "june", "july", "august",
+  "september", "october", "november", "december",
+]);
+
+function commitmentQueryTerms(query: string): string[] {
+  const topicQuery = query.replace(
+    /^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:read|review)\b/i,
+    "",
+  );
+  return [...new Set(
+    topicQuery
+      .toLowerCase()
+      .match(/[a-z0-9]+/g)
+      ?.filter((term) => !COMMITMENT_QUERY_STOP_WORDS.has(term) && !/^\d+$/.test(term)) ?? [],
+  )];
+}
+
+function commitmentTopicScore(commitment: GroundedCommitmentRecord, queryTerms: string[]): number {
+  if (queryTerms.length === 0) return 0;
+  const searchableTerms = new Set(
+    [commitment.content, commitment.dedupeKey, commitment.sourceMessage]
+      .filter((value): value is string => typeof value === "string")
+      .join(" ")
+      .toLowerCase()
+      .match(/[a-z0-9]+/g) ?? [],
+  );
+  return queryTerms.reduce((score, term) => score + (searchableTerms.has(term) ? 1 : 0), 0);
+}
+
+function isoDateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function dateKeyInTimezone(date: Date, timezone: string | undefined): string {
+  if (!timezone) return isoDateKey(date);
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+    const part = (type: "year" | "month" | "day"): string =>
+      parts.find((entry) => entry.type === type)?.value ?? "";
+    const key = `${part("year")}-${part("month")}-${part("day")}`;
+    return /^\d{4}-\d{2}-\d{2}$/.test(key) ? key : isoDateKey(date);
+  } catch {
+    return isoDateKey(date);
+  }
+}
+
+function shiftedDateKey(dateKey: string, days: number): string {
+  const shifted = new Date(`${dateKey}T12:00:00.000Z`);
+  shifted.setUTCDate(shifted.getUTCDate() + days);
+  return isoDateKey(shifted);
+}
+
+function requestedCommitmentDueDateFilter(query: string, todayKey: string): {
+  dates: Set<string>;
+  overdue: boolean;
+} {
+  const normalizedQuery = query.toLowerCase();
+  const dates = new Set(normalizedQuery.match(/\b\d{4}-\d{2}-\d{2}\b/g) ?? []);
+  if (/\b(?:today|tonight)\b/.test(normalizedQuery)) dates.add(todayKey);
+  if (/\btomorrow\b/.test(normalizedQuery)) dates.add(shiftedDateKey(todayKey, 1));
+  return {
+    dates,
+    overdue: /\boverdue\b/.test(normalizedQuery),
+  };
+}
+
 function dedupeCommitments(
   commitments: GroundedCommitmentRecord[],
   limit: number,
   now: Date,
+  query: string,
+  timezone?: string,
 ): { selected: GroundedCommitmentRecord[]; omitted: string[] } {
-  const todayKey = now.toISOString().slice(0, 10);
+  const todayKey = dateKeyInTimezone(now, timezone);
+  const queryTerms = commitmentQueryTerms(query);
+  const requestedDueDate = requestedCommitmentDueDateFilter(query, todayKey);
   const personalCommitments = commitments.filter(isPersonalCommitment);
   const groups = new Map<string, GroundedCommitmentRecord[]>();
   for (const commitment of personalCommitments) {
@@ -326,26 +485,51 @@ function dedupeCommitments(
 
   const canonical = Array.from(groups.values())
     .map((group) => [...group].sort((a, b) => {
+      const topicDiff = commitmentTopicScore(b, queryTerms) - commitmentTopicScore(a, queryTerms);
+      if (topicDiff !== 0) return topicDiff;
       const rankDiff = rankCommitment(b, todayKey) - rankCommitment(a, todayKey);
       if (rankDiff !== 0) return rankDiff;
       return extractedAtMs(b.extractedAt) - extractedAtMs(a.extractedAt);
-    })[0]!)
+    })[0]!);
+  const hasDateFilter = requestedDueDate.overdue || requestedDueDate.dates.size > 0;
+  const dateMatched = !hasDateFilter
+    ? canonical
+    : canonical.filter((commitment) => Boolean(
+      commitment.dueDate && (
+        requestedDueDate.dates.has(commitment.dueDate) ||
+        (requestedDueDate.overdue && commitment.dueDate < todayKey)
+      )
+    ));
+  const topicMatched = queryTerms.length === 0
+    ? dateMatched
+    : dateMatched.filter((commitment) => commitmentTopicScore(commitment, queryTerms) > 0);
+  const ranked = topicMatched
     .sort((a, b) => {
+      const topicDiff = commitmentTopicScore(b, queryTerms) - commitmentTopicScore(a, queryTerms);
+      if (topicDiff !== 0) return topicDiff;
       const rankDiff = rankCommitment(b, todayKey) - rankCommitment(a, todayKey);
       if (rankDiff !== 0) return rankDiff;
       return extractedAtMs(b.extractedAt) - extractedAtMs(a.extractedAt);
     });
 
-  const selected = canonical.slice(0, limit);
+  const selected = ranked.slice(0, limit);
   const duplicateCount = personalCommitments.length - groups.size;
   const excludedCount = commitments.length - personalCommitments.length;
-  const overflowCount = canonical.length - selected.length;
+  const dateExcludedCount = canonical.length - dateMatched.length;
+  const topicExcludedCount = dateMatched.length - topicMatched.length;
+  const overflowCount = ranked.length - selected.length;
   const omitted: string[] = [];
   if (duplicateCount > 0) {
     omitted.push(`Collapsed ${duplicateCount} duplicate pending commitment record(s).`);
   }
   if (excludedCount > 0) {
     omitted.push(`Omitted ${excludedCount} non-personal or low-signal commitment record(s) based on stored metadata.`);
+  }
+  if (dateExcludedCount > 0) {
+    omitted.push(`Omitted ${dateExcludedCount} pending commitment record(s) outside the requested due date.`);
+  }
+  if (topicExcludedCount > 0) {
+    omitted.push(`Omitted ${topicExcludedCount} pending commitment record(s) that did not match the requested topic.`);
   }
   if (overflowCount > 0) {
     omitted.push(`Omitted ${overflowCount} lower-ranked pending commitment record(s) beyond the packet limit.`);
@@ -383,19 +567,45 @@ export async function buildGroundedEvidencePacket(
   const now = effectiveDeps.now ?? (() => new Date());
   const generatedAt = now();
   const modelTarget = memoryModelTargetFromActiveModel(input.activeModel);
-  const query = compactText(input.query) || ABOUT_YOU_QUERY;
   const memoryLimit = Math.max(0, input.memoryLimit ?? DEFAULT_MEMORY_LIMIT);
   const commitmentLimit = Math.max(0, input.commitmentLimit ?? DEFAULT_COMMITMENT_LIMIT);
+  const queryPlan = buildGroundingQueryPlan({
+    requestText: input.requestText,
+    explicitQuery: input.query,
+  });
+  const sourcePolicy: GroundingSourcePolicy = {
+    profile: input.includeProfile ?? queryPlan.sources.profile,
+    soul: input.includeSoul ?? queryPlan.sources.soul,
+    memory: (input.includeMemory ?? queryPlan.sources.memory) && memoryLimit > 0,
+    commitments: (input.includeCommitments ?? queryPlan.sources.commitments) && commitmentLimit > 0,
+  };
+  const contextContract: GroundedEvidenceContextContract = {
+    schemaVersion: 1,
+    intent: queryPlan.intent,
+    sources: sourcePolicy,
+    memoryAuthority: "canonical_only",
+    claimPolicy: "evidence_only",
+    missingEvidencePolicy: "admit_not_loaded",
+    maxMemoryItems: memoryLimit,
+    maxCommitmentItems: commitmentLimit,
+  };
+  const plannedQueryText = queryPlan.queries.map((entry) => entry.query).join("\n");
   const evidence: GroundedEvidenceItem[] = [];
   const omitted: string[] = [];
   const uncertainty: string[] = [];
-  const queryFingerprint = fingerprintMemoryQuery(query, input.userId);
+  let loadedProfileState: RuntimeProfileState | null = null;
+  const queryFingerprint = fingerprintMemoryQuery(plannedQueryText, input.userId);
   const trace: GroundedEvidenceAssemblyTrace = {
     schemaVersion: 1,
     contentFree: true,
     identifiersOmitted: queryFingerprint === undefined,
     queryFingerprint,
-    queryLength: query.length,
+    queryLength: plannedQueryText.length,
+    queryPlan: {
+      intent: queryPlan.intent,
+      queryCount: queryPlan.queries.length,
+      purposes: queryPlan.queries.map((entry) => entry.purpose),
+    },
     stages: [],
   };
   const evidenceTraceIds = (ids: string[]): string[] => ids.flatMap((id) => {
@@ -414,10 +624,11 @@ export async function buildGroundedEvidencePacket(
     omittedCount: 0,
   });
 
-  if (input.includeProfile !== false) {
+  if (sourcePolicy.profile) {
     try {
       const loadProfile = effectiveDeps.loadProfileState ?? loadRuntimeProfileStateFromDb;
       const profile = await loadProfile(input.userId);
+      loadedProfileState = profile;
       const loaded = profileEvidence(profile);
       evidence.push(...loaded);
       trace.stages.push({
@@ -436,7 +647,7 @@ export async function buildGroundedEvidencePacket(
     trace.stages.push({ source: "profile", status: "skipped", loadedCount: 0, selectedIds: [], omittedCount: 0 });
   }
 
-  if (input.includeSoul !== false) {
+  if (sourcePolicy.soul) {
     try {
       const loadSoul = effectiveDeps.loadSoul ?? defaultLoadSoul;
       const loaded = soulEvidence(await loadSoul(input.userId));
@@ -456,23 +667,25 @@ export async function buildGroundedEvidencePacket(
     trace.stages.push({ source: "soul", status: "skipped", loadedCount: 0, selectedIds: [], omittedCount: 0 });
   }
 
-  if (input.includeMemory !== false && memoryLimit > 0) {
+  if (sourcePolicy.memory) {
     try {
       const retrieveMemoryContext = effectiveDeps.retrieveMemoryContext ?? defaultRetrieveMemoryContext;
-      const memoryContext = await retrieveMemoryContext({
-        userId: input.userId,
-        query,
-        limit: memoryLimit,
-        caller: "runtime_memory_inspection",
-        skipAccessUpdate: true,
-        canonicalOnly: true,
-        modelTarget,
-        allowRestrictedMemory: input.allowRestrictedMemory ?? false,
-      });
+      const memoryContexts = await Promise.all(queryPlan.queries.map((plannedQuery) => retrieveMemoryContext({
+          userId: input.userId,
+          query: plannedQuery.query,
+          limit: memoryLimit,
+          caller: "runtime_memory_inspection",
+          skipAccessUpdate: true,
+          canonicalOnly: true,
+          modelTarget,
+          allowRestrictedMemory: input.allowRestrictedMemory ?? false,
+        })));
+      const memoryContext = mergeMemoryContexts(memoryContexts, input.userId, plannedQueryText, memoryLimit);
       const loaded = memoryEvidence(memoryContext);
       evidence.push(...loaded);
       uncertainty.push(...memoryContext.uncertainty);
       trace.memoryRetrieval = memoryContext.trace;
+      trace.memoryRetrievals = memoryContexts.flatMap((context) => context.trace ? [context.trace] : []);
       trace.stages.push({
         source: "memory",
         status: loaded.length > 0 ? "loaded" : "empty",
@@ -491,11 +704,17 @@ export async function buildGroundedEvidencePacket(
     trace.stages.push({ source: "memory", status: "skipped", loadedCount: 0, selectedIds: [], omittedCount: 0 });
   }
 
-  if (input.includeCommitments !== false && commitmentLimit > 0) {
+  if (sourcePolicy.commitments) {
     try {
       const loadCommitments = effectiveDeps.loadCommitments ?? defaultLoadCommitments;
-      const rawCommitments = await loadCommitments(input.userId, Math.max(50, commitmentLimit * 6));
-      const { selected, omitted: omittedCommitments } = dedupeCommitments(rawCommitments, commitmentLimit, generatedAt);
+      const rawCommitments = await loadCommitments(input.userId);
+      const { selected, omitted: omittedCommitments } = dedupeCommitments(
+        rawCommitments,
+        commitmentLimit,
+        generatedAt,
+        queryPlan.intent === "commitment_status" ? input.query || input.requestText : "",
+        loadedProfileState?.timezone,
+      );
       const loaded = commitmentEvidence(selected);
       evidence.push(...loaded);
       omitted.push(...omittedCommitments);
@@ -522,6 +741,8 @@ export async function buildGroundedEvidencePacket(
     activeModel: input.activeModel,
     currentContext: input.currentContext,
     modelTarget,
+    queryPlan,
+    contextContract,
     evidence,
     omitted: uniqueStrings(omitted),
     uncertainty: uniqueStrings(uncertainty),
@@ -564,7 +785,8 @@ function renderCompactEvidencePacket(packet: GroundedEvidencePacket, maxChars: n
   const limitsLine = renderCompactLimits(packet, limitBudget);
   const opening = [
     "## Jarvis Grounded Evidence Packet",
-    "Use only EVIDENCE. Treat LIMITS as incomplete context and admit when a fact is not loaded.",
+    `Contract: intent=${packet.contextContract.intent}; claims=evidence_only; missing=admit_not_loaded.`,
+    "Use only EVIDENCE. Treat LIMITS as incomplete context.",
     limitsLine,
     "EVIDENCE:",
   ];
@@ -597,6 +819,10 @@ export function renderGroundedEvidencePacket(
     `Request: ${packet.requestText || "(empty)"}`,
     `Generated at: ${packet.generatedAt}`,
     `Model target: ${packet.modelTarget}`,
+    `Context contract: intent=${packet.contextContract.intent}; sources=${Object.entries(packet.contextContract.sources)
+      .filter(([, enabled]) => enabled)
+      .map(([source]) => source)
+      .join(",") || "none"}; memory=${packet.contextContract.memoryAuthority}; claims=${packet.contextContract.claimPolicy}; missing=${packet.contextContract.missingEvidencePolicy}`,
   ];
 
   if (packet.activeDevice || packet.activeModel || packet.currentContext) {

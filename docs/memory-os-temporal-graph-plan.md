@@ -422,6 +422,8 @@ Status note, 2026-06-08: Jarvis Core Runtime memory calibration previews now han
 
 Status note, 2026-07-12: Memory OS retrieval and grounded evidence assembly now expose content-free structured traces. The retrieval evaluation harness measures recall at K, precision at K, reciprocal rank, forbidden hits, retrieval misses, and evidence dropped during assembly; privacy-safe starter regressions and private trace-artifact input are available through `npm run jarvis:eval:memory-retrieval`.
 
+Status note, 2026-07-12: grounded local-model context now uses a deterministic query planner with broad, profile, temporal, relationship, commitment, and exact-recall intents. It selects only relevant state stores, runs no more than two canonical memory queries, interleaves/deduplicates bounded results, and supplies an evidence-only context contract to Phone Gemma and local voice.
+
 Implemented:
 
 - `server/memory/memoryOs.ts`

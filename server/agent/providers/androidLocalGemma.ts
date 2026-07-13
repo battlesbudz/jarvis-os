@@ -5,7 +5,14 @@ import { BaseProvider, isJsonObjectResponseFormat } from "./base";
 import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { buildRuntimeStateCardPrompt } from "../../state/stateCard";
 import { buildGroundedEvidencePacketPrompt } from "../../state/groundedEvidencePacket";
-import { classifyRuntimeMemoryInspectionIntent } from "../../state/runtimeMemoryInspection";
+import {
+  looksLikeMemorySaveRequest,
+  shouldGroundPersonalMemoryRequest,
+} from "../../state/groundingQueryPlanner";
+import {
+  answerRuntimeMemoryInspectionQuestion,
+  classifyRuntimeMemoryInspectionIntent,
+} from "../../state/runtimeMemoryInspection";
 import {
   auditLocalRuntimeResponse,
   type LocalRuntimeActionResult,
@@ -1555,15 +1562,6 @@ function isHiddenPhoneUrlToolCall(
   return normalizeDaemonActionArguments(args).action === "android_browse";
 }
 
-function looksLikeMemorySaveRequest(text: string): boolean {
-  return /^\s*(?:please\s+)?remember\s+(?:that|this)\b(?=[\s:,-]+\S)/i.test(text) ||
-    /^\s*(?:can|could|would)\s+you\s+(?:please\s+)?remember\s+(?:that|this)\b(?=[\s:,-]+\S)/i.test(text) ||
-    /^\s*(?:please\s+)?remember\s+my\b(?=[^?]*?(?::|=|\b(?:is|are|means?)\b))/i.test(text) ||
-    /^\s*(?:can|could|would)\s+you\s+(?:please\s+)?remember\s+my\b(?=[^?]*?(?::|=|\b(?:is|are|means?)\b))/i.test(text) ||
-    /^\s*(?:please\s+)?(?:save|store|add|write)\b.{0,80}\b(?:memory|memories)\b/i.test(text) ||
-    /^\s*(?:please\s+)?(?:correct|update)\s+(?:your\s+)?(?:memory|memories)\b/i.test(text);
-}
-
 function isStandaloneWhoAmIRequest(text: string): boolean {
   return /\bwho\s+am\s+i\s*\??\s*$/i.test(text);
 }
@@ -2267,13 +2265,16 @@ async function runtimeStateCardPromptFromParams(
         ? Math.max(useToolProtocol ? 120 : 220, Math.floor(promptBudget * (useToolProtocol ? 0.14 : 0.32)))
         : Math.max(320, Math.floor(promptBudget * (useToolProtocol ? 0.25 : 0.32))),
     );
+    const requestText = latestUserText(params.messages);
     const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent(params.messages);
-    if (memoryInspectionIntent?.scopeLabel === "about you") {
+    const shouldBuildGroundedPacket = Boolean(memoryInspectionIntent) ||
+      shouldGroundPersonalMemoryRequest(requestText);
+    if (shouldBuildGroundedPacket) {
       const compactProfile = turnBudget.contextTokens <= 512;
       return await buildGroundedEvidencePacketPrompt({
         userId: params.userId ?? "",
-        requestText: latestUserText(params.messages),
-        query: memoryInspectionIntent.query,
+        requestText,
+        query: memoryInspectionIntent?.query,
         activeDevice: "android",
         activeModel: normalizeAndroidLocalGemmaModel(params.model),
         currentContext: useToolProtocol ? "phone_gemma_tool_protocol" : "phone_gemma_chat",
@@ -2598,6 +2599,21 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       throw new Error("Android Local Gemma requires an authenticated user and the Jarvis Android app device control connection.");
     }
     const userId = params.userId;
+    const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent(params.messages);
+    if (!params.responseFormat && memoryInspectionIntent && memoryInspectionIntent.scopeLabel !== "about you") {
+      const runtimeInspection = await answerRuntimeMemoryInspectionQuestion({
+        messages: params.messages,
+        userId,
+        route: undefined,
+      });
+      if (runtimeInspection) {
+        if (runtimeInspection.textContent) {
+          yield { type: "text", delta: runtimeInspection.textContent };
+        }
+        yield { type: "finish", reason: runtimeInspection.finishReason ?? "stop" };
+        return;
+      }
+    }
     const normalizedModel = normalizeAndroidLocalGemmaModel(params.model);
     const turnBudget = await resolvePhoneGemmaTurnBudget(
       userId,

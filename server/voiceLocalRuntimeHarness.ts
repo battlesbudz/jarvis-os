@@ -11,7 +11,11 @@ import {
   type CloudBackgroundProviderStatus,
 } from "./agent/cloudBackgroundEscalation";
 import { buildGroundedEvidencePacketPrompt } from "./state/groundedEvidencePacket";
-import { classifyRuntimeMemoryInspectionIntent } from "./state/runtimeMemoryInspection";
+import { shouldGroundPersonalMemoryRequest } from "./state/groundingQueryPlanner";
+import {
+  answerRuntimeMemoryInspectionQuestion,
+  classifyRuntimeMemoryInspectionIntent,
+} from "./state/runtimeMemoryInspection";
 
 export type LocalVoiceModelCallKind = "local_gemma" | "cloud_model" | "secondary_llm";
 
@@ -1029,12 +1033,14 @@ async function contextPacketFromEvents(
     packet.push(`Recent screen: ${recentScreen.activeApp} - ${recentScreen.title ?? recentScreen.text}`);
   }
   const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent([{ role: "user", content: transcript }]);
-  if (memoryInspectionIntent?.scopeLabel === "about you") {
+  const shouldBuildGroundedPacket = memoryInspectionIntent?.scopeLabel === "about you" ||
+    (!memoryInspectionIntent && shouldGroundPersonalMemoryRequest(transcript));
+  if (shouldBuildGroundedPacket) {
     try {
       packet.push(await buildGroundedEvidencePacketPrompt({
         userId,
         requestText: transcript,
-        query: memoryInspectionIntent.query,
+        query: memoryInspectionIntent?.scopeLabel === "about you" ? memoryInspectionIntent.query : undefined,
         activeDevice: "android",
         activeModel: "gemma-4-e4b-it",
         currentContext: "local_voice",
@@ -1814,6 +1820,32 @@ export async function runLocalVoiceRuntimeHarnessTurn(input: LocalVoiceHarnessIn
       workingContext,
       diagnostics: runtimeStatus.diagnostics,
     };
+  }
+
+  const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent([{ role: "user", content: transcript }]);
+  if (memoryInspectionIntent && memoryInspectionIntent.scopeLabel !== "about you") {
+    const runtimeInspection = await answerRuntimeMemoryInspectionQuestion({
+      messages: [{ role: "user", content: transcript }],
+      userId,
+      route: undefined,
+    });
+    const canonicalResponse = runtimeInspection?.textContent.trim();
+    if (canonicalResponse) {
+      return {
+        transcript,
+        canonicalResponse,
+        chatOutput: canonicalResponse,
+        ttsOutput: canonicalResponse,
+        responseCount: 1,
+        modelCalls,
+        androidExecutions: [...androidRuntime.executions],
+        workingContext,
+        diagnostics: {
+          outcome: "runtime_memory_inspection",
+          modelOutputType: "runtime_direct",
+        },
+      };
+    }
   }
 
   recordModelCall(modelCalls, {

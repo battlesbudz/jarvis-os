@@ -12,6 +12,7 @@ import {
   type ScriptedLocalGemmaStep,
 } from "../../voiceLocalRuntimeHarness";
 import { _setGroundedEvidencePacketDepsForTesting } from "../../state/groundedEvidencePacket";
+import { _setRuntimeMemoryInspectionDepsForTesting } from "../../state/runtimeMemoryInspection";
 
 const notificationEvents: LocalVoiceAndroidEvent[] = [{
   type: "notification",
@@ -3555,6 +3556,30 @@ async function testLocalVoicePersonalMemoryQuestionInjectsGroundedEvidencePacket
     }),
     loadCommitments: async () => [],
   });
+  _setRuntimeMemoryInspectionDepsForTesting({
+    retrieveMemoryContext: async (input) => ({
+      userId: input.userId,
+      query: input.query,
+      caller: "runtime_memory_inspection",
+      items: [{
+        memory: {
+          id: "exact-doordash-memory",
+          content: "User does not want DoorDash alerts treated as automatically important.",
+          category: "preferences",
+          tier: "long_term",
+          memoryType: "semantic",
+          relevanceScore: 92,
+          confidence: 95,
+          accessCount: 0,
+          score: 0.94,
+        },
+        provenance: [{ kind: "user_memory", id: "exact-doordash-memory", source: "canonical" }],
+      }],
+      sources: { memories: ["exact-doordash-memory"], brainChunks: [], hotState: [] },
+      provenance: [{ kind: "user_memory", id: "exact-doordash-memory", source: "canonical" }],
+      uncertainty: [],
+    }),
+  });
 
   try {
     const gemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "You prefer direct answers." }]);
@@ -3569,9 +3594,59 @@ async function testLocalVoicePersonalMemoryQuestionInjectsGroundedEvidencePacket
     assert.match(gemma.prompts[0]?.contextPacket ?? "", /Use only EVIDENCE/);
     assert.match(gemma.prompts[0]?.contextPacket ?? "", /Preferred name: Justin/);
     assert.match(gemma.prompts[0]?.contextPacket ?? "", /direct answers from grounded Jarvis state/);
+
+    const temporalGemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "You chose native Android speech." }]);
+    const temporalResult = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript: "Do you remember what I decided about Android speech a while ago?",
+      gemma: temporalGemma,
+    });
+    assert.equal(temporalResult.diagnostics.outcome, "final");
+    assert.match(temporalGemma.prompts[0]?.contextPacket ?? "", /intent=temporal_recall/);
+    assert.match(temporalGemma.prompts[0]?.contextPacket ?? "", /direct answers from grounded Jarvis state/);
+
+    const personalFactGemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "Your favorite color is green." }]);
+    const personalFactResult = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript: "What's my favorite color?",
+      gemma: personalFactGemma,
+    });
+    assert.equal(personalFactResult.diagnostics.outcome, "final");
+    assert.match(personalFactGemma.prompts[0]?.contextPacket ?? "", /Jarvis Grounded Evidence Packet/);
+
+    const technicalMemoryGemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "Here is how to inspect memory usage." }]);
+    const technicalMemoryResult = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript: "How do I debug my memory leak?",
+      gemma: technicalMemoryGemma,
+    });
+    assert.equal(technicalMemoryResult.diagnostics.outcome, "final");
+    assert.doesNotMatch(technicalMemoryGemma.prompts[0]?.contextPacket ?? "", /Jarvis Grounded Evidence Packet/);
+
+    const exactInspectionGemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "Audit path owns this request." }]);
+    const exactInspectionResult = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript: "Show exact memories about DoorDash",
+      gemma: exactInspectionGemma,
+    });
+    assert.equal(exactInspectionResult.diagnostics.outcome, "runtime_memory_inspection");
+    assert.match(exactInspectionResult.canonicalResponse, /limited MemoryOS inspection for DoorDash/);
+    assert.match(exactInspectionResult.canonicalResponse, /DoorDash alerts treated as automatically important/);
+    assert.equal(exactInspectionResult.modelCalls.length, 0);
+    assert.equal(exactInspectionGemma.prompts.length, 0);
+
+    const memorySaveGemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "I will save that." }]);
+    const memorySaveResult = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript: "Remember that my birthday is Jan 1",
+      gemma: memorySaveGemma,
+    });
+    assert.equal(memorySaveResult.diagnostics.outcome, "final");
+    assert.doesNotMatch(memorySaveGemma.prompts[0]?.contextPacket ?? "", /Jarvis Grounded Evidence Packet/);
     console.log("OK: local voice injects grounded evidence packets for personal memory questions");
   } finally {
     _setGroundedEvidencePacketDepsForTesting(null);
+    _setRuntimeMemoryInspectionDepsForTesting(null);
   }
 }
 

@@ -201,12 +201,327 @@ async function testGlobalTestDepsFeedPromptBuilder(): Promise<void> {
   }
 }
 
+async function testTemporalPlanUsesOnlyMemoryAndMergesQueries(): Promise<void> {
+  const queries: string[] = [];
+  const packet = await buildGroundedEvidencePacket({
+    userId,
+    requestText: "What was that Android speech decision from a while ago?",
+    activeModel: "Phone Gemma",
+    memoryLimit: 3,
+    commitmentLimit: 3,
+  }, {
+    now: () => fixedNow,
+    loadProfileState: async () => {
+      throw new Error("profile should be skipped");
+    },
+    loadSoul: async () => {
+      throw new Error("soul should be skipped");
+    },
+    loadCommitments: async () => {
+      throw new Error("commitments should be skipped");
+    },
+    retrieveMemoryContext: async (input) => {
+      queries.push(input.query);
+      const ids = queries.length === 1
+        ? ["memory-android-context", "memory-android-speech-decision"]
+        : ["memory-android-speech-decision", "memory-android-current-policy"];
+      return {
+        userId,
+        query: input.query,
+        caller: "runtime_memory_inspection",
+        items: ids.map((id, index) => ({
+          memory: {
+            id,
+            content: `Grounded Android decision ${index + 1}`,
+            category: "decision",
+            tier: "long_term",
+            memoryType: "semantic",
+            relevanceScore: 90 - index,
+            confidence: 90,
+            accessCount: 0,
+            score: 0.9 - index / 10,
+          },
+          provenance: [{ kind: "user_memory", id, source: "canonical" }],
+        })),
+        sources: { memories: ids, brainChunks: [], hotState: [] },
+        provenance: ids.map((id) => ({ kind: "user_memory" as const, id, source: "canonical" as const })),
+        uncertainty: [],
+      };
+    },
+  });
+
+  assert.equal(packet.queryPlan.intent, "temporal_recall");
+  assert.equal(packet.queryPlan.queries.length, 2);
+  assert.deepEqual(packet.contextContract.sources, {
+    profile: false,
+    soul: false,
+    memory: true,
+    commitments: false,
+  });
+  assert.equal(packet.contextContract.memoryAuthority, "canonical_only");
+  assert.equal(packet.contextContract.claimPolicy, "evidence_only");
+  assert.equal(queries.length, 2);
+  assert.deepEqual(
+    packet.evidence.filter((item) => item.domain === "memory").map((item) => item.sourceId),
+    ["memory-android-context", "memory-android-speech-decision", "memory-android-current-policy"],
+  );
+  assert.deepEqual(
+    packet.trace?.stages.map((stage) => `${stage.source}:${stage.status}`),
+    ["runtime:loaded", "profile:skipped", "soul:skipped", "memory:loaded", "commitment:skipped"],
+  );
+  assert.equal(packet.trace?.queryPlan.intent, "temporal_recall");
+  assert.deepEqual(packet.trace?.queryPlan.purposes, ["primary", "temporal"]);
+
+  const rendered = renderGroundedEvidencePacket(packet, { maxChars: 5_000 });
+  assert.match(rendered, /Context contract: intent=temporal_recall/);
+  assert.match(rendered, /memory=canonical_only/);
+  console.log("OK: temporal grounding plans only memory queries and merges bounded results");
+}
+
+async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<void> {
+  const commitments: GroundedCommitmentRecord[] = [
+    {
+      id: "unrelated-overdue",
+      content: "Prepare the quarterly inventory controls report.",
+      dueDate: "2026-06-01",
+      status: "pending",
+      extractedAt: "2026-06-01T12:00:00.000Z",
+      commitmentKind: "user_task",
+      signalLevel: "normal",
+    },
+    {
+      id: "android-daemon",
+      content: "Verify Android daemon voice routing on the physical phone.",
+      dueDate: "2026-07-20",
+      status: "pending",
+      extractedAt: "2026-07-08T12:00:00.000Z",
+      commitmentKind: "user_task",
+      signalLevel: "normal",
+      dedupeKey: "topic:android_daemon_voice",
+    },
+    {
+      id: "unrelated-today",
+      content: "Review the production compliance checklist.",
+      dueDate: "2026-07-09",
+      status: "pending",
+      extractedAt: "2026-07-09T08:00:00.000Z",
+      commitmentKind: "user_commitment",
+      signalLevel: "normal",
+    },
+    {
+      id: "tomorrow-task",
+      content: "Call the packaging supplier.",
+      dueDate: "2026-07-10",
+      status: "pending",
+      extractedAt: "2026-07-09T09:00:00.000Z",
+      commitmentKind: "user_task",
+      signalLevel: "normal",
+    },
+  ];
+  const retrieveEmptyMemoryContext = async (input: { query: string }): Promise<MemoryContext> => ({
+    userId,
+    query: input.query,
+    caller: "runtime_memory_inspection",
+    items: [],
+    sources: { memories: [], brainChunks: [], hotState: [] },
+    provenance: [],
+    uncertainty: [],
+  });
+  const packet = await buildGroundedEvidencePacket({
+    userId,
+    requestText: "Do I have any pending tasks for the Android daemon?",
+    activeModel: "Phone Gemma",
+    memoryLimit: 2,
+    commitmentLimit: 1,
+  }, {
+    now: () => fixedNow,
+    loadProfileState: async () => ({ userId, timezone: "America/New_York", source: "profile_store" }),
+    retrieveMemoryContext: retrieveEmptyMemoryContext,
+    loadCommitments: async () => commitments,
+  });
+
+  assert.equal(packet.queryPlan.intent, "commitment_status");
+  assert.deepEqual(
+    packet.evidence.filter((item) => item.domain === "commitment").map((item) => item.sourceId),
+    ["android-daemon"],
+  );
+  assert.equal(packet.evidence.some((item) => item.sourceId === "unrelated-overdue"), false);
+  assert.match(packet.omitted.join(" "), /3 pending commitment record\(s\) that did not match the requested topic/);
+
+  for (const requestText of [
+    "List my tasks",
+    "Show my commitments",
+    "Review my tasks",
+    "read my commitments",
+    "Can you review my tasks?",
+    "What are my tasks this week?",
+    "What are my tasks next Friday?",
+  ]) {
+    const genericPacket = await buildGroundedEvidencePacket({
+      userId,
+      requestText,
+      activeModel: "Phone Gemma",
+      memoryLimit: 2,
+      commitmentLimit: 1,
+    }, {
+      now: () => fixedNow,
+      loadProfileState: async () => ({ userId, timezone: "America/New_York", source: "profile_store" }),
+      retrieveMemoryContext: retrieveEmptyMemoryContext,
+      loadCommitments: async () => commitments,
+    });
+    assert.equal(genericPacket.queryPlan.intent, "commitment_status");
+    assert.deepEqual(
+      genericPacket.evidence.filter((item) => item.domain === "commitment").map((item) => item.sourceId),
+      ["unrelated-overdue"],
+      `${requestText} should retain broad due-date ranking`,
+    );
+  }
+
+  const longBacklog: GroundedCommitmentRecord[] = [
+    ...Array.from({ length: 55 }, (_, index) => ({
+      id: `recent-unrelated-${index}`,
+      content: `Prepare unrelated report ${index}.`,
+      dueDate: "2026-07-09",
+      status: "pending" as const,
+      extractedAt: `2026-07-09T${String(index % 24).padStart(2, "0")}:00:00.000Z`,
+      commitmentKind: "user_task" as const,
+      signalLevel: "normal" as const,
+    })),
+    {
+      id: "older-android-archive",
+      content: "Verify the Android archive migration.",
+      dueDate: "2026-07-20",
+      status: "pending",
+      extractedAt: "2026-06-01T12:00:00.000Z",
+      commitmentKind: "user_task",
+      signalLevel: "normal",
+    },
+  ];
+  let requestedCommitmentLimit: number | undefined | null = null;
+  const olderTopicPacket = await buildGroundedEvidencePacket({
+    userId,
+    requestText: "Do I have any pending tasks for the Android archive?",
+    activeModel: "Phone Gemma",
+    memoryLimit: 2,
+    commitmentLimit: 1,
+  }, {
+    now: () => fixedNow,
+    loadProfileState: async () => ({ userId, timezone: "America/New_York", source: "profile_store" }),
+    retrieveMemoryContext: retrieveEmptyMemoryContext,
+    loadCommitments: async (_userId, limit) => {
+      requestedCommitmentLimit = limit;
+      return typeof limit === "number" ? longBacklog.slice(0, limit) : longBacklog;
+    },
+  });
+  assert.equal(requestedCommitmentLimit, undefined, "grounding should filter the complete pending commitment set");
+  assert.deepEqual(
+    olderTopicPacket.evidence.filter((item) => item.domain === "commitment").map((item) => item.sourceId),
+    ["older-android-archive"],
+  );
+
+  const tomorrowPacket = await buildGroundedEvidencePacket({
+    userId,
+    requestText: "Do I have any tasks due tomorrow?",
+    activeModel: "Phone Gemma",
+    memoryLimit: 2,
+    commitmentLimit: 1,
+  }, {
+    now: () => fixedNow,
+    loadProfileState: async () => ({ userId, timezone: "America/New_York", source: "profile_store" }),
+    retrieveMemoryContext: retrieveEmptyMemoryContext,
+    loadCommitments: async () => commitments,
+  });
+  assert.deepEqual(
+    tomorrowPacket.evidence.filter((item) => item.domain === "commitment").map((item) => item.sourceId),
+    ["tomorrow-task"],
+  );
+  assert.equal(tomorrowPacket.evidence.some((item) => item.sourceId === "unrelated-overdue"), false);
+
+  const overduePacket = await buildGroundedEvidencePacket({
+    userId,
+    requestText: "Do I have any overdue tasks?",
+    activeModel: "Phone Gemma",
+    memoryLimit: 2,
+    commitmentLimit: 4,
+  }, {
+    now: () => fixedNow,
+    loadProfileState: async () => ({ userId, timezone: "America/New_York", source: "profile_store" }),
+    retrieveMemoryContext: retrieveEmptyMemoryContext,
+    loadCommitments: async () => commitments,
+  });
+  assert.deepEqual(
+    overduePacket.evidence.filter((item) => item.domain === "commitment").map((item) => item.sourceId),
+    ["unrelated-overdue"],
+  );
+  assert.equal(overduePacket.evidence.some((item) => item.sourceId === "tomorrow-task"), false);
+
+  const nearMidnightUtc = new Date("2026-07-14T03:00:00.000Z");
+  const localDateCommitments: GroundedCommitmentRecord[] = [
+    {
+      id: "local-today",
+      content: "Complete the local-time task.",
+      dueDate: "2026-07-13",
+      status: "pending",
+      commitmentKind: "user_task",
+      signalLevel: "normal",
+    },
+    {
+      id: "local-tomorrow",
+      content: "Complete tomorrow's local-time task.",
+      dueDate: "2026-07-14",
+      status: "pending",
+      commitmentKind: "user_task",
+      signalLevel: "normal",
+    },
+  ];
+  for (const [requestText, expectedId] of [
+    ["What are my tasks due today?", "local-today"],
+    ["What are my tasks due tomorrow?", "local-tomorrow"],
+  ] as const) {
+    const localDatePacket = await buildGroundedEvidencePacket({
+      userId,
+      requestText,
+      activeModel: "Phone Gemma",
+      memoryLimit: 2,
+      commitmentLimit: 2,
+    }, {
+      now: () => nearMidnightUtc,
+      loadProfileState: async () => ({ userId, timezone: "America/New_York", source: "profile_store" }),
+      retrieveMemoryContext: retrieveEmptyMemoryContext,
+      loadCommitments: async () => localDateCommitments,
+    });
+    assert.deepEqual(
+      localDatePacket.evidence.filter((item) => item.domain === "commitment").map((item) => item.sourceId),
+      [expectedId],
+    );
+  }
+  console.log("OK: topic commitment grounding filters unrelated overdue work");
+}
+
 function testCompactRendererRetainsIncompleteContextLimits(): void {
   const packet: GroundedEvidencePacket = {
     userId,
     requestText: "What do you know about me?",
     generatedAt: fixedNow.toISOString(),
     modelTarget: "local",
+    queryPlan: {
+      schemaVersion: 1,
+      intent: "broad_personal_summary",
+      queries: [{ id: "primary", purpose: "primary", query: "user profile" }],
+      sources: { profile: true, soul: true, memory: true, commitments: true },
+      canonicalOnly: true,
+      maxQueries: 2,
+    },
+    contextContract: {
+      schemaVersion: 1,
+      intent: "broad_personal_summary",
+      sources: { profile: true, soul: true, memory: true, commitments: true },
+      memoryAuthority: "canonical_only",
+      claimPolicy: "evidence_only",
+      missingEvidencePolicy: "admit_not_loaded",
+      maxMemoryItems: 2,
+      maxCommitmentItems: 0,
+    },
     evidence: [{
       id: "profile:core",
       domain: "profile",
@@ -240,6 +555,8 @@ function testCompactRendererRetainsIncompleteContextLimits(): void {
 async function main(): Promise<void> {
   await testGroundedPacketBuildsEvidenceAndOmitsNoise();
   await testGlobalTestDepsFeedPromptBuilder();
+  await testTemporalPlanUsesOnlyMemoryAndMergesQueries();
+  await testTopicCommitmentStatusFiltersUnrelatedOverdueWork();
   testCompactRendererRetainsIncompleteContextLimits();
 }
 
