@@ -397,8 +397,12 @@ const COMMITMENT_QUERY_STOP_WORDS = new Set([
 ]);
 
 function commitmentQueryTerms(query: string): string[] {
+  const topicQuery = query.replace(
+    /^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:read|review)\b/i,
+    "",
+  );
   return [...new Set(
-    query
+    topicQuery
       .toLowerCase()
       .match(/[a-z0-9]+/g)
       ?.filter((term) => !COMMITMENT_QUERY_STOP_WORDS.has(term) && !/^\d+$/.test(term)) ?? [],

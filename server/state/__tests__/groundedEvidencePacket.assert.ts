@@ -351,6 +351,9 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
   for (const requestText of [
     "List my tasks",
     "Show my commitments",
+    "Review my tasks",
+    "read my commitments",
+    "Can you review my tasks?",
     "What are my tasks this week?",
     "What are my tasks next Friday?",
   ]) {
