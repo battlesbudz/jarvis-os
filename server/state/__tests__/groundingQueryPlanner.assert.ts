@@ -41,7 +41,7 @@ function testIntentSpecificSources(): void {
   });
   assert.equal(commitments.intent, "commitment_status");
   assert.equal(commitments.sources.commitments, true);
-  assert.equal(commitments.sources.profile, false);
+  assert.equal(commitments.sources.profile, true);
 
   const forwardCommitments = buildGroundingQueryPlan({
     requestText: "Do I have any pending tasks?",

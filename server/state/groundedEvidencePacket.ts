@@ -421,20 +421,38 @@ function isoDateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function shiftedUtcDateKey(date: Date, days: number): string {
-  const shifted = new Date(date);
+function dateKeyInTimezone(date: Date, timezone: string | undefined): string {
+  if (!timezone) return isoDateKey(date);
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+    const part = (type: "year" | "month" | "day"): string =>
+      parts.find((entry) => entry.type === type)?.value ?? "";
+    const key = `${part("year")}-${part("month")}-${part("day")}`;
+    return /^\d{4}-\d{2}-\d{2}$/.test(key) ? key : isoDateKey(date);
+  } catch {
+    return isoDateKey(date);
+  }
+}
+
+function shiftedDateKey(dateKey: string, days: number): string {
+  const shifted = new Date(`${dateKey}T12:00:00.000Z`);
   shifted.setUTCDate(shifted.getUTCDate() + days);
   return isoDateKey(shifted);
 }
 
-function requestedCommitmentDueDateFilter(query: string, now: Date): {
+function requestedCommitmentDueDateFilter(query: string, todayKey: string): {
   dates: Set<string>;
   overdue: boolean;
 } {
   const normalizedQuery = query.toLowerCase();
   const dates = new Set(normalizedQuery.match(/\b\d{4}-\d{2}-\d{2}\b/g) ?? []);
-  if (/\b(?:today|tonight)\b/.test(normalizedQuery)) dates.add(isoDateKey(now));
-  if (/\btomorrow\b/.test(normalizedQuery)) dates.add(shiftedUtcDateKey(now, 1));
+  if (/\b(?:today|tonight)\b/.test(normalizedQuery)) dates.add(todayKey);
+  if (/\btomorrow\b/.test(normalizedQuery)) dates.add(shiftedDateKey(todayKey, 1));
   return {
     dates,
     overdue: /\boverdue\b/.test(normalizedQuery),
@@ -446,10 +464,11 @@ function dedupeCommitments(
   limit: number,
   now: Date,
   query: string,
+  timezone?: string,
 ): { selected: GroundedCommitmentRecord[]; omitted: string[] } {
-  const todayKey = now.toISOString().slice(0, 10);
+  const todayKey = dateKeyInTimezone(now, timezone);
   const queryTerms = commitmentQueryTerms(query);
-  const requestedDueDate = requestedCommitmentDueDateFilter(query, now);
+  const requestedDueDate = requestedCommitmentDueDateFilter(query, todayKey);
   const personalCommitments = commitments.filter(isPersonalCommitment);
   const groups = new Map<string, GroundedCommitmentRecord[]>();
   for (const commitment of personalCommitments) {
@@ -570,6 +589,7 @@ export async function buildGroundedEvidencePacket(
   const evidence: GroundedEvidenceItem[] = [];
   const omitted: string[] = [];
   const uncertainty: string[] = [];
+  let loadedProfileState: RuntimeProfileState | null = null;
   const queryFingerprint = fingerprintMemoryQuery(plannedQueryText, input.userId);
   const trace: GroundedEvidenceAssemblyTrace = {
     schemaVersion: 1,
@@ -604,6 +624,7 @@ export async function buildGroundedEvidencePacket(
     try {
       const loadProfile = effectiveDeps.loadProfileState ?? loadRuntimeProfileStateFromDb;
       const profile = await loadProfile(input.userId);
+      loadedProfileState = profile;
       const loaded = profileEvidence(profile);
       evidence.push(...loaded);
       trace.stages.push({
@@ -688,6 +709,7 @@ export async function buildGroundedEvidencePacket(
         commitmentLimit,
         generatedAt,
         queryPlan.intent === "commitment_status" ? input.query || input.requestText : "",
+        loadedProfileState?.timezone,
       );
       const loaded = commitmentEvidence(selected);
       evidence.push(...loaded);

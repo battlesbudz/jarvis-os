@@ -335,6 +335,7 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
     commitmentLimit: 1,
   }, {
     now: () => fixedNow,
+    loadProfileState: async () => ({ userId, timezone: "America/New_York", source: "profile_store" }),
     retrieveMemoryContext: retrieveEmptyMemoryContext,
     loadCommitments: async () => commitments,
   });
@@ -361,6 +362,7 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
       commitmentLimit: 1,
     }, {
       now: () => fixedNow,
+      loadProfileState: async () => ({ userId, timezone: "America/New_York", source: "profile_store" }),
       retrieveMemoryContext: retrieveEmptyMemoryContext,
       loadCommitments: async () => commitments,
     });
@@ -380,6 +382,7 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
     commitmentLimit: 1,
   }, {
     now: () => fixedNow,
+    loadProfileState: async () => ({ userId, timezone: "America/New_York", source: "profile_store" }),
     retrieveMemoryContext: retrieveEmptyMemoryContext,
     loadCommitments: async () => commitments,
   });
@@ -397,6 +400,7 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
     commitmentLimit: 4,
   }, {
     now: () => fixedNow,
+    loadProfileState: async () => ({ userId, timezone: "America/New_York", source: "profile_store" }),
     retrieveMemoryContext: retrieveEmptyMemoryContext,
     loadCommitments: async () => commitments,
   });
@@ -405,6 +409,47 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
     ["unrelated-overdue"],
   );
   assert.equal(overduePacket.evidence.some((item) => item.sourceId === "tomorrow-task"), false);
+
+  const nearMidnightUtc = new Date("2026-07-14T03:00:00.000Z");
+  const localDateCommitments: GroundedCommitmentRecord[] = [
+    {
+      id: "local-today",
+      content: "Complete the local-time task.",
+      dueDate: "2026-07-13",
+      status: "pending",
+      commitmentKind: "user_task",
+      signalLevel: "normal",
+    },
+    {
+      id: "local-tomorrow",
+      content: "Complete tomorrow's local-time task.",
+      dueDate: "2026-07-14",
+      status: "pending",
+      commitmentKind: "user_task",
+      signalLevel: "normal",
+    },
+  ];
+  for (const [requestText, expectedId] of [
+    ["What are my tasks due today?", "local-today"],
+    ["What are my tasks due tomorrow?", "local-tomorrow"],
+  ] as const) {
+    const localDatePacket = await buildGroundedEvidencePacket({
+      userId,
+      requestText,
+      activeModel: "Phone Gemma",
+      memoryLimit: 2,
+      commitmentLimit: 2,
+    }, {
+      now: () => nearMidnightUtc,
+      loadProfileState: async () => ({ userId, timezone: "America/New_York", source: "profile_store" }),
+      retrieveMemoryContext: retrieveEmptyMemoryContext,
+      loadCommitments: async () => localDateCommitments,
+    });
+    assert.deepEqual(
+      localDatePacket.evidence.filter((item) => item.domain === "commitment").map((item) => item.sourceId),
+      [expectedId],
+    );
+  }
   console.log("OK: topic commitment grounding filters unrelated overdue work");
 }
 

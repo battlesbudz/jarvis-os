@@ -43,7 +43,7 @@ const SOURCE_POLICY: Record<GroundingIntent, GroundingSourcePolicy> = {
   profile_recall: { profile: true, soul: true, memory: true, commitments: false },
   temporal_recall: { profile: false, soul: false, memory: true, commitments: false },
   relationship_recall: { profile: false, soul: false, memory: true, commitments: false },
-  commitment_status: { profile: false, soul: false, memory: true, commitments: true },
+  commitment_status: { profile: true, soul: false, memory: true, commitments: true },
   exact_recall: { profile: false, soul: false, memory: true, commitments: false },
 };
 
