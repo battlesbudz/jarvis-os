@@ -117,6 +117,7 @@ const tests = [
   { file: "server/agent/__tests__/mindTraceContextPacks.test.ts" },
   { file: "server/state/__tests__/stateCard.assert.ts" },
   { file: "server/state/__tests__/groundedEvidencePacket.assert.ts" },
+  { file: "server/state/__tests__/groundingQueryPlanner.assert.ts" },
   { file: "server/commitments/__tests__/commitmentStore.assert.ts" },
   { file: "server/commitments/__tests__/dbCommitmentRepository.assert.ts", requiresDatabase: true },
   { file: "server/state/__tests__/runtimeWorkingContextTruthAudit.assert.ts" },
@@ -208,7 +209,6 @@ const tests = [
   { file: "server/memory/__tests__/vectorMigration.test.ts" },
   { file: "server/memory/__tests__/vectorStore.test.ts" },
   { file: "server/memory/__tests__/writePipeline.test.ts" },
-  { file: "server/state/__tests__/groundingQueryPlanner.assert.ts" },
 ];
 
 const hasDatabase = configureDatabaseEnvForTests();
