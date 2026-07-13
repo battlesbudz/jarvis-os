@@ -381,12 +381,43 @@ function rankCommitment(commitment: GroundedCommitmentRecord, todayKey: string):
   return dueDateRank(commitment.dueDate, todayKey);
 }
 
+const COMMITMENT_QUERY_STOP_WORDS = new Set([
+  "about", "any", "are", "blocker", "blockers", "commitment", "commitments",
+  "current", "currently", "date", "dates", "deadline", "deadlines", "do", "due",
+  "for", "goal", "goals", "have", "i", "is", "my", "need", "of", "on", "open",
+  "overdue", "pending", "related", "status", "still", "task", "tasks", "the", "to",
+  "what", "which", "work", "working",
+]);
+
+function commitmentQueryTerms(query: string): string[] {
+  return [...new Set(
+    query
+      .toLowerCase()
+      .match(/[a-z0-9]+/g)
+      ?.filter((term) => !COMMITMENT_QUERY_STOP_WORDS.has(term)) ?? [],
+  )];
+}
+
+function commitmentTopicScore(commitment: GroundedCommitmentRecord, queryTerms: string[]): number {
+  if (queryTerms.length === 0) return 0;
+  const searchableTerms = new Set(
+    [commitment.content, commitment.dedupeKey, commitment.sourceMessage]
+      .filter((value): value is string => typeof value === "string")
+      .join(" ")
+      .toLowerCase()
+      .match(/[a-z0-9]+/g) ?? [],
+  );
+  return queryTerms.reduce((score, term) => score + (searchableTerms.has(term) ? 1 : 0), 0);
+}
+
 function dedupeCommitments(
   commitments: GroundedCommitmentRecord[],
   limit: number,
   now: Date,
+  query: string,
 ): { selected: GroundedCommitmentRecord[]; omitted: string[] } {
   const todayKey = now.toISOString().slice(0, 10);
+  const queryTerms = commitmentQueryTerms(query);
   const personalCommitments = commitments.filter(isPersonalCommitment);
   const groups = new Map<string, GroundedCommitmentRecord[]>();
   for (const commitment of personalCommitments) {
@@ -399,26 +430,38 @@ function dedupeCommitments(
 
   const canonical = Array.from(groups.values())
     .map((group) => [...group].sort((a, b) => {
+      const topicDiff = commitmentTopicScore(b, queryTerms) - commitmentTopicScore(a, queryTerms);
+      if (topicDiff !== 0) return topicDiff;
       const rankDiff = rankCommitment(b, todayKey) - rankCommitment(a, todayKey);
       if (rankDiff !== 0) return rankDiff;
       return extractedAtMs(b.extractedAt) - extractedAtMs(a.extractedAt);
-    })[0]!)
+    })[0]!);
+  const topicMatched = queryTerms.length === 0
+    ? canonical
+    : canonical.filter((commitment) => commitmentTopicScore(commitment, queryTerms) > 0);
+  const ranked = topicMatched
     .sort((a, b) => {
+      const topicDiff = commitmentTopicScore(b, queryTerms) - commitmentTopicScore(a, queryTerms);
+      if (topicDiff !== 0) return topicDiff;
       const rankDiff = rankCommitment(b, todayKey) - rankCommitment(a, todayKey);
       if (rankDiff !== 0) return rankDiff;
       return extractedAtMs(b.extractedAt) - extractedAtMs(a.extractedAt);
     });
 
-  const selected = canonical.slice(0, limit);
+  const selected = ranked.slice(0, limit);
   const duplicateCount = personalCommitments.length - groups.size;
   const excludedCount = commitments.length - personalCommitments.length;
-  const overflowCount = canonical.length - selected.length;
+  const topicExcludedCount = canonical.length - topicMatched.length;
+  const overflowCount = ranked.length - selected.length;
   const omitted: string[] = [];
   if (duplicateCount > 0) {
     omitted.push(`Collapsed ${duplicateCount} duplicate pending commitment record(s).`);
   }
   if (excludedCount > 0) {
     omitted.push(`Omitted ${excludedCount} non-personal or low-signal commitment record(s) based on stored metadata.`);
+  }
+  if (topicExcludedCount > 0) {
+    omitted.push(`Omitted ${topicExcludedCount} pending commitment record(s) that did not match the requested topic.`);
   }
   if (overflowCount > 0) {
     omitted.push(`Omitted ${overflowCount} lower-ranked pending commitment record(s) beyond the packet limit.`);
@@ -595,7 +638,12 @@ export async function buildGroundedEvidencePacket(
     try {
       const loadCommitments = effectiveDeps.loadCommitments ?? defaultLoadCommitments;
       const rawCommitments = await loadCommitments(input.userId, Math.max(50, commitmentLimit * 6));
-      const { selected, omitted: omittedCommitments } = dedupeCommitments(rawCommitments, commitmentLimit, generatedAt);
+      const { selected, omitted: omittedCommitments } = dedupeCommitments(
+        rawCommitments,
+        commitmentLimit,
+        generatedAt,
+        queryPlan.intent === "commitment_status" ? input.query || input.requestText : "",
+      );
       const loaded = commitmentEvidence(selected);
       evidence.push(...loaded);
       omitted.push(...omittedCommitments);
