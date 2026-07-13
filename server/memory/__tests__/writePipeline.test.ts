@@ -249,7 +249,7 @@ async function testEditedApprovalRefreshesEmbedding(): Promise<void> {
   );
   assert.match(
     source,
-    /if \(content\) \{[\s\S]*await refreshApprovedMemoryEmbedding\(input\.userId, row\.id, content\)/,
+    /if \(content\) \{[\s\S]*await refreshApprovedMemoryEmbedding\(input\.userId, approval\.approvedMemoryId, content\)/,
     "approvePendingMemoryWrite should refresh embeddings for Save & Keep edits",
   );
   console.log("OK: edited memory approvals refresh or clear stale embeddings");
@@ -459,12 +459,12 @@ async function testApprovalEditsRejectRawRestrictedContent(): Promise<void> {
   const pipelineSource = fs.readFileSync(path.resolve(process.cwd(), "server/memory/writePipeline.ts"), "utf8");
   assert.match(
     pipelineSource,
-    /approvePendingMemoryWrite[\s\S]*containsRawRestrictedContent\(rawContent\)[\s\S]*containsRawRestrictedContent\(content\)[\s\S]*Edited memory content contains raw restricted details[\s\S]*SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id[\s\S]*hasRestrictedApprovalMetadata\(existingRow\)[\s\S]*Pending memory source is restricted[\s\S]*containsRawRestrictedContent\(existingContent\)[\s\S]*Pending memory content contains raw restricted details[\s\S]*UPDATE user_memories/,
+    /approvePendingMemoryWrite[\s\S]*containsRawRestrictedContent\(rawContent\)[\s\S]*containsRawRestrictedContent\(content\)[\s\S]*Edited memory content contains raw restricted details[\s\S]*SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id[\s\S]*hasRestrictedApprovalMetadata\(existingRow\)[\s\S]*Pending memory source is restricted[\s\S]*containsRawRestrictedContent\(existingRow\.content\)[\s\S]*Pending memory content contains raw restricted details[\s\S]*UPDATE user_memories/,
     "Approval edits and keeps should reject raw restricted content before updating pending memories",
   );
   assert.match(
     pipelineSource,
-    /keepPendingMemoryWrites[\s\S]*SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id[\s\S]*safeMemoryIds[\s\S]*hasRestrictedApprovalMetadata\(row\)[\s\S]*containsRawRestrictedContent\(row\.content \?\? ""\)[\s\S]*UPDATE user_memories[\s\S]*AND id = ANY\(\$\{safeMemoryIds\}::varchar\[\]\)/,
+    /keepPendingMemoryWrites[\s\S]*SELECT id, content, source_type, source_ref, sensitivity, provenance, supersedes_memory_id[\s\S]*hasRestrictedApprovalMetadata\(row\)[\s\S]*containsRawRestrictedContent\(row\.content \?\? ""\)[\s\S]*safeMemoryIds[\s\S]*UPDATE user_memories[\s\S]*AND id = ANY\(\$\{safeMemoryIds\}::varchar\[\]\)/,
     "Bulk approval should validate pending content before promoting memories",
   );
   console.log("OK: approval edits reject raw restricted details before DB updates");
@@ -550,6 +550,26 @@ async function testConflictSupersessionIsPlannedForApproval(): Promise<void> {
   console.log("OK: approved corrections supersede older active memories");
 }
 
+async function testCorrectionApprovalIsAtomic(): Promise<void> {
+  const pipelineSource = fs.readFileSync(path.resolve(process.cwd(), "server/memory/writePipeline.ts"), "utf8");
+  assert.match(
+    pipelineSource,
+    /approvePendingMemoryWrite[\s\S]*db\.transaction[\s\S]*FOR UPDATE[\s\S]*review_status = \$\{input\.status\}[\s\S]*review_status = 'superseded'[\s\S]*corrected_by_memory_id/,
+    "individual correction approval should activate the replacement and supersede the old memory in one transaction",
+  );
+  assert.match(
+    pipelineSource,
+    /keepPendingMemoryWrites[\s\S]*db\.transaction[\s\S]*FOR UPDATE[\s\S]*review_status = 'kept'[\s\S]*review_status = 'superseded'[\s\S]*corrected_by_memory_id/,
+    "bulk correction approval should lock and supersede source memories in the same transaction",
+  );
+  assert.match(
+    pipelineSource,
+    /ORDER BY extracted_at DESC[\s\S]*claimedSourceIds[\s\S]*claimedSourceIds\.has\(row\.supersedes_memory_id\)[\s\S]*claimedSourceIds\.add\(row\.supersedes_memory_id\)/,
+    "bulk correction approval should choose only the newest pending replacement for each source memory",
+  );
+  console.log("OK: correction approval and supersession are atomic");
+}
+
 async function main(): Promise<void> {
   await testWorkingContextRecordShape();
   await testWorkingContextPersistsThroughDeps();
@@ -569,6 +589,7 @@ async function main(): Promise<void> {
   await testApprovedRestrictedSummariesCarryMetadata();
   await testApprovedRestrictedSummariesRejectRawDetails();
   await testConflictSupersessionIsPlannedForApproval();
+  await testCorrectionApprovalIsAtomic();
 }
 
 main().catch((error) => {

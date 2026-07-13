@@ -202,6 +202,7 @@ const tests = [
   { file: "server/memory/__tests__/derivedLifecycleFilters.test.ts" },
   { file: "server/memory/__tests__/embeddingHealth.test.ts" },
   { file: "server/memory/__tests__/memoryOs.test.ts" },
+  { file: "server/memory/__tests__/memoryCorrectionRoutes.assert.ts" },
   { file: "server/memory/__tests__/retrievalEvaluation.test.ts" },
   { file: "server/memory/__tests__/retrieveVectorScoring.test.ts" },
   { file: "server/memory/__tests__/retrievalFusion.test.ts" },

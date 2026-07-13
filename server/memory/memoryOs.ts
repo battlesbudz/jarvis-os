@@ -1,7 +1,13 @@
 import { createHmac } from "node:crypto";
 
 import type { RetrievedMemory } from "./retrieve";
+import type {
+  MemoryProvenanceMetadata,
+  MemoryWriteInput,
+  MemoryWriteResult,
+} from "./writePipeline";
 import { containsRawRestrictedContent } from "./restrictedContent";
+import { normalizeMemoryTrustRecord } from "./trust";
 
 export type MemoryOsCaller =
   | "memory_search"
@@ -21,7 +27,12 @@ export type MemoryProvenanceRef = {
 };
 
 export type MemoryCorrectionOperation = "correct_existing_memory" | "propose_new_memory";
-export type MemoryCorrectionStatus = "review_required" | "invalid";
+export type MemoryCorrectionStatus =
+  | "review_required"
+  | "already_recorded"
+  | "invalid"
+  | "conflict"
+  | "excluded";
 export type MemoryModelTarget = "runtime" | "local" | "cloud";
 
 export type MemoryCorrectionInput = {
@@ -30,6 +41,9 @@ export type MemoryCorrectionInput = {
   proposedContent: string;
   reason?: string | null;
   confidence?: number | null;
+  category?: string | null;
+  tier?: string | null;
+  memoryType?: string | null;
   currentMemoryId?: string | null;
   currentMemoryContent?: string | null;
   source: {
@@ -44,9 +58,10 @@ export type MemoryCorrectionInput = {
 };
 
 export type MemoryCorrectionReview = {
-  recorded: false;
+  recorded: boolean;
   reviewOnly: true;
   status: MemoryCorrectionStatus;
+  correctionMemoryId: string | null;
   operation: MemoryCorrectionOperation;
   userId: string;
   currentMemoryId: string | null;
@@ -57,6 +72,31 @@ export type MemoryCorrectionReview = {
   source: MemoryCorrectionInput["source"] | null;
   provenance: MemoryProvenanceRef[];
   uncertainty: string[];
+};
+
+export type MemoryCorrectionCurrentMemory = {
+  id: string;
+  content: string;
+  category: string;
+  tier: string;
+  memoryType: string;
+  confidence: number;
+  sourceType: string | null;
+  sourceRef: string | null;
+  sensitivity: string;
+  provenance: unknown[];
+};
+
+export type ExistingMemoryCorrection = {
+  id: string;
+  pendingReview: boolean;
+  reviewStatus: string;
+};
+
+export type MemoryCorrectionDeps = {
+  loadCurrentMemory: (userId: string, memoryId: string) => Promise<MemoryCorrectionCurrentMemory | null>;
+  findCorrectionBySource: (userId: string, sourceEventId: string) => Promise<ExistingMemoryCorrection | null>;
+  writeMemory: (input: MemoryWriteInput) => Promise<MemoryWriteResult>;
 };
 
 export type MemoryContextItem = {
@@ -120,6 +160,33 @@ export type MemoryContext = {
   provenance: MemoryProvenanceRef[];
   uncertainty: string[];
   trace?: MemoryRetrievalTrace;
+};
+
+export type MemoryAnswerEvidence = {
+  memoryId: string;
+  content: string;
+  category: string;
+  tier: string;
+  memoryType: string;
+  confidence: number | null;
+  authority: "canonical" | "derived";
+  whyJarvisLearnedIt: string;
+  provenance: MemoryProvenanceRef[];
+  retrieval: RetrievedMemory["retrieval"] | null;
+};
+
+export type MemoryAnswerExplanation = {
+  available: boolean;
+  userId: string;
+  answer: string | null;
+  summary: string;
+  evidence: MemoryAnswerEvidence[];
+  uncertainty: string[];
+};
+
+export type ExplainMemoryAnswerInput = {
+  context: MemoryContext;
+  answer?: string | null;
 };
 
 export type RetrieveMemoryContextInput = {
@@ -322,13 +389,24 @@ function isRestrictedProvenanceRef(value: unknown): boolean {
     isRestrictedSourceType(sourceRef);
 }
 
-function isRestrictedRetrievedMemory(memory: RetrievedMemory): boolean {
+function isRestrictedMemoryRecord(memory: {
+  content: string;
+  sourceType?: unknown;
+  sourceRef?: unknown;
+  sensitivity?: unknown;
+  provenance?: unknown;
+  sourceRefs?: unknown;
+}): boolean {
   return cleanSingleLine(memory.sensitivity).toLowerCase() === "restricted_summary" ||
     isRestrictedSourceType(memory.sourceType) ||
     isRestrictedSourceType(memory.sourceRef) ||
     containsRawRestrictedContent(memory.content) ||
     (Array.isArray(memory.provenance) && memory.provenance.some(isRestrictedProvenanceRef)) ||
     (Array.isArray(memory.sourceRefs) && memory.sourceRefs.some(isRestrictedProvenanceRef));
+}
+
+function isRestrictedRetrievedMemory(memory: RetrievedMemory): boolean {
+  return isRestrictedMemoryRecord(memory);
 }
 
 function sanitizeRestrictedMemoryContent(content: string): string {
@@ -411,11 +489,12 @@ export function buildMemoryCorrectionReview(input?: MemoryCorrectionInput): Memo
       recorded: false,
       reviewOnly: true,
       status: "invalid",
+      correctionMemoryId: null,
       operation: "propose_new_memory",
       userId: "",
       currentMemoryId: null,
       proposedContent: "",
-      reason: "Memory correction flows are planned for a later slice.",
+      reason: "No memory correction input was provided.",
       correctionReason: null,
       confidence: null,
       source: null,
@@ -446,19 +525,31 @@ export function buildMemoryCorrectionReview(input?: MemoryCorrectionInput): Memo
   const uncertainty: string[] = [];
   if (!input.userId.trim()) uncertainty.push("No user id was provided for memory correction.");
   if (!proposedContent) uncertainty.push("No proposed memory correction content was provided.");
+  if (!input.source.eventId.trim()) uncertainty.push("No source event id was provided for memory correction.");
   if (input.operation === "correct_existing_memory" && !input.currentMemoryId) {
     uncertainty.push("Correction operation was requested without an existing memory id.");
+  }
+  if (input.operation === "correct_existing_memory" && !input.currentMemoryContent?.trim()) {
+    uncertainty.push("Correction operation was requested without the reviewed current memory content.");
+  }
+  if (
+    input.operation === "correct_existing_memory" &&
+    input.currentMemoryContent?.trim() &&
+    proposedContent === input.currentMemoryContent.trim()
+  ) {
+    uncertainty.push("The proposed correction matches the current memory content.");
   }
 
   return {
     recorded: false,
     reviewOnly: true,
     status: uncertainty.length > 0 ? "invalid" : "review_required",
+    correctionMemoryId: null,
     operation: input.operation,
     userId: input.userId,
     currentMemoryId: input.currentMemoryId ?? null,
     proposedContent,
-    reason: "Memory OS correction provenance is captured for review only; durable correction writes are planned for a later slice.",
+    reason: "The correction is valid but has not been queued. Durable memory changes require Memory Review approval.",
     correctionReason: input.reason ?? null,
     confidence: typeof input.confidence === "number" && Number.isFinite(input.confidence) ? input.confidence : null,
     source: input.source,
@@ -672,10 +763,228 @@ export async function rememberEpisode(): Promise<{ recorded: false; reason: stri
   return { recorded: false, reason: "Memory OS episode writes are planned for a later slice." };
 }
 
-export async function explainMemoryAnswer(): Promise<{ available: false; reason: string }> {
-  return { available: false, reason: "User-facing memory explanation is planned for a later slice." };
+function whyMemorySupported(item: MemoryContextItem): string {
+  const trust = normalizeMemoryTrustRecord(item.memory);
+  const brainChunks = item.provenance
+    .filter((ref) => ref.kind === "brain_chunk")
+    .map((ref) => ref.id);
+  if (brainChunks.length === 0) return trust.whyJarvisLearnedIt;
+  const chunkLabel = brainChunks.length === 1 ? "projection" : "projections";
+  return `${trust.whyJarvisLearnedIt} Approved G-Brain ${chunkLabel} also matched this answer.`;
 }
 
-export async function recordMemoryCorrection(input?: MemoryCorrectionInput): Promise<MemoryCorrectionReview> {
-  return buildMemoryCorrectionReview(input);
+export async function explainMemoryAnswer(
+  input: ExplainMemoryAnswerInput,
+): Promise<MemoryAnswerExplanation> {
+  const evidence = input.context.items.map((item): MemoryAnswerEvidence => ({
+    memoryId: item.provenance.find((ref) => ref.kind === "user_memory")?.id ?? item.memory.id,
+    content: item.memory.content,
+    category: item.memory.category,
+    tier: item.memory.tier,
+    memoryType: item.memory.memoryType,
+    confidence: Number.isFinite(item.memory.confidence) ? item.memory.confidence : null,
+    authority: item.memory.source === "gbrain" ? "derived" : "canonical",
+    whyJarvisLearnedIt: whyMemorySupported(item),
+    provenance: uniqueRefs(item.provenance),
+    retrieval: item.memory.retrieval ?? null,
+  }));
+  const available = evidence.length > 0;
+  return {
+    available,
+    userId: input.context.userId,
+    answer: input.answer?.trim() || null,
+    summary: available
+      ? `Jarvis used ${evidence.length} supporting MemoryOS record${evidence.length === 1 ? "" : "s"}.`
+      : "Jarvis has no supporting MemoryOS record loaded for this answer.",
+    evidence,
+    uncertainty: [...new Set(input.context.uncertainty.map(cleanSingleLine).filter(Boolean))],
+  };
+}
+
+function correctionConfidencePercent(value: number | null | undefined, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  const scaled = value >= 0 && value <= 1 ? value * 100 : value;
+  return Math.max(0, Math.min(100, Math.round(scaled)));
+}
+
+const defaultMemoryCorrectionDeps: MemoryCorrectionDeps = {
+  async loadCurrentMemory(userId, memoryId) {
+    const [{ db }, schema, drizzle] = await Promise.all([
+      import("../db"),
+      import("@shared/schema"),
+      import("drizzle-orm"),
+    ]);
+    const [row] = await db
+      .select({
+        id: schema.userMemories.id,
+        content: schema.userMemories.content,
+        category: schema.userMemories.category,
+        tier: schema.userMemories.tier,
+        memoryType: schema.userMemories.memoryType,
+        confidence: schema.userMemories.confidence,
+        sourceType: schema.userMemories.sourceType,
+        sourceRef: schema.userMemories.sourceRef,
+        sensitivity: schema.userMemories.sensitivity,
+        provenance: schema.userMemories.provenance,
+      })
+      .from(schema.userMemories)
+      .where(drizzle.and(
+        drizzle.eq(schema.userMemories.userId, userId),
+        drizzle.eq(schema.userMemories.id, memoryId),
+        drizzle.eq(schema.userMemories.pendingReview, false),
+        drizzle.inArray(schema.userMemories.reviewStatus, ["active", "kept", "edited"]),
+      ))
+      .limit(1);
+    return row ?? null;
+  },
+  async findCorrectionBySource(userId, sourceEventId) {
+    const [{ db }, schema, drizzle] = await Promise.all([
+      import("../db"),
+      import("@shared/schema"),
+      import("drizzle-orm"),
+    ]);
+    const [row] = await db
+      .select({
+        id: schema.userMemories.id,
+        pendingReview: schema.userMemories.pendingReview,
+        reviewStatus: schema.userMemories.reviewStatus,
+      })
+      .from(schema.userMemories)
+      .where(drizzle.and(
+        drizzle.eq(schema.userMemories.userId, userId),
+        drizzle.eq(schema.userMemories.sourceType, "runtime_memory_correction"),
+        drizzle.eq(schema.userMemories.sourceRef, sourceEventId),
+      ))
+      .limit(1);
+    return row ?? null;
+  },
+  async writeMemory(input) {
+    const { writeMemoryThroughPipeline } = await import("./writePipeline");
+    return writeMemoryThroughPipeline(input);
+  },
+};
+
+function correctionResult(
+  review: MemoryCorrectionReview,
+  patch: Partial<Pick<MemoryCorrectionReview, "recorded" | "status" | "correctionMemoryId" | "reason" | "uncertainty">>,
+): MemoryCorrectionReview {
+  return { ...review, ...patch };
+}
+
+function existingCorrectionResult(
+  review: MemoryCorrectionReview,
+  existing: ExistingMemoryCorrection,
+): MemoryCorrectionReview {
+  const stillPending = existing.pendingReview && existing.reviewStatus === "pending";
+  return correctionResult(review, {
+    status: stillPending ? "review_required" : "already_recorded",
+    correctionMemoryId: existing.id,
+    reason: stillPending
+      ? "This correction is already queued in Memory Review."
+      : `This correction source was already processed with lifecycle status ${existing.reviewStatus}.`,
+  });
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const record = error as { code?: unknown; cause?: { code?: unknown } };
+  return record.code === "23505" || record.cause?.code === "23505";
+}
+
+export async function recordMemoryCorrection(
+  input?: MemoryCorrectionInput,
+  deps: MemoryCorrectionDeps = defaultMemoryCorrectionDeps,
+): Promise<MemoryCorrectionReview> {
+  const review = buildMemoryCorrectionReview(input);
+  if (!input || review.status !== "review_required") return review;
+
+  const userId = input.userId.trim();
+  const sourceEventId = input.source.eventId.trim();
+  const existingCorrection = await deps.findCorrectionBySource(userId, sourceEventId);
+  if (existingCorrection) return existingCorrectionResult(review, existingCorrection);
+
+  let currentMemory: MemoryCorrectionCurrentMemory | null = null;
+  if (input.operation === "correct_existing_memory") {
+    currentMemory = await deps.loadCurrentMemory(userId, input.currentMemoryId!.trim());
+    if (!currentMemory) {
+      return correctionResult(review, {
+        status: "conflict",
+        reason: "The memory being corrected is no longer an active canonical memory.",
+        uncertainty: ["Refresh MemoryOS before preparing another correction."],
+      });
+    }
+    if (isRestrictedMemoryRecord(currentMemory)) {
+      return correctionResult(review, {
+        status: "excluded",
+        reason: "Restricted memories must be corrected through their restricted-source workflow.",
+        uncertainty: ["No correction was queued because normal Memory Review cannot downgrade restricted metadata."],
+      });
+    }
+    if (
+      input.currentMemoryContent?.trim() &&
+      cleanSingleLine(input.currentMemoryContent) !== cleanSingleLine(currentMemory.content)
+    ) {
+      return correctionResult(review, {
+        status: "conflict",
+        reason: "The source memory changed before this correction could be queued.",
+        uncertainty: ["The current memory changed since the correction was prepared. Refresh MemoryOS and try again."],
+      });
+    }
+    if (cleanSingleLine(review.proposedContent) === cleanSingleLine(currentMemory.content)) {
+      return correctionResult(review, {
+        status: "invalid",
+        reason: "The proposed correction matches the active memory.",
+        uncertainty: ["No durable memory change is needed."],
+      });
+    }
+  }
+
+  const provenance: MemoryProvenanceMetadata[] = review.provenance.map((ref) => ({
+    sourceType: ref.kind,
+    sourceRef: ref.id,
+    label: ref.label ?? ref.source,
+  }));
+  if (review.correctionReason) {
+    provenance.push({
+      sourceType: "memory_correction_reason",
+      sourceRef: sourceEventId,
+      label: review.correctionReason,
+    });
+  }
+  let writeResult: MemoryWriteResult;
+  try {
+    writeResult = await deps.writeMemory({
+      userId,
+      content: review.proposedContent,
+      trigger: "inferred",
+      category: currentMemory?.category ?? input.category,
+      tier: currentMemory?.tier ?? input.tier ?? "long_term",
+      memoryType: currentMemory?.memoryType ?? input.memoryType ?? "semantic",
+      confidence: correctionConfidencePercent(input.confidence, currentMemory?.confidence ?? 80),
+      sourceType: "runtime_memory_correction",
+      sourceRef: sourceEventId,
+      supersedesMemoryId: currentMemory?.id ?? null,
+      reviewEnabled: true,
+      provenance,
+    });
+  } catch (error) {
+    if (!isUniqueConstraintError(error)) throw error;
+    const racedCorrection = await deps.findCorrectionBySource(userId, sourceEventId);
+    if (racedCorrection) return existingCorrectionResult(review, racedCorrection);
+    throw error;
+  }
+  if (writeResult.status === "review_required" && writeResult.insertedMemoryId) {
+    return correctionResult(review, {
+      recorded: true,
+      correctionMemoryId: writeResult.insertedMemoryId,
+      reason: currentMemory
+        ? "Correction queued in Memory Review. The current memory remains active until approval."
+        : "New memory proposal queued in Memory Review and is not active until approval.",
+    });
+  }
+  return correctionResult(review, {
+    status: writeResult.status === "excluded" ? "excluded" : "invalid",
+    reason: writeResult.reason,
+    uncertainty: ["The correction was not written to the Memory Review queue."],
+  });
 }

@@ -23,6 +23,7 @@ import { markSoulStale } from "../memory/soul";
 import { deletePerson, listPeople } from "../memory/people";
 import { processLivingContextUpdate } from "../workspace/livingContextRouter";
 import { buildMemoryTrustSummary, normalizeMemoryTrustRecord } from "../memory/trust";
+import { recordMemoryCorrection } from "../memory/memoryOs";
 import { approvePendingMemoryWrite, keepPendingMemoryWrites } from "../memory/writePipeline";
 
 const openai = new OpenAI(getOpenAIClientConfig());
@@ -128,11 +129,12 @@ export function registerProfileMemoryRoutes(app: Express): void {
         id: string; content: string; category: string; memory_type: string;
         tier: string; confidence: number; relevance_score: number;
         source_type: string; source_ref: string | null; pending_review: boolean;
-        review_status: string; extracted_at: string; last_referenced_at: string | null;
+        review_status: string; supersedes_memory_id: string | null;
+        extracted_at: string; last_referenced_at: string | null;
       }>(sql`
         SELECT id, content, category, memory_type, tier, confidence,
                relevance_score, source_type, source_ref, pending_review,
-               review_status, extracted_at, last_referenced_at
+               review_status, supersedes_memory_id, extracted_at, last_referenced_at
         FROM user_memories
         WHERE user_id = ${userId}
           AND pending_review = TRUE
@@ -145,7 +147,8 @@ export function registerProfileMemoryRoutes(app: Express): void {
           id: string; content: string; category: string; memory_type: string;
           tier: string; confidence: number; relevance_score: number;
           source_type: string; source_ref: string | null; pending_review: boolean;
-          review_status: string; extracted_at: string; last_referenced_at: string | null;
+          review_status: string; supersedes_memory_id: string | null;
+          extracted_at: string; last_referenced_at: string | null;
         }) => {
           const trust = normalizeMemoryTrustRecord(row);
           return {
@@ -158,6 +161,76 @@ export function registerProfileMemoryRoutes(app: Express): void {
     } catch (error) {
       console.error("Error fetching pending-review memories:", error);
       res.status(500).json({ error: "Failed to fetch pending memories" });
+    }
+  });
+
+  app.post("/api/memory/corrections", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const body = (req.body ?? {}) as {
+        currentMemoryId?: unknown;
+        currentMemoryContent?: unknown;
+        proposedContent?: unknown;
+        reason?: unknown;
+        confidence?: unknown;
+        category?: unknown;
+        tier?: unknown;
+        memoryType?: unknown;
+        sourceEventId?: unknown;
+      };
+      const proposedContent = typeof body.proposedContent === "string" ? body.proposedContent.trim() : "";
+      if (!proposedContent) {
+        return res.status(400).json({ error: "proposedContent is required" });
+      }
+      const currentMemoryId = typeof body.currentMemoryId === "string" ? body.currentMemoryId.trim() : "";
+      const currentMemoryContent = typeof body.currentMemoryContent === "string"
+        ? body.currentMemoryContent.trim()
+        : "";
+      if (currentMemoryId && !currentMemoryContent) {
+        return res.status(400).json({
+          error: "currentMemoryContent is required when currentMemoryId is provided",
+        });
+      }
+      const sourceEventId = typeof body.sourceEventId === "string" && body.sourceEventId.trim()
+        ? body.sourceEventId.trim().slice(0, 200)
+        : `memory-correction-${createHash("sha256")
+            .update(`${userId}\0${currentMemoryId}\0${proposedContent}`)
+            .digest("hex")
+            .slice(0, 24)}`;
+      const correction = await recordMemoryCorrection({
+        userId,
+        operation: currentMemoryId ? "correct_existing_memory" : "propose_new_memory",
+        currentMemoryId: currentMemoryId || null,
+        currentMemoryContent: currentMemoryContent || null,
+        proposedContent,
+        reason: typeof body.reason === "string" ? body.reason.trim().slice(0, 1_000) || null : null,
+        confidence: typeof body.confidence === "number" ? body.confidence : null,
+        category: typeof body.category === "string" ? body.category : null,
+        tier: typeof body.tier === "string" ? body.tier : null,
+        memoryType: typeof body.memoryType === "string" ? body.memoryType : null,
+        source: {
+          kind: "runtime_memory_calibration",
+          eventId: sourceEventId,
+          eventSource: "app",
+          channel: "memory-review-api",
+          createdAt: new Date().toISOString(),
+        },
+      });
+      if (correction.status === "conflict") {
+        return res.status(409).json({ error: correction.reason, correction });
+      }
+      if (correction.status === "invalid" || correction.status === "excluded" || !correction.correctionMemoryId) {
+        return res.status(400).json({ error: correction.reason, correction });
+      }
+      return res.status(correction.recorded ? 202 : 200).json({
+        ok: true,
+        correction,
+        reviewPath: correction.status === "review_required" ? "/api/memory/pending-review" : null,
+      });
+    } catch (error) {
+      console.error("Error queuing memory correction:", error);
+      return res.status(500).json({ error: "Failed to queue memory correction" });
     }
   });
 

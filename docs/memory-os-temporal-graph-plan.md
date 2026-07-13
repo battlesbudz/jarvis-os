@@ -2,7 +2,7 @@
 
 Status: active implementation plan.
 
-Last updated: 2026-06-05.
+Last updated: 2026-07-13.
 
 This plan hardens the existing Jarvis memory system instead of replacing it.
 
@@ -424,17 +424,22 @@ Status note, 2026-07-12: Memory OS retrieval and grounded evidence assembly now 
 
 Status note, 2026-07-12: grounded local-model context now uses a deterministic query planner with broad, profile, temporal, relationship, commitment, and exact-recall intents. It selects only relevant state stores, runs no more than two canonical memory queries, interleaves/deduplicates bounded results, and supplies an evidence-only context contract to Phone Gemma and local voice.
 
+Status note, 2026-07-13: answer-level MemoryOS explanations now expose the exact supporting records, source chain, confidence, and approved G-Brain contribution. Exact runtime inspections render those reasons directly, including bounded personal questions such as why Jarvis remembers a preference. Memory corrections now enter the existing pending-review write pipeline idempotently, reject stale source-memory edits, and set supersession links only after the replacement is approved. Restricted memories are rejected from this normal correction path so their sensitivity and source provenance cannot be downgraded; they remain owned by the restricted-source workflow.
+
 Implemented:
 
 - `server/memory/memoryOs.ts`
 - route existing `memory_search`, daily command, Agent SDK read context, and coach context through it
 - return structured provenance and uncertainty
-- expose review-only correction/provenance results for runtime memory calibration previews
+- expose answer-level evidence explanations through runtime memory inspection
+- queue correction/provenance proposals through authenticated Memory Review without activating them
+- preserve stale-write detection, source-event idempotency, and approval-time supersession
+- keep restricted memories out of normal correction review so privacy metadata cannot be downgraded
 - keep current behavior as fallback
 
 Outcome:
 
-Jarvis has one facade for the roadmap-named memory read contexts instead of continuing to route those contexts through scattered calls. Broader read consolidation and the write API remain planned for later Memory OS slices.
+Jarvis has one facade for the roadmap-named memory read contexts, user-facing evidence explanations, and review-gated correction proposals. Broader episode capture and remaining direct-read consolidation stay in later Memory OS slices.
 
 ### Phase 4: Redis Hot State
 

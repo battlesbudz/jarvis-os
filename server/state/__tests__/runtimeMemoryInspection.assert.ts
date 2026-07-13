@@ -27,6 +27,8 @@ function memoryContext(query: string): MemoryContext {
               confidence: 96,
               accessCount: 3,
               score: 0.97,
+              sourceType: "conversation",
+              sourceRef: "chat-turn-doordash",
             },
             provenance: [{ kind: "user_memory", id: "mem-doordash-1", source: "canonical", label: "preferences" }],
           },
@@ -157,6 +159,38 @@ async function main(): Promise<void> {
   assert.deepEqual(
     classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Show memories about my launch plan." }]),
     { kind: "exact_memory_inspection", query: "launch plan", scopeLabel: "launch plan" },
+  );
+  assert.deepEqual(
+    classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Why do you remember my DoorDash preferences?" }]),
+    {
+      kind: "exact_memory_inspection",
+      query: "DoorDash preferences",
+      scopeLabel: "DoorDash preferences",
+      explanationRequested: true,
+    },
+  );
+  assert.deepEqual(
+    classifyRuntimeMemoryInspectionIntent([
+      {
+        role: "assistant",
+        content: "1. [long_term/semantic] [preferences] (MemoryOS/mem-doordash-1)\nUser manages DoorDash notifications personally.",
+      },
+      { role: "user", content: "Why do you believe that?" },
+    ]),
+    {
+      kind: "exact_memory_inspection",
+      query: "User manages DoorDash notifications personally",
+      scopeLabel: "that memory",
+      explanationRequested: true,
+    },
+  );
+  assert.equal(
+    classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "Why do you think memory leaks happen?" }]),
+    null,
+  );
+  assert.equal(
+    classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "How do you know memory leaks happen?" }]),
+    null,
   );
   assert.deepEqual(
     classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "What's in my memory?" }]),
@@ -324,6 +358,7 @@ async function main(): Promise<void> {
   assert.match(answer.textContent, /Pinned note: keep responses concise\./);
   assert.match(answer.textContent, /MemoryOS/);
   assert.match(answer.textContent, /User prefers terse next-step structures over broad intake questions\./);
+  assert.match(answer.textContent, /Why Jarvis knows this:/);
   assert(
     answer.textContent.indexOf("Soul/Core Profile") < answer.textContent.indexOf("## MemoryOS"),
     "Soul/Core Profile should render before MemoryOS memories",
