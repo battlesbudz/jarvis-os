@@ -43,6 +43,15 @@ function testIntentSpecificSources(): void {
   assert.equal(commitments.sources.commitments, true);
   assert.equal(commitments.sources.profile, false);
 
+  const forwardCommitments = buildGroundingQueryPlan({
+    requestText: "Do I have any pending tasks?",
+  });
+  assert.equal(forwardCommitments.intent, "commitment_status");
+  assert.equal(forwardCommitments.sources.commitments, true);
+  assert.equal(forwardCommitments.queries[1]?.purpose, "commitment");
+  assert.equal(classifyGroundingIntent("Do I have any deadlines?"), "commitment_status");
+  assert.equal(shouldGroundPersonalMemoryRequest("Do I have any pending tasks?"), true);
+
   assert.equal(classifyGroundingIntent("What is my timezone?"), "profile_recall");
   assert.equal(classifyGroundingIntent("What is my current timezone?"), "profile_recall");
   assert.equal(classifyGroundingIntent("What is my current preference for local voice?"), "temporal_recall");

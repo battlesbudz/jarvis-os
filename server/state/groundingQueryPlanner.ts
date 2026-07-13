@@ -69,6 +69,7 @@ export function classifyGroundingIntent(requestText: string): GroundingIntent {
   const hasPersonalTemporalSubject = hasPersonalAnchor &&
     /\b(?:preferences?|decisions?|choices?|plans?|polic(?:y|ies)|approach|setup|configuration|workflow|work patterns?|values?)\b/.test(text);
   const hasCommitmentAnchor = /\bmy\s+(?:current\s+|pending\s+)?(?:commitments?|tasks?|goals?|blockers?|deadlines?|due dates?|pending work)\b/.test(text) ||
+    /\bdo i have(?:\s+any)?\s+(?:current\s+|pending\s+|overdue\s+|open\s+)?(?:commitments?|tasks?|goals?|blockers?|deadlines?|due dates?|pending work)\b/.test(text) ||
     /\b(?:commitments?|tasks?|goals?|blockers?|deadlines?|due dates?|pending work)\b.{0,24}\b(?:do i have|i have|ive set|i need|im working)\b/.test(text);
   const hasProfileAnchor = /\bmy\s+(?:current\s+)?(?:profile|preferred name|name|timezone|time zone|language|communication style|preferences?|values?)\b/.test(text) ||
     /\b(?:profile|preferred name|name|timezone|time zone|language|communication style|preferences?|values?)\b.{0,16}\b(?:for|about) me\b/.test(text);
