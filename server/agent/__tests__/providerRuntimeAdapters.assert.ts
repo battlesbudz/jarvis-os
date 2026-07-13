@@ -1340,6 +1340,18 @@ async function testAndroidLocalGemmaUsesGroundedEvidencePacketForPersonalMemoryQ
     assert.match(capturedPrompt, /intent=temporal_recall/);
     assert.match(capturedPrompt, /direct answers with clear next actions/);
     assert.match(temporalResult.textContent, /Justin/);
+
+    capturedPrompt = "";
+    await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Show exact memories about DoorDash" }],
+      tools: [],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-grounded",
+    }));
+    assert.doesNotMatch(capturedPrompt, /Jarvis Grounded Evidence Packet/);
     console.log("OK: Android Local Gemma uses grounded evidence packets for personal memory questions");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);

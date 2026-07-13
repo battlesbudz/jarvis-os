@@ -3579,6 +3579,15 @@ async function testLocalVoicePersonalMemoryQuestionInjectsGroundedEvidencePacket
     assert.equal(temporalResult.diagnostics.outcome, "final");
     assert.match(temporalGemma.prompts[0]?.contextPacket ?? "", /intent=temporal_recall/);
     assert.match(temporalGemma.prompts[0]?.contextPacket ?? "", /direct answers from grounded Jarvis state/);
+
+    const exactInspectionGemma = new ScriptedFakeLocalGemmaProvider([{ type: "final", text: "Audit path owns this request." }]);
+    const exactInspectionResult = await runLocalVoiceRuntimeHarnessTurn({
+      userId: "user-local-voice",
+      transcript: "Show exact memories about DoorDash",
+      gemma: exactInspectionGemma,
+    });
+    assert.equal(exactInspectionResult.diagnostics.outcome, "final");
+    assert.doesNotMatch(exactInspectionGemma.prompts[0]?.contextPacket ?? "", /Jarvis Grounded Evidence Packet/);
     console.log("OK: local voice injects grounded evidence packets for personal memory questions");
   } finally {
     _setGroundedEvidencePacketDepsForTesting(null);

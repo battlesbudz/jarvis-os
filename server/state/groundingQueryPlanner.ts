@@ -63,8 +63,10 @@ function normalized(value: string): string {
 export function classifyGroundingIntent(requestText: string): GroundingIntent {
   const text = normalized(requestText);
   const hasPersonalAnchor = /\b(?:i|ive|im|me|my|mine|myself)\b/.test(text);
+  const hasSharedAnchor = /\b(?:we|our|ours|us)\b/.test(text);
   const hasHistoricalAnchor =
-    /\b(?:remember|recall|my memor(?:y|ies)|we discussed|we decided|i decid(?:e|ed)|i told you|you told me)\b/.test(text) ||
+    /\b(?:my memor(?:y|ies)|we discussed|we decided|i decid(?:e|ed)|i told you|you told me)\b/.test(text) ||
+    (/\b(?:remember|recall)\b/.test(text) && (hasPersonalAnchor || hasSharedAnchor)) ||
     /\bthat(?:\s+[a-z0-9_-]+){0,4}\s+(?:thing|decision|choice|plan)\b/.test(text);
   const hasPersonalTemporalSubject = hasPersonalAnchor &&
     /\b(?:preferences?|decisions?|choices?|plans?|polic(?:y|ies)|approach|setup|configuration|workflow|work patterns?|values?)\b/.test(text);

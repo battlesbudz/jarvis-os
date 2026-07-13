@@ -1030,12 +1030,14 @@ async function contextPacketFromEvents(
     packet.push(`Recent screen: ${recentScreen.activeApp} - ${recentScreen.title ?? recentScreen.text}`);
   }
   const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent([{ role: "user", content: transcript }]);
-  if (memoryInspectionIntent || shouldGroundPersonalMemoryRequest(transcript)) {
+  const shouldBuildGroundedPacket = memoryInspectionIntent?.scopeLabel === "about you" ||
+    (!memoryInspectionIntent && shouldGroundPersonalMemoryRequest(transcript));
+  if (shouldBuildGroundedPacket) {
     try {
       packet.push(await buildGroundedEvidencePacketPrompt({
         userId,
         requestText: transcript,
-        query: memoryInspectionIntent?.query,
+        query: memoryInspectionIntent?.scopeLabel === "about you" ? memoryInspectionIntent.query : undefined,
         activeDevice: "android",
         activeModel: "gemma-4-e4b-it",
         currentContext: "local_voice",

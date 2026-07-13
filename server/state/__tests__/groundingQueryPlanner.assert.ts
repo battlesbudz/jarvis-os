@@ -59,6 +59,8 @@ function testIntentSpecificSources(): void {
   assert.equal(classifyGroundingIntent("Explain project goals in OKRs."), "exact_recall");
   assert.equal(classifyGroundingIntent("What is your name?"), "exact_recall");
   assert.equal(classifyGroundingIntent("What's the latest Android version?"), "exact_recall");
+  assert.equal(classifyGroundingIntent("Do you remember the latest Android version?"), "exact_recall");
+  assert.equal(shouldGroundPersonalMemoryRequest("Do you remember the latest Android version?"), false);
   assert.equal(classifyGroundingIntent("Explain family relationships."), "exact_recall");
   assert.equal(classifyGroundingIntent("What's on my current screen?"), "exact_recall");
   assert.equal(classifyGroundingIntent("What are my current notifications?"), "exact_recall");
