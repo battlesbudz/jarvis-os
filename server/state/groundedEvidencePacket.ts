@@ -382,11 +382,13 @@ function rankCommitment(commitment: GroundedCommitmentRecord, todayKey: string):
 }
 
 const COMMITMENT_QUERY_STOP_WORDS = new Set([
-  "about", "any", "are", "blocker", "blockers", "commitment", "commitments",
-  "current", "currently", "date", "dates", "deadline", "deadlines", "do", "due",
-  "for", "goal", "goals", "have", "i", "is", "my", "need", "of", "on", "open",
-  "overdue", "pending", "related", "status", "still", "task", "tasks", "the", "to",
-  "what", "which", "work", "working",
+  "a", "about", "all", "an", "any", "are", "blocker", "blockers", "can", "check",
+  "commitment", "commitments", "could", "current", "currently", "date", "dates",
+  "deadline", "deadlines", "did", "display", "do", "does", "due", "for", "give",
+  "goal", "goals", "have", "i", "is", "list", "me", "my", "need", "of", "on",
+  "open", "our", "overdue", "pending", "please", "related", "remaining", "show",
+  "status", "still", "summarize", "summary", "task", "tasks", "tell", "the", "there",
+  "to", "unfinished", "us", "we", "what", "which", "work", "working", "you",
 ]);
 
 function commitmentQueryTerms(query: string): string[] {
@@ -394,7 +396,7 @@ function commitmentQueryTerms(query: string): string[] {
     query
       .toLowerCase()
       .match(/[a-z0-9]+/g)
-      ?.filter((term) => !COMMITMENT_QUERY_STOP_WORDS.has(term)) ?? [],
+      ?.filter((term) => !COMMITMENT_QUERY_STOP_WORDS.has(term) && !/^\d+$/.test(term)) ?? [],
   )];
 }
 

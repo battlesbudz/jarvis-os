@@ -279,6 +279,45 @@ async function testTemporalPlanUsesOnlyMemoryAndMergesQueries(): Promise<void> {
 }
 
 async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<void> {
+  const commitments: GroundedCommitmentRecord[] = [
+    {
+      id: "unrelated-overdue",
+      content: "Prepare the quarterly inventory controls report.",
+      dueDate: "2026-06-01",
+      status: "pending",
+      extractedAt: "2026-06-01T12:00:00.000Z",
+      commitmentKind: "user_task",
+      signalLevel: "normal",
+    },
+    {
+      id: "android-daemon",
+      content: "Verify Android daemon voice routing on the physical phone.",
+      dueDate: "2026-07-20",
+      status: "pending",
+      extractedAt: "2026-07-08T12:00:00.000Z",
+      commitmentKind: "user_task",
+      signalLevel: "normal",
+      dedupeKey: "topic:android_daemon_voice",
+    },
+    {
+      id: "unrelated-today",
+      content: "Review the production compliance checklist.",
+      dueDate: "2026-07-09",
+      status: "pending",
+      extractedAt: "2026-07-09T08:00:00.000Z",
+      commitmentKind: "user_commitment",
+      signalLevel: "normal",
+    },
+  ];
+  const retrieveEmptyMemoryContext = async (input: { query: string }): Promise<MemoryContext> => ({
+    userId,
+    query: input.query,
+    caller: "runtime_memory_inspection",
+    items: [],
+    sources: { memories: [], brainChunks: [], hotState: [] },
+    provenance: [],
+    uncertainty: [],
+  });
   const packet = await buildGroundedEvidencePacket({
     userId,
     requestText: "Do I have any pending tasks for the Android daemon?",
@@ -287,45 +326,8 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
     commitmentLimit: 1,
   }, {
     now: () => fixedNow,
-    retrieveMemoryContext: async (input) => ({
-      userId,
-      query: input.query,
-      caller: "runtime_memory_inspection",
-      items: [],
-      sources: { memories: [], brainChunks: [], hotState: [] },
-      provenance: [],
-      uncertainty: [],
-    }),
-    loadCommitments: async () => [
-      {
-        id: "unrelated-overdue",
-        content: "Prepare the quarterly inventory controls report.",
-        dueDate: "2026-06-01",
-        status: "pending",
-        extractedAt: "2026-06-01T12:00:00.000Z",
-        commitmentKind: "user_task",
-        signalLevel: "normal",
-      },
-      {
-        id: "android-daemon",
-        content: "Verify Android daemon voice routing on the physical phone.",
-        dueDate: "2026-07-20",
-        status: "pending",
-        extractedAt: "2026-07-08T12:00:00.000Z",
-        commitmentKind: "user_task",
-        signalLevel: "normal",
-        dedupeKey: "topic:android_daemon_voice",
-      },
-      {
-        id: "unrelated-today",
-        content: "Review the production compliance checklist.",
-        dueDate: "2026-07-09",
-        status: "pending",
-        extractedAt: "2026-07-09T08:00:00.000Z",
-        commitmentKind: "user_commitment",
-        signalLevel: "normal",
-      },
-    ],
+    retrieveMemoryContext: retrieveEmptyMemoryContext,
+    loadCommitments: async () => commitments,
   });
 
   assert.equal(packet.queryPlan.intent, "commitment_status");
@@ -335,6 +337,26 @@ async function testTopicCommitmentStatusFiltersUnrelatedOverdueWork(): Promise<v
   );
   assert.equal(packet.evidence.some((item) => item.sourceId === "unrelated-overdue"), false);
   assert.match(packet.omitted.join(" "), /2 pending commitment record\(s\) that did not match the requested topic/);
+
+  for (const requestText of ["List my tasks", "Show my commitments"]) {
+    const genericPacket = await buildGroundedEvidencePacket({
+      userId,
+      requestText,
+      activeModel: "Phone Gemma",
+      memoryLimit: 2,
+      commitmentLimit: 1,
+    }, {
+      now: () => fixedNow,
+      retrieveMemoryContext: retrieveEmptyMemoryContext,
+      loadCommitments: async () => commitments,
+    });
+    assert.equal(genericPacket.queryPlan.intent, "commitment_status");
+    assert.deepEqual(
+      genericPacket.evidence.filter((item) => item.domain === "commitment").map((item) => item.sourceId),
+      ["unrelated-overdue"],
+      `${requestText} should retain broad due-date ranking`,
+    );
+  }
   console.log("OK: topic commitment grounding filters unrelated overdue work");
 }
 
