@@ -613,6 +613,16 @@ async function main(): Promise<void> {
   assert.equal(staleCorrection.status, "conflict");
   assert.match(staleCorrection.uncertainty.join(" "), /changed since the correction was prepared/);
 
+  const missingSnapshotCorrection = buildMemoryCorrectionReview({
+    ...correctionInput,
+    currentMemoryContent: null,
+  });
+  assert.equal(missingSnapshotCorrection.status, "invalid");
+  assert.match(
+    missingSnapshotCorrection.uncertainty.join(" "),
+    /without the reviewed current memory content/,
+  );
+
   const invalidCorrection = buildMemoryCorrectionReview({
     userId: "",
     operation: "correct_existing_memory",

@@ -17,6 +17,10 @@ assert.match(
   source,
   /recordMemoryCorrection\([\s\S]*operation: currentMemoryId \? "correct_existing_memory" : "propose_new_memory"[\s\S]*channel: "memory-review-api"/,
 );
+assert.match(
+  source,
+  /if \(currentMemoryId && !currentMemoryContent\)[\s\S]*currentMemoryContent is required when currentMemoryId is provided/,
+);
 assert.match(source, /correction\.status === "conflict"[\s\S]*res\.status\(409\)/);
 assert.match(source, /res\.status\(correction\.recorded \? 202 : 200\)/);
 assert.match(source, /reviewPath: correction\.status === "review_required" \? "\/api\/memory\/pending-review" : null/);

@@ -184,6 +184,14 @@ export function registerProfileMemoryRoutes(app: Express): void {
         return res.status(400).json({ error: "proposedContent is required" });
       }
       const currentMemoryId = typeof body.currentMemoryId === "string" ? body.currentMemoryId.trim() : "";
+      const currentMemoryContent = typeof body.currentMemoryContent === "string"
+        ? body.currentMemoryContent.trim()
+        : "";
+      if (currentMemoryId && !currentMemoryContent) {
+        return res.status(400).json({
+          error: "currentMemoryContent is required when currentMemoryId is provided",
+        });
+      }
       const sourceEventId = typeof body.sourceEventId === "string" && body.sourceEventId.trim()
         ? body.sourceEventId.trim().slice(0, 200)
         : `memory-correction-${createHash("sha256")
@@ -194,7 +202,7 @@ export function registerProfileMemoryRoutes(app: Express): void {
         userId,
         operation: currentMemoryId ? "correct_existing_memory" : "propose_new_memory",
         currentMemoryId: currentMemoryId || null,
-        currentMemoryContent: typeof body.currentMemoryContent === "string" ? body.currentMemoryContent : null,
+        currentMemoryContent: currentMemoryContent || null,
         proposedContent,
         reason: typeof body.reason === "string" ? body.reason.trim().slice(0, 1_000) || null : null,
         confidence: typeof body.confidence === "number" ? body.confidence : null,

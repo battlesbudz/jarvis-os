@@ -514,6 +514,9 @@ export function buildMemoryCorrectionReview(input?: MemoryCorrectionInput): Memo
   if (input.operation === "correct_existing_memory" && !input.currentMemoryId) {
     uncertainty.push("Correction operation was requested without an existing memory id.");
   }
+  if (input.operation === "correct_existing_memory" && !input.currentMemoryContent?.trim()) {
+    uncertainty.push("Correction operation was requested without the reviewed current memory content.");
+  }
   if (
     input.operation === "correct_existing_memory" &&
     input.currentMemoryContent?.trim() &&
