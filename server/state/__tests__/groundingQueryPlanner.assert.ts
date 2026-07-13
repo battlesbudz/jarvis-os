@@ -13,6 +13,7 @@ function testBroadPersonalSummary(): void {
   assert.deepEqual(plan.queries, [{ id: "primary", purpose: "primary", query: ABOUT_YOU_GROUNDING_QUERY }]);
   assert.deepEqual(plan.sources, { profile: true, soul: true, memory: true, commitments: true });
   assert.equal(plan.canonicalOnly, true);
+  assert.equal(classifyGroundingIntent("What have I told you?"), "broad_personal_summary");
 }
 
 function testTemporalPlanning(): void {
@@ -52,6 +53,14 @@ function testIntentSpecificSources(): void {
   assert.equal(classifyGroundingIntent("Explain family relationships."), "exact_recall");
   assert.equal(classifyGroundingIntent("What's on my current screen?"), "exact_recall");
   assert.equal(classifyGroundingIntent("What are my current notifications?"), "exact_recall");
+  assert.equal(classifyGroundingIntent("What have I told you about Android speech?"), "exact_recall");
+
+  const topicPlan = buildGroundingQueryPlan({
+    requestText: "What have I told you about Android speech?",
+    explicitQuery: "Android speech",
+  });
+  assert.deepEqual(topicPlan.sources, { profile: false, soul: false, memory: true, commitments: false });
+  assert.deepEqual(topicPlan.queries, [{ id: "primary", purpose: "primary", query: "Android speech" }]);
 }
 
 function testExplicitQueryAndGroundingBoundary(): void {

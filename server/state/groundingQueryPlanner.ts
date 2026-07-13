@@ -72,7 +72,8 @@ export function classifyGroundingIntent(requestText: string): GroundingIntent {
     /\b(?:commitments?|tasks?|goals?|blockers?|deadlines?|due dates?|pending work)\b.{0,24}\b(?:do i have|i have|ive set|i need|im working)\b/.test(text);
   const hasProfileAnchor = /\bmy\s+(?:current\s+)?(?:profile|preferred name|name|timezone|time zone|language|communication style|preferences?|values?)\b/.test(text) ||
     /\b(?:profile|preferred name|name|timezone|time zone|language|communication style|preferences?|values?)\b.{0,16}\b(?:for|about) me\b/.test(text);
-  if (/\b(?:what do you know about me|(?:tell|show) me what you know about me|what have i told you|what do you remember about me|whats in my memory|what is in my memory|show my memories|list my memories)\b/.test(text)) {
+  if (/\b(?:what do you know about me|(?:tell|show) me what you know about me|what do you remember about me|whats in my memory|what is in my memory|show my memories|list my memories)\b/.test(text) ||
+    /\bwhat have i told you(?:\s+(?:please|thanks|thank you))?[?!.]*$/.test(text)) {
     return "broad_personal_summary";
   }
   if (hasCommitmentAnchor) {
