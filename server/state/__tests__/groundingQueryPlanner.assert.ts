@@ -4,6 +4,7 @@ import {
   ABOUT_YOU_GROUNDING_QUERY,
   buildGroundingQueryPlan,
   classifyGroundingIntent,
+  looksLikeMemorySaveRequest,
   shouldGroundPersonalMemoryRequest,
 } from "../groundingQueryPlanner";
 
@@ -86,6 +87,11 @@ function testExplicitQueryAndGroundingBoundary(): void {
   assert.equal(shouldGroundPersonalMemoryRequest("Remember that my birthday is Jan 1"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("Can you remember that my birthday is Jan 1?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("Do you remember that my birthday is Jan 1?"), true);
+  assert.equal(looksLikeMemorySaveRequest("Remember I need to call Sam"), true);
+  assert.equal(shouldGroundPersonalMemoryRequest("Remember I need to call Sam"), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("How do I recall an Outlook email?"), false);
+  assert.equal(shouldGroundPersonalMemoryRequest("Can you recall my birthday?"), true);
+  assert.equal(shouldGroundPersonalMemoryRequest("Please recall what I decided about Android speech"), true);
   assert.equal(shouldGroundPersonalMemoryRequest("Show memories about native speech."), true);
   assert.equal(shouldGroundPersonalMemoryRequest("What do you know about Kubernetes?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("How are you today?"), false);

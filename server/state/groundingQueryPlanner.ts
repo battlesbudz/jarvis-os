@@ -63,6 +63,7 @@ function normalized(value: string): string {
 export function looksLikeMemorySaveRequest(text: string): boolean {
   return /^\s*(?:please\s+)?remember\s+(?:that|this)\b(?=[\s:,-]+\S)/i.test(text) ||
     /^\s*(?:can|could|would)\s+you\s+(?:please\s+)?remember\s+(?:that|this)\b(?=[\s:,-]+\S)/i.test(text) ||
+    /^\s*(?:please\s+)?remember\s+(?:i|we)\s+(?:need|have\s+to|must|should|want|plan|intend|will|am\s+going|are\s+going)\b/i.test(text) ||
     /^\s*(?:please\s+)?remember\s+my\b(?=[^?]*?(?::|=|\b(?:is|are|means?)\b))/i.test(text) ||
     /^\s*(?:can|could|would)\s+you\s+(?:please\s+)?remember\s+my\b(?=[^?]*?(?::|=|\b(?:is|are|means?)\b))/i.test(text) ||
     /^\s*(?:please\s+)?(?:save|store|add|write)\b.{0,80}\b(?:memory|memories)\b/i.test(text) ||
@@ -121,8 +122,10 @@ export function shouldGroundPersonalMemoryRequest(requestText: string): boolean 
   if (/\b(?:my|jarvis|your)\s+(?:stored\s+)?(?:memory|memories)\b/.test(text)) {
     return true;
   }
-  return /\b(?:remember|recall)\b/.test(text) &&
-    /\b(?:i|ive|im|me|my|mine|myself|we|our|us|told you|discussed|decided)\b/.test(text);
+  const hasPersonalRecallAnchor = /\b(?:i|ive|im|me|my|mine|myself|we|our|ours|us|told you|discussed|decided)\b/.test(text);
+  const hasExplicitRecallAsk = /\b(?:do|did|can|could|would)\s+you\s+(?:remember|recall)\b/.test(text) ||
+    /^\s*(?:please\s+)?(?:remember|recall)\s+(?:what|when|where|why|how|whether|if)\b/.test(text);
+  return hasPersonalRecallAnchor && hasExplicitRecallAsk;
 }
 
 function temporalSupportQuery(requestText: string): string {
