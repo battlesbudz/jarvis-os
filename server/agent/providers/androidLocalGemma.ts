@@ -9,7 +9,10 @@ import {
   looksLikeMemorySaveRequest,
   shouldGroundPersonalMemoryRequest,
 } from "../../state/groundingQueryPlanner";
-import { classifyRuntimeMemoryInspectionIntent } from "../../state/runtimeMemoryInspection";
+import {
+  answerRuntimeMemoryInspectionQuestion,
+  classifyRuntimeMemoryInspectionIntent,
+} from "../../state/runtimeMemoryInspection";
 import {
   auditLocalRuntimeResponse,
   type LocalRuntimeActionResult,
@@ -2596,6 +2599,21 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       throw new Error("Android Local Gemma requires an authenticated user and the Jarvis Android app device control connection.");
     }
     const userId = params.userId;
+    const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent(params.messages);
+    if (!params.responseFormat && memoryInspectionIntent && memoryInspectionIntent.scopeLabel !== "about you") {
+      const runtimeInspection = await answerRuntimeMemoryInspectionQuestion({
+        messages: params.messages,
+        userId,
+        route: undefined,
+      });
+      if (runtimeInspection) {
+        if (runtimeInspection.textContent) {
+          yield { type: "text", delta: runtimeInspection.textContent };
+        }
+        yield { type: "finish", reason: runtimeInspection.finishReason ?? "stop" };
+        return;
+      }
+    }
     const normalizedModel = normalizeAndroidLocalGemmaModel(params.model);
     const turnBudget = await resolvePhoneGemmaTurnBudget(
       userId,
