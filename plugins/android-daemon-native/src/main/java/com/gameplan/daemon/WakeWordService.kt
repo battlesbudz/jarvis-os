@@ -39,6 +39,8 @@ class WakeWordService : Service() {
         private const val TAG = "JarvisWake"
         private const val CHANNEL_ID = "jarvis_wake_word"
         private const val NOTIFICATION_ID = 1002
+        private const val MIN_RECOGNIZER_RESTART_DELAY_MS = 1000L
+        private const val RECOGNIZER_RESTART_FAILURE_DELAY_MS = 3000L
 
         const val ACTION_START = "com.gameplan.daemon.WAKE_WORD_START"
         const val ACTION_STOP = "com.gameplan.daemon.WAKE_WORD_STOP"
@@ -86,6 +88,7 @@ class WakeWordService : Service() {
     private var wakeWords: List<String> = listOf("hey jarvis", "jarvis", "computer")
     private var talkModeEnabled = false
     private var active = false
+    private var restartRunnable: Runnable? = null
     /** True when Talk Mode is on and we are waiting to capture the user's utterance after a wake word */
     private var capturingUtterance = false
 
@@ -134,6 +137,7 @@ class WakeWordService : Service() {
 
     private fun startListening() {
         if (active) return
+        cancelPendingRestart()
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             DaemonLog.add("wake: SpeechRecognizer not available on this device")
             return
@@ -149,8 +153,9 @@ class WakeWordService : Service() {
             return
         }
         mainHandler.post {
+            if (active) return@post
             try {
-                speechRecognizer?.destroy()
+                destroyRecognizer()
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this@WakeWordService)
                 speechRecognizer?.setRecognitionListener(listener)
                 beginRecognizing()
@@ -165,14 +170,25 @@ class WakeWordService : Service() {
 
     private fun stopListening() {
         active = false
+        cancelPendingRestart()
         mainHandler.post {
             try {
                 speechRecognizer?.stopListening()
-                speechRecognizer?.destroy()
-                speechRecognizer = null
+                destroyRecognizer()
             } catch (e: Exception) {
                 Log.e(TAG, "stopListening error", e)
             }
+        }
+    }
+
+    private fun destroyRecognizer() {
+        try {
+            speechRecognizer?.cancel()
+            speechRecognizer?.destroy()
+        } catch (e: Exception) {
+            Log.e(TAG, "destroyRecognizer failed", e)
+        } finally {
+            speechRecognizer = null
         }
     }
 
@@ -188,21 +204,30 @@ class WakeWordService : Service() {
         speechRecognizer?.startListening(intent)
     }
 
-    private fun restartRecognizer(delayMs: Long = 300) {
-        if (!active) return
-        mainHandler.postDelayed({
-            if (!active) return@postDelayed
-            try {
-                speechRecognizer?.destroy()
-                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this@WakeWordService)
-                speechRecognizer?.setRecognitionListener(listener)
-                beginRecognizing()
-            } catch (e: Exception) {
-                Log.e(TAG, "restartRecognizer failed", e)
-                DaemonLog.add("wake: restart error: ${e.message}")
-                restartRecognizer(3000)
+    private fun cancelPendingRestart() {
+        restartRunnable?.let { mainHandler.removeCallbacks(it) }
+        restartRunnable = null
+    }
+
+    private fun restartRecognizer(delayMs: Long = MIN_RECOGNIZER_RESTART_DELAY_MS) {
+        if (!active || restartRunnable != null) return
+        val restart = Runnable {
+            restartRunnable = null
+            if (active) {
+                try {
+                    destroyRecognizer()
+                    speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this@WakeWordService)
+                    speechRecognizer?.setRecognitionListener(listener)
+                    beginRecognizing()
+                } catch (e: Exception) {
+                    Log.e(TAG, "restartRecognizer failed", e)
+                    DaemonLog.add("wake: restart error: ${e.message}")
+                    restartRecognizer(RECOGNIZER_RESTART_FAILURE_DELAY_MS)
+                }
             }
-        }, delayMs)
+        }
+        restartRunnable = restart
+        mainHandler.postDelayed(restart, delayMs.coerceAtLeast(MIN_RECOGNIZER_RESTART_DELAY_MS))
     }
 
     private val listener = object : RecognitionListener {
@@ -225,11 +250,11 @@ class WakeWordService : Service() {
             }
             // no_match and timeout are normal during silence — restart silently
             if (active && error != SpeechRecognizer.ERROR_CLIENT) {
-                val delay = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 2000L else 300L
+                val delay = if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 2000L else MIN_RECOGNIZER_RESTART_DELAY_MS
                 restartRecognizer(delay)
             } else if (active) {
                 DaemonLog.add("wake: recognition error: $label")
-                restartRecognizer(1000)
+                restartRecognizer(MIN_RECOGNIZER_RESTART_DELAY_MS)
             }
         }
 
@@ -248,16 +273,16 @@ class WakeWordService : Service() {
                     WebSocketService.sendEvent(event.toString())
                     DaemonLog.add("talk: sent utterance \"${utterance.take(60)}\"")
                     // Re-arm for next wake word after sending utterance
-                    if (active) restartRecognizer(300)
+                    if (active) restartRecognizer()
                 } else {
                     // Empty result — re-arm
                     capturingUtterance = false
-                    if (active) restartRecognizer(300)
+                    if (active) restartRecognizer()
                 }
                 return
             }
             val found = checkForWakeWord(matches)
-            if (!found && active) restartRecognizer(100)
+            if (!found && active) restartRecognizer()
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
@@ -311,12 +336,14 @@ class WakeWordService : Service() {
                 if (capturingUtterance) {
                     capturingUtterance = false
                     DaemonLog.add("talk: utterance capture timed out — resuming wake scan")
-                    if (active) restartRecognizer(300)
+                    if (active) restartRecognizer()
                 }
             }, 15_000L)
         } else {
             // Non-talk mode: pause listening during the conversation; auto-resume after timeout
             active = false
+            cancelPendingRestart()
+            mainHandler.post { destroyRecognizer() }
             mainHandler.postDelayed({
                 if (!active) startListening()
             }, 10_000L)
@@ -366,15 +393,10 @@ class WakeWordService : Service() {
     private fun handlePauseForPlayback() {
         if (!talkModeEnabled) return
         DaemonLog.add("wake: pausing mic for TTS playback")
-        mainHandler.post {
-            try {
-                speechRecognizer?.stopListening()
-            } catch (e: Exception) {
-                Log.e(TAG, "handlePauseForPlayback error", e)
-            }
-        }
         // Set active=false so startListening() in handleTtsFinished() is not a no-op
         active = false
+        cancelPendingRestart()
+        mainHandler.post { destroyRecognizer() }
     }
 
     private fun handlePauseForUserControl() {
@@ -382,11 +404,10 @@ class WakeWordService : Service() {
         DaemonLog.add("wake: pausing user capture")
         capturingUtterance = false
         active = false
+        cancelPendingRestart()
         mainHandler.post {
             try {
-                speechRecognizer?.cancel()
-                speechRecognizer?.destroy()
-                speechRecognizer = null
+                destroyRecognizer()
             } catch (e: Exception) {
                 Log.e(TAG, "handlePauseForUserControl error", e)
             }
@@ -399,11 +420,10 @@ class WakeWordService : Service() {
         talkModeEnabled = false
         capturingUtterance = false
         active = false
+        cancelPendingRestart()
         mainHandler.post {
             try {
-                speechRecognizer?.cancel()
-                speechRecognizer?.destroy()
-                speechRecognizer = null
+                destroyRecognizer()
             } catch (e: Exception) {
                 Log.e(TAG, "handleEndTalkModeForUserControl error", e)
             }
@@ -417,6 +437,7 @@ class WakeWordService : Service() {
         // Stay in utterance-capture mode: the next speech result is treated as
         // the next user turn without requiring another wake word.
         capturingUtterance = true
+        cancelPendingRestart()
         mainHandler.postDelayed({
             if (!active) startListening()
         }, 600L)
@@ -425,7 +446,7 @@ class WakeWordService : Service() {
             if (capturingUtterance) {
                 capturingUtterance = false
                 DaemonLog.add("talk: post-TTS utterance timed out — returning to wake scan")
-                if (active) restartRecognizer(300)
+                if (active) restartRecognizer()
             }
         }, 15_000L)
     }
