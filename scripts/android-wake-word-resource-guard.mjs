@@ -6,6 +6,7 @@ const root = path.resolve(import.meta.dirname, "..");
 const sources = [
   path.join(root, "android/app/src/main/java/com/gameplan/daemon/WakeWordService.kt"),
   path.join(root, "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/WakeWordService.kt"),
+  path.join(root, "android-daemon/app/src/main/java/com/jarvis/daemon/WakeWordService.kt"),
 ];
 
 for (const sourcePath of sources) {
