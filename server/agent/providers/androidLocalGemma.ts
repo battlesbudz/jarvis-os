@@ -58,6 +58,7 @@ type AndroidLocalGemmaDaemonOp = (
 
 let daemonOpForTesting: AndroidLocalGemmaDaemonOp | null = null;
 let forwardStatusOpsForTesting = false;
+const pendingGenerationCancellations = new Map<string, Promise<void>>();
 
 const DEFAULT_PHONE_GEMMA_TIMEOUT_MS = 60_000;
 const DEFAULT_PHONE_GEMMA_CONTEXT_TOKENS = 2048;
@@ -2558,6 +2559,26 @@ async function cancelAndroidLocalGemmaGeneration(userId: string, requestId?: str
   );
 }
 
+function trackAndroidLocalGemmaCancellation(userId: string, requestId?: string): Promise<void> {
+  const previous = pendingGenerationCancellations.get(userId) ?? Promise.resolve();
+  const cancellation = previous
+    .catch(() => {})
+    .then(() => cancelAndroidLocalGemmaGeneration(userId, requestId));
+  const tracked = cancellation
+    .catch(() => {})
+    .finally(() => {
+      if (pendingGenerationCancellations.get(userId) === tracked) {
+        pendingGenerationCancellations.delete(userId);
+      }
+    });
+  pendingGenerationCancellations.set(userId, tracked);
+  return tracked;
+}
+
+async function waitForAndroidLocalGemmaCancellation(userId: string): Promise<void> {
+  await pendingGenerationCancellations.get(userId);
+}
+
 async function sendAbortableAndroidLocalGemmaGenerateOp(
   userId: string,
   op: Extract<Parameters<AndroidLocalGemmaDaemonOp>[1], { type: "android_local_model_generate" }>,
@@ -2577,7 +2598,7 @@ async function sendAbortableAndroidLocalGemmaGenerateOp(
   const generatePromise = sendAndroidLocalGemmaOp(userId, op, timeoutMs);
   const abortPromise = new Promise<never>((_resolve, reject) => {
     onAbort = () => {
-      cancelAndroidLocalGemmaGeneration(userId, requestId).catch(() => {});
+      trackAndroidLocalGemmaCancellation(userId, requestId).catch(() => {});
       reject(createAbortError("Phone Gemma generation was stopped."));
     };
     signal.addEventListener("abort", onAbort, { once: true });
@@ -2599,6 +2620,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       throw new Error("Android Local Gemma requires an authenticated user and the Jarvis Android app device control connection.");
     }
     const userId = params.userId;
+    await waitForAndroidLocalGemmaCancellation(userId);
     const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent(params.messages);
     if (!params.responseFormat && memoryInspectionIntent && memoryInspectionIntent.scopeLabel !== "about you") {
       const runtimeInspection = await answerRuntimeMemoryInspectionQuestion({
@@ -2661,11 +2683,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
     })();
 
     if (shouldCancelTimedOutGeneration(result)) {
-      sendAndroidLocalGemmaOp(
-        userId,
-        { type: "android_local_model_cancel", requestId },
-        5_000,
-      ).catch(() => {});
+      await trackAndroidLocalGemmaCancellation(userId, requestId).catch(() => {});
     }
 
     if (!result.ok) {
