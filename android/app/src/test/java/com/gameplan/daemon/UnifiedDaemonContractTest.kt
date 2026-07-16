@@ -228,6 +228,95 @@ class UnifiedDaemonContractTest {
     }
 
     @Test
+    fun phoneGemmaOperationAdmissionBlocksStartsDuringMaintenanceAndShutdown() {
+        val admission = LocalGemmaOperationAdmission()
+        val executor = Executors.newSingleThreadExecutor()
+
+        try {
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.ACQUIRED,
+                admission.tryAcquireGeneration("request-active"),
+            )
+            assertTrue(admission.beginShutdown())
+            assertFalse(admission.beginShutdown())
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.BUSY,
+                admission.tryAcquireGeneration("request-blocked"),
+            )
+            assertFalse(admission.tryAcquireValidation())
+            assertFalse(admission.tryAcquireMaintenance())
+
+            val shutdownWaitFinished = CountDownLatch(1)
+            val shutdownDrained = executor.submit<Boolean> {
+                try {
+                    admission.awaitShutdownDrain()
+                    true
+                } finally {
+                    shutdownWaitFinished.countDown()
+                }
+            }
+            assertFalse(shutdownWaitFinished.await(100, TimeUnit.MILLISECONDS))
+            admission.releaseGeneration("request-active")
+            assertTrue(shutdownWaitFinished.await(1, TimeUnit.SECONDS))
+            assertTrue(shutdownDrained.get(1, TimeUnit.SECONDS))
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.BUSY,
+                admission.tryAcquireGeneration("request-still-blocked"),
+            )
+            admission.endShutdown()
+            assertFalse(admission.hasActiveOperation())
+
+            assertTrue(admission.tryAcquireMaintenance())
+            assertFalse(admission.tryAcquireMaintenance())
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.BUSY,
+                admission.tryAcquireGeneration("request-during-maintenance"),
+            )
+            assertFalse(admission.tryAcquireValidation())
+            admission.releaseMaintenance()
+            assertFalse(admission.hasActiveOperation())
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun localInferenceRecoveryHonorsCurrentCaptureAndTalkModeState() {
+        assertEquals(
+            WakeWordLocalInferenceRecoveryAction.ORDINARY_SCAN,
+            WakeWordLocalInferencePolicy.recoveryAction(
+                captureWasRequested = true,
+                captureCurrentlyRequested = true,
+                talkModeEnabled = false,
+            ),
+        )
+        assertEquals(
+            WakeWordLocalInferenceRecoveryAction.TALK_MODE,
+            WakeWordLocalInferencePolicy.recoveryAction(
+                captureWasRequested = true,
+                captureCurrentlyRequested = true,
+                talkModeEnabled = true,
+            ),
+        )
+        assertEquals(
+            WakeWordLocalInferenceRecoveryAction.NONE,
+            WakeWordLocalInferencePolicy.recoveryAction(
+                captureWasRequested = true,
+                captureCurrentlyRequested = false,
+                talkModeEnabled = false,
+            ),
+        )
+        assertEquals(
+            WakeWordLocalInferenceRecoveryAction.NONE,
+            WakeWordLocalInferencePolicy.recoveryAction(
+                captureWasRequested = false,
+                captureCurrentlyRequested = true,
+                talkModeEnabled = true,
+            ),
+        )
+    }
+
+    @Test
     fun talkModeRecoveryOnlyRearmsAfterSessionReturnsToListening() {
         assertTrue(
             OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(

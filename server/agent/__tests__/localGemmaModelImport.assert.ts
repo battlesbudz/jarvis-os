@@ -104,6 +104,8 @@ assert.match(nativeModelManager, /LOCAL_MODEL_VALIDATION_PROFILE_UNSUPPORTED/);
 assert.match(nativeModelManager, /Previous Phone Gemma validation used an older or hidden profile/);
 assert.match(nativeModelManager, /fun smokeTest\(context: Context, op: JSONObject\): OpResult/);
 assert.match(nativeModelManager, /LocalGemmaInferenceEngine\.releaseWarmEngine\(\)/);
+assert.match(nativeModelManager, /LocalGemmaInferenceEngine\.prepareForModelReplacement\(\)/);
+assert.match(nativeModelManager, /LocalGemmaInferenceEngine\.finishModelReplacement\(\)/);
 assert.match(nativeModelManager, /val validationError = if \(engineValidated\) null else lastEngineError \?: engineLastValidationError/);
 assert.match(nativeModelManager, /preserveExistingValidation/);
 assert.match(nativeModelManager, /\.put\("modelFileReady", modelFileReady\)/);
@@ -171,7 +173,14 @@ assert.match(nativeInferenceEngine, /if \(cachePolicy == "none"\) return LITERT_
 assert.match(nativeInferenceEngine, /\.put\("requestedBackend", active\.backend\)/);
 assert.match(nativeInferenceEngine, /\.put\("lastEngineError", lastEngineError \?: JSONObject\.NULL\)/);
 assert.match(nativeInferenceEngine, /fun releaseWarmEngine\(\)/);
-assert.match(nativeInferenceEngine, /if \(operationAdmission\.hasActiveOperation\(\)\) return/);
+assert.match(nativeInferenceEngine, /operationAdmission\.tryAcquireMaintenance\(\)/);
+assert.match(nativeInferenceEngine, /operationAdmission\.releaseMaintenance\(\)/);
+assert.match(nativeInferenceEngine, /operationAdmission\.awaitShutdownDrain\(\)/);
+assert.match(nativeInferenceEngine, /fun prepareForModelReplacement\(\): Boolean/);
+assert.match(nativeInferenceEngine, /fun finishModelReplacement\(\)/);
+assert.match(nativeInferenceEngine, /fun shutdownAsync\(\)/);
+assert.match(nativeInferenceEngine, /"jarvis-local-gemma-shutdown"/);
+assert.doesNotMatch(nativeInferenceEngine, /if \(operationAdmission\.hasActiveOperation\(\)\) return/);
 const generateBody = nativeInferenceEngine.slice(
   nativeInferenceEngine.indexOf("fun generate(context: Context"),
   nativeInferenceEngine.indexOf("\n    fun validate("),

@@ -353,7 +353,7 @@ class OutsideAppVoiceSessionService : Service() {
     private fun setState(nextState: OutsideAppVoiceState, actionName: String = nextState.wireName) {
         val previousState = state
         if (nextState == OutsideAppVoiceState.WORKING && previousState != OutsideAppVoiceState.WORKING) {
-            WakeWordService.pauseForLocalInference()
+            WakeWordService.pauseForResponse()
         } else if (OutsideAppVoiceSessionStateMachine.shouldResumeWakeCapture(previousState, nextState)) {
             resumeWakeCapture()
         }

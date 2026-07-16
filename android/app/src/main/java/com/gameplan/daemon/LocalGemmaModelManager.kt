@@ -138,8 +138,10 @@ object LocalGemmaModelManager {
         }
 
         val tmp = File(targetDir, "model.litertlm.tmp")
+        if (!LocalGemmaInferenceEngine.prepareForModelReplacement()) {
+            return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already shutting down. Retry the model import when it finishes.")
+        }
         return try {
-            LocalGemmaInferenceEngine.shutdown()
             if (tmp.exists()) tmp.delete()
             val sha256 = copyWithSha256(source, tmp)
             if (target.exists() && !target.delete()) {
@@ -193,6 +195,8 @@ object LocalGemmaModelManager {
         } catch (e: Exception) {
             tmp.delete()
             OpResult(false, error = "LOCAL_MODEL_IMPORT_FAILED: ${e.message}")
+        } finally {
+            LocalGemmaInferenceEngine.finishModelReplacement()
         }
     }
 

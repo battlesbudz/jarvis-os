@@ -28,6 +28,7 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicLong
 
 internal enum class LocalGemmaMemoryBlockReason(val wireName: String) {
@@ -98,11 +99,16 @@ internal class LocalGemmaOperationAdmission {
     private val lock = Any()
     private var generationRequestId: String? = null
     private var validationActive = false
+    private var maintenanceActive = false
+    private var shutdownActive = false
+    private var shutdownDrain: CountDownLatch? = null
 
     fun tryAcquireGeneration(requestId: String): LocalGemmaGenerationAdmissionResult {
         synchronized(lock) {
             if (generationRequestId == requestId) return LocalGemmaGenerationAdmissionResult.DUPLICATE
-            if (generationRequestId != null || validationActive) return LocalGemmaGenerationAdmissionResult.BUSY
+            if (generationRequestId != null || validationActive || maintenanceActive || shutdownActive) {
+                return LocalGemmaGenerationAdmissionResult.BUSY
+            }
             generationRequestId = requestId
             return LocalGemmaGenerationAdmissionResult.ACQUIRED
         }
@@ -110,13 +116,16 @@ internal class LocalGemmaOperationAdmission {
 
     fun releaseGeneration(requestId: String) {
         synchronized(lock) {
-            if (generationRequestId == requestId) generationRequestId = null
+            if (generationRequestId == requestId) {
+                generationRequestId = null
+                signalShutdownDrainIfIdle()
+            }
         }
     }
 
     fun tryAcquireValidation(): Boolean {
         synchronized(lock) {
-            if (generationRequestId != null || validationActive) return false
+            if (generationRequestId != null || validationActive || maintenanceActive || shutdownActive) return false
             validationActive = true
             return true
         }
@@ -125,12 +134,49 @@ internal class LocalGemmaOperationAdmission {
     fun releaseValidation() {
         synchronized(lock) {
             validationActive = false
+            signalShutdownDrainIfIdle()
+        }
+    }
+
+    fun tryAcquireMaintenance(): Boolean {
+        synchronized(lock) {
+            if (generationRequestId != null || validationActive || maintenanceActive || shutdownActive) return false
+            maintenanceActive = true
+            return true
+        }
+    }
+
+    fun releaseMaintenance() {
+        synchronized(lock) {
+            maintenanceActive = false
+            signalShutdownDrainIfIdle()
+        }
+    }
+
+    fun beginShutdown(): Boolean {
+        synchronized(lock) {
+            if (shutdownActive) return false
+            shutdownActive = true
+            shutdownDrain = CountDownLatch(if (hasRunningOperation()) 1 else 0)
+            return true
+        }
+    }
+
+    fun awaitShutdownDrain() {
+        val drain = synchronized(lock) { shutdownDrain }
+        drain?.await()
+    }
+
+    fun endShutdown() {
+        synchronized(lock) {
+            shutdownActive = false
+            shutdownDrain = null
         }
     }
 
     fun hasActiveOperation(): Boolean {
         synchronized(lock) {
-            return generationRequestId != null || validationActive
+            return generationRequestId != null || validationActive || maintenanceActive || shutdownActive
         }
     }
 
@@ -138,6 +184,14 @@ internal class LocalGemmaOperationAdmission {
         synchronized(lock) {
             return validationActive
         }
+    }
+
+    private fun hasRunningOperation(): Boolean {
+        return generationRequestId != null || validationActive || maintenanceActive
+    }
+
+    private fun signalShutdownDrainIfIdle() {
+        if (shutdownActive && !hasRunningOperation()) shutdownDrain?.countDown()
     }
 }
 
@@ -211,10 +265,10 @@ object LocalGemmaInferenceEngine {
         val active = ActiveRequest(requestId, model, modelFile.absolutePath, modelRevision, backendName, cachePolicy, startedAtMs, job)
         registerActiveRequest(active)?.let { return it }
 
-        var resumeWakeAfterInference = false
+        var wakeCaptureWasRequested = false
         var generationSucceeded = false
         return try {
-            resumeWakeAfterInference = WakeWordService.pauseForLocalInference()
+            wakeCaptureWasRequested = WakeWordService.pauseForLocalInference()
             val memoryRecovery = recoverMemoryHeadroom(context, backendName)
             val memory = memoryRecovery.current
             if (prompt.length != rawPrompt.length) {
@@ -348,7 +402,7 @@ object LocalGemmaInferenceEngine {
                 }
             } finally {
                 try {
-                    WakeWordService.resumeAfterLocalInference(resumeWakeAfterInference)
+                    WakeWordService.resumeAfterLocalInference(wakeCaptureWasRequested)
                 } finally {
                     activeRequests.remove(requestId, active)
                     operationAdmission.releaseGeneration(requestId)
@@ -369,9 +423,9 @@ object LocalGemmaInferenceEngine {
         if (!operationAdmission.tryAcquireValidation()) {
             return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already generating or validating. Wait for it to finish before validating the local engine.")
         }
-        var resumeWakeAfterValidation = false
+        var wakeCaptureWasRequested = false
         try {
-            resumeWakeAfterValidation = WakeWordService.pauseForLocalInference()
+            wakeCaptureWasRequested = WakeWordService.pauseForLocalInference()
             val memoryRecovery = recoverMemoryHeadroom(context, backendName)
             val memory = memoryRecovery.current
             lowMemoryError(memory, backendName, memoryRecovery)?.let { error ->
@@ -437,7 +491,7 @@ object LocalGemmaInferenceEngine {
             }
         } finally {
             try {
-                WakeWordService.resumeAfterLocalValidation(resumeWakeAfterValidation)
+                WakeWordService.resumeAfterLocalValidation(wakeCaptureWasRequested)
             } finally {
                 operationAdmission.releaseValidation()
             }
@@ -516,26 +570,60 @@ object LocalGemmaInferenceEngine {
         }
     }
 
-    fun shutdown() {
+    fun prepareForModelReplacement(): Boolean {
+        if (!operationAdmission.beginShutdown()) return false
+        try {
+            shutdownBlocking()
+            return true
+        } catch (e: Throwable) {
+            operationAdmission.endShutdown()
+            throw e
+        }
+    }
+
+    fun finishModelReplacement() {
+        operationAdmission.endShutdown()
+    }
+
+    fun shutdownAsync() {
+        if (!operationAdmission.beginShutdown()) return
+        Thread({
+            try {
+                shutdownBlocking()
+            } catch (e: Throwable) {
+                DaemonLog.add("local_gemma: asynchronous shutdown failed: ${e.message}")
+            } finally {
+                operationAdmission.endShutdown()
+            }
+        }, "jarvis-local-gemma-shutdown").start()
+    }
+
+    private fun shutdownBlocking() {
         runBlocking {
             activeRequests.values.toList().forEach { request ->
                 request.conversation?.cancelProcess()
                 request.job.cancel()
             }
             activeRequests.values.toList().forEach { it.job.cancelAndJoin() }
+            operationAdmission.awaitShutdownDrain()
             generationMutex.withLock {
                 engineMutex.withLock {
-                    engineState?.engine?.close()
+                    val closingEngine = engineState?.engine
                     engineState = null
                     lastEngineError = null
+                    closingEngine?.close()
                 }
             }
         }
     }
 
     fun releaseWarmEngine() {
-        if (operationAdmission.hasActiveOperation()) return
-        releaseEngine(clearLastError = false)
+        if (!operationAdmission.tryAcquireMaintenance()) return
+        try {
+            releaseEngine(clearLastError = false)
+        } finally {
+            operationAdmission.releaseMaintenance()
+        }
     }
 
     private fun runGenerationAttempt(
