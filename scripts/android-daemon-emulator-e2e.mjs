@@ -139,6 +139,17 @@ function collectLogcat() {
   }
 }
 
+function collectVoiceE2eLogcat() {
+  try {
+    return adb(
+      ["logcat", "-d", "-s", "JarvisVoiceE2E:I", "JarvisLog:I", "*:S"],
+      { capture: true },
+    );
+  } catch (err) {
+    return `Unable to collect voice E2E logcat: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
 function parseVoiceE2eStatus(logcat, token) {
   const lines = logcat.split(/\r?\n/).filter((line) => line.includes("JarvisVoiceE2E") && line.includes(`token=${token}`));
   const line = lines.at(-1);
@@ -165,14 +176,14 @@ async function waitForVoiceE2eStatus(label, predicate, timeoutMs = 10000) {
     const token = `voice_${Date.now()}_${++attempts}`;
     voiceE2eBroadcast("status", { token });
     await sleep(350);
-    const status = parseVoiceE2eStatus(collectLogcat(), token);
+    const status = parseVoiceE2eStatus(collectVoiceE2eLogcat(), token);
     if (status) {
       lastStatus = status;
       if (predicate(status)) return status;
     }
     await sleep(250);
   }
-  const recentVoiceLog = collectLogcat()
+  const recentVoiceLog = collectVoiceE2eLogcat()
     .split(/\r?\n/)
     .filter((line) => line.includes("JarvisVoiceE2E") || line.includes("OutsideAppVoice"))
     .slice(-30)
@@ -288,7 +299,7 @@ async function runCrashRestartSmoke() {
     (status) => !status.active && status.state === "idle",
     15000,
   );
-  const crashLog = collectLogcat();
+  const crashLog = collectVoiceE2eLogcat();
   if (!/JarvisVoiceE2E.*token=voice_crash.*e2eCrashCommand=dispatched/.test(crashLog)) {
     throw new Error("Simulated crash command did not emit the expected debug dispatch marker.");
   }
