@@ -17,6 +17,7 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
 
 /**
  * Persistent foreground service that listens for wake words using Android's SpeechRecognizer.
@@ -459,8 +460,32 @@ class WakeWordService : Service() {
         active = false
         cancelPendingRestart()
         cancelLocalInferenceRecovery()
-        mainHandler.post { destroyRecognizer() }
+        releaseRecognizerBeforeLocalInference()
         return resumeAfterInference
+    }
+
+    private fun releaseRecognizerBeforeLocalInference() {
+        if (Looper.myLooper() == mainHandler.looper) {
+            destroyRecognizer()
+            return
+        }
+        val recognizerReleased = CountDownLatch(1)
+        mainHandler.post {
+            try {
+                destroyRecognizer()
+            } finally {
+                recognizerReleased.countDown()
+            }
+        }
+        try {
+            recognizerReleased.await()
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw IllegalStateException(
+                "LOCAL_MODEL_WAKE_RESOURCE_RELEASE_INTERRUPTED: Phone Gemma did not start because speech recognition release was interrupted.",
+                e,
+            )
+        }
     }
 
     private fun handleResumeAfterLocalInference() {

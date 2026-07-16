@@ -415,6 +415,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "OutsideAppVoiceSessionStateMachine", source);
   assertIncludes(contents, "fun shouldRecoverTalkModeAfterLocalInference(state: OutsideAppVoiceState): Boolean", source);
   assertIncludes(contents, "return state == OutsideAppVoiceState.LISTENING", source);
+  assertIncludes(contents, "fun shouldResumeWakeCapture(", source);
+  assertIncludes(contents, "previousState == OutsideAppVoiceState.WORKING || previousState == OutsideAppVoiceState.APPROVAL", source);
   assertIncludes(contents, "ACTION_PAUSE", source);
   assertIncludes(contents, "ACTION_RESUME", source);
   assertIncludes(contents, "ACTION_END", source);
@@ -465,7 +467,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "private fun setStateFromAnyThread(nextState: OutsideAppVoiceState)", source);
   assertIncludes(contents, "private fun setState(nextState: OutsideAppVoiceState, actionName: String = nextState.wireName)", source);
   assertIncludes(contents, "WakeWordService.pauseForLocalInference()", source);
-  assertIncludes(contents, "nextState == OutsideAppVoiceState.LISTENING && previousState == OutsideAppVoiceState.WORKING", source);
+  assertIncludes(contents, "OutsideAppVoiceSessionStateMachine.shouldResumeWakeCapture(previousState, nextState)", source);
   assertIncludes(contents, "instance?.setStateFromAnyThread(OutsideAppVoiceState.SPEAKING)", source);
   assertIncludes(contents, "instance?.setStateFromAnyThread(OutsideAppVoiceState.LISTENING)", source);
   assertExcludes(contents, "WakeWordService.ACTION_STOP", source);
@@ -594,6 +596,10 @@ for (const [contents, source] of [
   assertIncludes(contents, "private fun handlePauseForUserControl()", source);
   assertIncludes(contents, "fun pauseForLocalInference(): Boolean", source);
   assertIncludes(contents, "private fun handlePauseForLocalInference(): Boolean", source);
+  assertIncludes(contents, "private fun releaseRecognizerBeforeLocalInference()", source);
+  assertIncludes(contents, "Looper.myLooper() == mainHandler.looper", source);
+  assertIncludes(contents, "val recognizerReleased = CountDownLatch(1)", source);
+  assertIncludes(contents, "recognizerReleased.await()", source);
   assertIncludes(contents, "fun resumeAfterLocalInference(shouldResume: Boolean)", source);
   assertIncludes(contents, "fun resumeAfterLocalValidation(shouldResume: Boolean)", source);
   assertIncludes(contents, "LOCAL_INFERENCE_TALK_MODE_RECOVERY_DELAY_MS = 10_000L", source);

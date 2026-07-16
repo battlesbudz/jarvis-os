@@ -65,6 +65,14 @@ object OutsideAppVoiceSessionStateMachine {
         return state == OutsideAppVoiceState.LISTENING
     }
 
+    fun shouldResumeWakeCapture(
+        previousState: OutsideAppVoiceState,
+        nextState: OutsideAppVoiceState,
+    ): Boolean {
+        return nextState == OutsideAppVoiceState.LISTENING &&
+            (previousState == OutsideAppVoiceState.WORKING || previousState == OutsideAppVoiceState.APPROVAL)
+    }
+
     fun notificationText(state: OutsideAppVoiceState): String {
         return when (state) {
             OutsideAppVoiceState.IDLE -> "Jarvis voice is ready"
@@ -346,7 +354,7 @@ class OutsideAppVoiceSessionService : Service() {
         val previousState = state
         if (nextState == OutsideAppVoiceState.WORKING && previousState != OutsideAppVoiceState.WORKING) {
             WakeWordService.pauseForLocalInference()
-        } else if (nextState == OutsideAppVoiceState.LISTENING && previousState == OutsideAppVoiceState.WORKING) {
+        } else if (OutsideAppVoiceSessionStateMachine.shouldResumeWakeCapture(previousState, nextState)) {
             resumeWakeCapture()
         }
         if (nextState != OutsideAppVoiceState.IDLE) {

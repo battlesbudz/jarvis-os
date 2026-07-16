@@ -198,6 +198,38 @@ class UnifiedDaemonContractTest {
     }
 
     @Test
+    fun wakeCaptureResumesWhenWorkingOrApprovalReturnsToListening() {
+        for (previousState in listOf(OutsideAppVoiceState.WORKING, OutsideAppVoiceState.APPROVAL)) {
+            assertTrue(
+                OutsideAppVoiceSessionStateMachine.shouldResumeWakeCapture(
+                    previousState,
+                    OutsideAppVoiceState.LISTENING,
+                ),
+            )
+        }
+        for (previousState in listOf(
+            OutsideAppVoiceState.IDLE,
+            OutsideAppVoiceState.LISTENING,
+            OutsideAppVoiceState.SPEAKING,
+            OutsideAppVoiceState.PAUSED,
+        )) {
+            assertFalse(
+                "Unexpected automatic wake resume from $previousState",
+                OutsideAppVoiceSessionStateMachine.shouldResumeWakeCapture(
+                    previousState,
+                    OutsideAppVoiceState.LISTENING,
+                ),
+            )
+        }
+        assertFalse(
+            OutsideAppVoiceSessionStateMachine.shouldResumeWakeCapture(
+                OutsideAppVoiceState.APPROVAL,
+                OutsideAppVoiceState.WORKING,
+            ),
+        )
+    }
+
+    @Test
     fun outsideAppVoiceSessionNotificationControlsStayStable() {
         val actions = OutsideAppVoiceSessionStateMachine.notificationActions()
 
