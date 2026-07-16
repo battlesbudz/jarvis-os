@@ -92,8 +92,12 @@ jobs:
           mkdir -p dist/e2e
           cp android/app/build/outputs/apk/debug/app-debug.apk "$ANDROID_APK_PATH"
           test -s "$ANDROID_APK_PATH"
-          rm -rf android/.gradle android/build android/app/build ~/.gradle/caches ~/.gradle/wrapper/dists ~/.npm/_cacache
-          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost
+          if ! rm -rf android/.gradle android/build android/app/build ~/.gradle/caches ~/.gradle/wrapper/dists ~/.npm/_cacache; then
+            echo "Gradle/npm cache cleanup was best-effort; continuing with the verified APK."
+          fi
+          if ! sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost; then
+            echo "Optional runner tool cleanup was best-effort; continuing with the verified APK."
+          fi
           df -h
 
       - name: Run daemon accessibility E2E on emulator
