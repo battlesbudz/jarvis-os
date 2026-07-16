@@ -504,6 +504,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "pausedForPlayback && OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.markPlaybackSpeaking()", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.markPlaybackListening()", source);
+  assertIncludes(contents, "mediaPlayer.setOnErrorListener", source);
+  assertIncludes(contents, "voice_speak_audio: asynchronous playback error", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()", source);
 }
 assertIncludes(pluginTemplateJarvisVoiceInteraction, "EXTRA_SHOW_WHEN_LOCKED_TOKEN", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");

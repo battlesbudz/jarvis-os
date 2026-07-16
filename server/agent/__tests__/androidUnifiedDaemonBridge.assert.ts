@@ -208,6 +208,24 @@ assert.match(
 
 assert.match(
   bridgeSource,
+  /setDaemonVoiceTurnState\(userId, "working"\)[\s\S]*?const playbackResult = await sendDaemonOp[\s\S]*?if \(!playbackResult\.ok\)/,
+  "Daemon voice processing should enter working state and reject failed Android playback starts.",
+);
+
+assert.match(
+  bridgeSource,
+  /async function recoverDaemonVoiceAfterFailure[\s\S]*?voice_set_outside_app_state[\s\S]*?state: "listening"[\s\S]*?if \(rearmWithoutPlayback\)[\s\S]*?voice_tts_finished/,
+  "Daemon voice failures should return the native session to listening and re-arm failures before playback.",
+);
+
+assert.match(
+  bridgeSource,
+  /catch \(err\)[\s\S]*?recoverDaemonVoiceAfterFailure\(userId, !playbackAttempted\)/,
+  "Daemon voice processing should run native recovery from its failure path.",
+);
+
+assert.match(
+  bridgeSource,
   /bootstrapToken:\s*string/,
   "Android app bootstrap messages should carry a native-only bootstrap token.",
 );
