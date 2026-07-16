@@ -345,11 +345,42 @@ async function persistDaemonVoiceExchange(userId: string, utterance: string, res
   }
 }
 
+async function setDaemonVoiceTurnState(
+  userId: string,
+  state: "working" | "listening",
+): Promise<void> {
+  const result = await sendDaemonOp(userId, { type: "voice_set_outside_app_state", state }, 5_000);
+  if (!result.ok) {
+    throw new Error(`Android voice state '${state}' failed: ${result.error ?? "unknown daemon error"}`);
+  }
+}
+
+async function recoverDaemonVoiceAfterFailure(
+  userId: string,
+  rearmWithoutPlayback: boolean,
+): Promise<void> {
+  const recoveryOps: Promise<unknown>[] = [
+    sendDaemonOp(userId, { type: "voice_set_outside_app_state", state: "listening" }, 5_000),
+    sendDaemonOp(
+      userId,
+      { type: "notify", title: "Jarvis", body: "Could not process your request - please try again." },
+      5_000,
+    ),
+  ];
+  if (rearmWithoutPlayback) {
+    recoveryOps.push(sendDaemonOp(userId, { type: "voice_tts_finished" }, 5_000));
+  }
+  await Promise.allSettled(recoveryOps);
+}
+
 async function processDaemonUtterance(userId: string, utterance: string): Promise<void> {
   const voiceTurnGeneration = currentVoiceTurnGeneration(userId);
+  let playbackAttempted = false;
   try {
     if (isDaemonVoiceTurnCancelled(userId, voiceTurnGeneration)) return;
     console.log(`[daemon] talk: processing utterance for userId=${userId}: "${utterance.slice(0, 60)}"`);
+    await setDaemonVoiceTurnState(userId, "working");
+    if (isDaemonVoiceTurnCancelled(userId, voiceTurnGeneration)) return;
     const { textToSpeech } = await import("../integrations/audioClient");
 
     let responseText = await processDaemonNotificationFollowUp(userId, utterance);
@@ -380,12 +411,20 @@ async function processDaemonUtterance(userId: string, utterance: string): Promis
     const audioBase64 = audioBuffer.toString("base64");
 
     // Send audio to daemon — it plays it and then re-arms for the next wake word
-    await sendDaemonOp(userId, { type: "voice_speak_audio", audioBase64, format: "mp3" }, 15_000);
+    playbackAttempted = true;
+    const playbackResult = await sendDaemonOp(
+      userId,
+      { type: "voice_speak_audio", audioBase64, format: "mp3" },
+      15_000,
+    );
+    if (isDaemonVoiceTurnCancelled(userId, voiceTurnGeneration)) return;
+    if (!playbackResult.ok) {
+      throw new Error(`Android voice playback failed: ${playbackResult.error ?? "unknown daemon error"}`);
+    }
   } catch (err) {
     if (isDaemonVoiceTurnCancelled(userId, voiceTurnGeneration)) return;
     console.error("[daemon] processDaemonUtterance failed:", err);
-    // Notify the user so they know something went wrong
-    sendDaemonOp(userId, { type: "notify", title: "Jarvis", body: "Could not process your request — please try again." }, 5_000).catch(() => {});
+    await recoverDaemonVoiceAfterFailure(userId, !playbackAttempted);
   }
 }
 

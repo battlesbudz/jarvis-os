@@ -544,7 +544,7 @@ object OpHandler {
             ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis app.")
         return try {
             val json = JSONObject(svc.readScreenContent())
-            // Return structured data directly so the server gets package/activity/text/clickable fields
+            // Keep android_read_screen compact; android_screen_context owns rich traversal.
             OpResult(true, data = json)
         } catch (e: Exception) {
             OpResult(false, error = "Read screen error: ${e.message}")
@@ -1525,6 +1525,12 @@ object OpHandler {
                 } else {
                     DaemonLog.add("voice_speak_audio: playback complete — rearm skipped")
                 }
+            }
+            mediaPlayer.setOnErrorListener { mp, what, extra ->
+                val shouldRearm = OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()
+                JarvisVoicePlaybackController.completePlayback(mp, playbackFile, rearmTalkMode = shouldRearm)
+                DaemonLog.add("voice_speak_audio: asynchronous playback error what=$what extra=$extra rearmed=$shouldRearm")
+                true
             }
             JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)
             OutsideAppVoiceSessionService.markPlaybackSpeaking()

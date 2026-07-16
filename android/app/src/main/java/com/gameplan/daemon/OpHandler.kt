@@ -1526,6 +1526,12 @@ object OpHandler {
                     DaemonLog.add("voice_speak_audio: playback complete — rearm skipped")
                 }
             }
+            mediaPlayer.setOnErrorListener { mp, what, extra ->
+                val shouldRearm = OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()
+                JarvisVoicePlaybackController.completePlayback(mp, playbackFile, rearmTalkMode = shouldRearm)
+                DaemonLog.add("voice_speak_audio: asynchronous playback error what=$what extra=$extra rearmed=$shouldRearm")
+                true
+            }
             JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)
             OutsideAppVoiceSessionService.markPlaybackSpeaking()
             mediaPlayer.start()

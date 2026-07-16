@@ -14,6 +14,9 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 class UnifiedDaemonContractTest {
@@ -136,6 +139,281 @@ class UnifiedDaemonContractTest {
         } finally {
             modelFile.parentFile?.deleteRecursively()
         }
+    }
+
+    @Test
+    fun phoneGemmaMemoryAdmissionRetriesReportedSafetyReserveSnapshot() {
+        val mib = 1024L * 1024L
+        val reported = LocalGemmaMemoryAdmissionPolicy.evaluate(
+            availableBytes = 1670L * mib,
+            lowMemory = false,
+            backendName = "gpu",
+        )
+
+        assertFalse(reported.allowed)
+        assertEquals(LocalGemmaMemoryBlockReason.JARVIS_SAFETY_RESERVE, reported.blockReason)
+        assertEquals(1800L * mib, reported.minimumBytes)
+        assertEquals(130L * mib, reported.shortfallBytes)
+        assertTrue(LocalGemmaMemoryAdmissionPolicy.shouldAttemptRecovery(reported))
+
+        val recovered = LocalGemmaMemoryAdmissionPolicy.evaluate(
+            availableBytes = 1840L * mib,
+            lowMemory = false,
+            backendName = "gpu",
+        )
+        assertTrue(recovered.allowed)
+        assertEquals(null, recovered.blockReason)
+    }
+
+    @Test
+    fun phoneGemmaMemoryAdmissionDoesNotWaitWhenAndroidReportsLowMemory() {
+        val mib = 1024L * 1024L
+        val reported = LocalGemmaMemoryAdmissionPolicy.evaluate(
+            availableBytes = 1670L * mib,
+            lowMemory = true,
+            backendName = "gpu",
+        )
+
+        assertFalse(reported.allowed)
+        assertEquals(LocalGemmaMemoryBlockReason.ANDROID_LOW_MEMORY, reported.blockReason)
+        assertFalse(LocalGemmaMemoryAdmissionPolicy.shouldAttemptRecovery(reported))
+    }
+
+    @Test
+    fun phoneGemmaOperationAdmissionSerializesGenerationAndValidationBeforeWakePause() {
+        val admission = LocalGemmaOperationAdmission()
+        val executor = Executors.newFixedThreadPool(2)
+        val ready = CountDownLatch(2)
+        val start = CountDownLatch(1)
+        val requestIds = listOf("request-a", "request-b")
+
+        try {
+            val futures = requestIds.map { requestId ->
+                executor.submit<LocalGemmaGenerationAdmissionResult> {
+                    ready.countDown()
+                    start.await()
+                    admission.tryAcquireAndPublishGeneration(requestId, {})
+                }
+            }
+            assertTrue("Concurrent admission workers did not become ready", ready.await(1, TimeUnit.SECONDS))
+            start.countDown()
+            val results = futures.map { it.get(1, TimeUnit.SECONDS) }
+
+            assertEquals(1, results.count { it == LocalGemmaGenerationAdmissionResult.ACQUIRED })
+            assertEquals(1, results.count { it == LocalGemmaGenerationAdmissionResult.BUSY })
+            val acquiredRequestId = requestIds[results.indexOf(LocalGemmaGenerationAdmissionResult.ACQUIRED)]
+            assertFalse(admission.tryAcquireValidation())
+            admission.releaseGeneration(acquiredRequestId)
+
+            assertTrue(admission.tryAcquireValidation())
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.BUSY,
+                admission.tryAcquireAndPublishGeneration("request-c", {}),
+            )
+            assertFalse(admission.tryAcquireValidation())
+            admission.releaseValidation()
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.ACQUIRED,
+                admission.tryAcquireAndPublishGeneration("request-c", {}),
+            )
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.DUPLICATE,
+                admission.tryAcquireAndPublishGeneration("request-c", {}),
+            )
+            admission.releaseGeneration("request-c")
+            assertFalse(admission.hasActiveOperation())
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun phoneGemmaGenerationPublicationIsAtomicWithShutdownAdmission() {
+        val admission = LocalGemmaOperationAdmission()
+        val executor = Executors.newFixedThreadPool(2)
+        val publicationEntered = CountDownLatch(1)
+        val allowPublication = CountDownLatch(1)
+        val publicationFinished = CountDownLatch(1)
+        val shutdownStarted = CountDownLatch(1)
+        val shutdownFinished = CountDownLatch(1)
+
+        try {
+            val generation = executor.submit<LocalGemmaGenerationAdmissionResult> {
+                admission.tryAcquireAndPublishGeneration("request-published") {
+                    publicationEntered.countDown()
+                    allowPublication.await()
+                    publicationFinished.countDown()
+                }
+            }
+            assertTrue(publicationEntered.await(1, TimeUnit.SECONDS))
+
+            val shutdown = executor.submit<Boolean> {
+                shutdownStarted.countDown()
+                try {
+                    admission.beginShutdown()
+                } finally {
+                    shutdownFinished.countDown()
+                }
+            }
+            assertTrue(shutdownStarted.await(1, TimeUnit.SECONDS))
+            assertFalse(shutdownFinished.await(100, TimeUnit.MILLISECONDS))
+
+            allowPublication.countDown()
+            assertTrue(publicationFinished.await(1, TimeUnit.SECONDS))
+            assertEquals(LocalGemmaGenerationAdmissionResult.ACQUIRED, generation.get(1, TimeUnit.SECONDS))
+            assertTrue(shutdownFinished.await(1, TimeUnit.SECONDS))
+            assertTrue(shutdown.get(1, TimeUnit.SECONDS))
+
+            admission.releaseGeneration("request-published")
+            admission.awaitShutdownDrain()
+            admission.endShutdown()
+            assertFalse(admission.hasActiveOperation())
+        } finally {
+            allowPublication.countDown()
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun phoneGemmaOperationAdmissionBlocksStartsDuringMaintenanceAndShutdown() {
+        val admission = LocalGemmaOperationAdmission()
+        val executor = Executors.newSingleThreadExecutor()
+
+        try {
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.ACQUIRED,
+                admission.tryAcquireAndPublishGeneration("request-active", {}),
+            )
+            assertTrue(admission.beginShutdown())
+            assertFalse(admission.beginShutdown())
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.BUSY,
+                admission.tryAcquireAndPublishGeneration("request-blocked", {}),
+            )
+            assertFalse(admission.tryAcquireValidation())
+            assertFalse(admission.tryAcquireMaintenance())
+
+            val shutdownWaitFinished = CountDownLatch(1)
+            val shutdownDrained = executor.submit<Boolean> {
+                try {
+                    admission.awaitShutdownDrain()
+                    true
+                } finally {
+                    shutdownWaitFinished.countDown()
+                }
+            }
+            assertFalse(shutdownWaitFinished.await(100, TimeUnit.MILLISECONDS))
+            admission.releaseGeneration("request-active")
+            assertTrue(shutdownWaitFinished.await(1, TimeUnit.SECONDS))
+            assertTrue(shutdownDrained.get(1, TimeUnit.SECONDS))
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.BUSY,
+                admission.tryAcquireAndPublishGeneration("request-still-blocked", {}),
+            )
+            admission.endShutdown()
+            assertFalse(admission.hasActiveOperation())
+
+            assertTrue(admission.tryAcquireMaintenance())
+            assertFalse(admission.tryAcquireMaintenance())
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.BUSY,
+                admission.tryAcquireAndPublishGeneration("request-during-maintenance", {}),
+            )
+            assertFalse(admission.tryAcquireValidation())
+            admission.releaseMaintenance()
+            assertFalse(admission.hasActiveOperation())
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun localInferenceRecoveryHonorsCurrentCaptureAndTalkModeState() {
+        assertEquals(
+            WakeWordLocalInferenceRecoveryAction.ORDINARY_SCAN,
+            WakeWordLocalInferencePolicy.recoveryAction(
+                captureWasRequested = true,
+                captureCurrentlyRequested = true,
+                talkModeEnabled = false,
+            ),
+        )
+        assertEquals(
+            WakeWordLocalInferenceRecoveryAction.TALK_MODE,
+            WakeWordLocalInferencePolicy.recoveryAction(
+                captureWasRequested = true,
+                captureCurrentlyRequested = true,
+                talkModeEnabled = true,
+            ),
+        )
+        assertEquals(
+            WakeWordLocalInferenceRecoveryAction.NONE,
+            WakeWordLocalInferencePolicy.recoveryAction(
+                captureWasRequested = true,
+                captureCurrentlyRequested = false,
+                talkModeEnabled = false,
+            ),
+        )
+        assertEquals(
+            WakeWordLocalInferenceRecoveryAction.NONE,
+            WakeWordLocalInferencePolicy.recoveryAction(
+                captureWasRequested = false,
+                captureCurrentlyRequested = true,
+                talkModeEnabled = true,
+            ),
+        )
+    }
+
+    @Test
+    fun talkModeRecoveryOnlyRearmsAfterSessionReturnsToListening() {
+        assertTrue(
+            OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(
+                OutsideAppVoiceState.LISTENING,
+            ),
+        )
+        for (state in listOf(
+            OutsideAppVoiceState.IDLE,
+            OutsideAppVoiceState.WORKING,
+            OutsideAppVoiceState.SPEAKING,
+            OutsideAppVoiceState.APPROVAL,
+            OutsideAppVoiceState.PAUSED,
+        )) {
+            assertFalse(
+                "Talk Mode must stay paused while the session is $state",
+                OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(state),
+            )
+        }
+    }
+
+    @Test
+    fun wakeCaptureResumesWhenWorkingOrApprovalReturnsToListening() {
+        for (previousState in listOf(OutsideAppVoiceState.WORKING, OutsideAppVoiceState.APPROVAL)) {
+            assertTrue(
+                OutsideAppVoiceSessionStateMachine.shouldResumeWakeCapture(
+                    previousState,
+                    OutsideAppVoiceState.LISTENING,
+                ),
+            )
+        }
+        for (previousState in listOf(
+            OutsideAppVoiceState.IDLE,
+            OutsideAppVoiceState.LISTENING,
+            OutsideAppVoiceState.SPEAKING,
+            OutsideAppVoiceState.PAUSED,
+        )) {
+            assertFalse(
+                "Unexpected automatic wake resume from $previousState",
+                OutsideAppVoiceSessionStateMachine.shouldResumeWakeCapture(
+                    previousState,
+                    OutsideAppVoiceState.LISTENING,
+                ),
+            )
+        }
+        assertFalse(
+            OutsideAppVoiceSessionStateMachine.shouldResumeWakeCapture(
+                OutsideAppVoiceState.APPROVAL,
+                OutsideAppVoiceState.WORKING,
+            ),
+        )
     }
 
     @Test

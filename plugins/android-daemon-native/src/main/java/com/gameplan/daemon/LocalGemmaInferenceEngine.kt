@@ -2,6 +2,7 @@ package com.gameplan.daemon
 
 import android.app.ActivityManager
 import android.content.Context
+import android.os.SystemClock
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
@@ -27,7 +28,176 @@ import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicLong
+
+internal enum class LocalGemmaMemoryBlockReason(val wireName: String) {
+    ANDROID_LOW_MEMORY("android_low_memory"),
+    JARVIS_SAFETY_RESERVE("jarvis_safety_reserve"),
+}
+
+internal data class LocalGemmaMemoryAdmissionDecision(
+    val allowed: Boolean,
+    val minimumBytes: Long,
+    val shortfallBytes: Long,
+    val blockReason: LocalGemmaMemoryBlockReason? = null,
+)
+
+internal object LocalGemmaMemoryAdmissionPolicy {
+    const val MIN_GPU_AVAILABLE_MEMORY_BYTES = 1800L * 1024L * 1024L
+    const val MIN_NPU_AVAILABLE_MEMORY_BYTES = 1800L * 1024L * 1024L
+    const val MIN_CPU_AVAILABLE_MEMORY_BYTES = 7000L * 1024L * 1024L
+    const val RECOVERY_MAX_SHORTFALL_BYTES = 384L * 1024L * 1024L
+    const val RECOVERY_TIMEOUT_MS = 2_000L
+    const val RECOVERY_POLL_INTERVAL_MS = 250L
+
+    fun evaluate(
+        availableBytes: Long,
+        lowMemory: Boolean,
+        backendName: String,
+    ): LocalGemmaMemoryAdmissionDecision {
+        val minimumBytes = minimumAvailableMemoryBytes(backendName)
+        val shortfallBytes = if (availableBytes == Long.MAX_VALUE) {
+            0L
+        } else {
+            (minimumBytes - availableBytes).coerceAtLeast(0L)
+        }
+        val blockReason = when {
+            lowMemory -> LocalGemmaMemoryBlockReason.ANDROID_LOW_MEMORY
+            shortfallBytes > 0L -> LocalGemmaMemoryBlockReason.JARVIS_SAFETY_RESERVE
+            else -> null
+        }
+        return LocalGemmaMemoryAdmissionDecision(
+            allowed = blockReason == null,
+            minimumBytes = minimumBytes,
+            shortfallBytes = shortfallBytes,
+            blockReason = blockReason,
+        )
+    }
+
+    fun shouldAttemptRecovery(decision: LocalGemmaMemoryAdmissionDecision): Boolean {
+        return decision.blockReason == LocalGemmaMemoryBlockReason.JARVIS_SAFETY_RESERVE &&
+            decision.shortfallBytes in 1L..RECOVERY_MAX_SHORTFALL_BYTES
+    }
+
+    fun minimumAvailableMemoryBytes(backendName: String): Long {
+        return when (backendName) {
+            "cpu" -> MIN_CPU_AVAILABLE_MEMORY_BYTES
+            "npu" -> MIN_NPU_AVAILABLE_MEMORY_BYTES
+            else -> MIN_GPU_AVAILABLE_MEMORY_BYTES
+        }
+    }
+}
+
+internal enum class LocalGemmaGenerationAdmissionResult {
+    ACQUIRED,
+    DUPLICATE,
+    BUSY,
+}
+
+internal class LocalGemmaOperationAdmission {
+    private val lock = Any()
+    private var generationRequestId: String? = null
+    private var validationActive = false
+    private var maintenanceActive = false
+    private var shutdownActive = false
+    private var shutdownDrain: CountDownLatch? = null
+
+    fun tryAcquireAndPublishGeneration(
+        requestId: String,
+        publishGeneration: () -> Unit,
+    ): LocalGemmaGenerationAdmissionResult {
+        synchronized(lock) {
+            if (generationRequestId == requestId) return LocalGemmaGenerationAdmissionResult.DUPLICATE
+            if (generationRequestId != null || validationActive || maintenanceActive || shutdownActive) {
+                return LocalGemmaGenerationAdmissionResult.BUSY
+            }
+            publishGeneration()
+            generationRequestId = requestId
+            return LocalGemmaGenerationAdmissionResult.ACQUIRED
+        }
+    }
+
+    fun releaseGeneration(requestId: String) {
+        synchronized(lock) {
+            if (generationRequestId == requestId) {
+                generationRequestId = null
+                signalShutdownDrainIfIdle()
+            }
+        }
+    }
+
+    fun tryAcquireValidation(): Boolean {
+        synchronized(lock) {
+            if (generationRequestId != null || validationActive || maintenanceActive || shutdownActive) return false
+            validationActive = true
+            return true
+        }
+    }
+
+    fun releaseValidation() {
+        synchronized(lock) {
+            validationActive = false
+            signalShutdownDrainIfIdle()
+        }
+    }
+
+    fun tryAcquireMaintenance(): Boolean {
+        synchronized(lock) {
+            if (generationRequestId != null || validationActive || maintenanceActive || shutdownActive) return false
+            maintenanceActive = true
+            return true
+        }
+    }
+
+    fun releaseMaintenance() {
+        synchronized(lock) {
+            maintenanceActive = false
+            signalShutdownDrainIfIdle()
+        }
+    }
+
+    fun beginShutdown(): Boolean {
+        synchronized(lock) {
+            if (shutdownActive) return false
+            shutdownActive = true
+            shutdownDrain = CountDownLatch(if (hasRunningOperation()) 1 else 0)
+            return true
+        }
+    }
+
+    fun awaitShutdownDrain() {
+        val drain = synchronized(lock) { shutdownDrain }
+        drain?.await()
+    }
+
+    fun endShutdown() {
+        synchronized(lock) {
+            shutdownActive = false
+            shutdownDrain = null
+        }
+    }
+
+    fun hasActiveOperation(): Boolean {
+        synchronized(lock) {
+            return generationRequestId != null || validationActive || maintenanceActive || shutdownActive
+        }
+    }
+
+    fun isValidationActive(): Boolean {
+        synchronized(lock) {
+            return validationActive
+        }
+    }
+
+    private fun hasRunningOperation(): Boolean {
+        return generationRequestId != null || validationActive || maintenanceActive
+    }
+
+    private fun signalShutdownDrainIfIdle() {
+        if (shutdownActive && !hasRunningOperation()) shutdownDrain?.countDown()
+    }
+}
 
 object LocalGemmaInferenceEngine {
     private const val PROVIDER = "android-local-gemma"
@@ -38,9 +208,6 @@ object LocalGemmaInferenceEngine {
     private const val DEFAULT_MAX_COMPLETION_TOKENS = 128
     private const val DEFAULT_CACHE_POLICY = "none"
     private const val LITERT_NO_CACHE_DIR = ":nocache"
-    private const val MIN_GPU_AVAILABLE_MEMORY_BYTES = 1800L * 1024L * 1024L
-    private const val MIN_NPU_AVAILABLE_MEMORY_BYTES = 1800L * 1024L * 1024L
-    private const val MIN_CPU_AVAILABLE_MEMORY_BYTES = 7000L * 1024L * 1024L
     private const val APPROX_CHARS_PER_TOKEN = 4
     private const val PROMPT_CHARS_PER_CONTEXT_TOKEN = 3
     private const val MIN_PROMPT_CONTEXT_RESERVE_TOKENS = 64
@@ -52,7 +219,7 @@ object LocalGemmaInferenceEngine {
 
     private val engineMutex = Mutex()
     private val generationMutex = Mutex()
-    private val activeRequestLock = Any()
+    private val operationAdmission = LocalGemmaOperationAdmission()
     private val activeRequests = ConcurrentHashMap<String, ActiveRequest>()
     private val completedRequests = AtomicLong(0)
 
@@ -73,6 +240,7 @@ object LocalGemmaInferenceEngine {
             .put("defaultCpuFallbackAllowed", DEFAULT_ALLOW_CPU_FALLBACK)
             .put("defaultCachePolicy", DEFAULT_CACHE_POLICY)
             .put("activeRequests", activeRequests.size)
+            .put("validationActive", operationAdmission.isValidationActive())
             .put("completedRequests", completedRequests.get())
             .put("supportsCancellation", true)
             .put("supportsStreaming", true)
@@ -96,28 +264,28 @@ object LocalGemmaInferenceEngine {
         val temperature = op.optDouble("temperature", DEFAULT_TEMPERATURE).coerceIn(0.0, 2.0)
         val systemInstruction = op.optString("systemInstruction", "").trim()
         val startedAtMs = System.currentTimeMillis()
-        val memory = memorySnapshot(context)
-
-        if (activeRequests.containsKey(requestId)) {
-            return OpResult(false, error = "LOCAL_MODEL_REQUEST_DUPLICATE: requestId is already active.")
-        }
-        if (prompt.length != rawPrompt.length) {
-            DaemonLog.add("local_gemma: trimmed prompt request=${shortRequestId(requestId)} chars=${rawPrompt.length}->${prompt.length} context=$contextTokens max=$maxCompletionTokens")
-        }
-        lowMemoryError(memory, backendName)?.let { error ->
-            DaemonLog.add("local_gemma: memory low request=${shortRequestId(requestId)} $error")
-            return OpResult(false, error = error)
-        }
 
         val job = Job()
         val active = ActiveRequest(requestId, model, modelFile.absolutePath, modelRevision, backendName, cachePolicy, startedAtMs, job)
         registerActiveRequest(active)?.let { return it }
-        DaemonLog.add(
-            "local_gemma: start request=${shortRequestId(requestId)} backend=$backendName cpuFallback=$allowCpuFallback cache=$cachePolicy context=$contextTokens max=$maxCompletionTokens promptChars=${prompt.length} availMem=${formatMiB(memory.availableBytes)}MB"
-        )
 
+        var wakeCaptureWasRequested = false
         var generationSucceeded = false
         return try {
+            wakeCaptureWasRequested = WakeWordService.pauseForLocalInference()
+            val memoryRecovery = recoverMemoryHeadroom(context, backendName)
+            val memory = memoryRecovery.current
+            if (prompt.length != rawPrompt.length) {
+                DaemonLog.add("local_gemma: trimmed prompt request=${shortRequestId(requestId)} chars=${rawPrompt.length}->${prompt.length} context=$contextTokens max=$maxCompletionTokens")
+            }
+            lowMemoryError(memory, backendName, memoryRecovery)?.let { error ->
+                DaemonLog.add("local_gemma: memory low request=${shortRequestId(requestId)} $error")
+                return OpResult(false, error = error)
+            }
+            DaemonLog.add(
+                "local_gemma: start request=${shortRequestId(requestId)} backend=$backendName cpuFallback=$allowCpuFallback cache=$cachePolicy context=$contextTokens max=$maxCompletionTokens promptChars=${prompt.length} availMem=${formatMiB(memory.availableBytes)}MB"
+            )
+
             var requestedAttemptBackend = backendName
             var requestedSpeculativeDecoding = speculativeDecodingPreference
             var generationRetries = 0
@@ -171,6 +339,8 @@ object LocalGemmaInferenceEngine {
                             .put("inputTrimmed", prompt.length != rawPrompt.length)
                             .put("engineKeptWarm", keepEngineWarm)
                             .put("generationRetries", generationRetries)
+                            .put("memoryRecoveryWaitMs", memoryRecovery.waitedMs)
+                            .put("memoryInitial", memoryRecovery.initial.toJson())
                             .put("memoryBefore", memory.toJson())
                             .put("memoryAfter", memorySnapshot(context).toJson())
                             .put("finishReason", attempt.finishReason)
@@ -214,7 +384,7 @@ object LocalGemmaInferenceEngine {
                             continue
                         }
                         DaemonLog.add(
-                            "local_gemma: skip_cpu_retry request=${shortRequestId(requestId)} cpuFallback=$allowCpuFallback availMem=${formatMiB(retryMemory.availableBytes)}MB minimum=${formatMiB(MIN_CPU_AVAILABLE_MEMORY_BYTES)}MB lowMemory=${retryMemory.lowMemory}"
+                            "local_gemma: skip_cpu_retry request=${shortRequestId(requestId)} cpuFallback=$allowCpuFallback availMem=${formatMiB(retryMemory.availableBytes)}MB minimum=${formatMiB(LocalGemmaMemoryAdmissionPolicy.MIN_CPU_AVAILABLE_MEMORY_BYTES)}MB lowMemory=${retryMemory.lowMemory}"
                         )
                     }
                     throw e
@@ -235,7 +405,12 @@ object LocalGemmaInferenceEngine {
                     releaseEngine(clearLastError = false)
                 }
             } finally {
-                activeRequests.remove(requestId)
+                try {
+                    WakeWordService.resumeAfterLocalInference(wakeCaptureWasRequested)
+                } finally {
+                    activeRequests.remove(requestId, active)
+                    operationAdmission.releaseGeneration(requestId)
+                }
             }
         }
     }
@@ -247,70 +422,83 @@ object LocalGemmaInferenceEngine {
         val cachePolicy = normalizeCachePolicy(op.optString("cachePolicy", DEFAULT_CACHE_POLICY))
         val contextTokens = op.optInt("contextTokens", DEFAULT_CONTEXT_TOKENS).coerceIn(512, 32768)
         val keepEngineWarm = op.optBoolean("keepEngineWarm", false)
-        val memory = memorySnapshot(context)
         val startedAtMs = System.currentTimeMillis()
 
-        if (activeRequests.isNotEmpty()) {
-            return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already generating. Wait for it to finish or cancel it before validating the local engine.")
+        if (!operationAdmission.tryAcquireValidation()) {
+            return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already generating or validating. Wait for it to finish before validating the local engine.")
         }
-        lowMemoryError(memory, backendName)?.let { error ->
-            DaemonLog.add("local_gemma: validation memory low $error")
-            return OpResult(false, error = error)
-        }
+        var wakeCaptureWasRequested = false
+        try {
+            wakeCaptureWasRequested = WakeWordService.pauseForLocalInference()
+            val memoryRecovery = recoverMemoryHeadroom(context, backendName)
+            val memory = memoryRecovery.current
+            lowMemoryError(memory, backendName, memoryRecovery)?.let { error ->
+                DaemonLog.add("local_gemma: validation memory low $error")
+                return OpResult(false, error = error)
+            }
 
-        return try {
-            var resolvedBackend = backendName
-            var resolvedSpeculativeDecoding = false
-            runBlocking {
-                generationMutex.withLock {
-                    val state = ensureEngine(
-                        context = context,
-                        modelPath = modelFile.absolutePath,
-                        modelRevision = modelRevision,
-                        backendName = backendName,
-                        allowCpuFallback = allowCpuFallback,
-                        speculativeDecodingPreference = speculativeDecodingPreference,
-                        cachePolicy = cachePolicy,
-                        contextTokens = contextTokens,
-                        memory = memorySnapshot(context),
-                    )
-                    resolvedBackend = state.backendName
-                    resolvedSpeculativeDecoding = state.speculativeDecodingEnabled
+            return try {
+                var resolvedBackend = backendName
+                var resolvedSpeculativeDecoding = false
+                runBlocking {
+                    generationMutex.withLock {
+                        val state = ensureEngine(
+                            context = context,
+                            modelPath = modelFile.absolutePath,
+                            modelRevision = modelRevision,
+                            backendName = backendName,
+                            allowCpuFallback = allowCpuFallback,
+                            speculativeDecodingPreference = speculativeDecodingPreference,
+                            cachePolicy = cachePolicy,
+                            contextTokens = contextTokens,
+                            memory = memory,
+                        )
+                        resolvedBackend = state.backendName
+                        resolvedSpeculativeDecoding = state.speculativeDecodingEnabled
+                    }
                 }
+                if (!keepEngineWarm) {
+                    releaseEngine(clearLastError = false)
+                }
+                OpResult(
+                    ok = true,
+                    data = JSONObject()
+                        .put("provider", PROVIDER)
+                        .put("runtime", RUNTIME)
+                        .put("engine", "litert-lm")
+                        .put("model", model)
+                        .put("modelRevision", modelRevision)
+                        .put("backend", resolvedBackend)
+                        .put("requestedBackend", backendName)
+                        .put("speculativeDecoding", resolvedSpeculativeDecoding)
+                        .put("speculativeDecodingPreference", speculativeDecodingPreference ?: JSONObject.NULL)
+                        .put("decodingMode", decodingModeName(resolvedSpeculativeDecoding))
+                        .put("contextTokens", contextTokens)
+                        .put("cpuFallbackAllowed", allowCpuFallback)
+                        .put("cachePolicy", cachePolicy)
+                        .put("profileId", op.optString("profileId", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                        .put("profileLabel", op.optString("profileLabel", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                        .put("memoryRecoveryWaitMs", memoryRecovery.waitedMs)
+                        .put("memoryInitial", memoryRecovery.initial.toJson())
+                        .put("memoryBefore", memory.toJson())
+                        .put("memoryAfter", memorySnapshot(context).toJson())
+                        .put("engineKeptWarm", keepEngineWarm)
+                        .put("durationMs", System.currentTimeMillis() - startedAtMs)
+                        .put("message", "Phone Gemma LiteRT-LM engine validated on this device.")
+                ).also {
+                    DaemonLog.add("local_gemma: validation OK backend=$resolvedBackend mode=${decodingModeName(resolvedSpeculativeDecoding)} cache=$cachePolicy durationMs=${System.currentTimeMillis() - startedAtMs}")
+                }
+            } catch (e: Throwable) {
+                val detail = e.message ?: e.javaClass.simpleName
+                DaemonLog.add("local_gemma: validation failed $detail")
+                OpResult(false, error = "LOCAL_MODEL_VALIDATION_FAILED: $detail")
             }
-            if (!keepEngineWarm) {
-                releaseEngine(clearLastError = false)
+        } finally {
+            try {
+                WakeWordService.resumeAfterLocalValidation(wakeCaptureWasRequested)
+            } finally {
+                operationAdmission.releaseValidation()
             }
-            OpResult(
-                ok = true,
-                data = JSONObject()
-                    .put("provider", PROVIDER)
-                    .put("runtime", RUNTIME)
-                    .put("engine", "litert-lm")
-                    .put("model", model)
-                    .put("modelRevision", modelRevision)
-                    .put("backend", resolvedBackend)
-                    .put("requestedBackend", backendName)
-                    .put("speculativeDecoding", resolvedSpeculativeDecoding)
-                    .put("speculativeDecodingPreference", speculativeDecodingPreference ?: JSONObject.NULL)
-                    .put("decodingMode", decodingModeName(resolvedSpeculativeDecoding))
-                    .put("contextTokens", contextTokens)
-                    .put("cpuFallbackAllowed", allowCpuFallback)
-                    .put("cachePolicy", cachePolicy)
-                    .put("profileId", op.optString("profileId", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
-                    .put("profileLabel", op.optString("profileLabel", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
-                    .put("memoryBefore", memory.toJson())
-                    .put("memoryAfter", memorySnapshot(context).toJson())
-                    .put("engineKeptWarm", keepEngineWarm)
-                    .put("durationMs", System.currentTimeMillis() - startedAtMs)
-                    .put("message", "Phone Gemma LiteRT-LM engine validated on this device.")
-            ).also {
-                DaemonLog.add("local_gemma: validation OK backend=$resolvedBackend mode=${decodingModeName(resolvedSpeculativeDecoding)} cache=$cachePolicy durationMs=${System.currentTimeMillis() - startedAtMs}")
-            }
-        } catch (e: Throwable) {
-            val detail = e.message ?: e.javaClass.simpleName
-            DaemonLog.add("local_gemma: validation failed $detail")
-            OpResult(false, error = "LOCAL_MODEL_VALIDATION_FAILED: $detail")
         }
     }
 
@@ -386,26 +574,60 @@ object LocalGemmaInferenceEngine {
         }
     }
 
-    fun shutdown() {
+    fun prepareForModelReplacement(): Boolean {
+        if (!operationAdmission.beginShutdown()) return false
+        try {
+            shutdownBlocking()
+            return true
+        } catch (e: Throwable) {
+            operationAdmission.endShutdown()
+            throw e
+        }
+    }
+
+    fun finishModelReplacement() {
+        operationAdmission.endShutdown()
+    }
+
+    fun shutdownAsync() {
+        if (!operationAdmission.beginShutdown()) return
+        Thread({
+            try {
+                shutdownBlocking()
+            } catch (e: Throwable) {
+                DaemonLog.add("local_gemma: asynchronous shutdown failed: ${e.message}")
+            } finally {
+                operationAdmission.endShutdown()
+            }
+        }, "jarvis-local-gemma-shutdown").start()
+    }
+
+    private fun shutdownBlocking() {
         runBlocking {
             activeRequests.values.toList().forEach { request ->
                 request.conversation?.cancelProcess()
                 request.job.cancel()
             }
             activeRequests.values.toList().forEach { it.job.cancelAndJoin() }
+            operationAdmission.awaitShutdownDrain()
             generationMutex.withLock {
                 engineMutex.withLock {
-                    engineState?.engine?.close()
+                    val closingEngine = engineState?.engine
                     engineState = null
                     lastEngineError = null
+                    closingEngine?.close()
                 }
             }
         }
     }
 
     fun releaseWarmEngine() {
-        if (activeRequests.isNotEmpty()) return
-        releaseEngine(clearLastError = false)
+        if (!operationAdmission.tryAcquireMaintenance()) return
+        try {
+            releaseEngine(clearLastError = false)
+        } finally {
+            operationAdmission.releaseMaintenance()
+        }
     }
 
     private fun runGenerationAttempt(
@@ -479,14 +701,16 @@ object LocalGemmaInferenceEngine {
     }
 
     private fun registerActiveRequest(active: ActiveRequest): OpResult? {
-        synchronized(activeRequestLock) {
-            if (activeRequests.containsKey(active.requestId)) {
+        when (operationAdmission.tryAcquireAndPublishGeneration(active.requestId) {
+            activeRequests[active.requestId] = active
+        }) {
+            LocalGemmaGenerationAdmissionResult.DUPLICATE -> {
                 return OpResult(false, error = "LOCAL_MODEL_REQUEST_DUPLICATE: requestId is already active.")
             }
-            if (activeRequests.isNotEmpty()) {
-                return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already generating. Wait for it to finish or cancel it before sending another message.")
+            LocalGemmaGenerationAdmissionResult.BUSY -> {
+                return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already generating or validating. Wait for it to finish before sending another message.")
             }
-            activeRequests[active.requestId] = active
+            LocalGemmaGenerationAdmissionResult.ACQUIRED -> Unit
         }
         return null
     }
@@ -499,11 +723,50 @@ object LocalGemmaInferenceEngine {
         return MemorySnapshot(info.availMem, info.threshold, info.lowMemory)
     }
 
-    private fun lowMemoryError(memory: MemorySnapshot, backendName: String): String? {
-        val minimumBytes = minimumAvailableMemoryBytes(backendName)
-        val underMinimum = memory.availableBytes != Long.MAX_VALUE && memory.availableBytes < minimumBytes
-        if (!memory.lowMemory && !underMinimum) return null
-        return "LOCAL_MODEL_DEVICE_MEMORY_LOW: backend=$backendName available=${formatMiB(memory.availableBytes)}MB threshold=${formatMiB(memory.thresholdBytes)}MB minimum=${formatMiB(minimumBytes)}MB lowMemory=${memory.lowMemory}"
+    private fun recoverMemoryHeadroom(context: Context, backendName: String): MemoryRecoveryResult {
+        val initial = memorySnapshot(context)
+        val initialDecision = LocalGemmaMemoryAdmissionPolicy.evaluate(
+            availableBytes = initial.availableBytes,
+            lowMemory = initial.lowMemory,
+            backendName = backendName,
+        )
+        if (!LocalGemmaMemoryAdmissionPolicy.shouldAttemptRecovery(initialDecision)) {
+            return MemoryRecoveryResult(initial, initial, 0L)
+        }
+
+        val startedAtMs = SystemClock.elapsedRealtime()
+        var current = initial
+        while (SystemClock.elapsedRealtime() - startedAtMs < LocalGemmaMemoryAdmissionPolicy.RECOVERY_TIMEOUT_MS) {
+            SystemClock.sleep(LocalGemmaMemoryAdmissionPolicy.RECOVERY_POLL_INTERVAL_MS)
+            current = memorySnapshot(context)
+            val decision = LocalGemmaMemoryAdmissionPolicy.evaluate(
+                availableBytes = current.availableBytes,
+                lowMemory = current.lowMemory,
+                backendName = backendName,
+            )
+            if (decision.allowed || decision.blockReason == LocalGemmaMemoryBlockReason.ANDROID_LOW_MEMORY) break
+        }
+        val waitedMs = SystemClock.elapsedRealtime() - startedAtMs
+        DaemonLog.add(
+            "local_gemma: memory recovery backend=$backendName available=${formatMiB(initial.availableBytes)}->${formatMiB(current.availableBytes)}MB waitedMs=$waitedMs"
+        )
+        return MemoryRecoveryResult(initial, current, waitedMs)
+    }
+
+    private fun lowMemoryError(
+        memory: MemorySnapshot,
+        backendName: String,
+        recovery: MemoryRecoveryResult? = null,
+    ): String? {
+        val decision = LocalGemmaMemoryAdmissionPolicy.evaluate(
+            availableBytes = memory.availableBytes,
+            lowMemory = memory.lowMemory,
+            backendName = backendName,
+        )
+        if (decision.allowed) return null
+        val initialAvailable = recovery?.initial?.availableBytes ?: memory.availableBytes
+        val recoveryWaitMs = recovery?.waitedMs ?: 0L
+        return "LOCAL_MODEL_DEVICE_MEMORY_LOW: reason=${decision.blockReason?.wireName} backend=$backendName available=${formatMiB(memory.availableBytes)}MB initialAvailable=${formatMiB(initialAvailable)}MB threshold=${formatMiB(memory.thresholdBytes)}MB minimum=${formatMiB(decision.minimumBytes)}MB shortfall=${formatMiB(decision.shortfallBytes)}MB lowMemory=${memory.lowMemory} recoveryWaitMs=$recoveryWaitMs"
     }
 
     private fun trimPromptForContext(prompt: String, contextTokens: Int, maxCompletionTokens: Int): String {
@@ -526,17 +789,13 @@ object LocalGemmaInferenceEngine {
     }
 
     private fun minimumAvailableMemoryBytes(backendName: String): Long {
-        return when (backendName) {
-            "cpu" -> MIN_CPU_AVAILABLE_MEMORY_BYTES
-            "npu" -> MIN_NPU_AVAILABLE_MEMORY_BYTES
-            else -> MIN_GPU_AVAILABLE_MEMORY_BYTES
-        }
+        return LocalGemmaMemoryAdmissionPolicy.minimumAvailableMemoryBytes(backendName)
     }
 
     private fun canUseCpuBackend(memory: MemorySnapshot): Boolean {
         return !memory.lowMemory &&
             memory.availableBytes != Long.MAX_VALUE &&
-            memory.availableBytes >= MIN_CPU_AVAILABLE_MEMORY_BYTES
+            memory.availableBytes >= LocalGemmaMemoryAdmissionPolicy.MIN_CPU_AVAILABLE_MEMORY_BYTES
     }
 
     private fun formatMiB(bytes: Long): Long {
@@ -634,7 +893,7 @@ object LocalGemmaInferenceEngine {
                 if (!allowCpuFallback) {
                     "; cpu fallback skipped: disabled by default to avoid Android low-memory kills"
                 } else {
-                    "; cpu fallback skipped: available=${formatMiB(memory.availableBytes)}MB minimum=${formatMiB(MIN_CPU_AVAILABLE_MEMORY_BYTES)}MB lowMemory=${memory.lowMemory}"
+                    "; cpu fallback skipped: available=${formatMiB(memory.availableBytes)}MB minimum=${formatMiB(LocalGemmaMemoryAdmissionPolicy.MIN_CPU_AVAILABLE_MEMORY_BYTES)}MB lowMemory=${memory.lowMemory}"
                 }
             } else {
                 ""
@@ -792,6 +1051,12 @@ object LocalGemmaInferenceEngine {
                 .put("lowMemory", lowMemory)
         }
     }
+
+    private data class MemoryRecoveryResult(
+        val initial: MemorySnapshot,
+        val current: MemorySnapshot,
+        val waitedMs: Long,
+    )
 
     private data class GenerationAttemptResult(
         val text: String,

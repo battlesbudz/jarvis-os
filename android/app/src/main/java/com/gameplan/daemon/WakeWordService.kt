@@ -17,6 +17,30 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
 import java.util.Locale
+import java.util.concurrent.CountDownLatch
+
+internal enum class WakeWordLocalInferenceRecoveryAction {
+    NONE,
+    ORDINARY_SCAN,
+    TALK_MODE,
+}
+
+internal object WakeWordLocalInferencePolicy {
+    fun recoveryAction(
+        captureWasRequested: Boolean,
+        captureCurrentlyRequested: Boolean,
+        talkModeEnabled: Boolean,
+    ): WakeWordLocalInferenceRecoveryAction {
+        if (!captureWasRequested || !captureCurrentlyRequested) {
+            return WakeWordLocalInferenceRecoveryAction.NONE
+        }
+        return if (talkModeEnabled) {
+            WakeWordLocalInferenceRecoveryAction.TALK_MODE
+        } else {
+            WakeWordLocalInferenceRecoveryAction.ORDINARY_SCAN
+        }
+    }
+}
 
 /**
  * Persistent foreground service that listens for wake words using Android's SpeechRecognizer.
@@ -41,6 +65,7 @@ class WakeWordService : Service() {
         private const val NOTIFICATION_ID = 1002
         private const val MIN_RECOGNIZER_RESTART_DELAY_MS = 1000L
         private const val RECOGNIZER_RESTART_FAILURE_DELAY_MS = 3000L
+        private const val LOCAL_INFERENCE_TALK_MODE_RECOVERY_DELAY_MS = 10_000L
 
         const val ACTION_START = "com.gameplan.daemon.WAKE_WORD_START"
         const val ACTION_STOP = "com.gameplan.daemon.WAKE_WORD_STOP"
@@ -68,6 +93,46 @@ class WakeWordService : Service() {
             instance?.handlePauseForUserControl()
         }
 
+        fun pauseForResponse() {
+            instance?.handlePauseForResponse()
+        }
+
+        /**
+         * Releases Android speech recognition before Phone Gemma allocates its
+         * accelerator buffers. Returns whether wake capture was requested when
+         * inference began; recovery also checks the latest user setting.
+         */
+        fun pauseForLocalInference(): Boolean {
+            return instance?.handlePauseForLocalInference() ?: false
+        }
+
+        fun resumeAfterLocalInference(captureWasRequested: Boolean) {
+            val service = instance ?: return
+            service.localInferencePaused = false
+            when (service.localInferenceRecoveryAction(captureWasRequested)) {
+                WakeWordLocalInferenceRecoveryAction.NONE -> Unit
+                WakeWordLocalInferenceRecoveryAction.ORDINARY_SCAN -> service.handleResumeAfterLocalInference()
+                WakeWordLocalInferenceRecoveryAction.TALK_MODE -> service.scheduleTalkModeRecoveryAfterLocalInference()
+            }
+        }
+
+        fun resumeAfterLocalValidation(captureWasRequested: Boolean) {
+            val service = instance ?: return
+            service.localInferencePaused = false
+            when (service.localInferenceRecoveryAction(captureWasRequested)) {
+                WakeWordLocalInferenceRecoveryAction.NONE -> Unit
+                WakeWordLocalInferenceRecoveryAction.ORDINARY_SCAN -> service.handleResumeAfterLocalInference()
+                WakeWordLocalInferenceRecoveryAction.TALK_MODE -> {
+                    if (OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(
+                            OutsideAppVoiceSessionService.currentState(),
+                        )
+                    ) {
+                        service.handleTtsFinished()
+                    }
+                }
+            }
+        }
+
         fun endTalkModeForUserControl() {
             instance?.handleEndTalkModeForUserControl()
         }
@@ -86,11 +151,15 @@ class WakeWordService : Service() {
     private var speechRecognizer: SpeechRecognizer? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var wakeWords: List<String> = listOf("hey jarvis", "jarvis", "computer")
-    private var talkModeEnabled = false
-    private var active = false
+    @Volatile private var talkModeEnabled = false
+    @Volatile private var listeningRequested = false
+    @Volatile private var active = false
     private var restartRunnable: Runnable? = null
+    private var nonTalkCooldownRunnable: Runnable? = null
+    private var localInferenceRecoveryRunnable: Runnable? = null
+    @Volatile private var localInferencePaused = false
     /** True when Talk Mode is on and we are waiting to capture the user's utterance after a wake word */
-    private var capturingUtterance = false
+    @Volatile private var capturingUtterance = false
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -107,16 +176,19 @@ class WakeWordService : Service() {
                 val words = intent?.getStringArrayExtra(EXTRA_WAKE_WORDS)
                 if (!words.isNullOrEmpty()) wakeWords = words.map { it.lowercase(Locale.US) }
                 talkModeEnabled = intent?.getBooleanExtra(EXTRA_TALK_MODE, false) ?: false
+                listeningRequested = true
                 startListening()
             }
             ACTION_UPDATE -> {
                 val words = intent?.getStringArrayExtra(EXTRA_WAKE_WORDS)
                 if (!words.isNullOrEmpty()) wakeWords = words.map { it.lowercase(Locale.US) }
                 talkModeEnabled = intent?.getBooleanExtra(EXTRA_TALK_MODE, talkModeEnabled) ?: talkModeEnabled
+                listeningRequested = true
                 DaemonLog.add("wake: words updated to [${wakeWords.joinToString()}] talkMode=$talkModeEnabled")
                 if (!active) startListening()
             }
             ACTION_STOP -> {
+                listeningRequested = false
                 stopListening()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -129,6 +201,7 @@ class WakeWordService : Service() {
 
     override fun onDestroy() {
         instance = null
+        listeningRequested = false
         stopListening()
         super.onDestroy()
     }
@@ -136,8 +209,9 @@ class WakeWordService : Service() {
     // ── SpeechRecognizer ────────────────────────────────────────────────────
 
     private fun startListening() {
-        if (active) return
+        if (!listeningRequested || active || localInferencePaused) return
         cancelPendingRestart()
+        cancelNonTalkCooldownRestart()
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             DaemonLog.add("wake: SpeechRecognizer not available on this device")
             return
@@ -153,7 +227,7 @@ class WakeWordService : Service() {
             return
         }
         mainHandler.post {
-            if (active) return@post
+            if (!listeningRequested || active || localInferencePaused) return@post
             try {
                 destroyRecognizer()
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this@WakeWordService)
@@ -171,6 +245,8 @@ class WakeWordService : Service() {
     private fun stopListening() {
         active = false
         cancelPendingRestart()
+        cancelNonTalkCooldownRestart()
+        cancelLocalInferenceRecovery()
         mainHandler.post {
             try {
                 speechRecognizer?.stopListening()
@@ -272,8 +348,9 @@ class WakeWordService : Service() {
                     }
                     WebSocketService.sendEvent(event.toString())
                     DaemonLog.add("talk: sent utterance \"${utterance.take(60)}\"")
-                    // Re-arm for next wake word after sending utterance
-                    if (active) restartRecognizer()
+                    // Release capture while the server chooses the response
+                    // route. Only the local engine claims local-inference pause.
+                    pauseForResponse()
                 } else {
                     // Empty result — re-arm
                     capturingUtterance = false
@@ -344,9 +421,7 @@ class WakeWordService : Service() {
             active = false
             cancelPendingRestart()
             mainHandler.post { destroyRecognizer() }
-            mainHandler.postDelayed({
-                if (!active) startListening()
-            }, 10_000L)
+            scheduleNonTalkCooldownRestart()
         }
     }
 
@@ -396,6 +471,7 @@ class WakeWordService : Service() {
         // Set active=false so startListening() in handleTtsFinished() is not a no-op
         active = false
         cancelPendingRestart()
+        cancelLocalInferenceRecovery()
         mainHandler.post { destroyRecognizer() }
     }
 
@@ -405,6 +481,7 @@ class WakeWordService : Service() {
         capturingUtterance = false
         active = false
         cancelPendingRestart()
+        cancelLocalInferenceRecovery()
         mainHandler.post {
             try {
                 destroyRecognizer()
@@ -414,6 +491,110 @@ class WakeWordService : Service() {
         }
     }
 
+    private fun handlePauseForResponse() {
+        if (!talkModeEnabled) return
+        capturingUtterance = false
+        active = false
+        cancelPendingRestart()
+        cancelLocalInferenceRecovery()
+        mainHandler.post { destroyRecognizer() }
+    }
+
+    private fun handlePauseForLocalInference(): Boolean {
+        val captureWasRequested = listeningRequested
+        localInferencePaused = true
+        DaemonLog.add("wake: releasing speech recognizer for Phone Gemma")
+        capturingUtterance = false
+        active = false
+        cancelPendingRestart()
+        cancelNonTalkCooldownRestart()
+        cancelLocalInferenceRecovery()
+        releaseRecognizerBeforeLocalInference()
+        return captureWasRequested
+    }
+
+    private fun localInferenceRecoveryAction(
+        captureWasRequested: Boolean,
+    ): WakeWordLocalInferenceRecoveryAction {
+        return WakeWordLocalInferencePolicy.recoveryAction(
+            captureWasRequested = captureWasRequested,
+            captureCurrentlyRequested = listeningRequested,
+            talkModeEnabled = talkModeEnabled,
+        )
+    }
+
+    private fun releaseRecognizerBeforeLocalInference() {
+        if (Looper.myLooper() == mainHandler.looper) {
+            destroyRecognizer()
+            return
+        }
+        val recognizerReleased = CountDownLatch(1)
+        mainHandler.post {
+            try {
+                destroyRecognizer()
+            } finally {
+                recognizerReleased.countDown()
+            }
+        }
+        try {
+            recognizerReleased.await()
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw IllegalStateException(
+                "LOCAL_MODEL_WAKE_RESOURCE_RELEASE_INTERRUPTED: Phone Gemma did not start because speech recognition release was interrupted.",
+                e,
+            )
+        }
+    }
+
+    private fun handleResumeAfterLocalInference() {
+        if (talkModeEnabled || active) return
+        cancelLocalInferenceRecovery()
+        DaemonLog.add("wake: resuming wake scan after Phone Gemma")
+        startListening()
+    }
+
+    private fun scheduleTalkModeRecoveryAfterLocalInference() {
+        if (!talkModeEnabled || active) return
+        if (!OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(
+                OutsideAppVoiceSessionService.currentState(),
+            )
+        ) return
+        cancelLocalInferenceRecovery()
+        val recovery = Runnable {
+            localInferenceRecoveryRunnable = null
+            if (!talkModeEnabled || active) return@Runnable
+            if (!OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(
+                    OutsideAppVoiceSessionService.currentState(),
+                )
+            ) return@Runnable
+            DaemonLog.add("wake: Phone Gemma finished without TTS re-arm; resuming Talk Mode")
+            handleTtsFinished()
+        }
+        localInferenceRecoveryRunnable = recovery
+        mainHandler.postDelayed(recovery, LOCAL_INFERENCE_TALK_MODE_RECOVERY_DELAY_MS)
+    }
+
+    private fun cancelLocalInferenceRecovery() {
+        localInferenceRecoveryRunnable?.let { mainHandler.removeCallbacks(it) }
+        localInferenceRecoveryRunnable = null
+    }
+
+    private fun scheduleNonTalkCooldownRestart() {
+        cancelNonTalkCooldownRestart()
+        val restart = Runnable {
+            nonTalkCooldownRunnable = null
+            if (!active && !localInferencePaused && !talkModeEnabled) startListening()
+        }
+        nonTalkCooldownRunnable = restart
+        mainHandler.postDelayed(restart, 10_000L)
+    }
+
+    private fun cancelNonTalkCooldownRestart() {
+        nonTalkCooldownRunnable?.let { mainHandler.removeCallbacks(it) }
+        nonTalkCooldownRunnable = null
+    }
+
     private fun handleEndTalkModeForUserControl() {
         if (!talkModeEnabled && !capturingUtterance) return
         DaemonLog.add("wake: ending talk mode capture")
@@ -421,6 +602,8 @@ class WakeWordService : Service() {
         capturingUtterance = false
         active = false
         cancelPendingRestart()
+        cancelNonTalkCooldownRestart()
+        cancelLocalInferenceRecovery()
         mainHandler.post {
             try {
                 destroyRecognizer()
@@ -432,14 +615,15 @@ class WakeWordService : Service() {
     }
 
     private fun handleTtsFinished() {
-        if (!talkModeEnabled) return
+        if (!talkModeEnabled || localInferencePaused) return
+        cancelLocalInferenceRecovery()
         DaemonLog.add("wake: TTS done — re-arming mic for next utterance (talk mode)")
         // Stay in utterance-capture mode: the next speech result is treated as
         // the next user turn without requiring another wake word.
         capturingUtterance = true
         cancelPendingRestart()
         mainHandler.postDelayed({
-            if (!active) startListening()
+            if (!active && !localInferencePaused) startListening()
         }, 600L)
         // Safety timeout: fall back to wake-word scan if no utterance in 15s
         mainHandler.postDelayed({

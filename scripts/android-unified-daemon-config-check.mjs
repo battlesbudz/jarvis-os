@@ -210,6 +210,14 @@ function assertIncludes(contents, expected, source) {
   }
 }
 
+function assertAppearsBefore(contents, first, second, source) {
+  const firstIndex = contents.indexOf(first);
+  const secondIndex = contents.indexOf(second);
+  if (firstIndex < 0 || secondIndex < 0 || firstIndex >= secondIndex) {
+    throw new Error(`${source} must place ${first} before ${second}`);
+  }
+}
+
 function assertExcludes(contents, forbidden, source) {
   const normalizedContents = contents.replace(/\r\n/g, "\n");
   const normalizedForbidden = forbidden.replace(/\r\n/g, "\n");
@@ -413,6 +421,10 @@ for (const [contents, source] of [
 ]) {
   assertIncludes(contents, "class OutsideAppVoiceSessionService : Service()", source);
   assertIncludes(contents, "OutsideAppVoiceSessionStateMachine", source);
+  assertIncludes(contents, "fun shouldRecoverTalkModeAfterLocalInference(state: OutsideAppVoiceState): Boolean", source);
+  assertIncludes(contents, "return state == OutsideAppVoiceState.LISTENING", source);
+  assertIncludes(contents, "fun shouldResumeWakeCapture(", source);
+  assertIncludes(contents, "previousState == OutsideAppVoiceState.WORKING || previousState == OutsideAppVoiceState.APPROVAL", source);
   assertIncludes(contents, "ACTION_PAUSE", source);
   assertIncludes(contents, "ACTION_RESUME", source);
   assertIncludes(contents, "ACTION_END", source);
@@ -462,6 +474,12 @@ for (const [contents, source] of [
   assertIncludes(contents, "private val mainHandler = Handler(Looper.getMainLooper())", source);
   assertIncludes(contents, "private fun setStateFromAnyThread(nextState: OutsideAppVoiceState)", source);
   assertIncludes(contents, "private fun setState(nextState: OutsideAppVoiceState, actionName: String = nextState.wireName)", source);
+  const setStateStart = contents.indexOf("private fun setState(nextState: OutsideAppVoiceState");
+  const setStateEnd = contents.indexOf("\n    private fun endSession()", setStateStart);
+  const setStateBody = contents.slice(setStateStart, setStateEnd);
+  assertIncludes(setStateBody, "WakeWordService.pauseForResponse()", `${source} setState`);
+  assertExcludes(setStateBody, "WakeWordService.pauseForLocalInference()", `${source} setState`);
+  assertIncludes(contents, "OutsideAppVoiceSessionStateMachine.shouldResumeWakeCapture(previousState, nextState)", source);
   assertIncludes(contents, "instance?.setStateFromAnyThread(OutsideAppVoiceState.SPEAKING)", source);
   assertIncludes(contents, "instance?.setStateFromAnyThread(OutsideAppVoiceState.LISTENING)", source);
   assertExcludes(contents, "WakeWordService.ACTION_STOP", source);
@@ -486,6 +504,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "pausedForPlayback && OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.markPlaybackSpeaking()", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.markPlaybackListening()", source);
+  assertIncludes(contents, "mediaPlayer.setOnErrorListener", source);
+  assertIncludes(contents, "voice_speak_audio: asynchronous playback error", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.clearEndedPlaybackGateForTalkModeEnable()", source);
 }
 assertIncludes(pluginTemplateJarvisVoiceInteraction, "EXTRA_SHOW_WHEN_LOCKED_TOKEN", "plugins/android-daemon-native/JarvisVoiceInteraction.kt");
@@ -588,11 +608,42 @@ for (const [contents, source] of [
   assertIncludes(contents, "val eventDelayMs = if (talkModeEnabled) 0L else 400L", source);
   assertIncludes(contents, "fun pauseForUserControl()", source);
   assertIncludes(contents, "private fun handlePauseForUserControl()", source);
+  assertIncludes(contents, "fun pauseForResponse()", source);
+  assertIncludes(contents, "private fun handlePauseForResponse()", source);
+  assertIncludes(contents, "fun pauseForLocalInference(): Boolean", source);
+  assertIncludes(contents, "private fun handlePauseForLocalInference(): Boolean", source);
+  assertIncludes(contents, "WakeWordLocalInferencePolicy.recoveryAction(", source);
+  assertIncludes(contents, "WakeWordLocalInferenceRecoveryAction.ORDINARY_SCAN", source);
+  assertIncludes(contents, "WakeWordLocalInferenceRecoveryAction.TALK_MODE", source);
+  assertIncludes(contents, "@Volatile private var listeningRequested = false", source);
+  assertIncludes(contents, "private var nonTalkCooldownRunnable: Runnable? = null", source);
+  assertIncludes(contents, "scheduleNonTalkCooldownRestart()", source);
+  assertIncludes(contents, "cancelNonTalkCooldownRestart()", source);
+  assertIncludes(contents, "private fun releaseRecognizerBeforeLocalInference()", source);
+  assertIncludes(contents, "Looper.myLooper() == mainHandler.looper", source);
+  assertIncludes(contents, "val recognizerReleased = CountDownLatch(1)", source);
+  assertIncludes(contents, "recognizerReleased.await()", source);
+  assertIncludes(contents, "fun resumeAfterLocalInference(captureWasRequested: Boolean)", source);
+  assertIncludes(contents, "fun resumeAfterLocalValidation(captureWasRequested: Boolean)", source);
+  assertIncludes(contents, "@Volatile private var localInferencePaused = false", source);
+  assertIncludes(contents, "if (!listeningRequested || active || localInferencePaused) return", source);
+  assertIncludes(contents, "if (!listeningRequested || active || localInferencePaused) return@post", source);
+  assertIncludes(contents, "LOCAL_INFERENCE_TALK_MODE_RECOVERY_DELAY_MS = 10_000L", source);
+  assertIncludes(contents, "scheduleTalkModeRecoveryAfterLocalInference()", source);
+  assertIncludes(contents, "OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(", source);
+  assertExcludes(contents, "OutsideAppVoiceSessionService.currentState() == OutsideAppVoiceState.PAUSED", source);
+  const onResultsStart = contents.indexOf("override fun onResults(results: Bundle?)");
+  const onResultsEnd = contents.indexOf("\n        override fun onPartialResults", onResultsStart);
+  const onResultsBody = contents.slice(onResultsStart, onResultsEnd);
+  assertIncludes(onResultsBody, "pauseForResponse()", `${source} onResults`);
+  assertExcludes(onResultsBody, "pauseForLocalInference()", `${source} onResults`);
+  assertExcludes(contents, "// Re-arm for next wake word after sending utterance", source);
   assertIncludes(contents, "fun endTalkModeForUserControl()", source);
   assertIncludes(contents, "private fun handleEndTalkModeForUserControl()", source);
   assertIncludes(contents, "talkModeEnabled = false", source);
   assertIncludes(contents, "speechRecognizer?.cancel()", source);
-  assertIncludes(contents, "if (!active && !capturingUtterance) return", source);
+  assertIncludes(contents, "localInferencePaused = true", source);
+  assertIncludes(contents, "if (!talkModeEnabled || localInferencePaused) return", source);
 }
 assertIncludes(webSocketService, "private fun startForegroundCompat(): Boolean", "WebSocketService.kt");
 assertIncludes(webSocketService, "Failed to start foreground daemon service", "WebSocketService.kt");
@@ -611,6 +662,7 @@ assertIncludes(webSocketService, "EXTRA_BOOTSTRAP_TOKEN", "WebSocketService.kt")
 assertIncludes(webSocketService, '"android_app_bootstrap"', "WebSocketService.kt");
 assertIncludes(webSocketService, "null -> {", "WebSocketService.kt");
 assertIncludes(webSocketService, "Skipping sticky restart reconnect", "WebSocketService.kt");
+assertIncludes(webSocketService, "LocalGemmaInferenceEngine.shutdownAsync()", "WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "private var currentConnectUsesDaemonId = false", "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "private var currentConnectUsesBootstrapToken = false", "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "private var reconnectFuture: java.util.concurrent.ScheduledFuture<*>? = null", "plugins/android-daemon-native/WebSocketService.kt");
@@ -626,6 +678,7 @@ assertIncludes(pluginTemplateWebSocket, "EXTRA_BOOTSTRAP_TOKEN", "plugins/androi
 assertIncludes(pluginTemplateWebSocket, '"android_app_bootstrap"', "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "null -> {", "plugins/android-daemon-native/WebSocketService.kt");
 assertIncludes(pluginTemplateWebSocket, "Skipping sticky restart reconnect", "plugins/android-daemon-native/WebSocketService.kt");
+assertIncludes(pluginTemplateWebSocket, "LocalGemmaInferenceEngine.shutdownAsync()", "plugins/android-daemon-native/WebSocketService.kt");
 assertExcludes(screenRecordHandler, "Jarvis app app", "ScreenRecordHandler.kt");
 assertExcludes(screenRecordHandler, "Allow Screen Capture", "ScreenRecordHandler.kt");
 assertExcludes(pluginTemplateScreenRecord, "Jarvis app app", "plugins/android-daemon-native/ScreenRecordHandler.kt");
@@ -718,6 +771,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "fun smokeTest(context: Context, op: JSONObject): OpResult", source);
   assertIncludes(contents, '.put("keepEngineWarm", false)', source);
   assertIncludes(contents, "LocalGemmaInferenceEngine.releaseWarmEngine()", source);
+  assertIncludes(contents, "LocalGemmaInferenceEngine.prepareForModelReplacement()", source);
+  assertIncludes(contents, "LocalGemmaInferenceEngine.finishModelReplacement()", source);
   assertIncludes(contents, "val validationError = if (engineValidated) null else lastEngineError ?: engineLastValidationError", source);
   assertIncludes(contents, "preserveExistingValidation", source);
   assertIncludes(contents, "sha256=$metadataSha;$fileRevision", source);
@@ -751,6 +806,30 @@ for (const [contents, source] of [
   assertIncludes(contents, "MIN_NPU_AVAILABLE_MEMORY_BYTES", source);
   assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES", source);
   assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES = 7000L * 1024L * 1024L", source);
+  assertIncludes(contents, "LocalGemmaMemoryAdmissionPolicy", source);
+  assertIncludes(contents, "LocalGemmaOperationAdmission", source);
+  assertIncludes(contents, "LocalGemmaGenerationAdmissionResult", source);
+  assertIncludes(contents, "tryAcquireAndPublishGeneration(active.requestId)", source);
+  assertIncludes(contents, "activeRequests[active.requestId] = active", source);
+  assertIncludes(contents, "RECOVERY_TIMEOUT_MS = 2_000L", source);
+  assertIncludes(contents, "recoverMemoryHeadroom(context, backendName)", source);
+  assertIncludes(contents, 'reason=${decision.blockReason?.wireName}', source);
+  assertIncludes(contents, "WakeWordService.pauseForLocalInference()", source);
+  assertIncludes(contents, "WakeWordService.resumeAfterLocalInference(wakeCaptureWasRequested)", source);
+  const generateStart = contents.indexOf("fun generate(context: Context");
+  const generateEnd = contents.indexOf("\n    fun validate(", generateStart);
+  const generateBody = contents.slice(generateStart, generateEnd);
+  assertAppearsBefore(generateBody, "registerActiveRequest(active)", "WakeWordService.pauseForLocalInference()", `${source} generate`);
+  assertAppearsBefore(generateBody, "WakeWordService.resumeAfterLocalInference(wakeCaptureWasRequested)", "operationAdmission.releaseGeneration(requestId)", `${source} generate cleanup`);
+  const validateStart = contents.indexOf("fun validate(context: Context");
+  const validateEnd = contents.indexOf("\n    fun cancel(", validateStart);
+  const validateBody = contents.slice(validateStart, validateEnd);
+  assertIncludes(validateBody, "WakeWordService.pauseForLocalInference()", `${source} validate`);
+  assertAppearsBefore(validateBody, "operationAdmission.tryAcquireValidation()", "WakeWordService.pauseForLocalInference()", `${source} validate`);
+  assertIncludes(validateBody, "recoverMemoryHeadroom(context, backendName)", `${source} validate`);
+  assertIncludes(validateBody, "lowMemoryError(memory, backendName, memoryRecovery)", `${source} validate`);
+  assertIncludes(validateBody, "WakeWordService.resumeAfterLocalValidation(wakeCaptureWasRequested)", `${source} validate`);
+  assertAppearsBefore(validateBody, "WakeWordService.resumeAfterLocalValidation(wakeCaptureWasRequested)", "operationAdmission.releaseValidation()", `${source} validate cleanup`);
   assertIncludes(contents, 'DEFAULT_CACHE_POLICY = "none"', source);
   assertIncludes(contents, 'LITERT_NO_CACHE_DIR = ":nocache"', source);
   assertIncludes(contents, "trimPromptForContext", source);
@@ -772,7 +851,16 @@ for (const [contents, source] of [
   assertIncludes(contents, "keepEngineWarm", source);
   assertIncludes(contents, "releaseEngine(clearLastError = false)", source);
   assertIncludes(contents, "fun releaseWarmEngine()", source);
-  assertIncludes(contents, "if (activeRequests.isNotEmpty()) return", source);
+  assertIncludes(contents, "operationAdmission.tryAcquireMaintenance()", source);
+  assertIncludes(contents, "operationAdmission.releaseMaintenance()", source);
+  assertIncludes(contents, "operationAdmission.beginShutdown()", source);
+  assertIncludes(contents, "operationAdmission.awaitShutdownDrain()", source);
+  assertIncludes(contents, "operationAdmission.endShutdown()", source);
+  assertIncludes(contents, "fun prepareForModelReplacement(): Boolean", source);
+  assertIncludes(contents, "fun finishModelReplacement()", source);
+  assertIncludes(contents, "fun shutdownAsync()", source);
+  assertIncludes(contents, '"jarvis-local-gemma-shutdown"', source);
+  assertExcludes(contents, "if (operationAdmission.hasActiveOperation()) return", source);
   assertIncludes(contents, "if (!keepEngineWarm || !generationSucceeded)", source);
   assertIncludes(contents, "retry_cpu", source);
   assertIncludes(contents, "generationRetries", source);
