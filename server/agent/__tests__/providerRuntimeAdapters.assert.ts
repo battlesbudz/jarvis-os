@@ -7598,6 +7598,82 @@ async function testAndroidLocalGemmaCancelsGenerationWhenRunAborts() {
   }
 }
 
+async function testAndroidLocalGemmaWaitsForAbortCleanupBeforeNextGeneration() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  let generationStarted: () => void = () => {};
+  let finishFirstGeneration: (result: any) => void = () => {};
+  let finishCancellation: (result: any) => void = () => {};
+  const generationStartedPromise = new Promise<void>((resolve) => {
+    generationStarted = resolve;
+  });
+  let generationCount = 0;
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    if (op.type === "android_local_model_cancel") {
+      return new Promise((resolve) => {
+        finishCancellation = resolve;
+      });
+    }
+    generationCount += 1;
+    if (generationCount === 1) {
+      generationStarted();
+      return new Promise((resolve) => {
+        finishFirstGeneration = resolve;
+      });
+    }
+    return { ok: true, data: { text: "second answer", finishReason: "stop" } };
+  });
+
+  const firstController = new AbortController();
+  try {
+    const firstTurn = accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "First question" }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-cancellation-barrier",
+      signal: firstController.signal,
+    }));
+
+    await generationStartedPromise;
+    firstController.abort();
+    await assert.rejects(firstTurn, (error: unknown) => {
+      assert(error instanceof Error);
+      assert.equal(error.name, "AbortError");
+      return true;
+    });
+
+    const secondTurn = accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Second question" }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-cancellation-barrier",
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    assert.deepEqual(requests.map((request) => request.op.type), [
+      "android_local_model_generate",
+      "android_local_model_cancel",
+    ]);
+
+    finishCancellation({ ok: true, data: { cancelled: true } });
+    finishFirstGeneration({ ok: false, error: "LOCAL_MODEL_CANCELLED: request was cancelled" });
+    const secondAnswer = await secondTurn;
+    assert.equal(secondAnswer.textContent, "second answer");
+    assert.deepEqual(requests.map((request) => request.op.type), [
+      "android_local_model_generate",
+      "android_local_model_cancel",
+      "android_local_model_generate",
+    ]);
+    console.log("OK: Android Local Gemma waits for abort cleanup before the next generation");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaExplainsUnbundledEngine() {
   _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
     ok: false,
@@ -7957,6 +8033,7 @@ async function main() {
   await testAndroidLocalGemmaSkipsStatusProbeForAlreadyAbortedRun();
   await testAndroidLocalGemmaAbortsDuringStatusProbe();
   await testAndroidLocalGemmaCancelsGenerationWhenRunAborts();
+  await testAndroidLocalGemmaWaitsForAbortCleanupBeforeNextGeneration();
   await testAndroidLocalGemmaExplainsUnbundledEngine();
   await testAndroidLocalGemmaExplainsValidationRequired();
   await testAndroidLocalGemmaExplainsPhoneResourceFailures();

@@ -314,18 +314,17 @@ object LocalGemmaInferenceEngine {
     fun cancel(op: JSONObject): OpResult {
         val requestId = op.optString("requestId", "")
         if (requestId.isBlank()) {
-            val cancelled = activeRequests.values.toList().onEach { request ->
-                request.conversation?.cancelProcess()
-                request.job.cancel()
-            }.size
+            val active = activeRequests.values.toList()
+            active.forEach(::requestCancellation)
+            active.forEach(::awaitCancellation)
             return OpResult(
                 ok = true,
                 data = JSONObject()
                     .put("provider", PROVIDER)
                     .put("runtime", RUNTIME)
-                    .put("cancelled", cancelled > 0)
-                    .put("cancelledCount", cancelled)
-                    .put("message", if (cancelled > 0) "Cancellation requested for all active local Gemma generations." else "No active local Gemma generations.")
+                    .put("cancelled", active.isNotEmpty())
+                    .put("cancelledCount", active.size)
+                    .put("message", if (active.isNotEmpty()) "All active local Gemma generations were cancelled." else "No active local Gemma generations.")
             )
         }
 
@@ -342,8 +341,8 @@ object LocalGemmaInferenceEngine {
             )
         }
 
-        active.conversation?.cancelProcess()
-        active.job.cancel()
+        requestCancellation(active)
+        awaitCancellation(active)
         return OpResult(
             ok = true,
             data = JSONObject()
@@ -351,8 +350,19 @@ object LocalGemmaInferenceEngine {
                 .put("runtime", RUNTIME)
                 .put("requestId", requestId)
                 .put("cancelled", true)
-                .put("message", "Cancellation requested for local Gemma generation.")
+                .put("message", "Local Gemma generation was cancelled.")
         )
+    }
+
+    private fun requestCancellation(active: ActiveRequest) {
+        active.conversation?.cancelProcess()
+        active.job.cancel()
+    }
+
+    private fun awaitCancellation(active: ActiveRequest) {
+        runBlocking {
+            active.job.cancelAndJoin()
+        }
     }
 
     fun shutdown() {
