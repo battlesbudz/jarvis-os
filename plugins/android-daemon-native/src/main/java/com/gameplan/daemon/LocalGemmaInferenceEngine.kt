@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
@@ -46,6 +47,7 @@ object LocalGemmaInferenceEngine {
     private const val DEFAULT_TOP_K = 40
     private const val DEFAULT_TOP_P = 0.95
     private const val DEFAULT_TEMPERATURE = 0.8
+    private const val CANCELLATION_TIMEOUT_MS = 4_000L
 
     private val engineMutex = Mutex()
     private val generationMutex = Mutex()
@@ -314,18 +316,25 @@ object LocalGemmaInferenceEngine {
     fun cancel(op: JSONObject): OpResult {
         val requestId = op.optString("requestId", "")
         if (requestId.isBlank()) {
-            val cancelled = activeRequests.values.toList().onEach { request ->
-                request.conversation?.cancelProcess()
-                request.job.cancel()
-            }.size
+            val active = activeRequests.values.toList()
+            active.forEach(::requestCancellation)
+            val completed = active.map(::awaitCancellation)
+            val timedOut = completed.count { !it }
             return OpResult(
-                ok = true,
+                ok = timedOut == 0,
+                error = if (timedOut > 0) "LOCAL_MODEL_CANCEL_TIMEOUT: Phone Gemma did not finish cancelling within ${CANCELLATION_TIMEOUT_MS}ms for $timedOut active generation(s)." else null,
                 data = JSONObject()
                     .put("provider", PROVIDER)
                     .put("runtime", RUNTIME)
-                    .put("cancelled", cancelled > 0)
-                    .put("cancelledCount", cancelled)
-                    .put("message", if (cancelled > 0) "Cancellation requested for all active local Gemma generations." else "No active local Gemma generations.")
+                    .put("cancelled", active.isNotEmpty())
+                    .put("cancelledCount", active.size - timedOut)
+                    .put("message", when {
+                        active.isEmpty() -> "No active local Gemma generations."
+                        timedOut == 0 -> "All active local Gemma generations were cancelled."
+                        else -> "Local Gemma cancellation timed out for $timedOut active generation(s)."
+                    })
+                    .put("cancellationTimedOut", timedOut > 0)
+                    .put("cancellationTimeoutMs", CANCELLATION_TIMEOUT_MS)
             )
         }
 
@@ -342,8 +351,13 @@ object LocalGemmaInferenceEngine {
             )
         }
 
-        active.conversation?.cancelProcess()
-        active.job.cancel()
+        requestCancellation(active)
+        if (!awaitCancellation(active)) {
+            return OpResult(
+                ok = false,
+                error = "LOCAL_MODEL_CANCEL_TIMEOUT: Phone Gemma did not finish cancelling within ${CANCELLATION_TIMEOUT_MS}ms."
+            )
+        }
         return OpResult(
             ok = true,
             data = JSONObject()
@@ -351,8 +365,21 @@ object LocalGemmaInferenceEngine {
                 .put("runtime", RUNTIME)
                 .put("requestId", requestId)
                 .put("cancelled", true)
-                .put("message", "Cancellation requested for local Gemma generation.")
+                .put("message", "Local Gemma generation was cancelled.")
         )
+    }
+
+    private fun requestCancellation(active: ActiveRequest) {
+        active.conversation?.cancelProcess()
+        active.job.cancel()
+    }
+
+    private fun awaitCancellation(active: ActiveRequest): Boolean {
+        return runBlocking {
+            withTimeoutOrNull(CANCELLATION_TIMEOUT_MS) {
+                active.job.cancelAndJoin()
+            } != null
+        }
     }
 
     fun shutdown() {
