@@ -13,6 +13,7 @@ const tests = [
   { file: "scripts/__tests__/testEnv.test.mjs" },
   { file: "scripts/__tests__/noReplitRuntimeDeps.test.mjs" },
   { file: "scripts/__tests__/androidDaemonUpdateConfig.test.mjs" },
+  { file: "scripts/android-wake-word-resource-guard.mjs" },
   { file: "scripts/voice-runtime-regression-gate.mjs" },
   { file: "scripts/__tests__/dashboardProjectsNavigation.test.mjs" },
   { file: "scripts/__tests__/oauthGatewayDoctor.test.mjs" },
