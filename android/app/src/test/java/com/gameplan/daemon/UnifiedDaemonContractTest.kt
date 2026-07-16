@@ -192,7 +192,7 @@ class UnifiedDaemonContractTest {
                 executor.submit<LocalGemmaGenerationAdmissionResult> {
                     ready.countDown()
                     start.await()
-                    admission.tryAcquireGeneration(requestId)
+                    admission.tryAcquireAndPublishGeneration(requestId, {})
                 }
             }
             assertTrue("Concurrent admission workers did not become ready", ready.await(1, TimeUnit.SECONDS))
@@ -208,21 +208,68 @@ class UnifiedDaemonContractTest {
             assertTrue(admission.tryAcquireValidation())
             assertEquals(
                 LocalGemmaGenerationAdmissionResult.BUSY,
-                admission.tryAcquireGeneration("request-c"),
+                admission.tryAcquireAndPublishGeneration("request-c", {}),
             )
             assertFalse(admission.tryAcquireValidation())
             admission.releaseValidation()
             assertEquals(
                 LocalGemmaGenerationAdmissionResult.ACQUIRED,
-                admission.tryAcquireGeneration("request-c"),
+                admission.tryAcquireAndPublishGeneration("request-c", {}),
             )
             assertEquals(
                 LocalGemmaGenerationAdmissionResult.DUPLICATE,
-                admission.tryAcquireGeneration("request-c"),
+                admission.tryAcquireAndPublishGeneration("request-c", {}),
             )
             admission.releaseGeneration("request-c")
             assertFalse(admission.hasActiveOperation())
         } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun phoneGemmaGenerationPublicationIsAtomicWithShutdownAdmission() {
+        val admission = LocalGemmaOperationAdmission()
+        val executor = Executors.newFixedThreadPool(2)
+        val publicationEntered = CountDownLatch(1)
+        val allowPublication = CountDownLatch(1)
+        val publicationFinished = CountDownLatch(1)
+        val shutdownStarted = CountDownLatch(1)
+        val shutdownFinished = CountDownLatch(1)
+
+        try {
+            val generation = executor.submit<LocalGemmaGenerationAdmissionResult> {
+                admission.tryAcquireAndPublishGeneration("request-published") {
+                    publicationEntered.countDown()
+                    allowPublication.await()
+                    publicationFinished.countDown()
+                }
+            }
+            assertTrue(publicationEntered.await(1, TimeUnit.SECONDS))
+
+            val shutdown = executor.submit<Boolean> {
+                shutdownStarted.countDown()
+                try {
+                    admission.beginShutdown()
+                } finally {
+                    shutdownFinished.countDown()
+                }
+            }
+            assertTrue(shutdownStarted.await(1, TimeUnit.SECONDS))
+            assertFalse(shutdownFinished.await(100, TimeUnit.MILLISECONDS))
+
+            allowPublication.countDown()
+            assertTrue(publicationFinished.await(1, TimeUnit.SECONDS))
+            assertEquals(LocalGemmaGenerationAdmissionResult.ACQUIRED, generation.get(1, TimeUnit.SECONDS))
+            assertTrue(shutdownFinished.await(1, TimeUnit.SECONDS))
+            assertTrue(shutdown.get(1, TimeUnit.SECONDS))
+
+            admission.releaseGeneration("request-published")
+            admission.awaitShutdownDrain()
+            admission.endShutdown()
+            assertFalse(admission.hasActiveOperation())
+        } finally {
+            allowPublication.countDown()
             executor.shutdownNow()
         }
     }
@@ -235,13 +282,13 @@ class UnifiedDaemonContractTest {
         try {
             assertEquals(
                 LocalGemmaGenerationAdmissionResult.ACQUIRED,
-                admission.tryAcquireGeneration("request-active"),
+                admission.tryAcquireAndPublishGeneration("request-active", {}),
             )
             assertTrue(admission.beginShutdown())
             assertFalse(admission.beginShutdown())
             assertEquals(
                 LocalGemmaGenerationAdmissionResult.BUSY,
-                admission.tryAcquireGeneration("request-blocked"),
+                admission.tryAcquireAndPublishGeneration("request-blocked", {}),
             )
             assertFalse(admission.tryAcquireValidation())
             assertFalse(admission.tryAcquireMaintenance())
@@ -261,7 +308,7 @@ class UnifiedDaemonContractTest {
             assertTrue(shutdownDrained.get(1, TimeUnit.SECONDS))
             assertEquals(
                 LocalGemmaGenerationAdmissionResult.BUSY,
-                admission.tryAcquireGeneration("request-still-blocked"),
+                admission.tryAcquireAndPublishGeneration("request-still-blocked", {}),
             )
             admission.endShutdown()
             assertFalse(admission.hasActiveOperation())
@@ -270,7 +317,7 @@ class UnifiedDaemonContractTest {
             assertFalse(admission.tryAcquireMaintenance())
             assertEquals(
                 LocalGemmaGenerationAdmissionResult.BUSY,
-                admission.tryAcquireGeneration("request-during-maintenance"),
+                admission.tryAcquireAndPublishGeneration("request-during-maintenance", {}),
             )
             assertFalse(admission.tryAcquireValidation())
             admission.releaseMaintenance()

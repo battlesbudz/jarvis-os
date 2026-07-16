@@ -809,6 +809,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "LocalGemmaMemoryAdmissionPolicy", source);
   assertIncludes(contents, "LocalGemmaOperationAdmission", source);
   assertIncludes(contents, "LocalGemmaGenerationAdmissionResult", source);
+  assertIncludes(contents, "tryAcquireAndPublishGeneration(active.requestId)", source);
+  assertIncludes(contents, "activeRequests[active.requestId] = active", source);
   assertIncludes(contents, "RECOVERY_TIMEOUT_MS = 2_000L", source);
   assertIncludes(contents, "recoverMemoryHeadroom(context, backendName)", source);
   assertIncludes(contents, 'reason=${decision.blockReason?.wireName}', source);

@@ -103,12 +103,16 @@ internal class LocalGemmaOperationAdmission {
     private var shutdownActive = false
     private var shutdownDrain: CountDownLatch? = null
 
-    fun tryAcquireGeneration(requestId: String): LocalGemmaGenerationAdmissionResult {
+    fun tryAcquireAndPublishGeneration(
+        requestId: String,
+        publishGeneration: () -> Unit,
+    ): LocalGemmaGenerationAdmissionResult {
         synchronized(lock) {
             if (generationRequestId == requestId) return LocalGemmaGenerationAdmissionResult.DUPLICATE
             if (generationRequestId != null || validationActive || maintenanceActive || shutdownActive) {
                 return LocalGemmaGenerationAdmissionResult.BUSY
             }
+            publishGeneration()
             generationRequestId = requestId
             return LocalGemmaGenerationAdmissionResult.ACQUIRED
         }
@@ -697,14 +701,16 @@ object LocalGemmaInferenceEngine {
     }
 
     private fun registerActiveRequest(active: ActiveRequest): OpResult? {
-        when (operationAdmission.tryAcquireGeneration(active.requestId)) {
+        when (operationAdmission.tryAcquireAndPublishGeneration(active.requestId) {
+            activeRequests[active.requestId] = active
+        }) {
             LocalGemmaGenerationAdmissionResult.DUPLICATE -> {
                 return OpResult(false, error = "LOCAL_MODEL_REQUEST_DUPLICATE: requestId is already active.")
             }
             LocalGemmaGenerationAdmissionResult.BUSY -> {
                 return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already generating or validating. Wait for it to finish before sending another message.")
             }
-            LocalGemmaGenerationAdmissionResult.ACQUIRED -> activeRequests[active.requestId] = active
+            LocalGemmaGenerationAdmissionResult.ACQUIRED -> Unit
         }
         return null
     }
