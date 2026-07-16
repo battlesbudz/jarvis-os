@@ -177,6 +177,27 @@ class UnifiedDaemonContractTest {
     }
 
     @Test
+    fun talkModeRecoveryOnlyRearmsAfterSessionReturnsToListening() {
+        assertTrue(
+            OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(
+                OutsideAppVoiceState.LISTENING,
+            ),
+        )
+        for (state in listOf(
+            OutsideAppVoiceState.IDLE,
+            OutsideAppVoiceState.WORKING,
+            OutsideAppVoiceState.SPEAKING,
+            OutsideAppVoiceState.APPROVAL,
+            OutsideAppVoiceState.PAUSED,
+        )) {
+            assertFalse(
+                "Talk Mode must stay paused while the session is $state",
+                OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(state),
+            )
+        }
+    }
+
+    @Test
     fun outsideAppVoiceSessionNotificationControlsStayStable() {
         val actions = OutsideAppVoiceSessionStateMachine.notificationActions()
 

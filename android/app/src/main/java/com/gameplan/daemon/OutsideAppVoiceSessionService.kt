@@ -61,6 +61,10 @@ object OutsideAppVoiceSessionStateMachine {
         }
     }
 
+    fun shouldRecoverTalkModeAfterLocalInference(state: OutsideAppVoiceState): Boolean {
+        return state == OutsideAppVoiceState.LISTENING
+    }
+
     fun notificationText(state: OutsideAppVoiceState): String {
         return when (state) {
             OutsideAppVoiceState.IDLE -> "Jarvis voice is ready"

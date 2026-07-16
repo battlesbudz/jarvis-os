@@ -413,6 +413,8 @@ for (const [contents, source] of [
 ]) {
   assertIncludes(contents, "class OutsideAppVoiceSessionService : Service()", source);
   assertIncludes(contents, "OutsideAppVoiceSessionStateMachine", source);
+  assertIncludes(contents, "fun shouldRecoverTalkModeAfterLocalInference(state: OutsideAppVoiceState): Boolean", source);
+  assertIncludes(contents, "return state == OutsideAppVoiceState.LISTENING", source);
   assertIncludes(contents, "ACTION_PAUSE", source);
   assertIncludes(contents, "ACTION_RESUME", source);
   assertIncludes(contents, "ACTION_END", source);
@@ -593,9 +595,11 @@ for (const [contents, source] of [
   assertIncludes(contents, "fun pauseForLocalInference(): Boolean", source);
   assertIncludes(contents, "private fun handlePauseForLocalInference(): Boolean", source);
   assertIncludes(contents, "fun resumeAfterLocalInference(shouldResume: Boolean)", source);
+  assertIncludes(contents, "fun resumeAfterLocalValidation(shouldResume: Boolean)", source);
   assertIncludes(contents, "LOCAL_INFERENCE_TALK_MODE_RECOVERY_DELAY_MS = 10_000L", source);
   assertIncludes(contents, "scheduleTalkModeRecoveryAfterLocalInference()", source);
-  assertIncludes(contents, "OutsideAppVoiceSessionService.currentState() == OutsideAppVoiceState.PAUSED", source);
+  assertIncludes(contents, "OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(", source);
+  assertExcludes(contents, "OutsideAppVoiceSessionService.currentState() == OutsideAppVoiceState.PAUSED", source);
   assertIncludes(contents, "pauseForLocalInference()", source);
   assertExcludes(contents, "// Re-arm for next wake word after sending utterance", source);
   assertIncludes(contents, "fun endTalkModeForUserControl()", source);
@@ -767,6 +771,13 @@ for (const [contents, source] of [
   assertIncludes(contents, 'reason=${decision.blockReason?.wireName}', source);
   assertIncludes(contents, "WakeWordService.pauseForLocalInference()", source);
   assertIncludes(contents, "WakeWordService.resumeAfterLocalInference(resumeWakeAfterInference)", source);
+  const validateStart = contents.indexOf("fun validate(context: Context");
+  const validateEnd = contents.indexOf("\n    fun cancel(", validateStart);
+  const validateBody = contents.slice(validateStart, validateEnd);
+  assertIncludes(validateBody, "WakeWordService.pauseForLocalInference()", `${source} validate`);
+  assertIncludes(validateBody, "recoverMemoryHeadroom(context, backendName)", `${source} validate`);
+  assertIncludes(validateBody, "lowMemoryError(memory, backendName, memoryRecovery)", `${source} validate`);
+  assertIncludes(validateBody, "WakeWordService.resumeAfterLocalValidation(resumeWakeAfterValidation)", `${source} validate`);
   assertIncludes(contents, 'DEFAULT_CACHE_POLICY = "none"', source);
   assertIncludes(contents, 'LITERT_NO_CACHE_DIR = ":nocache"', source);
   assertIncludes(contents, "trimPromptForContext", source);

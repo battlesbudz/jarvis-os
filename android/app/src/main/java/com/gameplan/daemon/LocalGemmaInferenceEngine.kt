@@ -312,70 +312,78 @@ object LocalGemmaInferenceEngine {
         val cachePolicy = normalizeCachePolicy(op.optString("cachePolicy", DEFAULT_CACHE_POLICY))
         val contextTokens = op.optInt("contextTokens", DEFAULT_CONTEXT_TOKENS).coerceIn(512, 32768)
         val keepEngineWarm = op.optBoolean("keepEngineWarm", false)
-        val memory = memorySnapshot(context)
         val startedAtMs = System.currentTimeMillis()
 
         if (activeRequests.isNotEmpty()) {
             return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already generating. Wait for it to finish or cancel it before validating the local engine.")
         }
-        lowMemoryError(memory, backendName)?.let { error ->
-            DaemonLog.add("local_gemma: validation memory low $error")
-            return OpResult(false, error = error)
-        }
+        val resumeWakeAfterValidation = WakeWordService.pauseForLocalInference()
+        try {
+            val memoryRecovery = recoverMemoryHeadroom(context, backendName)
+            val memory = memoryRecovery.current
+            lowMemoryError(memory, backendName, memoryRecovery)?.let { error ->
+                DaemonLog.add("local_gemma: validation memory low $error")
+                return OpResult(false, error = error)
+            }
 
-        return try {
-            var resolvedBackend = backendName
-            var resolvedSpeculativeDecoding = false
-            runBlocking {
-                generationMutex.withLock {
-                    val state = ensureEngine(
-                        context = context,
-                        modelPath = modelFile.absolutePath,
-                        modelRevision = modelRevision,
-                        backendName = backendName,
-                        allowCpuFallback = allowCpuFallback,
-                        speculativeDecodingPreference = speculativeDecodingPreference,
-                        cachePolicy = cachePolicy,
-                        contextTokens = contextTokens,
-                        memory = memorySnapshot(context),
-                    )
-                    resolvedBackend = state.backendName
-                    resolvedSpeculativeDecoding = state.speculativeDecodingEnabled
+            return try {
+                var resolvedBackend = backendName
+                var resolvedSpeculativeDecoding = false
+                runBlocking {
+                    generationMutex.withLock {
+                        val state = ensureEngine(
+                            context = context,
+                            modelPath = modelFile.absolutePath,
+                            modelRevision = modelRevision,
+                            backendName = backendName,
+                            allowCpuFallback = allowCpuFallback,
+                            speculativeDecodingPreference = speculativeDecodingPreference,
+                            cachePolicy = cachePolicy,
+                            contextTokens = contextTokens,
+                            memory = memory,
+                        )
+                        resolvedBackend = state.backendName
+                        resolvedSpeculativeDecoding = state.speculativeDecodingEnabled
+                    }
                 }
+                if (!keepEngineWarm) {
+                    releaseEngine(clearLastError = false)
+                }
+                OpResult(
+                    ok = true,
+                    data = JSONObject()
+                        .put("provider", PROVIDER)
+                        .put("runtime", RUNTIME)
+                        .put("engine", "litert-lm")
+                        .put("model", model)
+                        .put("modelRevision", modelRevision)
+                        .put("backend", resolvedBackend)
+                        .put("requestedBackend", backendName)
+                        .put("speculativeDecoding", resolvedSpeculativeDecoding)
+                        .put("speculativeDecodingPreference", speculativeDecodingPreference ?: JSONObject.NULL)
+                        .put("decodingMode", decodingModeName(resolvedSpeculativeDecoding))
+                        .put("contextTokens", contextTokens)
+                        .put("cpuFallbackAllowed", allowCpuFallback)
+                        .put("cachePolicy", cachePolicy)
+                        .put("profileId", op.optString("profileId", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                        .put("profileLabel", op.optString("profileLabel", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
+                        .put("memoryRecoveryWaitMs", memoryRecovery.waitedMs)
+                        .put("memoryInitial", memoryRecovery.initial.toJson())
+                        .put("memoryBefore", memory.toJson())
+                        .put("memoryAfter", memorySnapshot(context).toJson())
+                        .put("engineKeptWarm", keepEngineWarm)
+                        .put("durationMs", System.currentTimeMillis() - startedAtMs)
+                        .put("message", "Phone Gemma LiteRT-LM engine validated on this device.")
+                ).also {
+                    DaemonLog.add("local_gemma: validation OK backend=$resolvedBackend mode=${decodingModeName(resolvedSpeculativeDecoding)} cache=$cachePolicy durationMs=${System.currentTimeMillis() - startedAtMs}")
+                }
+            } catch (e: Throwable) {
+                val detail = e.message ?: e.javaClass.simpleName
+                DaemonLog.add("local_gemma: validation failed $detail")
+                OpResult(false, error = "LOCAL_MODEL_VALIDATION_FAILED: $detail")
             }
-            if (!keepEngineWarm) {
-                releaseEngine(clearLastError = false)
-            }
-            OpResult(
-                ok = true,
-                data = JSONObject()
-                    .put("provider", PROVIDER)
-                    .put("runtime", RUNTIME)
-                    .put("engine", "litert-lm")
-                    .put("model", model)
-                    .put("modelRevision", modelRevision)
-                    .put("backend", resolvedBackend)
-                    .put("requestedBackend", backendName)
-                    .put("speculativeDecoding", resolvedSpeculativeDecoding)
-                    .put("speculativeDecodingPreference", speculativeDecodingPreference ?: JSONObject.NULL)
-                    .put("decodingMode", decodingModeName(resolvedSpeculativeDecoding))
-                    .put("contextTokens", contextTokens)
-                    .put("cpuFallbackAllowed", allowCpuFallback)
-                    .put("cachePolicy", cachePolicy)
-                    .put("profileId", op.optString("profileId", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
-                    .put("profileLabel", op.optString("profileLabel", "").takeIf { it.isNotBlank() } ?: JSONObject.NULL)
-                    .put("memoryBefore", memory.toJson())
-                    .put("memoryAfter", memorySnapshot(context).toJson())
-                    .put("engineKeptWarm", keepEngineWarm)
-                    .put("durationMs", System.currentTimeMillis() - startedAtMs)
-                    .put("message", "Phone Gemma LiteRT-LM engine validated on this device.")
-            ).also {
-                DaemonLog.add("local_gemma: validation OK backend=$resolvedBackend mode=${decodingModeName(resolvedSpeculativeDecoding)} cache=$cachePolicy durationMs=${System.currentTimeMillis() - startedAtMs}")
-            }
-        } catch (e: Throwable) {
-            val detail = e.message ?: e.javaClass.simpleName
-            DaemonLog.add("local_gemma: validation failed $detail")
-            OpResult(false, error = "LOCAL_MODEL_VALIDATION_FAILED: $detail")
+        } finally {
+            WakeWordService.resumeAfterLocalValidation(resumeWakeAfterValidation)
         }
     }
 

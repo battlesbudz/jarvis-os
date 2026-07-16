@@ -87,6 +87,18 @@ class WakeWordService : Service() {
             }
         }
 
+        fun resumeAfterLocalValidation(shouldResume: Boolean) {
+            val service = instance ?: return
+            if (shouldResume) {
+                service.handleResumeAfterLocalInference()
+            } else if (OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(
+                    OutsideAppVoiceSessionService.currentState(),
+                )
+            ) {
+                service.handleTtsFinished()
+            }
+        }
+
         fun endTalkModeForUserControl() {
             instance?.handleEndTalkModeForUserControl()
         }
@@ -459,11 +471,19 @@ class WakeWordService : Service() {
     }
 
     private fun scheduleTalkModeRecoveryAfterLocalInference() {
-        if (!talkModeEnabled || active || OutsideAppVoiceSessionService.currentState() == OutsideAppVoiceState.PAUSED) return
+        if (!talkModeEnabled || active) return
+        if (!OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(
+                OutsideAppVoiceSessionService.currentState(),
+            )
+        ) return
         cancelLocalInferenceRecovery()
         val recovery = Runnable {
             localInferenceRecoveryRunnable = null
-            if (!talkModeEnabled || active || OutsideAppVoiceSessionService.currentState() == OutsideAppVoiceState.PAUSED) return@Runnable
+            if (!talkModeEnabled || active) return@Runnable
+            if (!OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(
+                    OutsideAppVoiceSessionService.currentState(),
+                )
+            ) return@Runnable
             DaemonLog.add("wake: Phone Gemma finished without TTS re-arm; resuming Talk Mode")
             handleTtsFinished()
         }
