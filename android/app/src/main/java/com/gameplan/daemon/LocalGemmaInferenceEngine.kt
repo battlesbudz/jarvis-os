@@ -16,6 +16,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -378,6 +379,9 @@ object LocalGemmaInferenceEngine {
         return runBlocking {
             withTimeoutOrNull(CANCELLATION_TIMEOUT_MS) {
                 active.job.cancelAndJoin()
+                while (activeRequests.containsKey(active.requestId)) {
+                    delay(10)
+                }
             } != null
         }
     }
