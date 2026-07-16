@@ -2430,6 +2430,9 @@ function normalizeAndroidLocalGemmaError(error: string | undefined): string {
     return `Phone Gemma could not start the LiteRT-LM engine for the imported .litertlm model. ${recoveryPath}; reimport ${ANDROID_LOCAL_GEMMA_MODEL.replace("android-local-gemma/", "")} as the official .litertlm file if this keeps happening. Details: ${error}`;
   }
   if (error?.includes("LOCAL_MODEL_DEVICE_MEMORY_LOW")) {
+    if (/reason=jarvis_safety_reserve/i.test(error) || /lowMemory=false/i.test(error)) {
+      return `Phone Gemma released Jarvis voice resources and waited for memory to recover, but the E4B safety reserve was still unavailable. Android did not report a low-memory state; Jarvis stopped before loading the model to avoid slowing or freezing the phone. Try again after the phone settles or close another heavy app. Details: ${error}`;
+    }
     return `Phone Gemma did not start because Android reported low available memory. Close other heavy apps, then try again. Details: ${error}`;
   }
   if (error?.includes("LOCAL_MODEL_BUSY")) {

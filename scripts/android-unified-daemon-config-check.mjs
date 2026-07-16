@@ -462,6 +462,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "private val mainHandler = Handler(Looper.getMainLooper())", source);
   assertIncludes(contents, "private fun setStateFromAnyThread(nextState: OutsideAppVoiceState)", source);
   assertIncludes(contents, "private fun setState(nextState: OutsideAppVoiceState, actionName: String = nextState.wireName)", source);
+  assertIncludes(contents, "WakeWordService.pauseForLocalInference()", source);
+  assertIncludes(contents, "nextState == OutsideAppVoiceState.LISTENING && previousState == OutsideAppVoiceState.WORKING", source);
   assertIncludes(contents, "instance?.setStateFromAnyThread(OutsideAppVoiceState.SPEAKING)", source);
   assertIncludes(contents, "instance?.setStateFromAnyThread(OutsideAppVoiceState.LISTENING)", source);
   assertExcludes(contents, "WakeWordService.ACTION_STOP", source);
@@ -588,6 +590,14 @@ for (const [contents, source] of [
   assertIncludes(contents, "val eventDelayMs = if (talkModeEnabled) 0L else 400L", source);
   assertIncludes(contents, "fun pauseForUserControl()", source);
   assertIncludes(contents, "private fun handlePauseForUserControl()", source);
+  assertIncludes(contents, "fun pauseForLocalInference(): Boolean", source);
+  assertIncludes(contents, "private fun handlePauseForLocalInference(): Boolean", source);
+  assertIncludes(contents, "fun resumeAfterLocalInference(shouldResume: Boolean)", source);
+  assertIncludes(contents, "LOCAL_INFERENCE_TALK_MODE_RECOVERY_DELAY_MS = 10_000L", source);
+  assertIncludes(contents, "scheduleTalkModeRecoveryAfterLocalInference()", source);
+  assertIncludes(contents, "OutsideAppVoiceSessionService.currentState() == OutsideAppVoiceState.PAUSED", source);
+  assertIncludes(contents, "pauseForLocalInference()", source);
+  assertExcludes(contents, "// Re-arm for next wake word after sending utterance", source);
   assertIncludes(contents, "fun endTalkModeForUserControl()", source);
   assertIncludes(contents, "private fun handleEndTalkModeForUserControl()", source);
   assertIncludes(contents, "talkModeEnabled = false", source);
@@ -751,6 +761,12 @@ for (const [contents, source] of [
   assertIncludes(contents, "MIN_NPU_AVAILABLE_MEMORY_BYTES", source);
   assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES", source);
   assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES = 7000L * 1024L * 1024L", source);
+  assertIncludes(contents, "LocalGemmaMemoryAdmissionPolicy", source);
+  assertIncludes(contents, "RECOVERY_TIMEOUT_MS = 2_000L", source);
+  assertIncludes(contents, "recoverMemoryHeadroom(context, backendName)", source);
+  assertIncludes(contents, 'reason=${decision.blockReason?.wireName}', source);
+  assertIncludes(contents, "WakeWordService.pauseForLocalInference()", source);
+  assertIncludes(contents, "WakeWordService.resumeAfterLocalInference(resumeWakeAfterInference)", source);
   assertIncludes(contents, 'DEFAULT_CACHE_POLICY = "none"', source);
   assertIncludes(contents, 'LITERT_NO_CACHE_DIR = ":nocache"', source);
   assertIncludes(contents, "trimPromptForContext", source);

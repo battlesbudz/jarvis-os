@@ -139,6 +139,44 @@ class UnifiedDaemonContractTest {
     }
 
     @Test
+    fun phoneGemmaMemoryAdmissionRetriesReportedSafetyReserveSnapshot() {
+        val mib = 1024L * 1024L
+        val reported = LocalGemmaMemoryAdmissionPolicy.evaluate(
+            availableBytes = 1670L * mib,
+            lowMemory = false,
+            backendName = "gpu",
+        )
+
+        assertFalse(reported.allowed)
+        assertEquals(LocalGemmaMemoryBlockReason.JARVIS_SAFETY_RESERVE, reported.blockReason)
+        assertEquals(1800L * mib, reported.minimumBytes)
+        assertEquals(130L * mib, reported.shortfallBytes)
+        assertTrue(LocalGemmaMemoryAdmissionPolicy.shouldAttemptRecovery(reported))
+
+        val recovered = LocalGemmaMemoryAdmissionPolicy.evaluate(
+            availableBytes = 1840L * mib,
+            lowMemory = false,
+            backendName = "gpu",
+        )
+        assertTrue(recovered.allowed)
+        assertEquals(null, recovered.blockReason)
+    }
+
+    @Test
+    fun phoneGemmaMemoryAdmissionDoesNotWaitWhenAndroidReportsLowMemory() {
+        val mib = 1024L * 1024L
+        val reported = LocalGemmaMemoryAdmissionPolicy.evaluate(
+            availableBytes = 1670L * mib,
+            lowMemory = true,
+            backendName = "gpu",
+        )
+
+        assertFalse(reported.allowed)
+        assertEquals(LocalGemmaMemoryBlockReason.ANDROID_LOW_MEMORY, reported.blockReason)
+        assertFalse(LocalGemmaMemoryAdmissionPolicy.shouldAttemptRecovery(reported))
+    }
+
+    @Test
     fun outsideAppVoiceSessionNotificationControlsStayStable() {
         val actions = OutsideAppVoiceSessionStateMachine.notificationActions()
 

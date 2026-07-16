@@ -41,6 +41,7 @@ class WakeWordService : Service() {
         private const val NOTIFICATION_ID = 1002
         private const val MIN_RECOGNIZER_RESTART_DELAY_MS = 1000L
         private const val RECOGNIZER_RESTART_FAILURE_DELAY_MS = 3000L
+        private const val LOCAL_INFERENCE_TALK_MODE_RECOVERY_DELAY_MS = 10_000L
 
         const val ACTION_START = "com.gameplan.daemon.WAKE_WORD_START"
         const val ACTION_STOP = "com.gameplan.daemon.WAKE_WORD_STOP"
@@ -68,6 +69,24 @@ class WakeWordService : Service() {
             instance?.handlePauseForUserControl()
         }
 
+        /**
+         * Releases Android speech recognition before Phone Gemma allocates its
+         * accelerator buffers. Returns true only when ordinary wake scanning
+         * should resume immediately after inference; Talk Mode waits for TTS.
+         */
+        fun pauseForLocalInference(): Boolean {
+            return instance?.handlePauseForLocalInference() ?: false
+        }
+
+        fun resumeAfterLocalInference(shouldResume: Boolean) {
+            val service = instance ?: return
+            if (shouldResume) {
+                service.handleResumeAfterLocalInference()
+            } else {
+                service.scheduleTalkModeRecoveryAfterLocalInference()
+            }
+        }
+
         fun endTalkModeForUserControl() {
             instance?.handleEndTalkModeForUserControl()
         }
@@ -86,11 +105,12 @@ class WakeWordService : Service() {
     private var speechRecognizer: SpeechRecognizer? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var wakeWords: List<String> = listOf("hey jarvis", "jarvis", "computer")
-    private var talkModeEnabled = false
-    private var active = false
+    @Volatile private var talkModeEnabled = false
+    @Volatile private var active = false
     private var restartRunnable: Runnable? = null
+    private var localInferenceRecoveryRunnable: Runnable? = null
     /** True when Talk Mode is on and we are waiting to capture the user's utterance after a wake word */
-    private var capturingUtterance = false
+    @Volatile private var capturingUtterance = false
 
     // ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -171,6 +191,7 @@ class WakeWordService : Service() {
     private fun stopListening() {
         active = false
         cancelPendingRestart()
+        cancelLocalInferenceRecovery()
         mainHandler.post {
             try {
                 speechRecognizer?.stopListening()
@@ -272,8 +293,10 @@ class WakeWordService : Service() {
                     }
                     WebSocketService.sendEvent(event.toString())
                     DaemonLog.add("talk: sent utterance \"${utterance.take(60)}\"")
-                    // Re-arm for next wake word after sending utterance
-                    if (active) restartRecognizer()
+                    // Phone Gemma and Android speech recognition are both
+                    // memory-intensive. Keep the mic released until the answer
+                    // is ready and TTS explicitly re-arms Talk Mode.
+                    pauseForLocalInference()
                 } else {
                     // Empty result — re-arm
                     capturingUtterance = false
@@ -396,6 +419,7 @@ class WakeWordService : Service() {
         // Set active=false so startListening() in handleTtsFinished() is not a no-op
         active = false
         cancelPendingRestart()
+        cancelLocalInferenceRecovery()
         mainHandler.post { destroyRecognizer() }
     }
 
@@ -405,6 +429,7 @@ class WakeWordService : Service() {
         capturingUtterance = false
         active = false
         cancelPendingRestart()
+        cancelLocalInferenceRecovery()
         mainHandler.post {
             try {
                 destroyRecognizer()
@@ -414,6 +439,43 @@ class WakeWordService : Service() {
         }
     }
 
+    private fun handlePauseForLocalInference(): Boolean {
+        val resumeAfterInference = active && !talkModeEnabled
+        if (!active && !capturingUtterance) return false
+        DaemonLog.add("wake: releasing speech recognizer for Phone Gemma")
+        capturingUtterance = false
+        active = false
+        cancelPendingRestart()
+        cancelLocalInferenceRecovery()
+        mainHandler.post { destroyRecognizer() }
+        return resumeAfterInference
+    }
+
+    private fun handleResumeAfterLocalInference() {
+        if (talkModeEnabled || active) return
+        cancelLocalInferenceRecovery()
+        DaemonLog.add("wake: resuming wake scan after Phone Gemma")
+        startListening()
+    }
+
+    private fun scheduleTalkModeRecoveryAfterLocalInference() {
+        if (!talkModeEnabled || active || OutsideAppVoiceSessionService.currentState() == OutsideAppVoiceState.PAUSED) return
+        cancelLocalInferenceRecovery()
+        val recovery = Runnable {
+            localInferenceRecoveryRunnable = null
+            if (!talkModeEnabled || active || OutsideAppVoiceSessionService.currentState() == OutsideAppVoiceState.PAUSED) return@Runnable
+            DaemonLog.add("wake: Phone Gemma finished without TTS re-arm; resuming Talk Mode")
+            handleTtsFinished()
+        }
+        localInferenceRecoveryRunnable = recovery
+        mainHandler.postDelayed(recovery, LOCAL_INFERENCE_TALK_MODE_RECOVERY_DELAY_MS)
+    }
+
+    private fun cancelLocalInferenceRecovery() {
+        localInferenceRecoveryRunnable?.let { mainHandler.removeCallbacks(it) }
+        localInferenceRecoveryRunnable = null
+    }
+
     private fun handleEndTalkModeForUserControl() {
         if (!talkModeEnabled && !capturingUtterance) return
         DaemonLog.add("wake: ending talk mode capture")
@@ -421,6 +483,7 @@ class WakeWordService : Service() {
         capturingUtterance = false
         active = false
         cancelPendingRestart()
+        cancelLocalInferenceRecovery()
         mainHandler.post {
             try {
                 destroyRecognizer()
@@ -433,6 +496,7 @@ class WakeWordService : Service() {
 
     private fun handleTtsFinished() {
         if (!talkModeEnabled) return
+        cancelLocalInferenceRecovery()
         DaemonLog.add("wake: TTS done — re-arming mic for next utterance (talk mode)")
         // Stay in utterance-capture mode: the next speech result is treated as
         // the next user turn without requiring another wake word.

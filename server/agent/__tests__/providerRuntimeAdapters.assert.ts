@@ -7744,6 +7744,33 @@ async function testAndroidLocalGemmaExplainsPhoneResourceFailures() {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
 
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: false,
+    error: "LOCAL_MODEL_DEVICE_MEMORY_LOW: reason=jarvis_safety_reserve backend=gpu available=1670MB initialAvailable=1670MB threshold=564MB minimum=1800MB shortfall=130MB lowMemory=false recoveryWaitMs=2000",
+  }));
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [{ role: "user", content: "Tell me a joke" }],
+        toolChoice: "none",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone",
+      })),
+      (error: unknown) => {
+        assert(error instanceof Error);
+        assert.match(error.message, /released Jarvis voice resources and waited/);
+        assert.match(error.message, /Android did not report a low-memory state/);
+        assert.doesNotMatch(error.message, /Android reported low available memory/);
+        return true;
+      },
+    );
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
     requests.push({ userId, op, timeoutMs });
@@ -7763,7 +7790,7 @@ async function testAndroidLocalGemmaExplainsPhoneResourceFailures() {
       /still working on the previous message/,
     );
     assert.deepEqual(requests.map((request) => request.op.type), ["android_local_model_generate"]);
-    console.log("OK: Android Local Gemma explains memory failures and does not cancel live busy generations");
+    console.log("OK: Android Local Gemma distinguishes Android low memory from its E4B safety reserve and does not cancel live busy generations");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
