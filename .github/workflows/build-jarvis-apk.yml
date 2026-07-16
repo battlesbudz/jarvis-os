@@ -173,6 +173,8 @@ jobs:
           retention-days: 90
 
       - name: Create or update GitHub release
+        id: release_mirror
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
           tag_name: jarvis-app-latest
@@ -200,6 +202,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Move latest release tag to this build
+        id: release_tag
+        if: steps.release_mirror.outcome == 'success'
+        continue-on-error: true
         run: |
           git tag -f jarvis-app-latest "$GITHUB_SHA"
           git push origin refs/tags/jarvis-app-latest --force
+
+      - name: Report release mirror outage
+        if: always() && (steps.release_mirror.outcome == 'failure' || steps.release_tag.outcome == 'failure')
+        run: echo "::warning::The signed APK is available in the jarvis-app-apk Actions artifact, but the optional GitHub Release mirror could not be updated."

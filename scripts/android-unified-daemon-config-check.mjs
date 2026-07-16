@@ -909,6 +909,19 @@ assertIncludes(apkWorkflow, "https://github.com/${{ github.repository }}/release
 assertIncludes(apkWorkflow, "https://github.com/${{ github.repository }}/releases/tag/jarvis-app-latest", "build-jarvis-apk.yml");
 assertIncludes(apkWorkflow, '"commitSha": "${{ github.sha }}"', "build-jarvis-apk.yml");
 assertIncludes(apkWorkflow, "Move latest release tag to this build", "build-jarvis-apk.yml");
+assertIncludes(
+  apkWorkflow,
+  "id: release_mirror\n        continue-on-error: true",
+  "build-jarvis-apk.yml",
+);
+assertIncludes(
+  apkWorkflow,
+  "id: release_tag\n        if: steps.release_mirror.outcome == 'success'\n        continue-on-error: true",
+  "build-jarvis-apk.yml",
+);
+assertIncludes(apkWorkflow, "steps.release_mirror.outcome == 'failure'", "build-jarvis-apk.yml");
+assertIncludes(apkWorkflow, "steps.release_tag.outcome == 'failure'", "build-jarvis-apk.yml");
+assertIncludes(apkWorkflow, "jarvis-app-apk Actions artifact", "build-jarvis-apk.yml");
 assertExcludes(apkWorkflow, "battlesbudz/Gameplanjarvisai/releases", "build-jarvis-apk.yml");
 
 console.log("OK: unified Android daemon native config is present");
