@@ -210,6 +210,14 @@ function assertIncludes(contents, expected, source) {
   }
 }
 
+function assertAppearsBefore(contents, first, second, source) {
+  const firstIndex = contents.indexOf(first);
+  const secondIndex = contents.indexOf(second);
+  if (firstIndex < 0 || secondIndex < 0 || firstIndex >= secondIndex) {
+    throw new Error(`${source} must place ${first} before ${second}`);
+  }
+}
+
 function assertExcludes(contents, forbidden, source) {
   const normalizedContents = contents.replace(/\r\n/g, "\n");
   const normalizedForbidden = forbidden.replace(/\r\n/g, "\n");
@@ -602,6 +610,9 @@ for (const [contents, source] of [
   assertIncludes(contents, "recognizerReleased.await()", source);
   assertIncludes(contents, "fun resumeAfterLocalInference(shouldResume: Boolean)", source);
   assertIncludes(contents, "fun resumeAfterLocalValidation(shouldResume: Boolean)", source);
+  assertIncludes(contents, "@Volatile private var localInferencePaused = false", source);
+  assertIncludes(contents, "if (active || localInferencePaused) return", source);
+  assertIncludes(contents, "if (active || localInferencePaused) return@post", source);
   assertIncludes(contents, "LOCAL_INFERENCE_TALK_MODE_RECOVERY_DELAY_MS = 10_000L", source);
   assertIncludes(contents, "scheduleTalkModeRecoveryAfterLocalInference()", source);
   assertIncludes(contents, "OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(", source);
@@ -612,7 +623,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "private fun handleEndTalkModeForUserControl()", source);
   assertIncludes(contents, "talkModeEnabled = false", source);
   assertIncludes(contents, "speechRecognizer?.cancel()", source);
-  assertIncludes(contents, "if (!active && !capturingUtterance) return", source);
+  assertIncludes(contents, "localInferencePaused = true", source);
+  assertIncludes(contents, "if (!talkModeEnabled || localInferencePaused) return", source);
 }
 assertIncludes(webSocketService, "private fun startForegroundCompat(): Boolean", "WebSocketService.kt");
 assertIncludes(webSocketService, "Failed to start foreground daemon service", "WebSocketService.kt");
@@ -772,18 +784,27 @@ for (const [contents, source] of [
   assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES", source);
   assertIncludes(contents, "MIN_CPU_AVAILABLE_MEMORY_BYTES = 7000L * 1024L * 1024L", source);
   assertIncludes(contents, "LocalGemmaMemoryAdmissionPolicy", source);
+  assertIncludes(contents, "LocalGemmaOperationAdmission", source);
+  assertIncludes(contents, "LocalGemmaGenerationAdmissionResult", source);
   assertIncludes(contents, "RECOVERY_TIMEOUT_MS = 2_000L", source);
   assertIncludes(contents, "recoverMemoryHeadroom(context, backendName)", source);
   assertIncludes(contents, 'reason=${decision.blockReason?.wireName}', source);
   assertIncludes(contents, "WakeWordService.pauseForLocalInference()", source);
   assertIncludes(contents, "WakeWordService.resumeAfterLocalInference(resumeWakeAfterInference)", source);
+  const generateStart = contents.indexOf("fun generate(context: Context");
+  const generateEnd = contents.indexOf("\n    fun validate(", generateStart);
+  const generateBody = contents.slice(generateStart, generateEnd);
+  assertAppearsBefore(generateBody, "registerActiveRequest(active)", "WakeWordService.pauseForLocalInference()", `${source} generate`);
+  assertAppearsBefore(generateBody, "WakeWordService.resumeAfterLocalInference(resumeWakeAfterInference)", "operationAdmission.releaseGeneration(requestId)", `${source} generate cleanup`);
   const validateStart = contents.indexOf("fun validate(context: Context");
   const validateEnd = contents.indexOf("\n    fun cancel(", validateStart);
   const validateBody = contents.slice(validateStart, validateEnd);
   assertIncludes(validateBody, "WakeWordService.pauseForLocalInference()", `${source} validate`);
+  assertAppearsBefore(validateBody, "operationAdmission.tryAcquireValidation()", "WakeWordService.pauseForLocalInference()", `${source} validate`);
   assertIncludes(validateBody, "recoverMemoryHeadroom(context, backendName)", `${source} validate`);
   assertIncludes(validateBody, "lowMemoryError(memory, backendName, memoryRecovery)", `${source} validate`);
   assertIncludes(validateBody, "WakeWordService.resumeAfterLocalValidation(resumeWakeAfterValidation)", `${source} validate`);
+  assertAppearsBefore(validateBody, "WakeWordService.resumeAfterLocalValidation(resumeWakeAfterValidation)", "operationAdmission.releaseValidation()", `${source} validate cleanup`);
   assertIncludes(contents, 'DEFAULT_CACHE_POLICY = "none"', source);
   assertIncludes(contents, 'LITERT_NO_CACHE_DIR = ":nocache"', source);
   assertIncludes(contents, "trimPromptForContext", source);
@@ -805,7 +826,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "keepEngineWarm", source);
   assertIncludes(contents, "releaseEngine(clearLastError = false)", source);
   assertIncludes(contents, "fun releaseWarmEngine()", source);
-  assertIncludes(contents, "if (activeRequests.isNotEmpty()) return", source);
+  assertIncludes(contents, "if (operationAdmission.hasActiveOperation()) return", source);
   assertIncludes(contents, "if (!keepEngineWarm || !generationSucceeded)", source);
   assertIncludes(contents, "retry_cpu", source);
   assertIncludes(contents, "generationRetries", source);

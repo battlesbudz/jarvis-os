@@ -88,6 +88,59 @@ internal object LocalGemmaMemoryAdmissionPolicy {
     }
 }
 
+internal enum class LocalGemmaGenerationAdmissionResult {
+    ACQUIRED,
+    DUPLICATE,
+    BUSY,
+}
+
+internal class LocalGemmaOperationAdmission {
+    private val lock = Any()
+    private var generationRequestId: String? = null
+    private var validationActive = false
+
+    fun tryAcquireGeneration(requestId: String): LocalGemmaGenerationAdmissionResult {
+        synchronized(lock) {
+            if (generationRequestId == requestId) return LocalGemmaGenerationAdmissionResult.DUPLICATE
+            if (generationRequestId != null || validationActive) return LocalGemmaGenerationAdmissionResult.BUSY
+            generationRequestId = requestId
+            return LocalGemmaGenerationAdmissionResult.ACQUIRED
+        }
+    }
+
+    fun releaseGeneration(requestId: String) {
+        synchronized(lock) {
+            if (generationRequestId == requestId) generationRequestId = null
+        }
+    }
+
+    fun tryAcquireValidation(): Boolean {
+        synchronized(lock) {
+            if (generationRequestId != null || validationActive) return false
+            validationActive = true
+            return true
+        }
+    }
+
+    fun releaseValidation() {
+        synchronized(lock) {
+            validationActive = false
+        }
+    }
+
+    fun hasActiveOperation(): Boolean {
+        synchronized(lock) {
+            return generationRequestId != null || validationActive
+        }
+    }
+
+    fun isValidationActive(): Boolean {
+        synchronized(lock) {
+            return validationActive
+        }
+    }
+}
+
 object LocalGemmaInferenceEngine {
     private const val PROVIDER = "android-local-gemma"
     private const val RUNTIME = "android-app"
@@ -108,7 +161,7 @@ object LocalGemmaInferenceEngine {
 
     private val engineMutex = Mutex()
     private val generationMutex = Mutex()
-    private val activeRequestLock = Any()
+    private val operationAdmission = LocalGemmaOperationAdmission()
     private val activeRequests = ConcurrentHashMap<String, ActiveRequest>()
     private val completedRequests = AtomicLong(0)
 
@@ -129,6 +182,7 @@ object LocalGemmaInferenceEngine {
             .put("defaultCpuFallbackAllowed", DEFAULT_ALLOW_CPU_FALLBACK)
             .put("defaultCachePolicy", DEFAULT_CACHE_POLICY)
             .put("activeRequests", activeRequests.size)
+            .put("validationActive", operationAdmission.isValidationActive())
             .put("completedRequests", completedRequests.get())
             .put("supportsCancellation", true)
             .put("supportsStreaming", true)
@@ -153,33 +207,27 @@ object LocalGemmaInferenceEngine {
         val systemInstruction = op.optString("systemInstruction", "").trim()
         val startedAtMs = System.currentTimeMillis()
 
-        if (activeRequests.containsKey(requestId)) {
-            return OpResult(false, error = "LOCAL_MODEL_REQUEST_DUPLICATE: requestId is already active.")
-        }
-        val resumeWakeAfterInference = WakeWordService.pauseForLocalInference()
-        val memoryRecovery = recoverMemoryHeadroom(context, backendName)
-        val memory = memoryRecovery.current
-        if (prompt.length != rawPrompt.length) {
-            DaemonLog.add("local_gemma: trimmed prompt request=${shortRequestId(requestId)} chars=${rawPrompt.length}->${prompt.length} context=$contextTokens max=$maxCompletionTokens")
-        }
-        lowMemoryError(memory, backendName, memoryRecovery)?.let { error ->
-            DaemonLog.add("local_gemma: memory low request=${shortRequestId(requestId)} $error")
-            WakeWordService.resumeAfterLocalInference(resumeWakeAfterInference)
-            return OpResult(false, error = error)
-        }
-
         val job = Job()
         val active = ActiveRequest(requestId, model, modelFile.absolutePath, modelRevision, backendName, cachePolicy, startedAtMs, job)
-        registerActiveRequest(active)?.let { result ->
-            WakeWordService.resumeAfterLocalInference(resumeWakeAfterInference)
-            return result
-        }
-        DaemonLog.add(
-            "local_gemma: start request=${shortRequestId(requestId)} backend=$backendName cpuFallback=$allowCpuFallback cache=$cachePolicy context=$contextTokens max=$maxCompletionTokens promptChars=${prompt.length} availMem=${formatMiB(memory.availableBytes)}MB"
-        )
+        registerActiveRequest(active)?.let { return it }
 
+        var resumeWakeAfterInference = false
         var generationSucceeded = false
         return try {
+            resumeWakeAfterInference = WakeWordService.pauseForLocalInference()
+            val memoryRecovery = recoverMemoryHeadroom(context, backendName)
+            val memory = memoryRecovery.current
+            if (prompt.length != rawPrompt.length) {
+                DaemonLog.add("local_gemma: trimmed prompt request=${shortRequestId(requestId)} chars=${rawPrompt.length}->${prompt.length} context=$contextTokens max=$maxCompletionTokens")
+            }
+            lowMemoryError(memory, backendName, memoryRecovery)?.let { error ->
+                DaemonLog.add("local_gemma: memory low request=${shortRequestId(requestId)} $error")
+                return OpResult(false, error = error)
+            }
+            DaemonLog.add(
+                "local_gemma: start request=${shortRequestId(requestId)} backend=$backendName cpuFallback=$allowCpuFallback cache=$cachePolicy context=$contextTokens max=$maxCompletionTokens promptChars=${prompt.length} availMem=${formatMiB(memory.availableBytes)}MB"
+            )
+
             var requestedAttemptBackend = backendName
             var requestedSpeculativeDecoding = speculativeDecodingPreference
             var generationRetries = 0
@@ -299,8 +347,12 @@ object LocalGemmaInferenceEngine {
                     releaseEngine(clearLastError = false)
                 }
             } finally {
-                activeRequests.remove(requestId)
-                WakeWordService.resumeAfterLocalInference(resumeWakeAfterInference)
+                try {
+                    WakeWordService.resumeAfterLocalInference(resumeWakeAfterInference)
+                } finally {
+                    activeRequests.remove(requestId, active)
+                    operationAdmission.releaseGeneration(requestId)
+                }
             }
         }
     }
@@ -314,11 +366,12 @@ object LocalGemmaInferenceEngine {
         val keepEngineWarm = op.optBoolean("keepEngineWarm", false)
         val startedAtMs = System.currentTimeMillis()
 
-        if (activeRequests.isNotEmpty()) {
-            return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already generating. Wait for it to finish or cancel it before validating the local engine.")
+        if (!operationAdmission.tryAcquireValidation()) {
+            return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already generating or validating. Wait for it to finish before validating the local engine.")
         }
-        val resumeWakeAfterValidation = WakeWordService.pauseForLocalInference()
+        var resumeWakeAfterValidation = false
         try {
+            resumeWakeAfterValidation = WakeWordService.pauseForLocalInference()
             val memoryRecovery = recoverMemoryHeadroom(context, backendName)
             val memory = memoryRecovery.current
             lowMemoryError(memory, backendName, memoryRecovery)?.let { error ->
@@ -383,7 +436,11 @@ object LocalGemmaInferenceEngine {
                 OpResult(false, error = "LOCAL_MODEL_VALIDATION_FAILED: $detail")
             }
         } finally {
-            WakeWordService.resumeAfterLocalValidation(resumeWakeAfterValidation)
+            try {
+                WakeWordService.resumeAfterLocalValidation(resumeWakeAfterValidation)
+            } finally {
+                operationAdmission.releaseValidation()
+            }
         }
     }
 
@@ -477,7 +534,7 @@ object LocalGemmaInferenceEngine {
     }
 
     fun releaseWarmEngine() {
-        if (activeRequests.isNotEmpty()) return
+        if (operationAdmission.hasActiveOperation()) return
         releaseEngine(clearLastError = false)
     }
 
@@ -552,14 +609,14 @@ object LocalGemmaInferenceEngine {
     }
 
     private fun registerActiveRequest(active: ActiveRequest): OpResult? {
-        synchronized(activeRequestLock) {
-            if (activeRequests.containsKey(active.requestId)) {
+        when (operationAdmission.tryAcquireGeneration(active.requestId)) {
+            LocalGemmaGenerationAdmissionResult.DUPLICATE -> {
                 return OpResult(false, error = "LOCAL_MODEL_REQUEST_DUPLICATE: requestId is already active.")
             }
-            if (activeRequests.isNotEmpty()) {
-                return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already generating. Wait for it to finish or cancel it before sending another message.")
+            LocalGemmaGenerationAdmissionResult.BUSY -> {
+                return OpResult(false, error = "LOCAL_MODEL_BUSY: Phone Gemma is already generating or validating. Wait for it to finish before sending another message.")
             }
-            activeRequests[active.requestId] = active
+            LocalGemmaGenerationAdmissionResult.ACQUIRED -> activeRequests[active.requestId] = active
         }
         return null
     }

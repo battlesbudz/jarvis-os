@@ -14,6 +14,9 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 class UnifiedDaemonContractTest {
@@ -174,6 +177,54 @@ class UnifiedDaemonContractTest {
         assertFalse(reported.allowed)
         assertEquals(LocalGemmaMemoryBlockReason.ANDROID_LOW_MEMORY, reported.blockReason)
         assertFalse(LocalGemmaMemoryAdmissionPolicy.shouldAttemptRecovery(reported))
+    }
+
+    @Test
+    fun phoneGemmaOperationAdmissionSerializesGenerationAndValidationBeforeWakePause() {
+        val admission = LocalGemmaOperationAdmission()
+        val executor = Executors.newFixedThreadPool(2)
+        val ready = CountDownLatch(2)
+        val start = CountDownLatch(1)
+        val requestIds = listOf("request-a", "request-b")
+
+        try {
+            val futures = requestIds.map { requestId ->
+                executor.submit<LocalGemmaGenerationAdmissionResult> {
+                    ready.countDown()
+                    start.await()
+                    admission.tryAcquireGeneration(requestId)
+                }
+            }
+            assertTrue("Concurrent admission workers did not become ready", ready.await(1, TimeUnit.SECONDS))
+            start.countDown()
+            val results = futures.map { it.get(1, TimeUnit.SECONDS) }
+
+            assertEquals(1, results.count { it == LocalGemmaGenerationAdmissionResult.ACQUIRED })
+            assertEquals(1, results.count { it == LocalGemmaGenerationAdmissionResult.BUSY })
+            val acquiredRequestId = requestIds[results.indexOf(LocalGemmaGenerationAdmissionResult.ACQUIRED)]
+            assertFalse(admission.tryAcquireValidation())
+            admission.releaseGeneration(acquiredRequestId)
+
+            assertTrue(admission.tryAcquireValidation())
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.BUSY,
+                admission.tryAcquireGeneration("request-c"),
+            )
+            assertFalse(admission.tryAcquireValidation())
+            admission.releaseValidation()
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.ACQUIRED,
+                admission.tryAcquireGeneration("request-c"),
+            )
+            assertEquals(
+                LocalGemmaGenerationAdmissionResult.DUPLICATE,
+                admission.tryAcquireGeneration("request-c"),
+            )
+            admission.releaseGeneration("request-c")
+            assertFalse(admission.hasActiveOperation())
+        } finally {
+            executor.shutdownNow()
+        }
     }
 
     @Test
