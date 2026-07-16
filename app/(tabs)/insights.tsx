@@ -4198,7 +4198,7 @@ export default function InsightsScreen() {
           placeholderTextColor={isRecording ? '#EF4444' : Colors.textSecondary}
           multiline
           maxLength={1000}
-          editable={!isStreaming && !isRecording && !isTranscribing && !isBaseLoading}
+          editable={!isRecording && !isTranscribing && !isBaseLoading}
           returnKeyType="send"
           blurOnSubmit={false}
           onSubmitEditing={() => {

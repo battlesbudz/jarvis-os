@@ -101,6 +101,7 @@ const tests = [
   { file: "server/agent/__tests__/composioConnectedAccounts.assert.ts" },
   { file: "server/agent/__tests__/composioRouteContract.assert.ts" },
   { file: "app/(tabs)/__tests__/connectionUx.assert.ts" },
+  { file: "app/(tabs)/__tests__/chatInputWhileStreaming.assert.ts" },
   { file: "app/(tabs)/__tests__/voiceApprovalGates.assert.ts" },
   { file: "app/(tabs)/__tests__/settingsAchievementsSection.assert.ts" },
   { file: "lib/__tests__/authNavigation.test.ts" },
