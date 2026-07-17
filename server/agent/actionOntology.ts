@@ -32,6 +32,19 @@ function has(text: string, re: RegExp): boolean {
   return re.test(text);
 }
 
+function isConversationInspectionQuestion(text: string): boolean {
+  const normalized = text
+    .toLowerCase()
+    .replace(/['`\u2018\u2019]/g, "")
+    .replace(/[?!.;,:\-\u2013\u2014]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return /^(?:hey\s+jarvis\s+)?what (?:was|is) my last message$/.test(normalized) ||
+    /^(?:hey\s+jarvis\s+)?what did i (?:just )?(?:say|ask)$/.test(normalized) ||
+    /^(?:hey\s+jarvis\s+)?what (?:was|is) (?:your|the assistant(?:s)?) last (?:message|response|reply)$/.test(normalized);
+}
+
 export function classifyActionOntology(text: string): ActionOntologyDecision {
   const normalized = text.trim();
   const lower = normalized.toLowerCase();
@@ -44,6 +57,17 @@ export function classifyActionOntology(text: string): ActionOntologyDecision {
       allowedToolGroups: [],
       priorityToolNames: [],
       reason: "No user request text was available to classify.",
+    });
+  }
+
+  if (isConversationInspectionQuestion(normalized)) {
+    return decision({
+      actionType: "unknown",
+      actor: "jarvis",
+      approvalRequired: false,
+      allowedToolGroups: [],
+      priorityToolNames: [],
+      reason: "The request asks Jarvis to inspect the current conversation, not send or change an external message.",
     });
   }
 

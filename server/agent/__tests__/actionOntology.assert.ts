@@ -34,6 +34,12 @@ assertAction("Send an email to Sam saying the appointment moved", {
   approvalRequired: true,
 });
 
+assertAction("What was my last message?", {
+  actionType: "unknown",
+  actor: "jarvis",
+  approvalRequired: false,
+});
+
 assertAction("Fix your scheduler bug", {
   actionType: "jarvis_code_proposal",
   actor: "human_approval_required",

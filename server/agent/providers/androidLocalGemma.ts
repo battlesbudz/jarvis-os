@@ -14,6 +14,11 @@ import {
   classifyRuntimeMemoryInspectionIntent,
 } from "../../state/runtimeMemoryInspection";
 import {
+  answerRuntimeConversationInspectionQuestion,
+  hasPromptOnlyStrictJsonConversationContract,
+  hasShortcutBlockingConversationInstruction,
+} from "../../state/runtimeConversationInspection";
+import {
   auditLocalRuntimeResponse,
   type LocalRuntimeActionResult,
   type LocalRuntimeCapabilityAvailability,
@@ -2623,6 +2628,26 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       throw new Error("Android Local Gemma requires an authenticated user and the Jarvis Android app device control connection.");
     }
     const userId = params.userId;
+    if (
+      !params.responseFormat &&
+      (params.toolChoice ?? "none") !== "required" &&
+      !hasShortcutBlockingConversationInstruction(params.messages) &&
+      !hasPromptOnlyStrictJsonConversationContract(params.messages)
+    ) {
+      if (params.signal?.aborted) {
+        throw createAbortError("Phone Gemma generation was stopped before reading conversation history.");
+      }
+      const runtimeConversationInspection = answerRuntimeConversationInspectionQuestion({
+        messages: params.messages,
+        route: undefined,
+        maxCompletionTokens: params.maxCompletionTokens,
+      });
+      if (runtimeConversationInspection) {
+        yield { type: "text", delta: runtimeConversationInspection.textContent };
+        yield { type: "finish", reason: runtimeConversationInspection.finishReason ?? "stop" };
+        return;
+      }
+    }
     await waitForAndroidLocalGemmaCancellation(userId);
     const memoryInspectionIntent = classifyRuntimeMemoryInspectionIntent(params.messages);
     if (!params.responseFormat && memoryInspectionIntent && memoryInspectionIntent.scopeLabel !== "about you") {
