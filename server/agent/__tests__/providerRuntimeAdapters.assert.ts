@@ -7450,6 +7450,479 @@ async function testAndroidLocalGemmaCancelsTimedOutGeneration() {
   }
 }
 
+async function testAndroidLocalGemmaAnswersLastMessageWithoutDaemonGeneration() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return { ok: false, error: "LOCAL_MODEL_BUSY: Phone Gemma is already generating." };
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "assistant", content: "Hello! How can I assist you today?" },
+        { role: "user", content: "Yo there" },
+        { role: "assistant", content: "Why did the scarecrow win an award?\n\nBecause he was outstanding in his field!" },
+        { role: "user", content: "What was my last message?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-history",
+    }));
+
+    assert.equal(result.textContent, "Your last message was: Yo there");
+    assert.deepEqual(requests, []);
+    console.log("OK: Android Local Gemma answers immediate last-message questions without daemon generation");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotBypassRequiredToolContractsForLastMessage() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return { ok: true, data: { text: "No device action was run.", finishReason: "stop" } };
+  }, { forwardStatusOps: true });
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [
+          { role: "user", content: "Yo there" },
+          { role: "assistant", content: "Why did the scarecrow win an award?\n\nBecause he was outstanding in his field!" },
+          { role: "user", content: "What was my last message?" },
+        ],
+        tools: [{
+          type: "function",
+          function: {
+            name: "daemon_action",
+            description: "Perform an Android daemon action.",
+            parameters: { type: "object", properties: { action: { type: "string" } }, required: ["action"] },
+          },
+        }],
+        toolChoice: "required",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone-history-required-tool",
+      })),
+      /required a tool call/,
+    );
+    assert.ok(requests.some((request) => request.op.type === "android_local_model_generate"));
+    console.log("OK: Android Local Gemma preserves required tool contracts for last-message wording");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotBypassPromptOnlyJsonContractsForLastMessage() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return { ok: true, data: { text: JSON.stringify({ previousUserMessage: "Yo there" }), finishReason: "stop" } };
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "system", content: "Return only JSON." },
+        { role: "user", content: "Yo there" },
+        { role: "assistant", content: "Why did the scarecrow win an award?\n\nBecause he was outstanding in his field!" },
+        { role: "user", content: "What was my last message?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-history-json",
+    }));
+
+    assert.equal(result.textContent, '{"previousUserMessage":"Yo there"}');
+    assert.ok(requests.some((request) => request.op.type === "android_local_model_generate"));
+    console.log("OK: Android Local Gemma preserves prompt-only JSON contracts for last-message wording");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotBypassSystemInstructionsForLastMessage() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return { ok: true, data: { text: "message precedente: Yo there", finishReason: "stop" } };
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "system", content: "Answer all questions in French." },
+        { role: "user", content: "Yo there" },
+        { role: "assistant", content: "ok" },
+        { role: "user", content: "What was my last message?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-history-system-instruction",
+    }));
+
+    assert.equal(result.textContent, "message precedente: Yo there");
+    assert.ok(requests.some((request) => request.op.type === "android_local_model_generate"));
+    console.log("OK: Android Local Gemma preserves system instructions for last-message wording");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaAllowsStandardCoachSystemPromptForLastMessage() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => {
+    throw new Error("standard coach prompt should still use last-message shortcut");
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        {
+          role: "system",
+          content: "You are Jarvis, the JARVIS chat runtime. You can take actions on the user's behalf using the available tools. Respond naturally and do not mention tool calls or functions to the user.",
+        },
+        { role: "user", content: "Yo there" },
+        { role: "assistant", content: "ok" },
+        { role: "user", content: "What was my last message?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-history-standard-system",
+    }));
+
+    assert.equal(result.textContent, "Your last message was: Yo there");
+    console.log("OK: Android Local Gemma allows standard coach system prompt for last-message shortcut");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotBypassDynamicCoachSystemPromptForLastMessage() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return { ok: true, data: { text: "Commander, your last message was Yo there.", finishReason: "stop" } };
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        {
+          role: "system",
+          content: "You are Jarvis, the JARVIS chat runtime. You can take actions on the user's behalf using the available tools. Respond naturally and do not mention tool calls or functions to the user. Prefix every reply with Commander.",
+        },
+        { role: "user", content: "Yo there" },
+        { role: "assistant", content: "ok" },
+        { role: "user", content: "What was my last message?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-history-dynamic-system",
+    }));
+
+    assert.equal(result.textContent, "Commander, your last message was Yo there.");
+    assert.ok(requests.some((request) => request.op.type === "android_local_model_generate"));
+    console.log("OK: Android Local Gemma preserves dynamic coach system prompt constraints for last-message wording");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaAllowsLeanSystemPromptForLastMessage() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => {
+    throw new Error("lean context prompt should still use last-message shortcut");
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        {
+          role: "system",
+          content: [
+            "You are Jarvis, the JARVIS chat runtime.",
+            "Answer the user's latest message directly and keep it concise.",
+            "Use only the context included in this request. Do not invent memories, files, user data, live research, or tool results.",
+            "If the user asks for current information or an action and a relevant tool is available, use it. If the needed tool or API is unavailable, say that plainly.",
+          ].join("\n"),
+        },
+        { role: "user", content: "Yo there" },
+        { role: "assistant", content: "ok" },
+        { role: "user", content: "What was my last message?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-history-lean-system",
+    }));
+
+    assert.equal(result.textContent, "Your last message was: Yo there");
+    console.log("OK: Android Local Gemma allows lean system prompt for last-message shortcut");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotBypassConfidentialityInstructionsForLastMessage() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return { ok: true, data: { text: "I cannot quote that verbatim.", finishReason: "stop" } };
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "system", content: "Never disclose or repeat user content verbatim." },
+        { role: "user", content: "private content" },
+        { role: "assistant", content: "ok" },
+        { role: "user", content: "What was my last message?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-history-confidentiality",
+    }));
+
+    assert.equal(result.textContent, "I cannot quote that verbatim.");
+    assert.ok(requests.some((request) => request.op.type === "android_local_model_generate"));
+    console.log("OK: Android Local Gemma preserves confidentiality instructions for last-message wording");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaBoundsLastMessageShortcutOutput() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => {
+    throw new Error("last-message shortcut should not call daemon");
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        {
+          role: "user",
+          content: `hola 😊 test@example.com https://example.com?a=1&b=2 ${Array.from({ length: 12 }, (_, index) => `opaque-id-${String(index).padStart(2, "0")}-xxxxxxxxx`).join(" ")}`,
+        },
+        { role: "assistant", content: "ok" },
+        { role: "user", content: "What was my last message?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 96,
+      stream: false,
+      userId: "user-phone-history-bounded",
+    }));
+
+    assert.ok(Buffer.byteLength(result.textContent, "utf8") <= 96 * 2);
+    assert.match(result.textContent, /^Your last message was: hola 😊 test@example\.com https:\/\/example\.com\?a=1&b=2/);
+    assert.match(result.textContent, /\.\.\.$/);
+    console.log("OK: Android Local Gemma bounds last-message shortcut output");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaSkipsLastMessageShortcutWhenCompletionBudgetIsTooSmall() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return { ok: true, data: { text: "model-sized answer", finishReason: "stop" } };
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Yo there" },
+        { role: "assistant", content: "ok" },
+        { role: "user", content: "What was my last message?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 1,
+      stream: false,
+      userId: "user-phone-history-tiny-budget",
+    }));
+
+    assert.equal(result.textContent, "model-sized answer");
+    assert.ok(requests.some((request) => request.op.type === "android_local_model_generate"));
+    console.log("OK: Android Local Gemma skips last-message shortcut when completion budget is too small");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaSkipsNoTextLastMessageShortcutWhenCompletionBudgetIsTooSmall() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return { ok: true, data: { text: "model no-text answer", finishReason: "stop" } };
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA==" } }] },
+        { role: "assistant", content: "ok" },
+        { role: "user", content: "What was my last message?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 1,
+      stream: false,
+      userId: "user-phone-history-no-text-tiny-budget",
+    }));
+
+    assert.equal(result.textContent, "model no-text answer");
+    assert.ok(requests.some((request) => request.op.type === "android_local_model_generate"));
+    console.log("OK: Android Local Gemma skips no-text last-message shortcut when completion budget is too small");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDistinguishesMissingHistoryForLastMessageShortcut() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => {
+    throw new Error("missing-history shortcut should not call daemon");
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "What was my last message?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-history-missing",
+    }));
+
+    assert.equal(result.textContent, "There is no previous user message in this conversation context.");
+    console.log("OK: Android Local Gemma distinguishes missing history from textless last-message context");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaHonorsAbortBeforeLastMessageShortcut() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => {
+    throw new Error("aborted last-message shortcut should not call daemon");
+  }, { forwardStatusOps: true });
+  const controller = new AbortController();
+  controller.abort();
+
+  try {
+    await assert.rejects(
+      () => accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [
+          { role: "user", content: "Yo there" },
+          { role: "assistant", content: "ok" },
+          { role: "user", content: "What was my last message?" },
+        ],
+        toolChoice: "none",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone-history-aborted",
+        signal: controller.signal,
+      })),
+      (error: unknown) => {
+        assert(error instanceof Error);
+        assert.equal(error.name, "AbortError");
+        return true;
+      },
+    );
+    console.log("OK: Android Local Gemma honors aborts before last-message shortcut replies");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotWaitForCancellationBeforeLastMessageShortcut() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  let generationStarted: () => void = () => {};
+  let finishGeneration: (result: any) => void = () => {};
+  let finishCancellation: (result: any) => void = () => {};
+  const generationStartedPromise = new Promise<void>((resolve) => {
+    generationStarted = resolve;
+  });
+
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    if (op.type === "android_local_model_cancel") {
+      return new Promise((resolve) => {
+        finishCancellation = resolve;
+      });
+    }
+    generationStarted();
+    return new Promise((resolve) => {
+      finishGeneration = resolve;
+    });
+  });
+
+  const controller = new AbortController();
+  try {
+    const firstTurn = accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "First question" }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-history-cancel-barrier",
+      signal: controller.signal,
+    }));
+
+    await generationStartedPromise;
+    controller.abort();
+    await assert.rejects(firstTurn, (error: unknown) => {
+      assert(error instanceof Error);
+      assert.equal(error.name, "AbortError");
+      return true;
+    });
+
+    const secondTurn = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Yo there" },
+        { role: "assistant", content: "ok" },
+        { role: "user", content: "What was my last message?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-history-cancel-barrier",
+    }));
+
+    assert.equal(secondTurn.textContent, "Your last message was: Yo there");
+    assert.deepEqual(requests.map((request) => request.op.type), [
+      "android_local_model_generate",
+      "android_local_model_cancel",
+    ]);
+    finishCancellation({ ok: true, data: { cancelled: true } });
+    finishGeneration({ ok: false, error: "LOCAL_MODEL_CANCELLED: request was cancelled" });
+    console.log("OK: Android Local Gemma does not wait for cancellation before last-message shortcut");
+  } finally {
+    finishCancellation({ ok: true, data: { cancelled: true } });
+    finishGeneration({ ok: false, error: "LOCAL_MODEL_CANCELLED: request was cancelled" });
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaSkipsStatusProbeForAlreadyAbortedRun() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -8057,6 +8530,20 @@ async function main() {
   await testAndroidLocalGemmaDoesNotSaveEmptyRememberCommands();
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
+  await testAndroidLocalGemmaAnswersLastMessageWithoutDaemonGeneration();
+  await testAndroidLocalGemmaDoesNotBypassRequiredToolContractsForLastMessage();
+  await testAndroidLocalGemmaDoesNotBypassPromptOnlyJsonContractsForLastMessage();
+  await testAndroidLocalGemmaDoesNotBypassSystemInstructionsForLastMessage();
+  await testAndroidLocalGemmaAllowsStandardCoachSystemPromptForLastMessage();
+  await testAndroidLocalGemmaDoesNotBypassDynamicCoachSystemPromptForLastMessage();
+  await testAndroidLocalGemmaAllowsLeanSystemPromptForLastMessage();
+  await testAndroidLocalGemmaDoesNotBypassConfidentialityInstructionsForLastMessage();
+  await testAndroidLocalGemmaBoundsLastMessageShortcutOutput();
+  await testAndroidLocalGemmaSkipsLastMessageShortcutWhenCompletionBudgetIsTooSmall();
+  await testAndroidLocalGemmaSkipsNoTextLastMessageShortcutWhenCompletionBudgetIsTooSmall();
+  await testAndroidLocalGemmaDistinguishesMissingHistoryForLastMessageShortcut();
+  await testAndroidLocalGemmaHonorsAbortBeforeLastMessageShortcut();
+  await testAndroidLocalGemmaDoesNotWaitForCancellationBeforeLastMessageShortcut();
   await testAndroidLocalGemmaSkipsStatusProbeForAlreadyAbortedRun();
   await testAndroidLocalGemmaAbortsDuringStatusProbe();
   await testAndroidLocalGemmaCancelsGenerationWhenRunAborts();
