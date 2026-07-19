@@ -154,6 +154,28 @@ async function main(): Promise<void> {
   );
   assert.doesNotMatch(missingCompletion?.textContent ?? "", /personal operating system/i);
 
+  const stopwordPrefixAnswer = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{
+        role: "user",
+        content: "Finish this sentence from your memories. \"I want the product\" what?",
+      }],
+      userId,
+      route: undefined,
+    },
+    {
+      retrieveMemoryContext: async (input) => memoryContextFromContents(input.query, [{
+        id: "mem-product-goal",
+        content: "I want the product to remain understandable and dependable.",
+        category: "goals",
+      }]),
+    },
+  );
+  assert.equal(
+    stopwordPrefixAnswer?.textContent,
+    "to remain understandable and dependable.\n\nSources: MemoryOS.",
+  );
+
   assert.deepEqual(
     classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "What do you know about me?" }]),
     { kind: "exact_memory_inspection", query: "user profile preferences relationships work patterns goals blockers values", scopeLabel: "about you" },

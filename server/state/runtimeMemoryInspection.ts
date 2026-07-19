@@ -799,9 +799,12 @@ export async function answerRuntimeMemoryInspectionQuestion(
     console.warn("[RuntimeMemoryInspection] MemoryOS unavailable:", safeErrorKind(error));
     notes.push("MemoryOS was unavailable.");
   }
-  memoryContext = filterMemoryContextForInspection(memoryContext, intent);
   if (intent.completionPrefix) {
-    const completion = exactStoredSentenceCompletion(memoryContext, intent.completionPrefix);
+    const canonicalMemoryContext = contextWithFilteredItems(
+      memoryContext,
+      memoryContext.items.filter(isCanonicalMemoryItem),
+    );
+    const completion = exactStoredSentenceCompletion(canonicalMemoryContext, intent.completionPrefix);
     const message = completion ?? (memorySucceeded
       ? "I couldn't find an exact MemoryOS record containing that sentence prefix."
       : "I couldn't check MemoryOS for an exact continuation right now.");
@@ -814,6 +817,7 @@ export async function answerRuntimeMemoryInspectionQuestion(
     });
     return providerTurnResult(message, input.route, explanation);
   }
+  memoryContext = filterMemoryContextForInspection(memoryContext, intent);
   const memoryExplanation = await explainMemoryAnswer({ context: memoryContext });
 
   notes.push(...memoryContext.uncertainty
