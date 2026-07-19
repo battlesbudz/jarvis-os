@@ -5,7 +5,8 @@ import type { FallbackChainEntry } from "../agent/providers/fallback";
 
 type ConversationInspectionIntent =
   | { kind: "previous_user_message" }
-  | { kind: "previous_assistant_message" };
+  | { kind: "previous_assistant_message" }
+  | { kind: "repeat_previous_assistant_message" };
 
 function textFromContent(content: OpenAI.Chat.Completions.ChatCompletionMessageParam["content"]): string {
   if (typeof content === "string") return content;
@@ -110,6 +111,16 @@ function classifyConversationInspectionIntent(
   if (/^(?:hey\s+jarvis\s+)?what (?:was|is) (?:your|the assistant(?:s)?) last (?:message|response|reply)$/.test(text)) {
     return { kind: "previous_assistant_message" };
   }
+  if (
+    /^(?:hey\s+jarvis\s+)?(?:please\s+)?(?:say|repeat) (?:that|it)(?: again)?(?: please)?$/.test(text) ||
+    /^(?:hey\s+jarvis\s+)?(?:can|could|would|will) you (?:please )?(?:say|repeat) (?:that|it)(?: again)?(?: please)?$/.test(text) ||
+    /^(?:hey\s+jarvis\s+)?(?:please\s+)?repeat (?:yourself|your last (?:message|response|reply))(?: please)?$/.test(text) ||
+    /^(?:hey\s+jarvis\s+)?(?:can|could|would|will) you (?:please )?repeat (?:yourself|your last (?:message|response|reply)|what you (?:just )?said)(?: please)?$/.test(text) ||
+    /^(?:hey\s+jarvis\s+)?(?:please\s+)?repeat what you (?:just )?said(?: please)?$/.test(text) ||
+    /^(?:hey\s+jarvis\s+)?what did you (?:just )?say$/.test(text)
+  ) {
+    return { kind: "repeat_previous_assistant_message" };
+  }
   return null;
 }
 
@@ -191,13 +202,17 @@ export function answerRuntimeConversationInspectionQuestion(input: {
   const intent = classifyConversationInspectionIntent(input.messages);
   if (!intent) return null;
 
-  const role = intent.kind === "previous_user_message" ? "user" : "assistant";
+  const isPreviousUserMessage = intent.kind === "previous_user_message";
+  const isRepeatRequest = intent.kind === "repeat_previous_assistant_message";
+  const role = isPreviousUserMessage ? "user" : "assistant";
   const priorMessage = findPriorMessageText(input.messages, role);
   if (!priorMessage.found) {
     const response = boundedFixedResponse(
-      intent.kind === "previous_user_message"
+      isPreviousUserMessage
         ? "There is no previous user message in this conversation context."
-        : "There is no previous assistant message in this conversation context.",
+        : isRepeatRequest
+          ? "There is no previous assistant message in this conversation context to repeat."
+          : "There is no previous assistant message in this conversation context.",
       input.maxCompletionTokens,
     );
     return response ? providerTurnResult(response, input.route) : null;
@@ -205,16 +220,20 @@ export function answerRuntimeConversationInspectionQuestion(input: {
 
   if (!priorMessage.text) {
     const response = boundedFixedResponse(
-      intent.kind === "previous_user_message"
+      isPreviousUserMessage
         ? "Your last message did not include any text I can quote from this conversation context."
-        : "My last message did not include any text I can quote from this conversation context.",
+        : isRepeatRequest
+          ? "My previous message did not include any text I can repeat from this conversation context."
+          : "My last message did not include any text I can quote from this conversation context.",
       input.maxCompletionTokens,
     );
     return response ? providerTurnResult(response, input.route) : null;
   }
 
-  const response = intent.kind === "previous_user_message"
+  const response = isPreviousUserMessage
     ? boundedQuote("Your last message was: ", priorMessage.text, input.maxCompletionTokens)
-    : boundedQuote("My last message was: ", priorMessage.text, input.maxCompletionTokens);
+    : isRepeatRequest
+      ? boundedQuote("", priorMessage.text, input.maxCompletionTokens)
+      : boundedQuote("My last message was: ", priorMessage.text, input.maxCompletionTokens);
   return response ? providerTurnResult(response, input.route) : null;
 }
