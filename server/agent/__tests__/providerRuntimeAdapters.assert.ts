@@ -1446,6 +1446,62 @@ async function testAndroidLocalGemmaUsesGroundedEvidencePacketForPersonalMemoryQ
   }
 }
 
+async function testAndroidLocalGemmaCompletesExactStoredMemoryWithoutGeneration() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setRuntimeMemoryInspectionDepsForTesting({
+    retrieveMemoryContext: async (input) => ({
+      userId: input.userId,
+      query: input.query,
+      caller: "runtime_memory_inspection",
+      items: [{
+        memory: {
+          id: "mem-jarvis-goal",
+          content: "A major goal is to make Jarvis a true personal operating system that can coordinate work across devices.",
+          category: "goals",
+          tier: "long_term",
+          memoryType: "semantic",
+          relevanceScore: 96,
+          confidence: 98,
+          accessCount: 2,
+          score: 0.98,
+        },
+        provenance: [{ kind: "user_memory", id: "mem-jarvis-goal", source: "canonical" }],
+      }],
+      sources: { memories: ["mem-jarvis-goal"], brainChunks: [], hotState: [] },
+      provenance: [{ kind: "user_memory", id: "mem-jarvis-goal", source: "canonical" }],
+      uncertainty: [],
+    }),
+  });
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return { ok: true, data: { text: "A major goa... operational security.", finishReason: "stop" } };
+  }, { forwardStatusOps: true });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{
+        role: "user",
+        content: "Finish this sentence from your memories. \"A major goal is to make Jarvis a\" what?",
+      }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-memory-completion",
+    }));
+
+    assert.equal(
+      result.textContent,
+      "true personal operating system that can coordinate work across devices.\n\nSources: MemoryOS.",
+    );
+    assert.deepEqual(requests, []);
+    console.log("OK: Android Local Gemma completes exact stored memories without local generation");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+    _setRuntimeMemoryInspectionDepsForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaSkipsCapabilityProbeWithoutAndroidTools() {
   _setRuntimeCapabilityDepsForTesting({
     loadConnectedAccounts: async () => {
@@ -7684,6 +7740,7 @@ async function testAndroidLocalGemmaRepeatsPreviousReplyWithoutDaemonGeneration(
     const priorReply = "The square root of 4 is 2.";
     for (const requestText of [
       "Say that again.",
+      "Say that one more time.",
       "Can you repeat that?",
       "Repeat what you just said.",
       "Could you repeat your last response?",
@@ -8646,6 +8703,7 @@ async function main() {
   await testAndroidLocalGemmaAuditsPronounConfirmationCompletions();
   await testAndroidLocalGemmaUsesToolResultEvidenceForIdentityAudit();
   await testAndroidLocalGemmaUsesGroundedEvidencePacketForPersonalMemoryQuestions();
+  await testAndroidLocalGemmaCompletesExactStoredMemoryWithoutGeneration();
   await testAndroidLocalGemmaSkipsCapabilityProbeWithoutAndroidTools();
   await testAndroidLocalGemmaAllowsConfirmedCompletionClaims();
   await testAndroidLocalGemmaAllowsRecentConfirmedCompletionFollowups();

@@ -25,6 +25,7 @@ export type RuntimeMemoryInspectionIntent = {
   query: string;
   scopeLabel: string;
   explanationRequested?: true;
+  completionPrefix?: string;
 };
 
 type SoulInspectionRecord = {
@@ -264,6 +265,15 @@ function isAboutYouMemoryInspectionRequest(normalized: string): boolean {
   );
 }
 
+function memorySentenceCompletionPrefix(text: string): string | null {
+  if (!/\b(?:finish|complete)\s+(?:this|the)\s+(?:sentence|quote)\b/i.test(text)) return null;
+  if (!/\b(?:from|using|based on)\s+(?:my|your|jarvis(?:['\u2019]s)?)\s+(?:stored\s+)?memor(?:y|ies)\b/i.test(text)) {
+    return null;
+  }
+  const quoted = text.match(/["\u201c]([^"\u201d\r\n]{3,240})["\u201d]/);
+  return quoted?.[1] ? cleanText(quoted[1]) : null;
+}
+
 export function classifyRuntimeMemoryInspectionIntent(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
 ): RuntimeMemoryInspectionIntent | null {
@@ -276,6 +286,16 @@ export function classifyRuntimeMemoryInspectionIntent(
   }
 
   if (hasCompoundFollowUpWork(rawText)) return null;
+
+  const completionPrefix = memorySentenceCompletionPrefix(rawText);
+  if (completionPrefix) {
+    return {
+      kind: "exact_memory_inspection",
+      query: completionPrefix,
+      scopeLabel: "the quoted sentence",
+      completionPrefix,
+    };
+  }
 
   const explanation = explanationIntent(rawText, messages);
   if (explanation) return explanation;
@@ -683,6 +703,23 @@ function filterMemoryContextForInspection(
   );
 }
 
+function exactStoredSentenceCompletion(context: MemoryContext, prefix: string): string | null {
+  const compactPrefix = prefix.replace(/\s+/g, " ").trim();
+  const normalizedPrefix = compactPrefix.toLowerCase();
+  if (!normalizedPrefix) return null;
+
+  for (const item of context.items) {
+    const content = item.memory.content.replace(/\s+/g, " ").trim();
+    const matchIndex = content.toLowerCase().indexOf(normalizedPrefix);
+    if (matchIndex < 0) continue;
+    const remainder = content.slice(matchIndex + compactPrefix.length).trimStart();
+    if (!remainder) continue;
+    const sentenceEnd = remainder.search(/[.!?](?=\s|$)/);
+    return sentenceEnd >= 0 ? remainder.slice(0, sentenceEnd + 1).trim() : remainder;
+  }
+  return null;
+}
+
 export async function answerRuntimeMemoryInspectionQuestion(
   input: {
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
@@ -763,6 +800,20 @@ export async function answerRuntimeMemoryInspectionQuestion(
     notes.push("MemoryOS was unavailable.");
   }
   memoryContext = filterMemoryContextForInspection(memoryContext, intent);
+  if (intent.completionPrefix) {
+    const completion = exactStoredSentenceCompletion(memoryContext, intent.completionPrefix);
+    const message = completion ?? (memorySucceeded
+      ? "I couldn't find an exact MemoryOS record containing that sentence prefix."
+      : "I couldn't check MemoryOS for an exact continuation right now.");
+    const explanation = createRuntimeExplanation({
+      title: "MemoryOS exact sentence completion",
+      message,
+      severity: completion ? "info" : "warning",
+      usedSources: completion ? [runtimeSource("MemoryOS")] : [],
+      attemptedSources: completion ? [] : [runtimeSource("MemoryOS")],
+    });
+    return providerTurnResult(message, input.route, explanation);
+  }
   const memoryExplanation = await explainMemoryAnswer({ context: memoryContext });
 
   notes.push(...memoryContext.uncertainty

@@ -112,8 +112,8 @@ function classifyConversationInspectionIntent(
     return { kind: "previous_assistant_message" };
   }
   if (
-    /^(?:hey\s+jarvis\s+)?(?:please\s+)?(?:say|repeat) (?:that|it)(?: again)?(?: please)?$/.test(text) ||
-    /^(?:hey\s+jarvis\s+)?(?:can|could|would|will) you (?:please )?(?:say|repeat) (?:that|it)(?: again)?(?: please)?$/.test(text) ||
+    /^(?:hey\s+jarvis\s+)?(?:please\s+)?(?:say|repeat) (?:that|it)(?: again| one more time)?(?: please)?$/.test(text) ||
+    /^(?:hey\s+jarvis\s+)?(?:can|could|would|will) you (?:please )?(?:say|repeat) (?:that|it)(?: again| one more time)?(?: please)?$/.test(text) ||
     /^(?:hey\s+jarvis\s+)?(?:please\s+)?repeat (?:yourself|your last (?:message|response|reply))(?: please)?$/.test(text) ||
     /^(?:hey\s+jarvis\s+)?(?:can|could|would|will) you (?:please )?repeat (?:yourself|your last (?:message|response|reply)|what you (?:just )?said)(?: please)?$/.test(text) ||
     /^(?:hey\s+jarvis\s+)?(?:please\s+)?repeat what you (?:just )?said(?: please)?$/.test(text) ||
