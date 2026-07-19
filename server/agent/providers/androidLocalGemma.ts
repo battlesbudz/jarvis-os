@@ -2688,6 +2688,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
         messages: params.messages,
         userId,
         route: undefined,
+        maxCompletionTokens: params.maxCompletionTokens,
       });
       if (runtimeInspection) {
         if (runtimeInspection.textContent) {

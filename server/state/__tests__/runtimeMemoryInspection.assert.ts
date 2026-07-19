@@ -154,6 +154,48 @@ async function main(): Promise<void> {
   );
   assert.doesNotMatch(missingCompletion?.textContent ?? "", /personal operating system/i);
 
+  const boundaryCompletion = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{
+        role: "user",
+        content: "Finish this sentence from your memories. \"The plan\" what?",
+      }],
+      userId,
+      route: undefined,
+    },
+    {
+      retrieveMemoryContext: async (input) => memoryContextFromContents(input.query, [{
+        id: "mem-planet",
+        content: "The planet needs a stable orbit.",
+        category: "goals",
+      }]),
+    },
+  );
+  assert.match(
+    boundaryCompletion?.textContent ?? "",
+    /^I couldn't find an exact MemoryOS record containing that sentence prefix\./,
+  );
+
+  const boundedCompletion = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{ role: "user", content: completionRequest }],
+      userId,
+      route: undefined,
+      maxCompletionTokens: 16,
+    },
+    {
+      retrieveMemoryContext: async (input) => memoryContextFromContents(input.query, [{
+        id: "mem-long-goal",
+        content: "A major goal is to make Jarvis a true personal operating system that can coordinate work across devices and services without losing context.",
+        category: "goals",
+      }]),
+    },
+  );
+  assert(boundedCompletion);
+  assert(Buffer.byteLength(boundedCompletion.textContent, "utf8") <= 32);
+  assert.match(boundedCompletion.textContent, /\.\.\.$/);
+  assert.doesNotMatch(boundedCompletion.textContent, /across devices/);
+
   const stopwordPrefixAnswer = await answerRuntimeMemoryInspectionQuestion(
     {
       messages: [{

@@ -1109,6 +1109,7 @@ export async function routeModelTurn(params: RoutedModelTurnParams): Promise<Pro
       messages: params.messages,
       userId: params.userId,
       route: prepared.chain[0],
+      maxCompletionTokens: params.maxCompletionTokens,
     });
     if (runtimeMemoryInspectionAnswer) return runtimeMemoryInspectionAnswer;
   }
@@ -1182,6 +1183,7 @@ export async function streamModelTurn(
       messages: params.messages,
       userId: params.userId,
       route: prepared.chain[0],
+      maxCompletionTokens: params.maxCompletionTokens,
     });
     if (runtimeMemoryInspectionAnswer) {
       await onChunk({ type: "text", delta: runtimeMemoryInspectionAnswer.textContent });

@@ -323,8 +323,12 @@ function providerTurnResult(
   text: string,
   route: FallbackChainEntry | undefined,
   runtimeExplanation?: RuntimeExplanation,
+  maxCompletionTokens?: number,
 ): ProviderTurnResult {
-  const renderedText = runtimeExplanation ? renderRuntimeExplanation(runtimeExplanation) : text;
+  const renderedText = boundDeterministicResponse(
+    runtimeExplanation ? renderRuntimeExplanation(runtimeExplanation) : text,
+    maxCompletionTokens,
+  );
   return {
     textContent: renderedText,
     textChunks: [renderedText],
@@ -703,6 +707,25 @@ function filterMemoryContextForInspection(
   );
 }
 
+const utf8Encoder = new TextEncoder();
+
+function estimatedShortcutTokens(text: string): number {
+  return Math.ceil(utf8Encoder.encode(text).length / 2);
+}
+
+function boundDeterministicResponse(text: string, maxCompletionTokens: number | undefined): string {
+  if (maxCompletionTokens === undefined || estimatedShortcutTokens(text) <= maxCompletionTokens) return text;
+  if (maxCompletionTokens < estimatedShortcutTokens("...")) return "";
+
+  const contentBudget = maxCompletionTokens - estimatedShortcutTokens("...");
+  let output = "";
+  for (const character of text) {
+    if (estimatedShortcutTokens(output + character) > contentBudget) break;
+    output += character;
+  }
+  return `${output.trimEnd()}...`;
+}
+
 function exactStoredSentenceCompletion(context: MemoryContext, prefix: string): string | null {
   const compactPrefix = prefix.replace(/\s+/g, " ").trim();
   const normalizedPrefix = compactPrefix.toLowerCase();
@@ -710,7 +733,16 @@ function exactStoredSentenceCompletion(context: MemoryContext, prefix: string): 
 
   for (const item of context.items) {
     const content = item.memory.content.replace(/\s+/g, " ").trim();
-    const matchIndex = content.toLowerCase().indexOf(normalizedPrefix);
+    const normalizedContent = content.toLowerCase();
+    let matchIndex = normalizedContent.indexOf(normalizedPrefix);
+    while (matchIndex >= 0) {
+      const precedingCharacter = content[matchIndex - 1];
+      const followingCharacter = content[matchIndex + compactPrefix.length];
+      const hasValidStartBoundary = !precedingCharacter || !/[\p{L}\p{N}_]/u.test(precedingCharacter);
+      const hasValidEndBoundary = !followingCharacter || !/[\p{L}\p{N}_]/u.test(followingCharacter);
+      if (hasValidStartBoundary && hasValidEndBoundary) break;
+      matchIndex = normalizedContent.indexOf(normalizedPrefix, matchIndex + 1);
+    }
     if (matchIndex < 0) continue;
     const remainder = content.slice(matchIndex + compactPrefix.length).trimStart();
     if (!remainder) continue;
@@ -725,6 +757,7 @@ export async function answerRuntimeMemoryInspectionQuestion(
     messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
     userId?: string;
     route: FallbackChainEntry | undefined;
+    maxCompletionTokens?: number;
   },
   deps: RuntimeMemoryInspectionDeps = {},
 ): Promise<ProviderTurnResult | null> {
@@ -815,7 +848,7 @@ export async function answerRuntimeMemoryInspectionQuestion(
       usedSources: completion ? [runtimeSource("MemoryOS")] : [],
       attemptedSources: completion ? [] : [runtimeSource("MemoryOS")],
     });
-    return providerTurnResult(message, input.route, explanation);
+    return providerTurnResult(message, input.route, explanation, input.maxCompletionTokens);
   }
   memoryContext = filterMemoryContextForInspection(memoryContext, intent);
   const memoryExplanation = await explainMemoryAnswer({ context: memoryContext });
