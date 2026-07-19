@@ -2402,13 +2402,23 @@ function chatPromptFromParams(
     `Local model: ${normalizeAndroidLocalGemmaModel(params.model)}.`,
     runtimeStateCardPrompt,
   ].filter(Boolean).join("\n");
+  const recentContextHeader = runtimeStateCardPrompt.includes("## Jarvis Grounded Evidence Packet")
+    ? ""
+    : [
+        "## Jarvis Recent Conversation Context",
+        "Authoritative recent turns supplied by Jarvis. Resolve references such as 'that', 'it', and 'what we were discussing' from these turns before saying the context is unavailable.",
+      ].join("\n");
   const promptBudget = turnBudget.promptCharBudget;
-  const conversationBudget = Math.max(MIN_REQUIRED_PROMPT_SECTION_CHARS, promptBudget - intro.length - 16);
+  const conversationBudget = Math.max(
+    MIN_REQUIRED_PROMPT_SECTION_CHARS,
+    promptBudget - intro.length - recentContextHeader.length - 18,
+  );
   return [
     intro,
     "",
+    recentContextHeader,
     formatPromptSections(params.messages, conversationBudget, false),
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 
 function textFromDaemonData(data: unknown): string {

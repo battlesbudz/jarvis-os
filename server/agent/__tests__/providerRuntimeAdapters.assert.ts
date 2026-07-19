@@ -2110,6 +2110,40 @@ async function testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol() {
   }
 }
 
+async function testAndroidLocalGemmaLabelsRecentConversationForContextualFollowups() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return {
+      ok: true,
+      data: { text: "Start with the product photography checklist.", finishReason: "stop" },
+    };
+  });
+
+  try {
+    await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Help me prepare my dual-cart battery product page." },
+        { role: "assistant", content: "Start with product photography, compliance, and pricing." },
+        { role: "user", content: "What should I do first from that list?" },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-context-followup",
+    }));
+
+    assert.equal(requests.length, 1);
+    assert.match(requests[0].op.prompt, /Jarvis Recent Conversation Context/);
+    assert.match(requests[0].op.prompt, /assistant: Start with product photography, compliance, and pricing\./);
+    assert.match(requests[0].op.prompt, /user: What should I do first from that list\?/);
+    console.log("OK: Android Local Gemma receives labeled Jarvis context for contextual follow-ups");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaOmitsPriorLocalRuntimeErrors() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
 
@@ -7639,6 +7673,57 @@ async function testAndroidLocalGemmaAnswersLastMessageWithoutDaemonGeneration() 
   }
 }
 
+async function testAndroidLocalGemmaRepeatsPreviousReplyWithoutDaemonGeneration() {
+  const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
+    requests.push({ userId, op, timeoutMs });
+    return { ok: true, data: { text: "I have nothing to repeat.", finishReason: "stop" } };
+  }, { forwardStatusOps: true });
+
+  try {
+    const priorReply = "The square root of 4 is 2.";
+    for (const requestText of [
+      "Say that again.",
+      "Can you repeat that?",
+      "Repeat what you just said.",
+      "Could you repeat your last response?",
+      "What did you just say?",
+    ]) {
+      const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+        model: "android-local-gemma/gemma-4-e4b-it",
+        messages: [
+          { role: "user", content: "What is the square root of 4?" },
+          { role: "assistant", content: priorReply },
+          { role: "user", content: requestText },
+        ],
+        toolChoice: "none",
+        maxCompletionTokens: 128,
+        stream: false,
+        userId: "user-phone-repeat",
+      }));
+
+      assert.equal(result.textContent, priorReply, requestText);
+    }
+
+    const missingHistory = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Say that again." }],
+      toolChoice: "none",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-repeat-missing",
+    }));
+    assert.equal(
+      missingHistory.textContent,
+      "There is no previous assistant message in this conversation context to repeat.",
+    );
+    assert.deepEqual(requests, []);
+    console.log("OK: Android Local Gemma resolves repeat requests from recent conversation context");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaDoesNotBypassRequiredToolContractsForLastMessage() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -8574,6 +8659,7 @@ async function main() {
   await testAndroidLocalGemmaNormalizesDirectNotificationToolNames();
   await testAndroidLocalGemmaNormalizesEveryDirectDaemonActionName();
   await testAndroidLocalGemmaKeepsPlainAutoChatOffToolProtocol();
+  await testAndroidLocalGemmaLabelsRecentConversationForContextualFollowups();
   await testAndroidLocalGemmaOmitsPriorLocalRuntimeErrors();
   await testAndroidLocalGemmaIgnoresOldToolTraceForPlainAutoChat();
   await testAndroidLocalGemmaUsesToolProtocolForUrlTools();
@@ -8695,6 +8781,7 @@ async function main() {
   await testAndroidLocalGemmaDoesNotContinuePromptOnlyJsonContract();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
   await testAndroidLocalGemmaAnswersLastMessageWithoutDaemonGeneration();
+  await testAndroidLocalGemmaRepeatsPreviousReplyWithoutDaemonGeneration();
   await testAndroidLocalGemmaDoesNotBypassRequiredToolContractsForLastMessage();
   await testAndroidLocalGemmaDoesNotBypassPromptOnlyJsonContractsForLastMessage();
   await testAndroidLocalGemmaDoesNotBypassSystemInstructionsForLastMessage();
