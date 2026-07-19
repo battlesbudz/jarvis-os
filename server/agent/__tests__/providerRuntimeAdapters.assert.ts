@@ -7549,6 +7549,36 @@ async function testAndroidLocalGemmaDoesNotContinueUserRequestedJson() {
   }
 }
 
+async function testAndroidLocalGemmaDoesNotContinuePromptOnlyJsonContract() {
+  let generateCount = 0;
+  _setAndroidLocalGemmaDaemonOpForTesting(async (_userId, op) => {
+    assert.equal(op.type, "android_local_model_generate");
+    generateCount += 1;
+    return { ok: true, data: { text: '{"answer":"partial"}', finishReason: "length" } };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "system", content: "Return only valid JSON." },
+        { role: "user", content: "Summarize the latest result." },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 256,
+      stream: false,
+      userId: "user-phone-length-prompt-json",
+    }));
+
+    assert.equal(generateCount, 1);
+    assert.equal(result.textContent, '{"answer":"partial"}');
+    assert.equal(result.finishReason, "length");
+    console.log("OK: Android Local Gemma does not splice prompt-only JSON contract continuations");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaCancelsTimedOutGeneration() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -8662,6 +8692,7 @@ async function main() {
   await testAndroidLocalGemmaContinuationRespectsRemainingCompletionBudget();
   await testAndroidLocalGemmaKeepsPartialReplyWhenContinuationFails();
   await testAndroidLocalGemmaDoesNotContinueUserRequestedJson();
+  await testAndroidLocalGemmaDoesNotContinuePromptOnlyJsonContract();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
   await testAndroidLocalGemmaAnswersLastMessageWithoutDaemonGeneration();
   await testAndroidLocalGemmaDoesNotBypassRequiredToolContractsForLastMessage();

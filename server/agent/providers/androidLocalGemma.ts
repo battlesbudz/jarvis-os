@@ -2756,6 +2756,7 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       !useToolProtocol &&
       !params.responseFormat &&
       !requestsJsonResponse(requestText) &&
+      !hasPromptOnlyStrictJsonConversationContract(params.messages) &&
       remainingCompletionTokens > 0 &&
       finishReasonFromDaemonData(result.data) === "length"
     ) {
