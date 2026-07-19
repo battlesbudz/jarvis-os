@@ -92,6 +92,132 @@ function memoryContextFromContents(
 }
 
 async function main(): Promise<void> {
+  const completionRequest = "Finish this sentence from your memories. \"A major goal is to make Jarvis a\" what?";
+  assert.deepEqual(
+    classifyRuntimeMemoryInspectionIntent([{ role: "user", content: completionRequest }]),
+    {
+      kind: "exact_memory_inspection",
+      query: "A major goal is to make Jarvis a",
+      scopeLabel: "the quoted sentence",
+      completionPrefix: "A major goal is to make Jarvis a",
+    },
+  );
+  assert.equal(
+    classifyRuntimeMemoryInspectionIntent([{
+      role: "user",
+      content: "Finish this sentence from your memories. \"A major goal is to make Jarvis a\" and email it to me.",
+    }]),
+    null,
+  );
+
+  const completionQueries: string[] = [];
+  const completionAnswer = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{ role: "user", content: completionRequest }],
+      userId,
+      route: undefined,
+    },
+    {
+      retrieveMemoryContext: async (input) => {
+        completionQueries.push(input.query);
+        return memoryContextFromContents(input.query, [{
+          id: "mem-jarvis-goal",
+          content: "A major goal is to make Jarvis a true personal operating system that can coordinate work across devices.",
+          category: "goals",
+        }]);
+      },
+    },
+  );
+  assert.deepEqual(completionQueries, ["A major goal is to make Jarvis a"]);
+  assert.equal(
+    completionAnswer?.textContent,
+    "true personal operating system that can coordinate work across devices.\n\nSources: MemoryOS.",
+  );
+
+  const missingCompletion = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{ role: "user", content: completionRequest }],
+      userId,
+      route: undefined,
+    },
+    {
+      retrieveMemoryContext: async (input) => memoryContextFromContents(input.query, [{
+        id: "mem-unrelated-goal",
+        content: "Jarvis should remain concise and dependable.",
+        category: "goals",
+      }]),
+    },
+  );
+  assert.match(
+    missingCompletion?.textContent ?? "",
+    /^I couldn't find an exact MemoryOS record containing that sentence prefix\./,
+  );
+  assert.doesNotMatch(missingCompletion?.textContent ?? "", /personal operating system/i);
+
+  const boundaryCompletion = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{
+        role: "user",
+        content: "Finish this sentence from your memories. \"The plan\" what?",
+      }],
+      userId,
+      route: undefined,
+    },
+    {
+      retrieveMemoryContext: async (input) => memoryContextFromContents(input.query, [{
+        id: "mem-planet",
+        content: "The planet needs a stable orbit.",
+        category: "goals",
+      }]),
+    },
+  );
+  assert.match(
+    boundaryCompletion?.textContent ?? "",
+    /^I couldn't find an exact MemoryOS record containing that sentence prefix\./,
+  );
+
+  const boundedCompletion = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{ role: "user", content: completionRequest }],
+      userId,
+      route: undefined,
+      maxCompletionTokens: 16,
+    },
+    {
+      retrieveMemoryContext: async (input) => memoryContextFromContents(input.query, [{
+        id: "mem-long-goal",
+        content: "A major goal is to make Jarvis a true personal operating system that can coordinate work across devices and services without losing context.",
+        category: "goals",
+      }]),
+    },
+  );
+  assert(boundedCompletion);
+  assert(Buffer.byteLength(boundedCompletion.textContent, "utf8") <= 32);
+  assert.match(boundedCompletion.textContent, /\.\.\.$/);
+  assert.doesNotMatch(boundedCompletion.textContent, /across devices/);
+
+  const stopwordPrefixAnswer = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{
+        role: "user",
+        content: "Finish this sentence from your memories. \"I want the product\" what?",
+      }],
+      userId,
+      route: undefined,
+    },
+    {
+      retrieveMemoryContext: async (input) => memoryContextFromContents(input.query, [{
+        id: "mem-product-goal",
+        content: "I want the product to remain understandable and dependable.",
+        category: "goals",
+      }]),
+    },
+  );
+  assert.equal(
+    stopwordPrefixAnswer?.textContent,
+    "to remain understandable and dependable.\n\nSources: MemoryOS.",
+  );
+
   assert.deepEqual(
     classifyRuntimeMemoryInspectionIntent([{ role: "user", content: "What do you know about me?" }]),
     { kind: "exact_memory_inspection", query: "user profile preferences relationships work patterns goals blockers values", scopeLabel: "about you" },
