@@ -7420,6 +7420,165 @@ async function testAndroidLocalGemmaPreservesToolFinalLengthFinishReason() {
   }
 }
 
+async function testAndroidLocalGemmaContinuesLengthLimitedPlainReplies() {
+  const generatePrompts: string[] = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (_userId, op) => {
+    assert.equal(op.type, "android_local_model_generate");
+    generatePrompts.push(op.prompt);
+    if (generatePrompts.length === 1) {
+      return {
+        ok: true,
+        data: {
+          text: "1. Product photography. 2. Detailed description. Be",
+          finishReason: "length",
+        },
+      };
+    }
+    return {
+      ok: true,
+      data: {
+        text: " specific about compatibility and safety features.",
+        finishReason: "stop",
+      },
+    };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Help me prepare my dual cart vape battery for sale." }],
+      toolChoice: "none",
+      maxCompletionTokens: 2000,
+      stream: false,
+      userId: "user-phone-length-continuation",
+    }));
+
+    assert.equal(generatePrompts.length, 2);
+    assert.match(generatePrompts[1], /Continue the assistant response/);
+    assert.equal(
+      result.textContent,
+      "1. Product photography. 2. Detailed description. Be specific about compatibility and safety features.",
+    );
+    assert.equal(result.finishReason, "stop");
+    console.log("OK: Android Local Gemma completes a plain reply after its first segment reaches the token limit");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaContinuationRespectsRemainingCompletionBudget() {
+  const maxTokens: number[] = [];
+  _setAndroidLocalGemmaDaemonOpForTesting(async (_userId, op) => {
+    assert.equal(op.type, "android_local_model_generate");
+    assert.equal(typeof op.maxTokens, "number");
+    maxTokens.push(op.maxTokens!);
+    return maxTokens.length === 1
+      ? { ok: true, data: { text: "First segment", finishReason: "length" } }
+      : { ok: true, data: { text: "second segment", finishReason: "stop" } };
+  });
+
+  try {
+    await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Give me a complete answer." }],
+      toolChoice: "none",
+      maxCompletionTokens: 200,
+      stream: false,
+      userId: "user-phone-length-budget",
+    }));
+
+    assert.deepEqual(maxTokens, [128, 72]);
+    console.log("OK: Android Local Gemma continuation stays within the caller completion budget");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaKeepsPartialReplyWhenContinuationFails() {
+  let generateCount = 0;
+  _setAndroidLocalGemmaDaemonOpForTesting(async (_userId, op) => {
+    assert.equal(op.type, "android_local_model_generate");
+    generateCount += 1;
+    return generateCount === 1
+      ? { ok: true, data: { text: "Useful partial answer", finishReason: "length" } }
+      : { ok: false, error: "LOCAL_MODEL_BUSY: Phone Gemma is already generating." };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Give me a complete answer." }],
+      toolChoice: "none",
+      maxCompletionTokens: 256,
+      stream: false,
+      userId: "user-phone-length-fail-open",
+    }));
+
+    assert.equal(result.textContent, "Useful partial answer");
+    assert.equal(result.finishReason, "length");
+    console.log("OK: Android Local Gemma preserves useful partial text when continuation fails");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotContinueUserRequestedJson() {
+  let generateCount = 0;
+  _setAndroidLocalGemmaDaemonOpForTesting(async (_userId, op) => {
+    assert.equal(op.type, "android_local_model_generate");
+    generateCount += 1;
+    return { ok: true, data: { text: '{"answer":"partial"}', finishReason: "length" } };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [{ role: "user", content: "Return the answer as JSON." }],
+      toolChoice: "none",
+      maxCompletionTokens: 256,
+      stream: false,
+      userId: "user-phone-length-json",
+    }));
+
+    assert.equal(generateCount, 1);
+    assert.equal(result.textContent, '{"answer":"partial"}');
+    assert.equal(result.finishReason, "length");
+    console.log("OK: Android Local Gemma does not splice user-requested JSON continuations");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
+async function testAndroidLocalGemmaDoesNotContinuePromptOnlyJsonContract() {
+  let generateCount = 0;
+  _setAndroidLocalGemmaDaemonOpForTesting(async (_userId, op) => {
+    assert.equal(op.type, "android_local_model_generate");
+    generateCount += 1;
+    return { ok: true, data: { text: '{"answer":"partial"}', finishReason: "length" } };
+  });
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "system", content: "Return only valid JSON." },
+        { role: "user", content: "Summarize the latest result." },
+      ],
+      toolChoice: "none",
+      maxCompletionTokens: 256,
+      stream: false,
+      userId: "user-phone-length-prompt-json",
+    }));
+
+    assert.equal(generateCount, 1);
+    assert.equal(result.textContent, '{"answer":"partial"}');
+    assert.equal(result.finishReason, "length");
+    console.log("OK: Android Local Gemma does not splice prompt-only JSON contract continuations");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaCancelsTimedOutGeneration() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -8529,6 +8688,11 @@ async function main() {
   await testAndroidLocalGemmaSearchesSavedMemoryQuestions();
   await testAndroidLocalGemmaDoesNotSaveEmptyRememberCommands();
   await testAndroidLocalGemmaPreservesToolFinalLengthFinishReason();
+  await testAndroidLocalGemmaContinuesLengthLimitedPlainReplies();
+  await testAndroidLocalGemmaContinuationRespectsRemainingCompletionBudget();
+  await testAndroidLocalGemmaKeepsPartialReplyWhenContinuationFails();
+  await testAndroidLocalGemmaDoesNotContinueUserRequestedJson();
+  await testAndroidLocalGemmaDoesNotContinuePromptOnlyJsonContract();
   await testAndroidLocalGemmaCancelsTimedOutGeneration();
   await testAndroidLocalGemmaAnswersLastMessageWithoutDaemonGeneration();
   await testAndroidLocalGemmaDoesNotBypassRequiredToolContractsForLastMessage();

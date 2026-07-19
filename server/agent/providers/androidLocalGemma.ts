@@ -312,6 +312,29 @@ function fitPhoneGemmaPromptToBudget(prompt: string, maxChars: number): string {
   return `${prompt.slice(0, headChars).trimEnd()}${marker}${prompt.slice(-tailChars).trimStart()}`;
 }
 
+function phoneGemmaContinuationPrompt(requestText: string, partialResponse: string, maxChars: number): string {
+  return fitPhoneGemmaPromptToBudget([
+    "Continue the assistant response below from exactly where it stopped.",
+    "Return only the continuation. Do not repeat earlier text or add a new introduction.",
+    "Finish the answer within this response.",
+    "",
+    `User request: ${requestText}`,
+    "",
+    `Assistant response so far: ${partialResponse}`,
+    "",
+    "Continuation:",
+  ].join("\n"), maxChars);
+}
+
+function appendPhoneGemmaContinuation(partialResponse: string, continuation: string): string {
+  if (!partialResponse) return continuation;
+  if (!continuation) return partialResponse;
+  if (/\s$/.test(partialResponse) || /^\s/.test(continuation)) {
+    return partialResponse + continuation;
+  }
+  return `${partialResponse} ${continuation}`;
+}
+
 function shouldCancelTimedOutGeneration(result: DaemonOpResult): boolean {
   return !result.ok && /timeout/i.test(result.error || "");
 }
@@ -2683,47 +2706,80 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
       throw new Error("Android Local Gemma received an empty prompt.");
     }
 
-    const requestId = `phone-gemma-${randomUUID()}`;
-    markPhoneGemmaGenerationStarted({
-      userId,
-      requestId,
-      model: normalizedModel,
-    });
-    const result = await (async () => {
-      try {
-        return await sendAbortableAndroidLocalGemmaGenerateOp(
-          userId,
-          {
-            type: "android_local_model_generate",
-            requestId,
-            model: normalizedModel,
-            prompt,
-            contextTokens: turnBudget.contextTokens,
-            maxTokens: turnBudget.maxCompletionTokens,
-            allowCpuFallback: phoneGemmaAllowCpuFallback(),
-          },
-          phoneGemmaTimeoutMs(),
-          params.signal,
-        );
-      } finally {
-        markPhoneGemmaGenerationFinished({ userId, requestId });
+    const runGeneration = async (generationPrompt: string, maxTokens = turnBudget.maxCompletionTokens) => {
+      const requestId = `phone-gemma-${randomUUID()}`;
+      markPhoneGemmaGenerationStarted({
+        userId,
+        requestId,
+        model: normalizedModel,
+      });
+      const result = await (async () => {
+        try {
+          return await sendAbortableAndroidLocalGemmaGenerateOp(
+            userId,
+            {
+              type: "android_local_model_generate",
+              requestId,
+              model: normalizedModel,
+              prompt: generationPrompt,
+              contextTokens: turnBudget.contextTokens,
+              maxTokens,
+              allowCpuFallback: phoneGemmaAllowCpuFallback(),
+            },
+            phoneGemmaTimeoutMs(),
+            params.signal,
+          );
+        } finally {
+          markPhoneGemmaGenerationFinished({ userId, requestId });
+        }
+      })();
+
+      if (shouldCancelTimedOutGeneration(result)) {
+        await trackAndroidLocalGemmaCancellation(userId, requestId).catch(() => {});
       }
-    })();
+      return result;
+    };
 
-    if (shouldCancelTimedOutGeneration(result)) {
-      await trackAndroidLocalGemmaCancellation(userId, requestId).catch(() => {});
-    }
-
+    let result = await runGeneration(prompt);
     if (!result.ok) {
       throw new Error(normalizeAndroidLocalGemmaError(result.error));
     }
 
-    const text = textFromDaemonData(result.data);
+    let text = textFromDaemonData(result.data);
     if (!text.trim()) {
       throw new Error("Phone Gemma finished without response text. Phone Gemma Runtime may have been interrupted or run out of memory; retry after closing other apps.");
     }
 
     const requestText = latestUserText(params.messages);
+    const remainingCompletionTokens = Math.max(0, params.maxCompletionTokens - turnBudget.maxCompletionTokens);
+    if (
+      !useToolProtocol &&
+      !params.responseFormat &&
+      !requestsJsonResponse(requestText) &&
+      !hasPromptOnlyStrictJsonConversationContract(params.messages) &&
+      remainingCompletionTokens > 0 &&
+      finishReasonFromDaemonData(result.data) === "length"
+    ) {
+      const continuationPrompt = phoneGemmaContinuationPrompt(requestText, text, turnBudget.promptCharBudget);
+      const continuationMaxTokens = Math.min(turnBudget.maxCompletionTokens, remainingCompletionTokens);
+      try {
+        const continuationResult = await runGeneration(continuationPrompt, continuationMaxTokens);
+        if (continuationResult.ok) {
+          const continuationText = textFromDaemonData(continuationResult.data);
+          if (continuationText.trim()) {
+            text = appendPhoneGemmaContinuation(text, continuationText);
+            result = continuationResult;
+          }
+        }
+      } catch (error) {
+        if (params.signal?.aborted || (error instanceof Error && error.name === "AbortError")) throw error;
+      }
+    }
+
+    /*
+     * Tool protocol and structured-response turns must remain single-shot so a
+     * continuation cannot splice together invalid JSON or tool-call envelopes.
+     */
     const preserveRequestedJson = requestsJsonResponse(requestText) || isJsonObjectResponseFormat(params.responseFormat);
     if (useToolProtocol) {
       const parsed = parseLocalGemmaStructuredOutput(text, { preserveWholeJson: preserveRequestedJson });

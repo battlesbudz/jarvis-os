@@ -390,6 +390,46 @@ async function runUserSelectedAndroidLocalGemmaOverridesCodexRuntimeAssertion():
   }
 }
 
+async function runOptionalBackgroundTurnExcludesSelectedPhoneGemmaAssertion(): Promise<void> {
+  let phoneGemmaCalls = 0;
+  class UnexpectedPhoneGemmaProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+
+    async *query(): AsyncGenerator<ProviderChunk> {
+      phoneGemmaCalls += 1;
+      throw new Error("optional background work must not occupy Phone Gemma");
+    }
+  }
+
+  try {
+    _overrideProviderForTesting("android-local-gemma", new UnexpectedPhoneGemmaProvider());
+    _setUserSelectedModelResolverForTesting(async ({ userId }) => {
+      assert.equal(userId, "user-phone-gemma-background");
+      return "android-local-gemma/gemma-4-e4b-it";
+    });
+
+    await assert.rejects(
+      () => routeModelTurn({
+        tier: "cheap",
+        messages: [{ role: "user", content: "Generate optional follow-up suggestions." }],
+        toolChoice: "none",
+        maxCompletionTokens: 600,
+        userId: "user-phone-gemma-background",
+        logPrefix: "[ModelRouterPhoneGemmaBackgroundTest]",
+        excludedProviders: ["android-local-gemma"],
+      }),
+      /No model providers configured/,
+    );
+
+    assert.equal(phoneGemmaCalls, 0);
+    console.log("OK: optional background turns cannot occupy selected Phone Gemma");
+  } finally {
+    _setUserSelectedModelResolverForTesting(null);
+    _clearProviderCacheForTesting();
+  }
+}
+
 async function runSelectedAndroidLocalGemmaKeepsToolRequiredTurnsLocalAssertion(): Promise<void> {
   const previousEnv = new Map<string, string | undefined>();
   for (const key of [
@@ -3179,6 +3219,7 @@ async function runPhoneGemmaDiagnosticsBypassSelectedPhoneGemmaAssertion(): Prom
 runUserOpenAIProfileRouteAssertion()
   .then(runUserSelectedProviderOverridesRuntimeDefaultsAssertion)
   .then(runUserSelectedAndroidLocalGemmaOverridesCodexRuntimeAssertion)
+  .then(runOptionalBackgroundTurnExcludesSelectedPhoneGemmaAssertion)
   .then(runSelectedAndroidLocalGemmaKeepsToolRequiredTurnsLocalAssertion)
   .then(runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion)
   .then(runDefaultProviderProfileOverridesStaleCodexSelectionAssertion)
