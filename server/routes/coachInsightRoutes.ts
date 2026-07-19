@@ -41,6 +41,7 @@ Return ONLY the JSON object.`;
         maxCompletionTokens: 600,
         userId: req.userId ?? undefined,
         disableRuntimeStateCard: true,
+        excludedProviders: ["android-local-gemma"],
         logPrefix: "[CoachSuggestions]",
       });
 

@@ -113,6 +113,7 @@ export interface RoutedModelTurnParams {
   disableRuntimeStateCardMemoryContext?: boolean;
   phoneGemmaDeviceId?: string;
   phoneGemmaProfileId?: string;
+  excludedProviders?: ProviderName[];
 }
 
 interface PreparedModelTurn {
@@ -1252,13 +1253,15 @@ async function prepareModelTurn(
   console.log(
     `${logPrefix} route_input requested=${params.requestedModel ?? "none"} requestedEntry=${describeRouteChain(requestedChain)} selected=${describeRouteChain(selectedChain)} selectedExplicit=${selectedRoute?.isExplicit ? "true" : "false"} preferRequested=${params.preferRequestedModel ? "true" : "false"}`,
   );
-  const chain = preferredRequestedChain
+  const resolvedChain = preferredRequestedChain
     ?? (!selectedCodexIsStaleDefault ? selectedRuntimeChain : null)
     ?? providerProfileState.defaultChain
     ?? selectedRuntimeChain
     ?? requestedRuntimeChain
     ?? (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix))
     ?? getModelRouteChain(params.tier);
+  const excludedProviders = new Set(params.excludedProviders ?? []);
+  const chain = resolvedChain.filter((entry) => !excludedProviders.has(entry.providerName));
   if (chain.length === 0) {
     throw new Error(
       "No model providers configured. Enable ChatGPT/Codex OAuth or another explicitly approved provider variable.",
