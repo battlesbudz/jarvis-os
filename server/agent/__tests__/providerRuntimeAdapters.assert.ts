@@ -2959,6 +2959,68 @@ async function testAndroidLocalGemmaPreservesToolContinuationWhenTrimming() {
   }
 }
 
+async function testAndroidLocalGemmaFallsBackToCompletedMemorySearchResult() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "tool_calls", tool_calls: [] }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "I want you to pull one random memory that is relevant." },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_memory_search",
+            type: "function",
+            function: {
+              name: "memory_search",
+              arguments: JSON.stringify({ query: "dual-cart vape battery website", limit: 1 }),
+            },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_memory_search",
+          content: [
+            'Memory search returned 1 actual retrieved memory for: "dual-cart vape battery website"',
+            "These are real memory entries from the user's memory store.",
+            "",
+            "[1] memory_id=mem-vape-site [long_term/semantic] (goals, confidence: 96%) User is preparing a website to sell a dual-cart vape battery.",
+          ].join("\n"),
+        },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "memory_search",
+          description: "Search canonical user memories.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" }, limit: { type: "number" } },
+            required: ["query"],
+          },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-memory-tool-fallback",
+    }));
+
+    assert.equal(result.textContent, "User is preparing a website to sell a dual-cart vape battery.\n\nSources: MemoryOS.");
+    console.log("OK: Android Local Gemma falls back to completed memory search results");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaPreservesEmptyAssistantToolCallContinuation() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -8732,6 +8794,7 @@ async function main() {
   await testAndroidLocalGemmaPreservesSystemGuardrailsWhenTrimming();
   await testAndroidLocalGemmaOmitsCodeProposalSystemPromptForPhoneActions();
   await testAndroidLocalGemmaPreservesToolContinuationWhenTrimming();
+  await testAndroidLocalGemmaFallsBackToCompletedMemorySearchResult();
   await testAndroidLocalGemmaPreservesEmptyAssistantToolCallContinuation();
   await testAndroidLocalGemmaPreservesNewestTurnWhenTrimming();
   await testAndroidLocalGemmaRecoversRequiredScreenshotFinalAnswer();

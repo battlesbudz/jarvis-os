@@ -1483,6 +1483,55 @@ function currentTurnToolEvidence(messages: OpenAI.Chat.Completions.ChatCompletio
     .filter(Boolean);
 }
 
+function memorySearchFallbackFromCurrentTurn(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  maxCompletionTokens: number,
+): string | null {
+  const pendingMemorySearches = new Set<string>();
+  let currentTurnStart = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      currentTurnStart = index + 1;
+      break;
+    }
+  }
+
+  for (const message of messages.slice(currentTurnStart)) {
+    if (message.role === "assistant" && Array.isArray(message.tool_calls)) {
+      for (const toolCall of message.tool_calls) {
+        if (isFunctionToolCall(toolCall) && toolCall.function.name === "memory_search") {
+          pendingMemorySearches.add(toolCall.id);
+        }
+      }
+      continue;
+    }
+    if (message.role !== "tool" || !pendingMemorySearches.has(message.tool_call_id)) continue;
+    if (!daemonToolResultSucceeded(message.content)) continue;
+
+    const memories = toolMessageTextContent(message.content)
+      .split(/\r?\n/)
+      .map((line) => line.match(/^\[\d+\]\s+memory_id=\S+\s+\[[^\]]+\]\s+\([^)]*\)\s+(.+)$/)?.[1]?.trim())
+      .filter((memory): memory is string => Boolean(memory));
+    if (memories.length === 0) continue;
+
+    const selectionSeed = Array.from(message.tool_call_id)
+      .reduce((hash, character) => ((hash * 31) + character.charCodeAt(0)) >>> 0, 0);
+    const answer = `${memories[selectionSeed % memories.length]}\n\nSources: MemoryOS.`;
+    const maxBytes = Math.max(0, maxCompletionTokens) * 2;
+    if (Buffer.byteLength(answer, "utf8") <= maxBytes) return answer;
+    if (maxBytes < Buffer.byteLength("...", "utf8")) return null;
+
+    const suffix = "...";
+    let bounded = "";
+    for (const character of answer) {
+      if (Buffer.byteLength(bounded + character + suffix, "utf8") > maxBytes) break;
+      bounded += character;
+    }
+    return `${bounded.trimEnd()}${suffix}`;
+  }
+  return null;
+}
+
 function localRuntimeAuditEvidence(
   runtimeStateCardPrompt: string,
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
@@ -2804,6 +2853,15 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
           ),
         );
         if (toolCalls.length === 0) {
+          const memorySearchFallback = memorySearchFallbackFromCurrentTurn(
+            params.messages,
+            params.maxCompletionTokens,
+          );
+          if (memorySearchFallback) {
+            yield { type: "text", delta: memorySearchFallback };
+            yield { type: "finish", reason: "stop" };
+            return;
+          }
           const recoveredToolCall = recoverRequiredToolCallFromRequest(params) ||
             recoverExplicitAndroidRuntimeToolFromRequest(params);
           if (recoveredToolCall) {
