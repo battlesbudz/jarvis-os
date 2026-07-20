@@ -2988,12 +2988,15 @@ async function testAndroidLocalGemmaFallsBackToCompletedMemorySearchResult() {
         {
           role: "tool",
           tool_call_id: "call_memory_search",
-          content: [
-            'Memory search returned 1 actual retrieved memory for: "dual-cart vape battery website"',
-            "These are real memory entries from the user's memory store.",
-            "",
-            "[1] memory_id=mem-vape-site [long_term/semantic] (goals, confidence: 96%) A prior packaging attempt failed, and the user is preparing a website to sell a dual-cart vape battery.",
-          ].join("\n"),
+          content: JSON.stringify({
+            result: "success",
+            detail: [
+              'Memory search returned 1 actual retrieved memory for: "dual-cart vape battery website"',
+              "These are real memory entries from the user's memory store.",
+              "",
+              "[1] memory_id=mem-vape-site [long_term/semantic] (goals, confidence: 96%) A prior packaging attempt failed, and the user is preparing a website to sell a dual-cart vape battery.",
+            ].join("\n"),
+          }),
         },
       ],
       tools: [{

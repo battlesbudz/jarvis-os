@@ -1507,7 +1507,11 @@ function memorySearchFallbackFromCurrentTurn(
       continue;
     }
     if (message.role !== "tool" || !pendingMemorySearches.has(message.tool_call_id)) continue;
-    const memorySearchContent = toolMessageTextContent(message.content);
+    const rawMemorySearchContent = toolMessageTextContent(message.content);
+    const wrappedResult = parseWholeJsonObject(rawMemorySearchContent);
+    const memorySearchContent = wrappedResult?.result === "success" && typeof wrappedResult.detail === "string"
+      ? wrappedResult.detail
+      : rawMemorySearchContent;
     if (!/^Memory search returned \d+ actual retrieved memor(?:y|ies) for:/m.test(memorySearchContent)) continue;
 
     const memories = memorySearchContent
