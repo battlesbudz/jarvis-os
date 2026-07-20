@@ -3015,6 +3015,44 @@ async function testAndroidLocalGemmaFallsBackToCompletedMemorySearchResult() {
     }));
 
     assert.equal(result.textContent, "User is preparing a website to sell a dual-cart vape battery.\n\nSources: MemoryOS.");
+
+    const jsonResult = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: "Return one relevant memory as JSON." },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_memory_search_json",
+            type: "function",
+            function: { name: "memory_search", arguments: JSON.stringify({ query: "dual-cart vape battery" }) },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_memory_search_json",
+          content: "[1] memory_id=mem-vape-site [long_term/semantic] (goals, confidence: 96%) User is preparing a website to sell a dual-cart vape battery.",
+        },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "memory_search",
+          description: "Search canonical user memories.",
+          parameters: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+        },
+      }],
+      toolChoice: "auto",
+      responseFormat: { type: "json_object" },
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-memory-tool-fallback",
+    }));
+    assert.deepEqual(JSON.parse(jsonResult.textContent), {
+      content: "User is preparing a website to sell a dual-cart vape battery.",
+      sources: ["MemoryOS"],
+    });
     console.log("OK: Android Local Gemma falls back to completed memory search results");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
