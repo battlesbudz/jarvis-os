@@ -1483,6 +1483,78 @@ function currentTurnToolEvidence(messages: OpenAI.Chat.Completions.ChatCompletio
     .filter(Boolean);
 }
 
+function memorySearchFallbackFromCurrentTurn(
+  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+  maxCompletionTokens: number,
+  preserveWholeJson = false,
+): string | null {
+  const pendingMemorySearches = new Set<string>();
+  let currentTurnStart = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (messages[index]?.role === "user") {
+      currentTurnStart = index + 1;
+      break;
+    }
+  }
+
+  for (const message of messages.slice(currentTurnStart)) {
+    if (message.role === "assistant" && Array.isArray(message.tool_calls)) {
+      for (const toolCall of message.tool_calls) {
+        if (isFunctionToolCall(toolCall) && toolCall.function.name === "memory_search") {
+          pendingMemorySearches.add(toolCall.id);
+        }
+      }
+      continue;
+    }
+    if (message.role !== "tool" || !pendingMemorySearches.has(message.tool_call_id)) continue;
+    const rawMemorySearchContent = toolMessageTextContent(message.content);
+    const wrappedResult = parseWholeJsonObject(rawMemorySearchContent);
+    const memorySearchContent = wrappedResult?.result === "success" && typeof wrappedResult.detail === "string"
+      ? wrappedResult.detail
+      : rawMemorySearchContent;
+    if (!/^Memory search returned \d+ actual retrieved memor(?:y|ies) for:/m.test(memorySearchContent)) continue;
+
+    const memories = memorySearchContent
+      .split(/\r?\n/)
+      .map((line) => line.match(/^\[\d+\]\s+memory_id=\S+\s+\[[^\]]+\]\s+\([^)]*\)\s+(.+)$/)?.[1]?.trim())
+      .filter((memory): memory is string => Boolean(memory));
+    if (memories.length === 0) continue;
+
+    const selectionSeed = Array.from(message.tool_call_id)
+      .reduce((hash, character) => ((hash * 31) + character.charCodeAt(0)) >>> 0, 0);
+    const selectedMemory = memories[selectionSeed % memories.length];
+    const maxBytes = Math.max(0, maxCompletionTokens) * 2;
+    if (preserveWholeJson) {
+      const renderJson = (content: string) => JSON.stringify({ content, sources: ["MemoryOS"] });
+      const fullJson = renderJson(selectedMemory);
+      if (Buffer.byteLength(fullJson, "utf8") <= maxBytes) return fullJson;
+
+      let boundedContent = "";
+      for (const character of selectedMemory) {
+        const candidate = renderJson(`${boundedContent}${character}...`);
+        if (Buffer.byteLength(candidate, "utf8") > maxBytes) break;
+        boundedContent += character;
+      }
+      const boundedJson = renderJson(`${boundedContent.trimEnd()}...`);
+      if (boundedContent && Buffer.byteLength(boundedJson, "utf8") <= maxBytes) return boundedJson;
+      return maxBytes >= Buffer.byteLength("{}", "utf8") ? "{}" : null;
+    }
+
+    const answer = `${selectedMemory}\n\nSources: MemoryOS.`;
+    if (Buffer.byteLength(answer, "utf8") <= maxBytes) return answer;
+    if (maxBytes < Buffer.byteLength("...", "utf8")) return null;
+
+    const suffix = "...";
+    let bounded = "";
+    for (const character of answer) {
+      if (Buffer.byteLength(bounded + character + suffix, "utf8") > maxBytes) break;
+      bounded += character;
+    }
+    return `${bounded.trimEnd()}${suffix}`;
+  }
+  return null;
+}
+
 function localRuntimeAuditEvidence(
   runtimeStateCardPrompt: string,
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
@@ -2804,6 +2876,16 @@ export class AndroidLocalGemmaProvider extends BaseProvider {
           ),
         );
         if (toolCalls.length === 0) {
+          const memorySearchFallback = memorySearchFallbackFromCurrentTurn(
+            params.messages,
+            params.maxCompletionTokens,
+            preserveRequestedJson,
+          );
+          if (memorySearchFallback) {
+            yield { type: "text", delta: memorySearchFallback };
+            yield { type: "finish", reason: "stop" };
+            return;
+          }
           const recoveredToolCall = recoverRequiredToolCallFromRequest(params) ||
             recoverExplicitAndroidRuntimeToolFromRequest(params);
           if (recoveredToolCall) {
