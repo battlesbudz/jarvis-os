@@ -2992,7 +2992,7 @@ async function testAndroidLocalGemmaFallsBackToCompletedMemorySearchResult() {
             'Memory search returned 1 actual retrieved memory for: "dual-cart vape battery website"',
             "These are real memory entries from the user's memory store.",
             "",
-            "[1] memory_id=mem-vape-site [long_term/semantic] (goals, confidence: 96%) User is preparing a website to sell a dual-cart vape battery.",
+            "[1] memory_id=mem-vape-site [long_term/semantic] (goals, confidence: 96%) A prior packaging attempt failed, and the user is preparing a website to sell a dual-cart vape battery.",
           ].join("\n"),
         },
       ],
@@ -3014,7 +3014,10 @@ async function testAndroidLocalGemmaFallsBackToCompletedMemorySearchResult() {
       userId: "user-phone-memory-tool-fallback",
     }));
 
-    assert.equal(result.textContent, "User is preparing a website to sell a dual-cart vape battery.\n\nSources: MemoryOS.");
+    assert.equal(
+      result.textContent,
+      "A prior packaging attempt failed, and the user is preparing a website to sell a dual-cart vape battery.\n\nSources: MemoryOS.",
+    );
 
     const jsonResult = await accumulateTurn(new AndroidLocalGemmaProvider().query({
       model: "android-local-gemma/gemma-4-e4b-it",
@@ -3032,7 +3035,10 @@ async function testAndroidLocalGemmaFallsBackToCompletedMemorySearchResult() {
         {
           role: "tool",
           tool_call_id: "call_memory_search_json",
-          content: "[1] memory_id=mem-vape-site [long_term/semantic] (goals, confidence: 96%) User is preparing a website to sell a dual-cart vape battery.",
+          content: [
+            'Memory search returned 1 actual retrieved memory for: "dual-cart vape battery"',
+            "[1] memory_id=mem-vape-site [long_term/semantic] (goals, confidence: 96%) User is preparing a website to sell a dual-cart vape battery.",
+          ].join("\n"),
         },
       ],
       tools: [{

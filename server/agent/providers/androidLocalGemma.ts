@@ -1507,9 +1507,10 @@ function memorySearchFallbackFromCurrentTurn(
       continue;
     }
     if (message.role !== "tool" || !pendingMemorySearches.has(message.tool_call_id)) continue;
-    if (!daemonToolResultSucceeded(message.content)) continue;
+    const memorySearchContent = toolMessageTextContent(message.content);
+    if (!/^Memory search returned \d+ actual retrieved memor(?:y|ies) for:/m.test(memorySearchContent)) continue;
 
-    const memories = toolMessageTextContent(message.content)
+    const memories = memorySearchContent
       .split(/\r?\n/)
       .map((line) => line.match(/^\[\d+\]\s+memory_id=\S+\s+\[[^\]]+\]\s+\([^)]*\)\s+(.+)$/)?.[1]?.trim())
       .filter((memory): memory is string => Boolean(memory));
