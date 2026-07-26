@@ -1483,13 +1483,6 @@ function currentTurnToolEvidence(messages: OpenAI.Chat.Completions.ChatCompletio
     .filter(Boolean);
 }
 
-function looksLikePersonalMemoryRequest(requestText: string): boolean {
-  const normalized = requestText.toLowerCase().replace(/\s+/g, " ").trim();
-  const referencesMemory = /\b(?:memory|memories|remember|know|fact)\b/.test(normalized);
-  const referencesUser = /\b(?:about me|about myself|of me)\b/.test(normalized);
-  return referencesMemory && referencesUser;
-}
-
 function looksLikeGeneratedTaskGuidance(memory: string): boolean {
   return /^task guidance for\b/i.test(memory.trim());
 }
@@ -1532,7 +1525,7 @@ function memorySearchFallbackFromCurrentTurn(
     if (memories.length === 0) continue;
 
     const requestText = latestUserText(messages);
-    const personalMemoryRequest = looksLikePersonalMemoryRequest(requestText);
+    const personalMemoryRequest = shouldGroundPersonalMemoryRequest(requestText);
     const eligibleMemories = personalMemoryRequest
       ? memories.filter((memory) => !looksLikeGeneratedTaskGuidance(memory))
       : memories;

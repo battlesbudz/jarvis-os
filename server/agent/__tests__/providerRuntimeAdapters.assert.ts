@@ -3078,8 +3078,7 @@ async function testAndroidLocalGemmaPrefersPersonalMemoryOverTaskGuidance() {
   }));
 
   try {
-    const request = "Tell me one thing that you know about me, specifically from your memories.";
-    const result = await accumulateTurn(new AndroidLocalGemmaProvider().query({
+    const runRequest = async (request: string) => accumulateTurn(new AndroidLocalGemmaProvider().query({
       model: "android-local-gemma/gemma-4-e4b-it",
       messages: [
         { role: "user", content: request },
@@ -3128,11 +3127,20 @@ async function testAndroidLocalGemmaPrefersPersonalMemoryOverTaskGuidance() {
       userId: "user-phone-personal-memory-fallback",
     }));
 
+    const result = await runRequest(
+      "Tell me one thing that you know about me, specifically from your memories.",
+    );
     assert.equal(
       result.textContent,
       "User prefers direct, concise answers with clear next actions.\n\nSources: MemoryOS.",
     );
-    console.log("OK: Android Local Gemma prefers personal memories over task guidance");
+
+    const possessiveResult = await runRequest("What do you remember about my preferences?");
+    assert.equal(
+      possessiveResult.textContent,
+      "User prefers direct, concise answers with clear next actions.\n\nSources: MemoryOS.",
+    );
+    console.log("OK: Android Local Gemma prefers personal memories over task guidance for personal prompt forms");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);
   }
