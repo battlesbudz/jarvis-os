@@ -3140,6 +3140,12 @@ async function testAndroidLocalGemmaPrefersPersonalMemoryOverTaskGuidance() {
       possessiveResult.textContent,
       "User prefers direct, concise answers with clear next actions.\n\nSources: MemoryOS.",
     );
+
+    const exactTaskResult = await runRequest("What did I tell you about the tracking task?");
+    assert.equal(
+      exactTaskResult.textContent,
+      `Task guidance for "Set up tracking system for product batch and inventory control": Q: Which stages should it cover? A: I don't understand the question.\n\nSources: MemoryOS.`,
+    );
     console.log("OK: Android Local Gemma prefers personal memories over task guidance for personal prompt forms");
   } finally {
     _setAndroidLocalGemmaDaemonOpForTesting(null);

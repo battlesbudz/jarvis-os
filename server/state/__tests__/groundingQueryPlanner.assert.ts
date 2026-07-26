@@ -101,6 +101,10 @@ function testExplicitQueryAndGroundingBoundary(): void {
   assert.equal(shouldGroundPersonalMemoryRequest("Check memory usage."), false);
   assert.equal(shouldGroundPersonalMemoryRequest("How do I debug my memory leak?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("What do you know about Kubernetes?"), false);
+  assert.equal(
+    classifyGroundingIntent("Tell me one thing that you know about me, specifically from your memories."),
+    "broad_personal_summary",
+  );
   assert.equal(shouldGroundPersonalMemoryRequest("How are you today?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("How do I debug an Android memory leak?"), false);
   assert.equal(shouldGroundPersonalMemoryRequest("How does memory recall work?"), false);

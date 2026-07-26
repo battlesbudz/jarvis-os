@@ -6,6 +6,7 @@ import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { buildRuntimeStateCardPrompt } from "../../state/stateCard";
 import { buildGroundedEvidencePacketPrompt } from "../../state/groundedEvidencePacket";
 import {
+  classifyGroundingIntent,
   looksLikeMemorySaveRequest,
   shouldGroundPersonalMemoryRequest,
 } from "../../state/groundingQueryPlanner";
@@ -1526,7 +1527,10 @@ function memorySearchFallbackFromCurrentTurn(
 
     const requestText = latestUserText(messages);
     const personalMemoryRequest = shouldGroundPersonalMemoryRequest(requestText);
-    const eligibleMemories = personalMemoryRequest
+    const groundingIntent = classifyGroundingIntent(requestText);
+    const excludeTaskGuidance = groundingIntent === "broad_personal_summary" ||
+      groundingIntent === "profile_recall";
+    const eligibleMemories = excludeTaskGuidance
       ? memories.filter((memory) => !looksLikeGeneratedTaskGuidance(memory))
       : memories;
     if (eligibleMemories.length === 0) continue;
