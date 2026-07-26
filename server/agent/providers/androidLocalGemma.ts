@@ -6,6 +6,7 @@ import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { buildRuntimeStateCardPrompt } from "../../state/stateCard";
 import { buildGroundedEvidencePacketPrompt } from "../../state/groundedEvidencePacket";
 import {
+  classifyGroundingIntent,
   looksLikeMemorySaveRequest,
   shouldGroundPersonalMemoryRequest,
 } from "../../state/groundingQueryPlanner";
@@ -1483,6 +1484,10 @@ function currentTurnToolEvidence(messages: OpenAI.Chat.Completions.ChatCompletio
     .filter(Boolean);
 }
 
+function looksLikeGeneratedTaskGuidance(memory: string): boolean {
+  return /^task guidance for\b/i.test(memory.trim());
+}
+
 function memorySearchFallbackFromCurrentTurn(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
   maxCompletionTokens: number,
@@ -1520,9 +1525,22 @@ function memorySearchFallbackFromCurrentTurn(
       .filter((memory): memory is string => Boolean(memory));
     if (memories.length === 0) continue;
 
+    const requestText = latestUserText(messages);
+    const personalMemoryRequest = shouldGroundPersonalMemoryRequest(requestText);
+    const groundingIntent = classifyGroundingIntent(requestText);
+    const excludeTaskGuidance = groundingIntent === "broad_personal_summary" ||
+      groundingIntent === "profile_recall";
+    const eligibleMemories = excludeTaskGuidance
+      ? memories.filter((memory) => !looksLikeGeneratedTaskGuidance(memory))
+      : memories;
+    if (eligibleMemories.length === 0) continue;
+
     const selectionSeed = Array.from(message.tool_call_id)
       .reduce((hash, character) => ((hash * 31) + character.charCodeAt(0)) >>> 0, 0);
-    const selectedMemory = memories[selectionSeed % memories.length];
+    const explicitlyRandom = /\brandom\b/i.test(requestText);
+    const selectedMemory = personalMemoryRequest && !explicitlyRandom
+      ? eligibleMemories[0]
+      : eligibleMemories[selectionSeed % eligibleMemories.length];
     const maxBytes = Math.max(0, maxCompletionTokens) * 2;
     if (preserveWholeJson) {
       const renderJson = (content: string) => JSON.stringify({ content, sources: ["MemoryOS"] });

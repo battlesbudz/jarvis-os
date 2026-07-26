@@ -3068,6 +3068,90 @@ async function testAndroidLocalGemmaFallsBackToCompletedMemorySearchResult() {
   }
 }
 
+async function testAndroidLocalGemmaPrefersPersonalMemoryOverTaskGuidance() {
+  _setAndroidLocalGemmaDaemonOpForTesting(async () => ({
+    ok: true,
+    data: {
+      text: JSON.stringify({ type: "tool_calls", tool_calls: [] }),
+      finishReason: "stop",
+    },
+  }));
+
+  try {
+    const runRequest = async (request: string) => accumulateTurn(new AndroidLocalGemmaProvider().query({
+      model: "android-local-gemma/gemma-4-e4b-it",
+      messages: [
+        { role: "user", content: request },
+        {
+          role: "assistant",
+          content: "",
+          tool_calls: [{
+            id: "call_1",
+            type: "function",
+            function: {
+              name: "memory_search",
+              arguments: JSON.stringify({ query: request, limit: 5 }),
+            },
+          }],
+        },
+        {
+          role: "tool",
+          tool_call_id: "call_1",
+          content: JSON.stringify({
+            result: "success",
+            detail: [
+              `Memory search returned 2 actual retrieved memories for: "${request}"`,
+              "These are real memory entries from the user's memory store.",
+              "",
+              `[1] memory_id=mem-task-guidance [long_term/semantic] (goals, confidence: 95%) Task guidance for "Set up tracking system for product batch and inventory control": Q: Which stages should it cover? A: I don't understand the question.`,
+              "[2] memory_id=mem-personal-preference [long_term/semantic] (preferences, confidence: 92%) User prefers direct, concise answers with clear next actions.",
+            ].join("\n"),
+          }),
+        },
+      ],
+      tools: [{
+        type: "function",
+        function: {
+          name: "memory_search",
+          description: "Search canonical user memories.",
+          parameters: {
+            type: "object",
+            properties: { query: { type: "string" }, limit: { type: "number" } },
+            required: ["query"],
+          },
+        },
+      }],
+      toolChoice: "auto",
+      maxCompletionTokens: 128,
+      stream: false,
+      userId: "user-phone-personal-memory-fallback",
+    }));
+
+    const result = await runRequest(
+      "Tell me one thing that you know about me, specifically from your memories.",
+    );
+    assert.equal(
+      result.textContent,
+      "User prefers direct, concise answers with clear next actions.\n\nSources: MemoryOS.",
+    );
+
+    const possessiveResult = await runRequest("What do you remember about my preferences?");
+    assert.equal(
+      possessiveResult.textContent,
+      "User prefers direct, concise answers with clear next actions.\n\nSources: MemoryOS.",
+    );
+
+    const exactTaskResult = await runRequest("What did I tell you about the tracking task?");
+    assert.equal(
+      exactTaskResult.textContent,
+      `Task guidance for "Set up tracking system for product batch and inventory control": Q: Which stages should it cover? A: I don't understand the question.\n\nSources: MemoryOS.`,
+    );
+    console.log("OK: Android Local Gemma prefers personal memories over task guidance for personal prompt forms");
+  } finally {
+    _setAndroidLocalGemmaDaemonOpForTesting(null);
+  }
+}
+
 async function testAndroidLocalGemmaPreservesEmptyAssistantToolCallContinuation() {
   const requests: Array<{ userId: string; op: any; timeoutMs: number }> = [];
   _setAndroidLocalGemmaDaemonOpForTesting(async (userId, op, timeoutMs) => {
@@ -8842,6 +8926,7 @@ async function main() {
   await testAndroidLocalGemmaOmitsCodeProposalSystemPromptForPhoneActions();
   await testAndroidLocalGemmaPreservesToolContinuationWhenTrimming();
   await testAndroidLocalGemmaFallsBackToCompletedMemorySearchResult();
+  await testAndroidLocalGemmaPrefersPersonalMemoryOverTaskGuidance();
   await testAndroidLocalGemmaPreservesEmptyAssistantToolCallContinuation();
   await testAndroidLocalGemmaPreservesNewestTurnWhenTrimming();
   await testAndroidLocalGemmaRecoversRequiredScreenshotFinalAnswer();
