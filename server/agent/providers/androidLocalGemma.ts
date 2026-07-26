@@ -1483,6 +1483,17 @@ function currentTurnToolEvidence(messages: OpenAI.Chat.Completions.ChatCompletio
     .filter(Boolean);
 }
 
+function looksLikePersonalMemoryRequest(requestText: string): boolean {
+  const normalized = requestText.toLowerCase().replace(/\s+/g, " ").trim();
+  const referencesMemory = /\b(?:memory|memories|remember|know|fact)\b/.test(normalized);
+  const referencesUser = /\b(?:about me|about myself|of me)\b/.test(normalized);
+  return referencesMemory && referencesUser;
+}
+
+function looksLikeGeneratedTaskGuidance(memory: string): boolean {
+  return /^task guidance for\b/i.test(memory.trim());
+}
+
 function memorySearchFallbackFromCurrentTurn(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
   maxCompletionTokens: number,
@@ -1520,9 +1531,19 @@ function memorySearchFallbackFromCurrentTurn(
       .filter((memory): memory is string => Boolean(memory));
     if (memories.length === 0) continue;
 
+    const requestText = latestUserText(messages);
+    const personalMemoryRequest = looksLikePersonalMemoryRequest(requestText);
+    const eligibleMemories = personalMemoryRequest
+      ? memories.filter((memory) => !looksLikeGeneratedTaskGuidance(memory))
+      : memories;
+    if (eligibleMemories.length === 0) continue;
+
     const selectionSeed = Array.from(message.tool_call_id)
       .reduce((hash, character) => ((hash * 31) + character.charCodeAt(0)) >>> 0, 0);
-    const selectedMemory = memories[selectionSeed % memories.length];
+    const explicitlyRandom = /\brandom\b/i.test(requestText);
+    const selectedMemory = personalMemoryRequest && !explicitlyRandom
+      ? eligibleMemories[0]
+      : eligibleMemories[selectionSeed % eligibleMemories.length];
     const maxBytes = Math.max(0, maxCompletionTokens) * 2;
     if (preserveWholeJson) {
       const renderJson = (content: string) => JSON.stringify({ content, sources: ["MemoryOS"] });
