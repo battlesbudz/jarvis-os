@@ -1488,6 +1488,23 @@ function looksLikeGeneratedTaskGuidance(memory: string): boolean {
   return /^task guidance for\b/i.test(memory.trim());
 }
 
+function renderMemorySearchFallbackContent(memory: string): string {
+  const taskGuidance = memory.trim().match(/^task guidance for\s+".+?":\s*((?:Q:|A:).+)$/i);
+  if (!taskGuidance?.[1]) return memory;
+
+  const detail = taskGuidance[1].trim();
+  const answerMarker = detail.startsWith("Q: ") ? detail.indexOf(" A: ") : -1;
+  const answer = detail.startsWith("A: ")
+    ? detail.slice(3).trim()
+    : answerMarker >= 0
+      ? detail.slice(answerMarker + 4).trim()
+      : "";
+  if (!answer) return memory;
+
+  const unquotedAnswer = answer.match(/^["\u201c](.+)["\u201d]$/)?.[1] ?? answer;
+  return `You said, "${unquotedAnswer}"`;
+}
+
 function memorySearchFallbackFromCurrentTurn(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
   maxCompletionTokens: number,
@@ -1541,14 +1558,15 @@ function memorySearchFallbackFromCurrentTurn(
     const selectedMemory = personalMemoryRequest && !explicitlyRandom
       ? eligibleMemories[0]
       : eligibleMemories[selectionSeed % eligibleMemories.length];
+    const renderedMemory = renderMemorySearchFallbackContent(selectedMemory);
     const maxBytes = Math.max(0, maxCompletionTokens) * 2;
     if (preserveWholeJson) {
       const renderJson = (content: string) => JSON.stringify({ content, sources: ["MemoryOS"] });
-      const fullJson = renderJson(selectedMemory);
+      const fullJson = renderJson(renderedMemory);
       if (Buffer.byteLength(fullJson, "utf8") <= maxBytes) return fullJson;
 
       let boundedContent = "";
-      for (const character of selectedMemory) {
+      for (const character of renderedMemory) {
         const candidate = renderJson(`${boundedContent}${character}...`);
         if (Buffer.byteLength(candidate, "utf8") > maxBytes) break;
         boundedContent += character;
@@ -1558,7 +1576,7 @@ function memorySearchFallbackFromCurrentTurn(
       return maxBytes >= Buffer.byteLength("{}", "utf8") ? "{}" : null;
     }
 
-    const answer = `${selectedMemory}\n\nSources: MemoryOS.`;
+    const answer = `${renderedMemory}\n\nSources: MemoryOS.`;
     if (Buffer.byteLength(answer, "utf8") <= maxBytes) return answer;
     if (maxBytes < Buffer.byteLength("...", "utf8")) return null;
 

@@ -3078,7 +3078,11 @@ async function testAndroidLocalGemmaPrefersPersonalMemoryOverTaskGuidance() {
   }));
 
   try {
-    const runRequest = async (request: string) => accumulateTurn(new AndroidLocalGemmaProvider().query({
+    const defaultTaskGuidance = `Task guidance for "Set up tracking system for product batch and inventory control": Q: Which stages should it cover? A: I don't understand the question.`;
+    const runRequest = async (
+      request: string,
+      taskGuidance = defaultTaskGuidance,
+    ) => accumulateTurn(new AndroidLocalGemmaProvider().query({
       model: "android-local-gemma/gemma-4-e4b-it",
       messages: [
         { role: "user", content: request },
@@ -3103,7 +3107,7 @@ async function testAndroidLocalGemmaPrefersPersonalMemoryOverTaskGuidance() {
               `Memory search returned 2 actual retrieved memories for: "${request}"`,
               "These are real memory entries from the user's memory store.",
               "",
-              `[1] memory_id=mem-task-guidance [long_term/semantic] (goals, confidence: 95%) Task guidance for "Set up tracking system for product batch and inventory control": Q: Which stages should it cover? A: I don't understand the question.`,
+              `[1] memory_id=mem-task-guidance [long_term/semantic] (goals, confidence: 95%) ${taskGuidance}`,
               "[2] memory_id=mem-personal-preference [long_term/semantic] (preferences, confidence: 92%) User prefers direct, concise answers with clear next actions.",
             ].join("\n"),
           }),
@@ -3144,7 +3148,16 @@ async function testAndroidLocalGemmaPrefersPersonalMemoryOverTaskGuidance() {
     const exactTaskResult = await runRequest("What did I tell you about the tracking task?");
     assert.equal(
       exactTaskResult.textContent,
-      `Task guidance for "Set up tracking system for product batch and inventory control": Q: Which stages should it cover? A: I don't understand the question.\n\nSources: MemoryOS.`,
+      `You said, "I don't understand the question."\n\nSources: MemoryOS.`,
+    );
+
+    const noQuestionTaskResult = await runRequest(
+      "What did I tell you about the launch task?",
+      `Task guidance for "Launch the product": A: Publish it Tuesday morning.`,
+    );
+    assert.equal(
+      noQuestionTaskResult.textContent,
+      `You said, "Publish it Tuesday morning."\n\nSources: MemoryOS.`,
     );
     console.log("OK: Android Local Gemma prefers personal memories over task guidance for personal prompt forms");
   } finally {
