@@ -1489,17 +1489,17 @@ function looksLikeGeneratedTaskGuidance(memory: string): boolean {
 }
 
 function renderMemorySearchFallbackContent(memory: string): string {
-  const taskGuidance = memory.trim().match(/^task guidance for\s+".+?":\s*((?:Q:|A:).+)$/i);
-  if (!taskGuidance?.[1]) return memory;
+  const taskGuidance = memory.trim().match(/^task guidance for\s+"(.+?)":\s*((?:Q:|A:).+)$/i);
+  if (!taskGuidance?.[1] || !taskGuidance[2]) return memory;
 
-  const detail = taskGuidance[1].trim();
-  const answerMarker = detail.startsWith("Q: ") ? detail.indexOf(" A: ") : -1;
+  const detail = taskGuidance[2].trim();
+  const answerMarkers = detail.startsWith("Q: ") ? Array.from(detail.matchAll(/ A: /g)) : [];
   const answer = detail.startsWith("A: ")
     ? detail.slice(3).trim()
-    : answerMarker >= 0
-      ? detail.slice(answerMarker + 4).trim()
+    : answerMarkers.length === 1 && answerMarkers[0].index !== undefined
+      ? detail.slice(answerMarkers[0].index + 4).trim()
       : "";
-  if (!answer) return memory;
+  if (!answer) return `You discussed guidance for "${taskGuidance[1]}".`;
 
   const unquotedAnswer = answer.match(/^["\u201c](.+)["\u201d]$/)?.[1] ?? answer;
   return `You said, "${unquotedAnswer}"`;
