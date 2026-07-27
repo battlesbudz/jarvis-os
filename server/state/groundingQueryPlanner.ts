@@ -149,7 +149,11 @@ export function shouldExcludeTaskGuidanceForRecall(
     ?.replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (/^(?:me|myself|the user|this user)(?:\s+(?:personally|generally|overall|in general|as a person|please))*$/.test(normalizedScope ?? "")) {
+  const isBroadScope =
+    /^(?:general|generally|overall)$/.test(normalizedScope ?? "") ||
+    /^(?:me|myself|the user|this user)(?:\s+(?:personally|generally|overall|in general|as a person|please))*$/
+      .test(normalizedScope ?? "");
+  if (isBroadScope) {
     return true;
   }
   if (normalizedScope) return false;
