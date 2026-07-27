@@ -150,7 +150,9 @@ export function shouldExcludeTaskGuidanceForRecall(
     ?.replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  if (/^(?:me|myself|the user|this user)(?: please)?$/.test(normalizedScope ?? "")) return true;
+  if (/^(?:me|myself|the user|this user)(?:\s+(?:personally|generally|overall|in general|as a person|please))*$/.test(normalizedScope ?? "")) {
+    return true;
+  }
 
   const isProfileLikeRecall = intent === "profile_recall" ||
     (intent === "temporal_recall" && /\b(?:preferences?|values?)\b/.test(normalizedQuery));

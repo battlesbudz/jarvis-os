@@ -106,6 +106,34 @@ async function main(): Promise<void> {
   assert.deepEqual(incrementedIds, [["__memory_os_tool_1__"]]);
   assert.equal(calls.length, 1);
 
+  const gbrainResult = await executeMemorySearchForTest(
+    { query: "derived project context", limit: 5 },
+    ctx,
+    {
+      retrieveMemoryContext: async (input) => ({
+        ...context(),
+        query: input.query,
+        items: [{
+          memory: {
+            ...context().items[0].memory,
+            id: "__gbrain_tool_1__",
+            content: "Derived project context from an approved brain chunk.",
+            sourceType: null,
+            source: "gbrain",
+          },
+          provenance: [{ kind: "brain_chunk" as const, id: "__gbrain_chunk_1__", source: "gbrain" as const }],
+        }],
+      }),
+      incrementAccessCount: (ids) => {
+        incrementedIds.push(ids);
+      },
+      fetchProfileIdentity: async () => null,
+    },
+  );
+  assert.equal(gbrainResult.ok, true);
+  assert.match(gbrainResult.content, /source: gbrain/);
+  assert.doesNotMatch(gbrainResult.content, /source: unknown/);
+
   const broadIncrementedIds: string[][] = [];
   const broadSearchDeps = {
     retrieveMemoryContext: async (input: {

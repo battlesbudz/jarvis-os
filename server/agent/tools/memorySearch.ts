@@ -285,7 +285,7 @@ async function fetchProfileIdentity(userId: string): Promise<string | null> {
 }
 
 function formatRetrievedMemoryLine(memory: RetrievedMemory, index: number): string {
-  const sourceType = String(memory.sourceType || "unknown")
+  const sourceType = String(memory.sourceType || memory.source || "unknown")
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9._:-]+/g, "_")
