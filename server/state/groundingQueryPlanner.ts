@@ -52,7 +52,7 @@ const ABOUT_YOU_QUERY_TERMS = new Set([
 ]);
 
 export function isCanonicalAboutYouGroundingQuery(query: string): boolean {
-  const terms = normalized(query).split(/\s+/).filter(Boolean);
+  const terms: string[] = normalized(query).match(/[a-z0-9]+/g) ?? [];
   if (terms.length < 3 || terms.some((term) => !ABOUT_YOU_QUERY_TERMS.has(term))) return false;
   if (!terms.includes("user") && !terms.includes("profile")) return false;
 
