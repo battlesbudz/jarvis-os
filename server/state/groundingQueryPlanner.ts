@@ -145,7 +145,7 @@ export function shouldExcludeTaskGuidanceForRecall(
     /^(?:for|about|regarding|on|with|concerning|around|related to|relating to|when it comes to|in relation to|as to|in)\s+(.+?)(?:[,;:]\s*|\s+(?=(?:what|whats|which|could|can|would|tell|show)\b)).*\b(?:preferences?|values?)\b/,
   )?.[1];
   const topicFirstScope = normalizedQuery.match(
-    /^(.+?)[,;:]\s*(?=(?:what|whats|which|could|can|would|tell|show)\b).*\b(?:preferences?|values?)\b/,
+    /^(.+?)[,;:]\s*(?:(?:please|kindly)\s+)?(?=(?:what|whats|which|could|can|would|tell|show)\b).*\b(?:preferences?|values?)\b/,
   )?.[1];
   const scopedTopic = trailingScope ?? leadingScope ?? topicFirstScope;
   const normalizedScope = scopedTopic
