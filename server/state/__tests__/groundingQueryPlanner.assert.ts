@@ -81,6 +81,7 @@ function testIntentSpecificSources(): void {
   );
   assert.equal(shouldExcludeTaskGuidanceForRecall("What's my preference for the rollout task?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("For the rollout task, what is my preference?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Rollout task: what is my preference?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("Regarding launch safety, what are my values?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What is my current preference for local voice?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What are my preferences about my work?"), false);
@@ -94,6 +95,7 @@ function testIntentSpecificSources(): void {
   assert.equal(shouldExcludeTaskGuidanceForRecall("Concerning launch safety, what are my preferences?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("For me, what is my preference?"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("For me personally, what is my preference?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What are my preferences about me, thanks?"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("For me regarding rollout safety, what is my preference?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What are my values regarding launch safety?"), false);
   assert.equal(classifyGroundingIntent("What is my current preference for local voice?"), "temporal_recall");

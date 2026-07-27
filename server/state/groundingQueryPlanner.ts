@@ -144,14 +144,17 @@ export function shouldExcludeTaskGuidanceForRecall(
   const leadingScope = normalizedQuery.match(
     /^(?:for|about|regarding|on|with|concerning|around|related to|relating to|when it comes to|in relation to|as to|in)\s+(.+?)(?:[,;:]\s*|\s+(?=(?:what|which|could|can|would|tell|show)\b)).*\b(?:preferences?|values?)\b/,
   )?.[1];
-  const scopedTopic = trailingScope ?? leadingScope;
+  const topicFirstScope = normalizedQuery.match(
+    /^(.+?)[,;:]\s*(?=(?:what|which|could|can|would|tell|show)\b).*\b(?:preferences?|values?)\b/,
+  )?.[1];
+  const scopedTopic = trailingScope ?? leadingScope ?? topicFirstScope;
   const normalizedScope = scopedTopic
     ?.replace(/[^a-z0-9\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   const isBroadScope =
     /^(?:general|generally|overall)(?:\s+(?:please|thanks|thank you))*$/.test(normalizedScope ?? "") ||
-    /^(?:me|myself|the user|this user)(?:\s+(?:personally|generally|overall|in general|as a person|please))*$/
+    /^(?:me|myself|the user|this user)(?:\s+(?:personally|generally|overall|in general|as a person|please|thanks|thank you))*$/
       .test(normalizedScope ?? "");
   if (isBroadScope) {
     return true;
