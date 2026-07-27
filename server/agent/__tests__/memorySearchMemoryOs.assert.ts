@@ -196,7 +196,19 @@ async function main(): Promise<void> {
   assert.equal(canonicalBroadResult.ok, true);
   assert.doesNotMatch(canonicalBroadResult.content, /Task guidance for/);
   assert.match(canonicalBroadResult.content, /The user prefers direct, concise answers\./);
-  assert.deepEqual(broadIncrementedIds, [["__personal_memory__"], ["__personal_memory__"]]);
+
+  const bareProfileResult = await executeMemorySearchForTest(
+    { query: "preferences", limit: 5 },
+    ctx,
+    broadSearchDeps,
+  );
+  assert.equal(bareProfileResult.ok, true);
+  assert.doesNotMatch(bareProfileResult.content, /Task guidance for/);
+  assert.match(bareProfileResult.content, /The user prefers direct, concise answers\./);
+  assert.deepEqual(
+    broadIncrementedIds,
+    [["__personal_memory__"], ["__personal_memory__"], ["__personal_memory__"]],
+  );
 
   const topicProfileResult = await executeMemorySearchForTest(
     { query: "What is my preference for the rollout task?", limit: 5 },

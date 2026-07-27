@@ -62,6 +62,9 @@ function testIntentSpecificSources(): void {
   assert.equal(classifyGroundingIntent("What is my timezone?"), "profile_recall");
   assert.equal(classifyGroundingIntent("What is my current timezone?"), "profile_recall");
   assert.equal(shouldExcludeTaskGuidanceForRecall("What do you remember about my preferences?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("preferences"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("values"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("rollout preferences"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What's my preference?"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What's my current preference?"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("Could you summarize my current preferences?"), true);

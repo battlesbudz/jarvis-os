@@ -137,8 +137,13 @@ export function shouldExcludeTaskGuidanceForRecall(
   query: string,
   intent: GroundingIntent = classifyGroundingIntent(query),
 ): boolean {
-  if (intent === "broad_personal_summary" || isCanonicalAboutYouGroundingQuery(query)) return true;
   const normalizedQuery = normalized(query);
+  const isBareProfileQuery =
+    /^(?:user )?(?:profile|preferences?|values?|communication style|preferred name|timezone|time zone|language|work patterns?)$/
+      .test(normalizedQuery);
+  if (intent === "broad_personal_summary" || isCanonicalAboutYouGroundingQuery(query) || isBareProfileQuery) {
+    return true;
+  }
   const trailingScope = normalizedQuery.match(
     /\b(?:preferences?|values?)\b.{0,48}?\b(?:for|about|regarding|on|with|concerning|around|related to|relating to|when it comes to|in relation to|as to)\s+(.+)$/,
   )?.[1];
