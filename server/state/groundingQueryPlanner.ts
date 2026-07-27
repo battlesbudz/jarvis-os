@@ -140,10 +140,10 @@ export function shouldExcludeTaskGuidanceForRecall(
   if (intent === "broad_personal_summary" || isCanonicalAboutYouGroundingQuery(query)) return true;
   const normalizedQuery = normalized(query);
   const trailingScope = normalizedQuery.match(
-    /\b(?:preferences?|values?)\b.{0,48}?\b(?:for|about|regarding|on|with)\s+(.+)$/,
+    /\b(?:preferences?|values?)\b.{0,48}?\b(?:for|about|regarding|on|with|concerning|around|related to|relating to|when it comes to|in relation to|as to)\s+(.+)$/,
   )?.[1];
   const leadingScope = normalizedQuery.match(
-    /^(?:for|about|regarding|on|with)\s+(.+?)(?:[,;:]\s*|\s+(?=(?:what|which|could|can|would|tell|show)\b)).*\b(?:preferences?|values?)\b/,
+    /^(?:for|about|regarding|on|with|concerning|around|related to|relating to|when it comes to|in relation to|as to)\s+(.+?)(?:[,;:]\s*|\s+(?=(?:what|which|could|can|would|tell|show)\b)).*\b(?:preferences?|values?)\b/,
   )?.[1];
   const scopedTopic = trailingScope ?? leadingScope;
   const normalizedScope = scopedTopic
