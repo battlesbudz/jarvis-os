@@ -38,6 +38,31 @@ export type BuildGroundingQueryPlanInput = {
 export const ABOUT_YOU_GROUNDING_QUERY =
   "user profile preferences relationships work patterns goals blockers values commitments";
 
+const ABOUT_YOU_QUERY_TERMS = new Set([
+  "user",
+  "profile",
+  "preferences",
+  "relationships",
+  "work",
+  "patterns",
+  "goals",
+  "blockers",
+  "values",
+  "commitments",
+]);
+
+export function isCanonicalAboutYouGroundingQuery(query: string): boolean {
+  const terms = normalized(query).split(/\s+/).filter(Boolean);
+  if (terms.length < 3 || terms.some((term) => !ABOUT_YOU_QUERY_TERMS.has(term))) return false;
+  if (!terms.includes("user") && !terms.includes("profile")) return false;
+
+  const profileTerms = terms.filter((term) =>
+    !["user", "profile", "work", "patterns"].includes(term),
+  );
+  const includesWorkPatterns = terms.includes("work") && terms.includes("patterns");
+  return profileTerms.length + (includesWorkPatterns ? 1 : 0) >= 1;
+}
+
 const SOURCE_POLICY: Record<GroundingIntent, GroundingSourcePolicy> = {
   broad_personal_summary: { profile: true, soul: true, memory: true, commitments: true },
   profile_recall: { profile: true, soul: true, memory: true, commitments: false },

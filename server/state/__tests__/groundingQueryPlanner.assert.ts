@@ -4,6 +4,7 @@ import {
   ABOUT_YOU_GROUNDING_QUERY,
   buildGroundingQueryPlan,
   classifyGroundingIntent,
+  isCanonicalAboutYouGroundingQuery,
   looksLikeMemorySaveRequest,
   shouldGroundPersonalMemoryRequest,
 } from "../groundingQueryPlanner";
@@ -15,6 +16,9 @@ function testBroadPersonalSummary(): void {
   assert.deepEqual(plan.sources, { profile: true, soul: true, memory: true, commitments: true });
   assert.equal(plan.canonicalOnly, true);
   assert.equal(classifyGroundingIntent("What have I told you?"), "broad_personal_summary");
+  assert.equal(isCanonicalAboutYouGroundingQuery("user profile preferences relationships"), true);
+  assert.equal(isCanonicalAboutYouGroundingQuery(ABOUT_YOU_GROUNDING_QUERY), true);
+  assert.equal(isCanonicalAboutYouGroundingQuery("tracking task goals blockers"), false);
 }
 
 function testTemporalPlanning(): void {

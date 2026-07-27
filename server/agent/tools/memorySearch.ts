@@ -4,7 +4,10 @@ import type { RetrievedMemory } from "../../memory/retrieve";
 import { retrieveMemoryContext, memoryContextItemsToRetrievedMemories, type MemoryContext } from "../../memory/memoryOs";
 import { containsRawRestrictedContent } from "../../memory/restrictedContent";
 import { defaultMemoryWriteDeps, planMemoryWrite } from "../../memory/writePipeline";
-import { classifyGroundingIntent } from "../../state/groundingQueryPlanner";
+import {
+  classifyGroundingIntent,
+  isCanonicalAboutYouGroundingQuery,
+} from "../../state/groundingQueryPlanner";
 import { db } from "../../db";
 import { eq, sql } from "drizzle-orm";
 import {
@@ -313,7 +316,8 @@ async function executeMemorySearch(
   const shouldIncludeProfileFallback = isIdentityFallbackQuery(query);
   const groundingIntent = classifyGroundingIntent(query);
   const excludeTaskGuidance = groundingIntent === "broad_personal_summary" ||
-    groundingIntent === "profile_recall";
+    groundingIntent === "profile_recall" ||
+    isCanonicalAboutYouGroundingQuery(query);
   const candidateLimit = limit * (excludeTaskGuidance ? 4 : 2);
 
   try {

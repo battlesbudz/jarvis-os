@@ -105,48 +105,64 @@ async function main(): Promise<void> {
   assert.equal(calls.length, 1);
 
   const broadIncrementedIds: string[][] = [];
+  const broadSearchDeps = {
+    retrieveMemoryContext: async (input: {
+      userId: string;
+      query: string;
+      limit?: number;
+      caller: string;
+      skipAccessUpdate?: boolean;
+    }) => {
+      assert.equal(input.limit, 20, "broad personal searches should over-fetch before provenance filtering");
+      return {
+        ...context(),
+        items: [
+          {
+            memory: {
+              ...context().items[0].memory,
+              id: "__task_guidance_memory__",
+              content: `Task guidance for "Inventory": A: I don't understand the question.`,
+              category: "Task Guidance",
+              sourceType: "task_guidance",
+            },
+            provenance: [{ kind: "user_memory" as const, id: "__task_guidance_memory__", source: "canonical" as const }],
+          },
+          {
+            memory: {
+              ...context().items[0].memory,
+              id: "__personal_memory__",
+              content: "The user prefers direct, concise answers.",
+              category: "preferences",
+              sourceType: "manual",
+            },
+            provenance: [{ kind: "user_memory" as const, id: "__personal_memory__", source: "canonical" as const }],
+          },
+        ],
+      };
+    },
+    incrementAccessCount: (ids: string[]) => {
+      broadIncrementedIds.push(ids);
+    },
+    fetchProfileIdentity: async () => null,
+  };
   const broadResult = await executeMemorySearchForTest(
     { query: "Tell me one thing that you know about me, specifically from your memories.", limit: 5 },
     ctx,
-    {
-      retrieveMemoryContext: async (input) => {
-        assert.equal(input.limit, 20, "broad personal searches should over-fetch before provenance filtering");
-        return {
-          ...context(),
-          items: [
-            {
-              memory: {
-                ...context().items[0].memory,
-                id: "__task_guidance_memory__",
-                content: `Task guidance for "Inventory": A: I don't understand the question.`,
-                category: "Task Guidance",
-                sourceType: "task_guidance",
-              },
-              provenance: [{ kind: "user_memory", id: "__task_guidance_memory__", source: "canonical" }],
-            },
-            {
-              memory: {
-                ...context().items[0].memory,
-                id: "__personal_memory__",
-                content: "The user prefers direct, concise answers.",
-                category: "preferences",
-                sourceType: "manual",
-              },
-              provenance: [{ kind: "user_memory", id: "__personal_memory__", source: "canonical" }],
-            },
-          ],
-        };
-      },
-      incrementAccessCount: (ids) => {
-        broadIncrementedIds.push(ids);
-      },
-      fetchProfileIdentity: async () => null,
-    },
+    broadSearchDeps,
   );
   assert.equal(broadResult.ok, true);
   assert.doesNotMatch(broadResult.content, /Task guidance for/);
   assert.match(broadResult.content, /The user prefers direct, concise answers\./);
-  assert.deepEqual(broadIncrementedIds, [["__personal_memory__"]]);
+
+  const canonicalBroadResult = await executeMemorySearchForTest(
+    { query: "user profile preferences relationships", limit: 5 },
+    ctx,
+    broadSearchDeps,
+  );
+  assert.equal(canonicalBroadResult.ok, true);
+  assert.doesNotMatch(canonicalBroadResult.content, /Task guidance for/);
+  assert.match(canonicalBroadResult.content, /The user prefers direct, concise answers\./);
+  assert.deepEqual(broadIncrementedIds, [["__personal_memory__"], ["__personal_memory__"]]);
 
   const failure = await executeMemorySearchForTest(
     { query: "morning planning", limit: 5 },
