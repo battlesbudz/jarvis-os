@@ -56,41 +56,57 @@ const BROAD_PROFILE_QUERY_TERMS = new Set([
   "about",
   "an",
   "are",
+  "before",
   "can",
+  "change",
+  "changed",
   "communication",
   "could",
+  "current",
+  "currently",
   "do",
   "for",
   "from",
   "is",
   "know",
   "language",
+  "last",
+  "latest",
   "me",
   "memories",
   "memory",
+  "most",
   "my",
   "name",
+  "newest",
   "one",
   "please",
   "preference",
   "preferences",
   "preferred",
+  "previously",
+  "recent",
   "profile",
   "recall",
   "remember",
   "show",
   "specifically",
   "style",
+  "still",
   "tell",
   "that",
   "the",
   "thing",
   "time",
   "timezone",
+  "to",
+  "used",
   "value",
   "values",
   "what",
   "whats",
+  "was",
+  "were",
   "you",
   "zone",
 ]);
@@ -182,9 +198,12 @@ export function shouldExcludeTaskGuidanceForRecall(
   intent: GroundingIntent = classifyGroundingIntent(query),
 ): boolean {
   if (intent === "broad_personal_summary" || isCanonicalAboutYouGroundingQuery(query)) return true;
-  if (intent !== "profile_recall") return false;
+  const normalizedQuery = normalized(query);
+  const isProfileLikeRecall = intent === "profile_recall" ||
+    (intent === "temporal_recall" && /\b(?:preferences?|values?)\b/.test(normalizedQuery));
+  if (!isProfileLikeRecall) return false;
 
-  const topicTerms = normalized(query)
+  const topicTerms = normalizedQuery
     .match(/[a-z0-9]+/g)
     ?.filter((term) => !BROAD_PROFILE_QUERY_TERMS.has(term)) ?? [];
   return topicTerms.length === 0;
