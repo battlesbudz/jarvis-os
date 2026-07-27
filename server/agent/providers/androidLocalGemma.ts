@@ -8,6 +8,7 @@ import { buildGroundedEvidencePacketPrompt } from "../../state/groundedEvidenceP
 import {
   classifyGroundingIntent,
   looksLikeMemorySaveRequest,
+  shouldExcludeTaskGuidanceForRecall,
   shouldGroundPersonalMemoryRequest,
 } from "../../state/groundingQueryPlanner";
 import {
@@ -1545,8 +1546,7 @@ function memorySearchFallbackFromCurrentTurn(
     const requestText = latestUserText(messages);
     const personalMemoryRequest = shouldGroundPersonalMemoryRequest(requestText);
     const groundingIntent = classifyGroundingIntent(requestText);
-    const excludeTaskGuidance = groundingIntent === "broad_personal_summary" ||
-      groundingIntent === "profile_recall";
+    const excludeTaskGuidance = shouldExcludeTaskGuidanceForRecall(requestText, groundingIntent);
     const eligibleMemories = excludeTaskGuidance
       ? memories.filter((memory) => !looksLikeGeneratedTaskGuidance(memory))
       : memories;

@@ -10,6 +10,7 @@ import {
 } from "../memory/memoryOs";
 import {
   buildGroundingQueryPlan,
+  shouldExcludeTaskGuidanceForRecall,
   type GroundingIntent,
   type GroundingQueryPlan,
   type GroundingSourcePolicy,
@@ -671,7 +672,7 @@ export async function buildGroundedEvidencePacket(
   if (sourcePolicy.memory) {
     try {
       const retrieveMemoryContext = effectiveDeps.retrieveMemoryContext ?? defaultRetrieveMemoryContext;
-      const excludeTaskGuidance = queryPlan.intent === "broad_personal_summary";
+      const excludeTaskGuidance = shouldExcludeTaskGuidanceForRecall(input.requestText, queryPlan.intent);
       const memoryContexts = await Promise.all(queryPlan.queries.map((plannedQuery) => retrieveMemoryContext({
           userId: input.userId,
           query: plannedQuery.query,

@@ -3145,6 +3145,15 @@ async function testAndroidLocalGemmaPrefersPersonalMemoryOverTaskGuidance() {
       "User prefers direct, concise answers with clear next actions.\n\nSources: MemoryOS.",
     );
 
+    const scopedPreferenceResult = await runRequest(
+      "What is my preference for the rollout task?",
+      `Task guidance for "Choose a rollout mode": A: Use the safe rollout.`,
+    );
+    assert.equal(
+      scopedPreferenceResult.textContent,
+      `Saved task guidance: "Use the safe rollout."\n\nSources: MemoryOS.`,
+    );
+
     const exactTaskResult = await runRequest("What did I tell you about the tracking task?");
     assert.equal(
       exactTaskResult.textContent,

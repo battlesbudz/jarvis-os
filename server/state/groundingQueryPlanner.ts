@@ -51,6 +51,49 @@ const ABOUT_YOU_QUERY_TERMS = new Set([
   "commitments",
 ]);
 
+const BROAD_PROFILE_QUERY_TERMS = new Set([
+  "a",
+  "about",
+  "an",
+  "are",
+  "can",
+  "communication",
+  "could",
+  "do",
+  "for",
+  "from",
+  "is",
+  "know",
+  "language",
+  "me",
+  "memories",
+  "memory",
+  "my",
+  "name",
+  "one",
+  "please",
+  "preference",
+  "preferences",
+  "preferred",
+  "profile",
+  "recall",
+  "remember",
+  "show",
+  "specifically",
+  "style",
+  "tell",
+  "that",
+  "the",
+  "thing",
+  "time",
+  "timezone",
+  "value",
+  "values",
+  "what",
+  "you",
+  "zone",
+]);
+
 export function isCanonicalAboutYouGroundingQuery(query: string): boolean {
   const terms = normalized(query).split(/\s+/).filter(Boolean);
   if (terms.length < 3 || terms.some((term) => !ABOUT_YOU_QUERY_TERMS.has(term))) return false;
@@ -131,6 +174,19 @@ export function classifyGroundingIntent(requestText: string): GroundingIntent {
     return "profile_recall";
   }
   return "exact_recall";
+}
+
+export function shouldExcludeTaskGuidanceForRecall(
+  query: string,
+  intent: GroundingIntent = classifyGroundingIntent(query),
+): boolean {
+  if (intent === "broad_personal_summary" || isCanonicalAboutYouGroundingQuery(query)) return true;
+  if (intent !== "profile_recall") return false;
+
+  const topicTerms = normalized(query)
+    .match(/[a-z0-9]+/g)
+    ?.filter((term) => !BROAD_PROFILE_QUERY_TERMS.has(term)) ?? [];
+  return topicTerms.length === 0;
 }
 
 export function shouldGroundPersonalMemoryRequest(requestText: string): boolean {

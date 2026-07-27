@@ -6,7 +6,7 @@ import { containsRawRestrictedContent } from "../../memory/restrictedContent";
 import { defaultMemoryWriteDeps, planMemoryWrite } from "../../memory/writePipeline";
 import {
   classifyGroundingIntent,
-  isCanonicalAboutYouGroundingQuery,
+  shouldExcludeTaskGuidanceForRecall,
 } from "../../state/groundingQueryPlanner";
 import { db } from "../../db";
 import { eq, sql } from "drizzle-orm";
@@ -318,8 +318,7 @@ async function executeMemorySearch(
   const tierFilter = args.tier ? String(args.tier).trim() : null;
   const shouldIncludeProfileFallback = isIdentityFallbackQuery(query);
   const groundingIntent = classifyGroundingIntent(query);
-  const excludeTaskGuidance = groundingIntent === "broad_personal_summary" ||
-    isCanonicalAboutYouGroundingQuery(query);
+  const excludeTaskGuidance = shouldExcludeTaskGuidanceForRecall(query, groundingIntent);
   const candidateLimit = limit * 2;
 
   try {
