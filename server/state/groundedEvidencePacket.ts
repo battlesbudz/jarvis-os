@@ -130,6 +130,7 @@ export interface GroundedEvidencePacketDeps {
     canonicalOnly?: boolean;
     modelTarget?: MemoryModelTarget;
     allowRestrictedMemory?: boolean;
+    excludeTaskGuidance?: boolean;
   }) => Promise<MemoryContext>;
   loadCommitments?: (userId: string, limit?: number) => Promise<GroundedCommitmentRecord[]>;
   now?: () => Date;
@@ -670,6 +671,8 @@ export async function buildGroundedEvidencePacket(
   if (sourcePolicy.memory) {
     try {
       const retrieveMemoryContext = effectiveDeps.retrieveMemoryContext ?? defaultRetrieveMemoryContext;
+      const excludeTaskGuidance = queryPlan.intent === "broad_personal_summary" ||
+        queryPlan.intent === "profile_recall";
       const memoryContexts = await Promise.all(queryPlan.queries.map((plannedQuery) => retrieveMemoryContext({
           userId: input.userId,
           query: plannedQuery.query,
@@ -679,6 +682,7 @@ export async function buildGroundedEvidencePacket(
           canonicalOnly: true,
           modelTarget,
           allowRestrictedMemory: input.allowRestrictedMemory ?? false,
+          excludeTaskGuidance,
         })));
       const memoryContext = mergeMemoryContexts(memoryContexts, input.userId, plannedQueryText, memoryLimit);
       const loaded = memoryEvidence(memoryContext);

@@ -125,6 +125,7 @@ async function testGroundedPacketBuildsEvidenceAndOmitsNoise(): Promise<void> {
     retrieveMemoryContext: async (input) => {
       assert.equal(input.modelTarget, "local");
       assert.equal(input.canonicalOnly, true);
+      assert.equal(input.excludeTaskGuidance, true);
       return memoryContext(input.query);
     },
     loadCommitments: async () => noisyCommitments,
@@ -221,6 +222,7 @@ async function testTemporalPlanUsesOnlyMemoryAndMergesQueries(): Promise<void> {
       throw new Error("commitments should be skipped");
     },
     retrieveMemoryContext: async (input) => {
+      assert.equal(input.excludeTaskGuidance, false);
       queries.push(input.query);
       const ids = queries.length === 1
         ? ["memory-android-context", "memory-android-speech-decision"]
