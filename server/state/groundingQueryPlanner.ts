@@ -51,66 +51,6 @@ const ABOUT_YOU_QUERY_TERMS = new Set([
   "commitments",
 ]);
 
-const BROAD_PROFILE_QUERY_TERMS = new Set([
-  "a",
-  "about",
-  "an",
-  "are",
-  "before",
-  "can",
-  "change",
-  "changed",
-  "communication",
-  "could",
-  "current",
-  "currently",
-  "do",
-  "for",
-  "from",
-  "is",
-  "know",
-  "language",
-  "last",
-  "latest",
-  "me",
-  "memories",
-  "memory",
-  "most",
-  "my",
-  "name",
-  "newest",
-  "one",
-  "please",
-  "preference",
-  "preferences",
-  "preferred",
-  "previously",
-  "recent",
-  "profile",
-  "recall",
-  "remember",
-  "show",
-  "specifically",
-  "style",
-  "still",
-  "tell",
-  "that",
-  "the",
-  "thing",
-  "time",
-  "timezone",
-  "to",
-  "used",
-  "value",
-  "values",
-  "what",
-  "whats",
-  "was",
-  "were",
-  "you",
-  "zone",
-]);
-
 export function isCanonicalAboutYouGroundingQuery(query: string): boolean {
   const terms = normalized(query).split(/\s+/).filter(Boolean);
   if (terms.length < 3 || terms.some((term) => !ABOUT_YOU_QUERY_TERMS.has(term))) return false;
@@ -203,10 +143,10 @@ export function shouldExcludeTaskGuidanceForRecall(
     (intent === "temporal_recall" && /\b(?:preferences?|values?)\b/.test(normalizedQuery));
   if (!isProfileLikeRecall) return false;
 
-  const topicTerms = normalizedQuery
-    .match(/[a-z0-9]+/g)
-    ?.filter((term) => !BROAD_PROFILE_QUERY_TERMS.has(term)) ?? [];
-  return topicTerms.length === 0;
+  const scopedTopic = normalizedQuery.match(
+    /\b(?:preferences?|values?)\b.{0,48}?\b(?:for|about|regarding|on|with)\s+(.+)$/,
+  )?.[1];
+  return !scopedTopic?.match(/[a-z0-9]/);
 }
 
 export function shouldGroundPersonalMemoryRequest(requestText: string): boolean {
