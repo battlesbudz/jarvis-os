@@ -42,12 +42,15 @@ interface MemorySearchDeps {
     limit?: number;
     caller: string;
     skipAccessUpdate?: boolean;
+    canonicalOnly?: boolean;
+    excludeTaskGuidance?: boolean;
   }) => Promise<MemoryContext>;
   retrieveMemories?: (
     userId: string,
     query: string,
     limit: number,
     skipAccessUpdate: boolean,
+    options?: { excludeTaskGuidance?: boolean },
   ) => Promise<RetrievedMemory[]>;
   incrementAccessCount: (ids: string[]) => void;
   fetchProfileIdentity: (userId: string) => Promise<string | null>;
@@ -318,7 +321,7 @@ async function executeMemorySearch(
   const excludeTaskGuidance = groundingIntent === "broad_personal_summary" ||
     groundingIntent === "profile_recall" ||
     isCanonicalAboutYouGroundingQuery(query);
-  const candidateLimit = limit * (excludeTaskGuidance ? 4 : 2);
+  const candidateLimit = limit * 2;
 
   try {
     let memories: RetrievedMemory[];
@@ -330,11 +333,15 @@ async function executeMemorySearch(
         limit: candidateLimit,
         caller: "memory_search",
         skipAccessUpdate: true,
+        canonicalOnly: excludeTaskGuidance,
+        excludeTaskGuidance,
       });
       memories = memoryContextItemsToRetrievedMemories(memoryContext.items);
       uncertainty = memoryContext.uncertainty;
     } else if (deps.retrieveMemories) {
-      memories = await deps.retrieveMemories(ctx.userId, query, candidateLimit, true);
+      memories = await deps.retrieveMemories(ctx.userId, query, candidateLimit, true, {
+        excludeTaskGuidance,
+      });
     } else {
       throw new Error("No memory retrieval dependency configured.");
     }

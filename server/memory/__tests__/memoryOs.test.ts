@@ -79,6 +79,27 @@ async function main(): Promise<void> {
   const roundTrip = memoryContextItemsToRetrievedMemories(context.items);
   assert.deepEqual(roundTrip, [memory()]);
 
+  const provenanceFilteredContext = await retrieveMemoryContext(
+    {
+      userId: "memory-os-user",
+      query: "user profile preferences relationships",
+      limit: 25,
+      caller: "memory_search",
+      skipAccessUpdate: true,
+      canonicalOnly: true,
+      excludeTaskGuidance: true,
+    },
+    {
+      retrieveMemories: async (_userId, _query, limit, _skipAccessUpdate, options) => {
+        assert.equal(limit, 50);
+        assert.equal(options?.canonicalOnly, true);
+        assert.equal(options?.excludeTaskGuidance, true);
+        return [memory({ id: "personal-memory", sourceType: "manual" })];
+      },
+    },
+  );
+  assert.deepEqual(provenanceFilteredContext.sources.memories, ["personal-memory"]);
+
   const gbrainContext = await retrieveMemoryContext(
     { userId: "memory-os-user", query: "derived planning", caller: "gbrain_retrieval" },
     {

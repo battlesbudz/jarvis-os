@@ -131,6 +131,7 @@ export async function searchMemoryVectors(input: {
   query: string;
   queryEmbedding: number[] | null;
   limit: number;
+  excludeTaskGuidance?: boolean;
 }): Promise<MemoryVectorSearchResult> {
   if (!input.queryEmbedding || !isMemoryVectorRetrievalEnabled()) {
     return { status: "disabled", rows: [] };
@@ -165,6 +166,11 @@ export async function searchMemoryVectors(input: {
         AND ${userMemories.pendingReview} = FALSE
         AND ${userMemories.reviewStatus} IN ('active', 'kept', 'edited')
         AND ${userMemories.embeddingVector} IS NOT NULL
+        AND (${input.excludeTaskGuidance !== true} OR (
+          COALESCE(LOWER(${userMemories.sourceType}), '') <> 'task_guidance'
+          AND COALESCE(LOWER(${userMemories.category}), '') <> 'task guidance'
+          AND LOWER(LTRIM(${userMemories.content})) NOT LIKE 'task guidance for%'
+        ))
       ORDER BY ${userMemories.embeddingVector} <=> ${literal}::vector ASC,
         fts_rank DESC NULLS LAST,
         ${userMemories.relevanceScore} DESC

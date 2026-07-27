@@ -19,6 +19,8 @@ let executeMemorySearchForTest: (
         limit?: number;
         caller: string;
         skipAccessUpdate?: boolean;
+        canonicalOnly?: boolean;
+        excludeTaskGuidance?: boolean;
       },
     ) => Promise<MemoryContext>;
     incrementAccessCount: (ids: string[]) => void;
@@ -112,8 +114,12 @@ async function main(): Promise<void> {
       limit?: number;
       caller: string;
       skipAccessUpdate?: boolean;
+      canonicalOnly?: boolean;
+      excludeTaskGuidance?: boolean;
     }) => {
-      assert.equal(input.limit, 20, "broad personal searches should over-fetch before provenance filtering");
+      assert.equal(input.limit, 10);
+      assert.equal(input.canonicalOnly, true);
+      assert.equal(input.excludeTaskGuidance, true);
       return {
         ...context(),
         items: [
