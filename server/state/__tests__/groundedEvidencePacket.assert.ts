@@ -183,6 +183,21 @@ async function testGroundedPacketBuildsEvidenceAndOmitsNoise(): Promise<void> {
     },
   });
   assert.equal(topicProfilePacket.queryPlan.intent, "profile_recall");
+
+  const explicitProfilePacket = await buildGroundedEvidencePacket({
+    userId,
+    requestText: "Show memories about preferences.",
+    query: "preferences",
+    activeModel: "Phone Gemma",
+  }, {
+    now: () => fixedNow,
+    retrieveMemoryContext: async (input) => {
+      assert.equal(input.query, "preferences");
+      assert.equal(input.excludeTaskGuidance, true);
+      return memoryContext(input.query);
+    },
+  });
+  assert.equal(explicitProfilePacket.queryPlan.intent, "exact_recall");
   console.log("OK: grounded evidence packet loads profile, memory, commitments, and omits noisy duplicates");
 }
 
