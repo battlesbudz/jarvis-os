@@ -10,6 +10,7 @@ import {
 } from "../memory/memoryOs";
 import {
   buildGroundingQueryPlan,
+  shouldExcludeTaskGuidanceForRecall,
   type GroundingIntent,
   type GroundingQueryPlan,
   type GroundingSourcePolicy,
@@ -130,6 +131,7 @@ export interface GroundedEvidencePacketDeps {
     canonicalOnly?: boolean;
     modelTarget?: MemoryModelTarget;
     allowRestrictedMemory?: boolean;
+    excludeTaskGuidance?: boolean;
   }) => Promise<MemoryContext>;
   loadCommitments?: (userId: string, limit?: number) => Promise<GroundedCommitmentRecord[]>;
   now?: () => Date;
@@ -679,6 +681,7 @@ export async function buildGroundedEvidencePacket(
           canonicalOnly: true,
           modelTarget,
           allowRestrictedMemory: input.allowRestrictedMemory ?? false,
+          excludeTaskGuidance: shouldExcludeTaskGuidanceForRecall(plannedQuery.query),
         })));
       const memoryContext = mergeMemoryContexts(memoryContexts, input.userId, plannedQueryText, memoryLimit);
       const loaded = memoryEvidence(memoryContext);

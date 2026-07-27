@@ -57,6 +57,7 @@ export interface RetrievedMemory {
 type MemoryRow = MemoryVectorRow;
 export type RetrievedMemoryFilterOptions = {
   includeRestricted?: boolean;
+  excludeTaskGuidance?: boolean;
 };
 
 const RESTRICTED_SOURCE_TOKENS = [
@@ -111,7 +112,13 @@ export function filterRestrictedRetrievedMemories<T extends RetrievedMemory>(
   memories: T[],
   options: RetrievedMemoryFilterOptions = {},
 ): T[] {
-  return options.includeRestricted ? memories : memories.filter((memory) => !isRestrictedRetrievedMemory(memory));
+  return memories.filter((memory) => {
+    if (!options.includeRestricted && isRestrictedRetrievedMemory(memory)) return false;
+    if (!options.excludeTaskGuidance) return true;
+    return String(memory.sourceType ?? "").trim().toLowerCase() !== "task_guidance" &&
+      String(memory.category ?? "").trim().toLowerCase() !== "task guidance" &&
+      !/^task guidance for\b/i.test(memory.content.trim());
+  });
 }
 
 function envFlagEnabled(value: string | undefined): boolean {
@@ -532,6 +539,7 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
     query: q,
     queryEmbedding: queryVec,
     limit: retrievalLimit,
+    excludeTaskGuidance: options.excludeTaskGuidance,
   });
   if (vectorSearch.status === "ok" && vectorSearch.rows.length > 0) {
     vectorRows = vectorSearch.rows;
@@ -554,6 +562,11 @@ export async function retrieveCanonicalMemoriesWithQueryVector(
         AND (expires_at IS NULL OR expires_at >= NOW())
         AND (pending_review = FALSE OR pending_review IS NULL)
         AND review_status IN ('active', 'kept', 'edited')
+        AND (${options.excludeTaskGuidance !== true} OR (
+          COALESCE(LOWER(source_type), '') <> 'task_guidance'
+          AND COALESCE(LOWER(category), '') <> 'task guidance'
+          AND LOWER(LTRIM(content)) NOT LIKE 'task guidance for%'
+        ))
       ORDER BY fts_rank DESC NULLS LAST, relevance_score DESC
       LIMIT 60
     `);

@@ -139,6 +139,7 @@ export type MemoryRetrievalTrace = {
     canonicalOnly: boolean;
     modelTarget: MemoryModelTarget;
     allowRestrictedMemory: boolean;
+    excludeTaskGuidance: boolean;
   };
   outcome: "ok" | "empty" | "invalid_input" | "error";
   fallbackUsed: boolean;
@@ -198,11 +199,13 @@ export type RetrieveMemoryContextInput = {
   canonicalOnly?: boolean;
   modelTarget?: MemoryModelTarget;
   allowRestrictedMemory?: boolean;
+  excludeTaskGuidance?: boolean;
 };
 
 export type MemoryRetrievalOptions = {
   canonicalOnly?: boolean;
   includeRestricted?: boolean;
+  excludeTaskGuidance?: boolean;
 };
 
 export type MemoryOsDeps = {
@@ -222,12 +225,14 @@ const defaultDeps: MemoryOsDeps = {
       const { retrieveCanonicalRelevantMemories } = await import("./retrieve");
       return retrieveCanonicalRelevantMemories(userId, query, limit, skipAccessUpdate, {
         includeRestricted: options.includeRestricted,
+        excludeTaskGuidance: options.excludeTaskGuidance,
       });
     }
 
     const { retrieveRelevantMemories } = await import("./retrieve");
     return retrieveRelevantMemories(userId, query, limit, skipAccessUpdate, {
       includeRestricted: options?.includeRestricted,
+      excludeTaskGuidance: options?.excludeTaskGuidance,
     });
   },
   incrementAccessCount: (ids) => {
@@ -279,6 +284,7 @@ function baseRetrievalTrace(
       canonicalOnly: input.canonicalOnly ?? false,
       modelTarget: input.modelTarget ?? "cloud",
       allowRestrictedMemory: input.allowRestrictedMemory ?? false,
+      excludeTaskGuidance: input.excludeTaskGuidance ?? false,
     },
     outcome,
     fallbackUsed: false,
@@ -625,6 +631,7 @@ export async function retrieveMemoryContext(
     const rawMemories = await deps.retrieveMemories(input.userId, query, rawLimit, true, {
       canonicalOnly: input.canonicalOnly ?? false,
       includeRestricted: true,
+      excludeTaskGuidance: input.excludeTaskGuidance,
     });
     trace.stages.push({
       stage: "primary_retrieval",
@@ -676,6 +683,7 @@ export async function retrieveMemoryContext(
       const canonicalFallback = await deps.retrieveMemories(input.userId, query, fallbackLimit, true, {
         canonicalOnly: true,
         includeRestricted: true,
+        excludeTaskGuidance: input.excludeTaskGuidance,
       });
       const fallbackPrepared = prepareMemoriesForModelTarget(
         canonicalFallback,

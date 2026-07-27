@@ -4,7 +4,9 @@ import {
   ABOUT_YOU_GROUNDING_QUERY,
   buildGroundingQueryPlan,
   classifyGroundingIntent,
+  isCanonicalAboutYouGroundingQuery,
   looksLikeMemorySaveRequest,
+  shouldExcludeTaskGuidanceForRecall,
   shouldGroundPersonalMemoryRequest,
 } from "../groundingQueryPlanner";
 
@@ -15,6 +17,10 @@ function testBroadPersonalSummary(): void {
   assert.deepEqual(plan.sources, { profile: true, soul: true, memory: true, commitments: true });
   assert.equal(plan.canonicalOnly, true);
   assert.equal(classifyGroundingIntent("What have I told you?"), "broad_personal_summary");
+  assert.equal(isCanonicalAboutYouGroundingQuery("user profile preferences relationships"), true);
+  assert.equal(isCanonicalAboutYouGroundingQuery("user profile, preferences, relationships"), true);
+  assert.equal(isCanonicalAboutYouGroundingQuery(ABOUT_YOU_GROUNDING_QUERY), true);
+  assert.equal(isCanonicalAboutYouGroundingQuery("tracking task goals blockers"), false);
 }
 
 function testTemporalPlanning(): void {
@@ -55,6 +61,54 @@ function testIntentSpecificSources(): void {
 
   assert.equal(classifyGroundingIntent("What is my timezone?"), "profile_recall");
   assert.equal(classifyGroundingIntent("What is my current timezone?"), "profile_recall");
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What do you remember about my preferences?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("preferences"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("preferences?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("values"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("current preferences"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("latest communication style"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("rollout preferences"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What's my preference?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What's my current preference?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Could you summarize my current preferences?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What preferences do you remember about me?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Could you summarize my preferences for me?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What are my current values?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What is my preference for the rollout task?"), false);
+  assert.equal(
+    shouldExcludeTaskGuidanceForRecall(
+      "What do you remember about me, specifically my preferences for the rollout task?",
+    ),
+    false,
+  );
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What's my preference for the rollout task?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("For the rollout task, what is my preference?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("For the rollout task, what's my preference?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Rollout task: what is my preference?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Rollout task: what's my preference?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Rollout task, please tell me my preference?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Rollout task: kindly show my preference."), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Jarvis, what's my preference?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Hey, what are my values?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Hey Jarvis, what are my preferences?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Kindly, show me my preferences."), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Kindly Jarvis, show me my values."), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Regarding launch safety, what are my values?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What is my current preference for local voice?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What are my preferences about my work?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What is my preference in the rollout task?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("In the rollout task, what is my preference?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What are my preferences in general?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What are my preferences in general, please?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("In general, what are my preferences?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("In general, what are my preferences, thanks?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What are my preferences when it comes to the rollout task?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Concerning launch safety, what are my preferences?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("For me, what is my preference?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("For me personally, what is my preference?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What are my preferences about me, thanks?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("For me regarding rollout safety, what is my preference?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What are my values regarding launch safety?"), false);
   assert.equal(classifyGroundingIntent("What is my current preference for local voice?"), "temporal_recall");
   assert.equal(classifyGroundingIntent("What are Kubernetes tasks?"), "exact_recall");
   assert.equal(classifyGroundingIntent("Explain project goals in OKRs."), "exact_recall");

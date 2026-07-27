@@ -19,6 +19,8 @@ let executeMemorySearchForTest: (
         limit?: number;
         caller: string;
         skipAccessUpdate?: boolean;
+        canonicalOnly?: boolean;
+        excludeTaskGuidance?: boolean;
       },
     ) => Promise<MemoryContext>;
     incrementAccessCount: (ids: string[]) => void;
@@ -43,6 +45,7 @@ function context(): MemoryContext {
           confidence: 92,
           accessCount: 2,
           score: 0.93,
+          sourceType: "task_guidance",
         },
         provenance: [{ kind: "user_memory", id: "__memory_os_tool_1__", source: "canonical" }],
       },
@@ -96,9 +99,147 @@ async function main(): Promise<void> {
   assert.equal(result.ok, true);
   assert.match(result.content, /Memory search returned 1 actual retrieved memory/);
   assert.match(result.content, /memory_id=__memory_os_tool_1__/);
+  assert.match(result.content, /source: task_guidance/);
   assert.match(result.content, /The user prefers crisp morning plans\./);
+  assert.match(result.content, /stored summaries, not verbatim quotes/i);
+  assert.match(result.content, /never claim the user said the exact wording/i);
   assert.deepEqual(incrementedIds, [["__memory_os_tool_1__"]]);
   assert.equal(calls.length, 1);
+
+  const gbrainResult = await executeMemorySearchForTest(
+    { query: "derived project context", limit: 5 },
+    ctx,
+    {
+      retrieveMemoryContext: async (input) => ({
+        ...context(),
+        query: input.query,
+        items: [{
+          memory: {
+            ...context().items[0].memory,
+            id: "__gbrain_tool_1__",
+            content: "Derived project context from an approved brain chunk.",
+            sourceType: null,
+            source: "gbrain",
+          },
+          provenance: [{ kind: "brain_chunk" as const, id: "__gbrain_chunk_1__", source: "gbrain" as const }],
+        }],
+      }),
+      incrementAccessCount: (ids) => {
+        incrementedIds.push(ids);
+      },
+      fetchProfileIdentity: async () => null,
+    },
+  );
+  assert.equal(gbrainResult.ok, true);
+  assert.match(gbrainResult.content, /source: gbrain/);
+  assert.doesNotMatch(gbrainResult.content, /source: unknown/);
+
+  const broadIncrementedIds: string[][] = [];
+  const broadSearchDeps = {
+    retrieveMemoryContext: async (input: {
+      userId: string;
+      query: string;
+      limit?: number;
+      caller: string;
+      skipAccessUpdate?: boolean;
+      canonicalOnly?: boolean;
+      excludeTaskGuidance?: boolean;
+    }) => {
+      assert.equal(input.limit, 10);
+      assert.equal(input.canonicalOnly, true);
+      assert.equal(input.excludeTaskGuidance, true);
+      return {
+        ...context(),
+        items: [
+          {
+            memory: {
+              ...context().items[0].memory,
+              id: "__task_guidance_memory__",
+              content: `Task guidance for "Inventory": A: I don't understand the question.`,
+              category: "Task Guidance",
+              sourceType: "task_guidance",
+            },
+            provenance: [{ kind: "user_memory" as const, id: "__task_guidance_memory__", source: "canonical" as const }],
+          },
+          {
+            memory: {
+              ...context().items[0].memory,
+              id: "__personal_memory__",
+              content: "The user prefers direct, concise answers.",
+              category: "preferences",
+              sourceType: "manual",
+            },
+            provenance: [{ kind: "user_memory" as const, id: "__personal_memory__", source: "canonical" as const }],
+          },
+        ],
+      };
+    },
+    incrementAccessCount: (ids: string[]) => {
+      broadIncrementedIds.push(ids);
+    },
+    fetchProfileIdentity: async () => null,
+  };
+  const broadResult = await executeMemorySearchForTest(
+    { query: "Tell me one thing that you know about me, specifically from your memories.", limit: 5 },
+    ctx,
+    broadSearchDeps,
+  );
+  assert.equal(broadResult.ok, true);
+  assert.doesNotMatch(broadResult.content, /Task guidance for/);
+  assert.match(broadResult.content, /The user prefers direct, concise answers\./);
+
+  const canonicalBroadResult = await executeMemorySearchForTest(
+    { query: "user profile preferences relationships", limit: 5 },
+    ctx,
+    broadSearchDeps,
+  );
+  assert.equal(canonicalBroadResult.ok, true);
+  assert.doesNotMatch(canonicalBroadResult.content, /Task guidance for/);
+  assert.match(canonicalBroadResult.content, /The user prefers direct, concise answers\./);
+
+  const bareProfileResult = await executeMemorySearchForTest(
+    { query: "preferences", limit: 5 },
+    ctx,
+    broadSearchDeps,
+  );
+  assert.equal(bareProfileResult.ok, true);
+  assert.doesNotMatch(bareProfileResult.content, /Task guidance for/);
+  assert.match(bareProfileResult.content, /The user prefers direct, concise answers\./);
+
+  const punctuatedBareProfileResult = await executeMemorySearchForTest(
+    { query: "preferences?", limit: 5 },
+    ctx,
+    broadSearchDeps,
+  );
+  assert.equal(punctuatedBareProfileResult.ok, true);
+  assert.doesNotMatch(punctuatedBareProfileResult.content, /Task guidance for/);
+  assert.deepEqual(
+    broadIncrementedIds,
+    [
+      ["__personal_memory__"],
+      ["__personal_memory__"],
+      ["__personal_memory__"],
+      ["__personal_memory__"],
+    ],
+  );
+
+  const topicProfileResult = await executeMemorySearchForTest(
+    { query: "What is my preference for the rollout task?", limit: 5 },
+    ctx,
+    {
+      retrieveMemoryContext: async (input) => {
+        assert.equal(input.canonicalOnly, false);
+        assert.equal(input.excludeTaskGuidance, false);
+        return context();
+      },
+      incrementAccessCount: (ids) => {
+        incrementedIds.push(ids);
+      },
+      fetchProfileIdentity: async () => null,
+    },
+  );
+  assert.equal(topicProfileResult.ok, true);
+  assert.match(topicProfileResult.content, /The user prefers crisp morning plans\./);
 
   const failure = await executeMemorySearchForTest(
     { query: "morning planning", limit: 5 },

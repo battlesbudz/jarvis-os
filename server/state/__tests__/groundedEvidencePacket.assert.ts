@@ -125,6 +125,7 @@ async function testGroundedPacketBuildsEvidenceAndOmitsNoise(): Promise<void> {
     retrieveMemoryContext: async (input) => {
       assert.equal(input.modelTarget, "local");
       assert.equal(input.canonicalOnly, true);
+      assert.equal(input.excludeTaskGuidance, true);
       return memoryContext(input.query);
     },
     loadCommitments: async () => noisyCommitments,
@@ -167,6 +168,36 @@ async function testGroundedPacketBuildsEvidenceAndOmitsNoise(): Promise<void> {
   assert.match(rendered, /id=profile:core/);
   assert.match(rendered, /Review Jarvis voice grounding PR/);
   assert.doesNotMatch(rendered, /informational phone notification/);
+
+  const topicProfilePacket = await buildGroundedEvidencePacket({
+    userId,
+    requestText: "What is my preference for the rollout task?",
+    activeModel: "Phone Gemma",
+  }, {
+    now: () => fixedNow,
+    loadProfileState: async () => null,
+    loadSoul: async () => ({ content: "", manualOverride: null, generatedAt: null, updatedAt: null }),
+    retrieveMemoryContext: async (input) => {
+      assert.equal(input.excludeTaskGuidance, false);
+      return memoryContext(input.query);
+    },
+  });
+  assert.equal(topicProfilePacket.queryPlan.intent, "profile_recall");
+
+  const explicitProfilePacket = await buildGroundedEvidencePacket({
+    userId,
+    requestText: "Show memories about preferences.",
+    query: "preferences",
+    activeModel: "Phone Gemma",
+  }, {
+    now: () => fixedNow,
+    retrieveMemoryContext: async (input) => {
+      assert.equal(input.query, "preferences");
+      assert.equal(input.excludeTaskGuidance, true);
+      return memoryContext(input.query);
+    },
+  });
+  assert.equal(explicitProfilePacket.queryPlan.intent, "exact_recall");
   console.log("OK: grounded evidence packet loads profile, memory, commitments, and omits noisy duplicates");
 }
 
@@ -221,6 +252,7 @@ async function testTemporalPlanUsesOnlyMemoryAndMergesQueries(): Promise<void> {
       throw new Error("commitments should be skipped");
     },
     retrieveMemoryContext: async (input) => {
+      assert.equal(input.excludeTaskGuidance, false);
       queries.push(input.query);
       const ids = queries.length === 1
         ? ["memory-android-context", "memory-android-speech-decision"]

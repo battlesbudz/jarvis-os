@@ -8,6 +8,7 @@ import { buildGroundedEvidencePacketPrompt } from "../../state/groundedEvidenceP
 import {
   classifyGroundingIntent,
   looksLikeMemorySaveRequest,
+  shouldExcludeTaskGuidanceForRecall,
   shouldGroundPersonalMemoryRequest,
 } from "../../state/groundingQueryPlanner";
 import {
@@ -1499,10 +1500,10 @@ function renderMemorySearchFallbackContent(memory: string): string {
     : answerMarkers.length === 1 && answerMarkers[0].index !== undefined
       ? detail.slice(answerMarkers[0].index + 4).trim()
       : "";
-  if (!answer) return `You discussed guidance for "${taskGuidance[1]}".`;
+  if (!answer) return `Saved guidance exists for "${taskGuidance[1]}".`;
 
   const unquotedAnswer = answer.match(/^["\u201c](.+)["\u201d]$/)?.[1] ?? answer;
-  return `You said, "${unquotedAnswer}"`;
+  return `Saved task guidance: "${unquotedAnswer}"`;
 }
 
 function memorySearchFallbackFromCurrentTurn(
@@ -1545,8 +1546,7 @@ function memorySearchFallbackFromCurrentTurn(
     const requestText = latestUserText(messages);
     const personalMemoryRequest = shouldGroundPersonalMemoryRequest(requestText);
     const groundingIntent = classifyGroundingIntent(requestText);
-    const excludeTaskGuidance = groundingIntent === "broad_personal_summary" ||
-      groundingIntent === "profile_recall";
+    const excludeTaskGuidance = shouldExcludeTaskGuidanceForRecall(requestText, groundingIntent);
     const eligibleMemories = excludeTaskGuidance
       ? memories.filter((memory) => !looksLikeGeneratedTaskGuidance(memory))
       : memories;
