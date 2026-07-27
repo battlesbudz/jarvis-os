@@ -461,6 +461,7 @@ async function main(): Promise<void> {
       }),
       retrieveMemoryContext: async (input) => {
         assert.equal(input.limit, 10);
+        assert.equal(input.excludeTaskGuidance, true);
         return memoryContext(input.query);
       },
     },
@@ -543,6 +544,7 @@ async function main(): Promise<void> {
         assert.equal(input.query, "DoorDash");
         assert.equal(input.limit, 40);
         assert.equal(input.canonicalOnly, true);
+        assert.equal(input.excludeTaskGuidance, false);
         return memoryContext(input.query);
       },
     },

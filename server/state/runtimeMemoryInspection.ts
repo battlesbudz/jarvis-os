@@ -47,6 +47,7 @@ type RuntimeMemoryInspectionDeps = {
     canonicalOnly?: boolean;
     modelTarget?: "runtime" | "local" | "cloud";
     allowRestrictedMemory?: boolean;
+    excludeTaskGuidance?: boolean;
   }) => Promise<MemoryContext>;
 };
 
@@ -371,6 +372,7 @@ async function defaultRetrieveMemoryContext(input: {
   caller: "runtime_memory_inspection";
   skipAccessUpdate: boolean;
   canonicalOnly?: boolean;
+  excludeTaskGuidance?: boolean;
 }): Promise<MemoryContext> {
   const { retrieveMemoryContext } = await import("../memory/memoryOs");
   return retrieveMemoryContext({
@@ -826,6 +828,7 @@ export async function answerRuntimeMemoryInspectionQuestion(
       caller: "runtime_memory_inspection",
       skipAccessUpdate: true,
       canonicalOnly: true,
+      excludeTaskGuidance: includeCoreProfile,
     });
     memorySucceeded = true;
   } catch (error) {
