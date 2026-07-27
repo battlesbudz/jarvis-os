@@ -90,6 +90,7 @@ const BROAD_PROFILE_QUERY_TERMS = new Set([
   "value",
   "values",
   "what",
+  "whats",
   "you",
   "zone",
 ]);
