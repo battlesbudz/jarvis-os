@@ -1499,10 +1499,10 @@ function renderMemorySearchFallbackContent(memory: string): string {
     : answerMarkers.length === 1 && answerMarkers[0].index !== undefined
       ? detail.slice(answerMarkers[0].index + 4).trim()
       : "";
-  if (!answer) return `You discussed guidance for "${taskGuidance[1]}".`;
+  if (!answer) return `Saved guidance exists for "${taskGuidance[1]}".`;
 
   const unquotedAnswer = answer.match(/^["\u201c](.+)["\u201d]$/)?.[1] ?? answer;
-  return `You said, "${unquotedAnswer}"`;
+  return `Saved task guidance: "${unquotedAnswer}"`;
 }
 
 function memorySearchFallbackFromCurrentTurn(

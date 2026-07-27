@@ -3148,7 +3148,7 @@ async function testAndroidLocalGemmaPrefersPersonalMemoryOverTaskGuidance() {
     const exactTaskResult = await runRequest("What did I tell you about the tracking task?");
     assert.equal(
       exactTaskResult.textContent,
-      `You said, "I don't understand the question."\n\nSources: MemoryOS.`,
+      `Saved task guidance: "I don't understand the question."\n\nSources: MemoryOS.`,
     );
 
     const noQuestionTaskResult = await runRequest(
@@ -3157,7 +3157,7 @@ async function testAndroidLocalGemmaPrefersPersonalMemoryOverTaskGuidance() {
     );
     assert.equal(
       noQuestionTaskResult.textContent,
-      `You said, "Publish it Tuesday morning."\n\nSources: MemoryOS.`,
+      `Saved task guidance: "Publish it Tuesday morning."\n\nSources: MemoryOS.`,
     );
 
     const ambiguousQuestionResult = await runRequest(
@@ -3166,7 +3166,7 @@ async function testAndroidLocalGemmaPrefersPersonalMemoryOverTaskGuidance() {
     );
     assert.equal(
       ambiguousQuestionResult.textContent,
-      `You discussed guidance for "Choose a rollout mode".\n\nSources: MemoryOS.`,
+      `Saved guidance exists for "Choose a rollout mode".\n\nSources: MemoryOS.`,
     );
     console.log("OK: Android Local Gemma prefers personal memories over task guidance for personal prompt forms");
   } finally {

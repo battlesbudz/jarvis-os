@@ -43,6 +43,7 @@ function context(): MemoryContext {
           confidence: 92,
           accessCount: 2,
           score: 0.93,
+          sourceType: "task_guidance",
         },
         provenance: [{ kind: "user_memory", id: "__memory_os_tool_1__", source: "canonical" }],
       },
@@ -96,9 +97,56 @@ async function main(): Promise<void> {
   assert.equal(result.ok, true);
   assert.match(result.content, /Memory search returned 1 actual retrieved memory/);
   assert.match(result.content, /memory_id=__memory_os_tool_1__/);
+  assert.match(result.content, /source: task_guidance/);
   assert.match(result.content, /The user prefers crisp morning plans\./);
+  assert.match(result.content, /stored summaries, not verbatim quotes/i);
+  assert.match(result.content, /never claim the user said the exact wording/i);
   assert.deepEqual(incrementedIds, [["__memory_os_tool_1__"]]);
   assert.equal(calls.length, 1);
+
+  const broadIncrementedIds: string[][] = [];
+  const broadResult = await executeMemorySearchForTest(
+    { query: "Tell me one thing that you know about me, specifically from your memories.", limit: 5 },
+    ctx,
+    {
+      retrieveMemoryContext: async (input) => {
+        assert.equal(input.limit, 20, "broad personal searches should over-fetch before provenance filtering");
+        return {
+          ...context(),
+          items: [
+            {
+              memory: {
+                ...context().items[0].memory,
+                id: "__task_guidance_memory__",
+                content: `Task guidance for "Inventory": A: I don't understand the question.`,
+                category: "Task Guidance",
+                sourceType: "task_guidance",
+              },
+              provenance: [{ kind: "user_memory", id: "__task_guidance_memory__", source: "canonical" }],
+            },
+            {
+              memory: {
+                ...context().items[0].memory,
+                id: "__personal_memory__",
+                content: "The user prefers direct, concise answers.",
+                category: "preferences",
+                sourceType: "manual",
+              },
+              provenance: [{ kind: "user_memory", id: "__personal_memory__", source: "canonical" }],
+            },
+          ],
+        };
+      },
+      incrementAccessCount: (ids) => {
+        broadIncrementedIds.push(ids);
+      },
+      fetchProfileIdentity: async () => null,
+    },
+  );
+  assert.equal(broadResult.ok, true);
+  assert.doesNotMatch(broadResult.content, /Task guidance for/);
+  assert.match(broadResult.content, /The user prefers direct, concise answers\./);
+  assert.deepEqual(broadIncrementedIds, [["__personal_memory__"]]);
 
   const failure = await executeMemorySearchForTest(
     { query: "morning planning", limit: 5 },

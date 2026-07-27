@@ -4,6 +4,7 @@ import type { RetrievedMemory } from "../../memory/retrieve";
 import { retrieveMemoryContext, memoryContextItemsToRetrievedMemories, type MemoryContext } from "../../memory/memoryOs";
 import { containsRawRestrictedContent } from "../../memory/restrictedContent";
 import { defaultMemoryWriteDeps, planMemoryWrite } from "../../memory/writePipeline";
+import { classifyGroundingIntent } from "../../state/groundingQueryPlanner";
 import { db } from "../../db";
 import { eq, sql } from "drizzle-orm";
 import {
@@ -278,11 +279,22 @@ async function fetchProfileIdentity(userId: string): Promise<string | null> {
 }
 
 function formatRetrievedMemoryLine(memory: RetrievedMemory, index: number): string {
-  return `[${index + 1}] memory_id=${memory.id} [${memory.tier}/${memory.memoryType}] (${memory.category}, confidence: ${memory.confidence}%) ${memory.content}`;
+  const sourceType = String(memory.sourceType || "unknown")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._:-]+/g, "_")
+    .slice(0, 80) || "unknown";
+  return `[${index + 1}] memory_id=${memory.id} [${memory.tier}/${memory.memoryType}] (${memory.category}, confidence: ${memory.confidence}%, source: ${sourceType}) ${memory.content}`;
 }
 
 function formatMemoryRowLine(memory: MemoryRow, index: number): string {
   return `[${index + 1}] memory_id=${memory.id} [${memory.tier || "long_term"}/${memory.memory_type || "semantic"}] (${memory.confidence}% confidence) ${memory.content}`;
+}
+
+function isTaskGuidanceMemory(memory: RetrievedMemory): boolean {
+  return memory.sourceType?.trim().toLowerCase() === "task_guidance" ||
+    memory.category.trim().toLowerCase() === "task guidance" ||
+    /^task guidance for\b/i.test(memory.content.trim());
 }
 
 async function executeMemorySearch(
@@ -299,6 +311,10 @@ async function executeMemorySearch(
   const category = args.category ? String(args.category).trim() : null;
   const tierFilter = args.tier ? String(args.tier).trim() : null;
   const shouldIncludeProfileFallback = isIdentityFallbackQuery(query);
+  const groundingIntent = classifyGroundingIntent(query);
+  const excludeTaskGuidance = groundingIntent === "broad_personal_summary" ||
+    groundingIntent === "profile_recall";
+  const candidateLimit = limit * (excludeTaskGuidance ? 4 : 2);
 
   try {
     let memories: RetrievedMemory[];
@@ -307,14 +323,14 @@ async function executeMemorySearch(
       const memoryContext = await deps.retrieveMemoryContext({
         userId: ctx.userId,
         query,
-        limit: limit * 2,
+        limit: candidateLimit,
         caller: "memory_search",
         skipAccessUpdate: true,
       });
       memories = memoryContextItemsToRetrievedMemories(memoryContext.items);
       uncertainty = memoryContext.uncertainty;
     } else if (deps.retrieveMemories) {
-      memories = await deps.retrieveMemories(ctx.userId, query, limit * 2, true);
+      memories = await deps.retrieveMemories(ctx.userId, query, candidateLimit, true);
     } else {
       throw new Error("No memory retrieval dependency configured.");
     }
@@ -329,6 +345,10 @@ async function executeMemorySearch(
       memories = memories.filter(
         (m) => m.tier.toLowerCase() === tierFilter.toLowerCase(),
       );
+    }
+
+    if (excludeTaskGuidance) {
+      memories = memories.filter((memory) => !isTaskGuidanceMemory(memory));
     }
 
     const top = memories.slice(0, limit);
@@ -366,9 +386,10 @@ async function executeMemorySearch(
     const content = appendProfileIdentityFallback(
       [
         `Memory search returned ${top.length} actual retrieved memor${top.length === 1 ? "y" : "ies"} for: "${query}"`,
-        "These are real memory entries from the user's memory store. In your final answer, summarize the entries below and do not claim there were no results.",
+        "These are retrieved records from the user's memory store. In your final answer, summarize relevant entries below and do not claim there were no results.",
+        "Memory entries are stored summaries, not verbatim quotes. Paraphrase them and never claim the user said the exact wording.",
         "",
-        "Format: memory_id=<id> [tier/type] (category, confidence%). Use memory_id as supersedes_memory_id when saving a user-approved correction to an existing memory.",
+        "Format: memory_id=<id> [tier/type] (category, confidence%, source). Use memory_id as supersedes_memory_id when saving a user-approved correction to an existing memory.",
         "",
         formatted,
       ].join("\n"),
