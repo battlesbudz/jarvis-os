@@ -139,14 +139,20 @@ export function shouldExcludeTaskGuidanceForRecall(
 ): boolean {
   if (intent === "broad_personal_summary" || isCanonicalAboutYouGroundingQuery(query)) return true;
   const normalizedQuery = normalized(query);
+  const scopedTopic = normalizedQuery.match(
+    /\b(?:preferences?|values?)\b.{0,48}?\b(?:for|about|regarding|on|with)\s+(.+)$/,
+  )?.[1];
+  const normalizedScope = scopedTopic
+    ?.replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (/^(?:me|myself|the user|this user)(?: please)?$/.test(normalizedScope ?? "")) return true;
+
   const isProfileLikeRecall = intent === "profile_recall" ||
     (intent === "temporal_recall" && /\b(?:preferences?|values?)\b/.test(normalizedQuery));
   if (!isProfileLikeRecall) return false;
 
-  const scopedTopic = normalizedQuery.match(
-    /\b(?:preferences?|values?)\b.{0,48}?\b(?:for|about|regarding|on|with)\s+(.+)$/,
-  )?.[1];
-  return !scopedTopic?.match(/[a-z0-9]/);
+  return !normalizedScope;
 }
 
 export function shouldGroundPersonalMemoryRequest(requestText: string): boolean {

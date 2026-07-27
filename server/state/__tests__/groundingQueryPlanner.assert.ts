@@ -64,10 +64,13 @@ function testIntentSpecificSources(): void {
   assert.equal(shouldExcludeTaskGuidanceForRecall("What's my preference?"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What's my current preference?"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("Could you summarize my current preferences?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What preferences do you remember about me?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Could you summarize my preferences for me?"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What are my current values?"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What is my preference for the rollout task?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What's my preference for the rollout task?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What is my current preference for local voice?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("What are my preferences about my work?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What are my values regarding launch safety?"), false);
   assert.equal(classifyGroundingIntent("What is my current preference for local voice?"), "temporal_recall");
   assert.equal(classifyGroundingIntent("What are Kubernetes tasks?"), "exact_recall");
