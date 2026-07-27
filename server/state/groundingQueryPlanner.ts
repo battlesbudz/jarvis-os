@@ -154,7 +154,7 @@ export function shouldExcludeTaskGuidanceForRecall(
     .trim();
   const isBroadScope =
     /^(?:general|generally|overall)(?:\s+(?:please|thanks|thank you))*$/.test(normalizedScope ?? "") ||
-    /^(?:(?:hey|hi|hello|please|ok|okay|well|so)(?: jarvis)?|jarvis)(?: please)?$/
+    /^(?:(?:hey|hi|hello|please|kindly|ok|okay|well|so)(?: jarvis)?|jarvis)(?: please)?$/
       .test(normalizedScope ?? "") ||
     /^(?:me|myself|the user|this user)(?:\s+(?:personally|generally|overall|in general|as a person|please|thanks|thank you))*$/
       .test(normalizedScope ?? "");
@@ -168,7 +168,7 @@ export function shouldExcludeTaskGuidanceForRecall(
     .replace(/\s+/g, " ")
     .trim();
   const isBareProfileQuery =
-    /^(?:user )?(?:profile|preferences?|values?|communication style|preferred name|timezone|time zone|language|work patterns?)$/
+    /^(?:(?:current|overall|latest|general|recent|updated|present|default)\s+)*(?:user )?(?:profile|preferences?|values?|communication style|preferred name|timezone|time zone|language|work patterns?)$/
       .test(punctuationFreeQuery);
   if (intent === "broad_personal_summary" || isCanonicalAboutYouGroundingQuery(query) || isBareProfileQuery) {
     return true;

@@ -65,6 +65,8 @@ function testIntentSpecificSources(): void {
   assert.equal(shouldExcludeTaskGuidanceForRecall("preferences"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("preferences?"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("values"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("current preferences"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("latest communication style"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("rollout preferences"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What's my preference?"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What's my current preference?"), true);
@@ -89,6 +91,8 @@ function testIntentSpecificSources(): void {
   assert.equal(shouldExcludeTaskGuidanceForRecall("Jarvis, what's my preference?"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("Hey, what are my values?"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("Hey Jarvis, what are my preferences?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Kindly, show me my preferences."), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Kindly Jarvis, show me my values."), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("Regarding launch safety, what are my values?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What is my current preference for local voice?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What are my preferences about my work?"), false);
