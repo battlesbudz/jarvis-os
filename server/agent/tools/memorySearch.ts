@@ -319,7 +319,6 @@ async function executeMemorySearch(
   const shouldIncludeProfileFallback = isIdentityFallbackQuery(query);
   const groundingIntent = classifyGroundingIntent(query);
   const excludeTaskGuidance = groundingIntent === "broad_personal_summary" ||
-    groundingIntent === "profile_recall" ||
     isCanonicalAboutYouGroundingQuery(query);
   const candidateLimit = limit * 2;
 

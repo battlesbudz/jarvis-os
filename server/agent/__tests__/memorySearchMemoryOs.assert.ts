@@ -170,6 +170,24 @@ async function main(): Promise<void> {
   assert.match(canonicalBroadResult.content, /The user prefers direct, concise answers\./);
   assert.deepEqual(broadIncrementedIds, [["__personal_memory__"], ["__personal_memory__"]]);
 
+  const topicProfileResult = await executeMemorySearchForTest(
+    { query: "What is my preference for the rollout task?", limit: 5 },
+    ctx,
+    {
+      retrieveMemoryContext: async (input) => {
+        assert.equal(input.canonicalOnly, false);
+        assert.equal(input.excludeTaskGuidance, false);
+        return context();
+      },
+      incrementAccessCount: (ids) => {
+        incrementedIds.push(ids);
+      },
+      fetchProfileIdentity: async () => null,
+    },
+  );
+  assert.equal(topicProfileResult.ok, true);
+  assert.match(topicProfileResult.content, /The user prefers crisp morning plans\./);
+
   const failure = await executeMemorySearchForTest(
     { query: "morning planning", limit: 5 },
     ctx,

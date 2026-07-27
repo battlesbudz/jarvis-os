@@ -168,6 +168,21 @@ async function testGroundedPacketBuildsEvidenceAndOmitsNoise(): Promise<void> {
   assert.match(rendered, /id=profile:core/);
   assert.match(rendered, /Review Jarvis voice grounding PR/);
   assert.doesNotMatch(rendered, /informational phone notification/);
+
+  const topicProfilePacket = await buildGroundedEvidencePacket({
+    userId,
+    requestText: "What is my preference for the rollout task?",
+    activeModel: "Phone Gemma",
+  }, {
+    now: () => fixedNow,
+    loadProfileState: async () => null,
+    loadSoul: async () => ({ content: "", manualOverride: null, generatedAt: null, updatedAt: null }),
+    retrieveMemoryContext: async (input) => {
+      assert.equal(input.excludeTaskGuidance, false);
+      return memoryContext(input.query);
+    },
+  });
+  assert.equal(topicProfilePacket.queryPlan.intent, "profile_recall");
   console.log("OK: grounded evidence packet loads profile, memory, commitments, and omits noisy duplicates");
 }
 
