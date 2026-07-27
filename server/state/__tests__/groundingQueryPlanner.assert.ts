@@ -84,6 +84,9 @@ function testIntentSpecificSources(): void {
   assert.equal(shouldExcludeTaskGuidanceForRecall("For the rollout task, what's my preference?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("Rollout task: what is my preference?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("Rollout task: what's my preference?"), false);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Jarvis, what's my preference?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Hey, what are my values?"), true);
+  assert.equal(shouldExcludeTaskGuidanceForRecall("Hey Jarvis, what are my preferences?"), true);
   assert.equal(shouldExcludeTaskGuidanceForRecall("Regarding launch safety, what are my values?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What is my current preference for local voice?"), false);
   assert.equal(shouldExcludeTaskGuidanceForRecall("What are my preferences about my work?"), false);

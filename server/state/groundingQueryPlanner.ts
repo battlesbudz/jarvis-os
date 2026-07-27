@@ -154,6 +154,8 @@ export function shouldExcludeTaskGuidanceForRecall(
     .trim();
   const isBroadScope =
     /^(?:general|generally|overall)(?:\s+(?:please|thanks|thank you))*$/.test(normalizedScope ?? "") ||
+    /^(?:(?:hey|hi|hello|please|ok|okay|well|so)(?: jarvis)?|jarvis)(?: please)?$/
+      .test(normalizedScope ?? "") ||
     /^(?:me|myself|the user|this user)(?:\s+(?:personally|generally|overall|in general|as a person|please|thanks|thank you))*$/
       .test(normalizedScope ?? "");
   if (isBroadScope) {
