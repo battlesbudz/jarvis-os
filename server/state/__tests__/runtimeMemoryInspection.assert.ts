@@ -557,6 +557,23 @@ async function main(): Promise<void> {
   assert.doesNotMatch(topicAnswer.textContent, /Soul\/Core Profile/);
   assert.doesNotMatch(topicAnswer.textContent, /Preferred name/);
 
+  const bareProfileAnswer = await answerRuntimeMemoryInspectionQuestion(
+    {
+      messages: [{ role: "user", content: "Show memories about preferences." }],
+      userId,
+      route: { providerName: "google", model: "gemini-2.5-flash" },
+    },
+    {
+      retrieveMemoryContext: async (input) => {
+        assert.equal(input.query, "preferences");
+        assert.equal(input.excludeTaskGuidance, true);
+        return memoryContext(input.query);
+      },
+    },
+  );
+  assert(bareProfileAnswer);
+  assert.match(bareProfileAnswer.textContent, /MemoryOS/);
+
   const derivedBrainFilteredAnswer = await answerRuntimeMemoryInspectionQuestion(
     {
       messages: [{ role: "user", content: "Show memories about DoorDash." }],

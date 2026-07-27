@@ -15,6 +15,7 @@ import {
   type MemoryAnswerExplanation,
   type MemoryContext,
 } from "../memory/memoryOs";
+import { shouldExcludeTaskGuidanceForRecall } from "./groundingQueryPlanner";
 import {
   loadRuntimeProfileStateFromDb,
   type RuntimeProfileState,
@@ -828,7 +829,7 @@ export async function answerRuntimeMemoryInspectionQuestion(
       caller: "runtime_memory_inspection",
       skipAccessUpdate: true,
       canonicalOnly: true,
-      excludeTaskGuidance: includeCoreProfile,
+      excludeTaskGuidance: shouldExcludeTaskGuidanceForRecall(intent.query),
     });
     memorySucceeded = true;
   } catch (error) {
