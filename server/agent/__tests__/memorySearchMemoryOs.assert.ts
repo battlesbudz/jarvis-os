@@ -205,9 +205,22 @@ async function main(): Promise<void> {
   assert.equal(bareProfileResult.ok, true);
   assert.doesNotMatch(bareProfileResult.content, /Task guidance for/);
   assert.match(bareProfileResult.content, /The user prefers direct, concise answers\./);
+
+  const punctuatedBareProfileResult = await executeMemorySearchForTest(
+    { query: "preferences?", limit: 5 },
+    ctx,
+    broadSearchDeps,
+  );
+  assert.equal(punctuatedBareProfileResult.ok, true);
+  assert.doesNotMatch(punctuatedBareProfileResult.content, /Task guidance for/);
   assert.deepEqual(
     broadIncrementedIds,
-    [["__personal_memory__"], ["__personal_memory__"], ["__personal_memory__"]],
+    [
+      ["__personal_memory__"],
+      ["__personal_memory__"],
+      ["__personal_memory__"],
+      ["__personal_memory__"],
+    ],
   );
 
   const topicProfileResult = await executeMemorySearchForTest(

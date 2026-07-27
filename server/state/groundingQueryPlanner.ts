@@ -138,12 +138,6 @@ export function shouldExcludeTaskGuidanceForRecall(
   intent: GroundingIntent = classifyGroundingIntent(query),
 ): boolean {
   const normalizedQuery = normalized(query);
-  const isBareProfileQuery =
-    /^(?:user )?(?:profile|preferences?|values?|communication style|preferred name|timezone|time zone|language|work patterns?)$/
-      .test(normalizedQuery);
-  if (intent === "broad_personal_summary" || isCanonicalAboutYouGroundingQuery(query) || isBareProfileQuery) {
-    return true;
-  }
   const trailingScope = normalizedQuery.match(
     /\b(?:preferences?|values?)\b.{0,48}?\b(?:for|about|regarding|on|with|concerning|around|related to|relating to|when it comes to|in relation to|as to)\s+(.+)$/,
   )?.[1];
@@ -158,12 +152,21 @@ export function shouldExcludeTaskGuidanceForRecall(
   if (/^(?:me|myself|the user|this user)(?:\s+(?:personally|generally|overall|in general|as a person|please))*$/.test(normalizedScope ?? "")) {
     return true;
   }
+  if (normalizedScope) return false;
 
+  const punctuationFreeQuery = normalizedQuery
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const isBareProfileQuery =
+    /^(?:user )?(?:profile|preferences?|values?|communication style|preferred name|timezone|time zone|language|work patterns?)$/
+      .test(punctuationFreeQuery);
+  if (intent === "broad_personal_summary" || isCanonicalAboutYouGroundingQuery(query) || isBareProfileQuery) {
+    return true;
+  }
   const isProfileLikeRecall = intent === "profile_recall" ||
     (intent === "temporal_recall" && /\b(?:preferences?|values?)\b/.test(normalizedQuery));
-  if (!isProfileLikeRecall) return false;
-
-  return !normalizedScope;
+  return isProfileLikeRecall;
 }
 
 export function shouldGroundPersonalMemoryRequest(requestText: string): boolean {
