@@ -10,6 +10,7 @@ const SERVER_YOUTUBE_TOOL_NAMES = new Set([
   "get_youtube_transcript",
 ]);
 const PHONE_COMPOUND_CONNECTOR_PATTERN = String.raw`(?:and\s+then|then|after(?:wards|\s+that)?|also|and)`;
+const PHONE_FOLLOW_UP_ACTION_PATTERN = String.raw`(?:open|launch|start|play|watch|tap|click|select|share|send|close|pause|subscribe|like|save|download|call|text|message|search|find|look\s+up)`;
 
 export function isAndroidPhoneRuntimeToolName(name: string): boolean {
   return ANDROID_PHONE_RUNTIME_TOOL_NAME_SET.has(name);
@@ -84,6 +85,7 @@ export function extractYoutubePhoneSearchQuery(text: string): string | null {
       // maintain an incomplete list of action verbs; the normal multi-tool
       // loop can still interpret legitimate search phrases containing one.
       if (new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i").test(query)) return null;
+      if (new RegExp(String.raw`[,;]\s*(?:please\s+)?${PHONE_FOLLOW_UP_ACTION_PATTERN}\b`, "i").test(query)) return null;
       return query;
     }
   }
