@@ -42,6 +42,8 @@ async function main(): Promise<void> {
   assert.match(routesSource, /preview\.task = String\(args\.task \|\| ''\);/);
   assert.match(routesSource, /preview\.context = String\(args\.context\);/);
   assert.doesNotMatch(routesSource, /preview\.task = String\(args\.task \|\| ''\)\.slice/);
+  assert.match(routesSource, /preview\.workingDirectory = normalizedWorkingDirectory;/);
+  assert.match(routesSource, /normalizeCodexDelegationTimeoutMs\(args\.timeout_seconds\) \/ 1000/);
 
   console.log("OK: calendar validation/provider fallback and approval inbox idempotency are deterministic");
 }
