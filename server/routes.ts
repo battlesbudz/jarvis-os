@@ -115,6 +115,7 @@ import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
 import { buildToolExecutionPolicy } from "./agent/toolExecutionPolicy";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 import { getCoachAppAgentId } from "./agent/coreAgentIds";
+import { assembleCoachContext, type CoachContextTrace } from "./agent/coachContextAssembler";
 import { classifyComposioActionPermission } from "./connectors/composio/connectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
 import { createCoachChatProgressStream } from "./services/coachChatProgress";
@@ -1266,12 +1267,65 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let stopKeepalive: () => void = () => {};
     let stopVisibleProgress: () => void = () => {};
     try {
-      const { messages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: incomingAppSessionId, originChannel: rawOriginChannel } = req.body;
+      const { messages: requestedMessages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: rawIncomingAppSessionId, originChannel: rawOriginChannel } = req.body;
+      const incomingAppSessionId = typeof rawIncomingAppSessionId === "string" && rawIncomingAppSessionId.trim()
+        ? rawIncomingAppSessionId.trim()
+        : undefined;
       const originChannel: string = (typeof rawOriginChannel === "string" && rawOriginChannel.trim()) ? rawOriginChannel.trim().toLowerCase() : "appchat";
       userId = req.userId ?? await getUserIdFromRequest(req);
 
-      if (!messages || !Array.isArray(messages)) {
+      if (!requestedMessages || !Array.isArray(requestedMessages)) {
         return res.status(400).json({ error: "messages array is required" });
+      }
+      let messages = requestedMessages;
+      let resumableAppSessionId: string | undefined;
+      let contextTrace: CoachContextTrace = {
+        clientMessageCount: requestedMessages.length,
+        recoveredSessionMessageCount: 0,
+        providerMessageCount: requestedMessages.length,
+        summarizedMessageCount: 0,
+        omittedMessageCount: 0,
+      };
+      if (userId) {
+        const COACH_APP_AGENT_ID = getCoachAppAgentId(userId);
+        let recoveredSessionMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [];
+        let fallbackMessages: unknown[] = [];
+        if (incomingAppSessionId) {
+          try {
+            const { resumeSession } = await import("./agent/providers/sessionStore");
+            const resumed = await resumeSession(incomingAppSessionId, COACH_APP_AGENT_ID, userId);
+            if (resumed?.resumed) {
+              recoveredSessionMessages = resumed.messages;
+              resumableAppSessionId = incomingAppSessionId;
+            }
+          } catch (error) {
+            console.warn("[CoachContext] session recovery failed; using persisted history fallback:", error);
+          }
+        }
+        if (recoveredSessionMessages.length === 0) {
+          try {
+            const rows = await db
+              .select({ data: schema.chatHistory.data })
+              .from(schema.chatHistory)
+              .where(eq(schema.chatHistory.userId, userId))
+              .limit(1);
+            const stored = Array.isArray(rows[0]?.data) ? rows[0].data : [];
+            // chat_history is stored newest-first by the app/channel persistence paths.
+            fallbackMessages = [...stored].reverse();
+          } catch (error) {
+            console.warn("[CoachContext] persisted history fallback failed; using client context:", error);
+          }
+        }
+        const assembledContext = assembleCoachContext({
+          clientMessages: requestedMessages,
+          recoveredSessionMessages,
+          fallbackMessages,
+        });
+        messages = assembledContext.messages;
+        contextTrace = assembledContext.trace;
+      }
+      if (messages.length === 0) {
+        return res.status(400).json({ error: "messages must include at least one user or assistant text message" });
       }
       const coachChatSelectedModel = await getExplicitCoachRequestedModel(userId);
       console.info(
@@ -1514,9 +1568,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // and serve data from the in-process prompt cache instead.  On cold starts
       // (or cache misses) the data is fetched normally and stored in the cache
       // once the session ID is known (see the initSession block further below).
-      const cachedPromptData = getPromptData(userId ?? undefined, incomingAppSessionId ?? undefined);
-      if (incomingAppSessionId) {
-        console.log(`[CoachPromptCache] userId=${userId} session=${incomingAppSessionId} ${cachedPromptData ? 'HIT' : 'MISS'}`);
+      const cachedPromptData = getPromptData(userId ?? undefined, resumableAppSessionId);
+      if (resumableAppSessionId) {
+        console.log(`[CoachPromptCache] userId=${userId} session=${resumableAppSessionId} ${cachedPromptData ? 'HIT' : 'MISS'}`);
       }
 
       let resolvedGmailConnected: boolean;
@@ -1649,8 +1703,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Re-seed cache for resumed sessions that suffered a cache miss (e.g.
         // after a server restart) so subsequent turns skip the fetch cost.
-        if (userId && incomingAppSessionId) {
-          setPromptData(userId, incomingAppSessionId, {
+        if (userId && resumableAppSessionId) {
+          setPromptData(userId, resumableAppSessionId, {
             resolvedGmailConnected, resolvedGmailItems, calendarEvents: resolvedCalendarEvents,
             userCommitments, memories, morningNoteSummary, documentsContext,
             proactiveQuestionContext, crossChannelContext,
@@ -1808,6 +1862,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           return { role: m.role as 'user' | 'assistant', content };
         }),
       ];
+      // Tool and non-tool turns use the same canonical, session-hydrated
+      // conversation. The focused route keeps its smaller action-specific system
+      // prompt, but it must not silently discard conversation turns.
       const toolFocusedMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = useToolFocusedLoop
         ? [
             {
@@ -1825,12 +1882,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                   : "",
               ].filter(Boolean).join("\n\n"),
             },
-            ...messages.slice(-6).map((m: { role: string; content: string }, idx: number, recent: Array<{ role: string; content: string }>) => {
-              const isLast = idx === recent.length - 1;
-              const content = (isLast && m.role === 'user' && youtubeCtxBlock)
+            ...messages.map((m: { role: string; content: string }, idx: number) => {
+              const isLast = idx === messages.length - 1;
+              const content = (isLast && m.role === "user" && youtubeCtxBlock)
                 ? m.content + youtubeCtxBlock
                 : m.content;
-              return { role: m.role as 'user' | 'assistant', content };
+              return { role: m.role as "user" | "assistant", content };
             }),
           ]
         : chatMessages;
@@ -1891,12 +1948,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             const { initSession, appendToSession } = await import("./agent/providers/sessionStore");
             const COACH_APP_AGENT_ID = getCoachAppAgentId(userId);
             let appSessionId: string | undefined;
-            if (incomingAppSessionId) {
-              await appendToSession(incomingAppSessionId, COACH_APP_AGENT_ID, userId, [
+            if (resumableAppSessionId) {
+              await appendToSession(resumableAppSessionId, COACH_APP_AGENT_ID, userId, [
                 { role: "user" as const, content: lastUserOrigText },
                 { role: "assistant" as const, content: responseText },
               ]).catch(() => {});
-              appSessionId = incomingAppSessionId;
+              appSessionId = resumableAppSessionId;
             } else {
               appSessionId = await initSession(COACH_APP_AGENT_ID, userId, [...chatMessages, { role: "assistant" as const, content: responseText }]);
               if (appSessionId && !cachedPromptData) {
@@ -2041,6 +2098,20 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               allowServerYoutubeTools: youtubeServerResearchRequest,
             })
           : firstTurnToolPolicy.tools;
+
+        const firstProviderMessages = useToolFocusedLoop ? toolFocusedMessages : chatMessages;
+        openCoachSse(res);
+        res.write(`data: ${JSON.stringify({
+          type: "context_trace",
+          clientMessageCount: Math.max(0, Math.floor(contextTrace.clientMessageCount)),
+          recoveredSessionMessageCount: Math.max(0, Math.floor(contextTrace.recoveredSessionMessageCount)),
+          providerMessageCount: Math.max(0, firstProviderMessages.length),
+          summarizedMessageCount: Math.max(0, Math.floor(contextTrace.summarizedMessageCount)),
+          omittedMessageCount: Math.max(0, Math.floor(contextTrace.omittedMessageCount)),
+          offeredToolNames: modelRequestTools
+            .map((tool) => chatToolName(tool))
+            .filter((name): name is string => Boolean(name)),
+        })}\n\n`);
 
         // Shared MCP tool context (pendingAttachments accumulate across turns)
         const mcpToolCtx: import("./agent/types").ToolContext = {
@@ -2215,13 +2286,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                   const { initSession, appendToSession } = await import("./agent/providers/sessionStore");
                   const COACH_APP_AGENT_ID = getCoachAppAgentId(userId);
                   let appSessionId: string | undefined;
-                  if (incomingAppSessionId) {
+                  if (resumableAppSessionId) {
                     const exchangeMsgs = [
                       { role: "user" as const, content: typeof lastUserMsg0?.content === "string" ? lastUserMsg0.content : "" },
                       { role: "assistant" as const, content: responseText },
                     ];
-                    await appendToSession(incomingAppSessionId, COACH_APP_AGENT_ID, userId, exchangeMsgs).catch(() => {});
-                    appSessionId = incomingAppSessionId;
+                    await appendToSession(resumableAppSessionId, COACH_APP_AGENT_ID, userId, exchangeMsgs).catch(() => {});
+                    appSessionId = resumableAppSessionId;
                   } else {
                     appSessionId = await initSession(COACH_APP_AGENT_ID, userId, [...chatMessages, { role: "assistant" as const, content: responseText }]);
                     // Seed the prompt cache so subsequent turns skip DB/API lookups.
@@ -2668,13 +2739,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               const COACH_APP_AGENT_ID = getCoachAppAgentId(userId);
               const lastUserMsgForSession = [...messages].reverse().find((m: any) => m.role === 'user');
               let appSessionId: string | undefined;
-              if (incomingAppSessionId) {
+              if (resumableAppSessionId) {
                 const exchangeMsgs = [
                   { role: "user" as const, content: typeof lastUserMsgForSession?.content === "string" ? lastUserMsgForSession.content : "" },
                   { role: "assistant" as const, content: loopFinalText },
                 ];
-                await appendToSession(incomingAppSessionId, COACH_APP_AGENT_ID, userId, exchangeMsgs).catch(() => {});
-                appSessionId = incomingAppSessionId;
+                await appendToSession(resumableAppSessionId, COACH_APP_AGENT_ID, userId, exchangeMsgs).catch(() => {});
+                appSessionId = resumableAppSessionId;
               } else {
                 appSessionId = await initSession(COACH_APP_AGENT_ID, userId, [...chatMessages, { role: "assistant" as const, content: loopFinalText }]);
                 if (appSessionId && !cachedPromptData) {
@@ -2809,13 +2880,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           const COACH_APP_AGENT_ID = getCoachAppAgentId(userId);
           const lastUserMsgForSession = [...messages].reverse().find((m: any) => m.role === 'user');
           let appSessionId: string | undefined;
-          if (incomingAppSessionId) {
+          if (resumableAppSessionId) {
             const exchangeMsgs = [
               { role: "user" as const, content: typeof lastUserMsgForSession?.content === "string" ? lastUserMsgForSession.content : "" },
               { role: "assistant" as const, content: fullStreamedReply },
             ];
-            await appendToSession(incomingAppSessionId, COACH_APP_AGENT_ID, userId, exchangeMsgs).catch(() => {});
-            appSessionId = incomingAppSessionId;
+            await appendToSession(resumableAppSessionId, COACH_APP_AGENT_ID, userId, exchangeMsgs).catch(() => {});
+            appSessionId = resumableAppSessionId;
           } else {
             appSessionId = await initSession(COACH_APP_AGENT_ID, userId, [...chatMessages, { role: "assistant" as const, content: fullStreamedReply }]);
             // Seed the prompt cache so subsequent turns skip DB/API lookups.

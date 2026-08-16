@@ -40,6 +40,42 @@ assertAction("What was my last message?", {
   approvalRequired: false,
 });
 
+for (const text of [
+  "Okay and what is the message before that?",
+  "Why can't you see the previous message in our conversation history?",
+  "Can you reliably access the entire context history of every message that I sent?",
+]) {
+  assertAction(text, {
+    actionType: "unknown",
+    actor: "jarvis",
+    approvalRequired: false,
+  });
+}
+
+assertAction("Please message Sam and tell him I am running late", {
+  actionType: "jarvis_external_write",
+  actor: "human_approval_required",
+  approvalRequired: true,
+});
+
+assertAction("Send my previous message to Bob", {
+  actionType: "jarvis_external_write",
+  actor: "human_approval_required",
+  approvalRequired: true,
+});
+
+assertAction("Read my unread messages", {
+  actionType: "jarvis_read",
+  actor: "jarvis",
+  approvalRequired: false,
+});
+
+assertAction("Reply Bob and tell him I am running late", {
+  actionType: "jarvis_external_write",
+  actor: "human_approval_required",
+  approvalRequired: true,
+});
+
 assertAction("Fix your scheduler bug", {
   actionType: "jarvis_code_proposal",
   actor: "human_approval_required",

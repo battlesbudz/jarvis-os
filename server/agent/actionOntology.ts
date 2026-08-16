@@ -32,7 +32,7 @@ function has(text: string, re: RegExp): boolean {
   return re.test(text);
 }
 
-function isConversationInspectionQuestion(text: string): boolean {
+export function isConversationInspectionQuestion(text: string): boolean {
   const normalized = text
     .toLowerCase()
     .replace(/['`\u2018\u2019]/g, "")
@@ -42,7 +42,23 @@ function isConversationInspectionQuestion(text: string): boolean {
 
   return /^(?:hey\s+jarvis\s+)?what (?:was|is) my last message$/.test(normalized) ||
     /^(?:hey\s+jarvis\s+)?what did i (?:just )?(?:say|ask)$/.test(normalized) ||
-    /^(?:hey\s+jarvis\s+)?what (?:was|is) (?:your|the assistant(?:s)?) last (?:message|response|reply)$/.test(normalized);
+    /^(?:hey\s+jarvis\s+)?what (?:was|is) (?:your|the assistant(?:s)?) last (?:message|response|reply)$/.test(normalized) ||
+    /\b(?:message|reply|response|question)\s+(?:immediately\s+)?before\s+(?:that|this|it)\b/.test(normalized) ||
+    /\b(?:previous|prior|earlier|last)\s+(?:message|reply|response|question|conversation|context)\b/.test(normalized) ||
+    /\bwhat did (?:i|you|we) say\b.{0,40}\b(?:ago|earlier|before)\b/.test(normalized) ||
+    /\b(?:see|read|remember|recover|quote|inspect|access|retain)\b.{0,80}\b(?:conversation|context|history)\b/.test(normalized) ||
+    /\b(?:recover|quote|inspect|access|retain)\b.{0,80}\bmessages?\b/.test(normalized) ||
+    /\b(?:conversation|context)\s+history\b/.test(normalized);
+}
+
+function isExternalCommunicationAction(text: string): boolean {
+  if (/\b(?:send|post|publish)\b/.test(text)) return true;
+  if (/\b(?:reply|respond)\s+(?:to|on|via)\b/.test(text)) return true;
+  if (/(?:^|\b(?:please|you)(?:\s+to)?\s+)(?:reply|respond)\s+(?!(?:that|this|why|how|what|was|is)\b)[a-z0-9@]/.test(text)) return true;
+  if (/\b(?:schedule a meeting|book|cancel|reschedule)\b/.test(text)) return true;
+  // "message" is commonly a noun in conversation-inspection requests. Treat it
+  // as an external action only in an imperative construction with a recipient.
+  return /(?:^|\b(?:please|you|jarvis)(?:\s+to)?\s+)message\s+(?!(?:before|after|history|context|conversation|that|this|it|i|you|was|is)\b)[a-z0-9@]/.test(text);
 }
 
 export function classifyActionOntology(text: string): ActionOntologyDecision {
@@ -60,7 +76,7 @@ export function classifyActionOntology(text: string): ActionOntologyDecision {
     });
   }
 
-  if (isConversationInspectionQuestion(normalized)) {
+  if (isConversationInspectionQuestion(normalized) && !isExternalCommunicationAction(lower)) {
     return decision({
       actionType: "unknown",
       actor: "jarvis",
@@ -121,7 +137,10 @@ export function classifyActionOntology(text: string): ActionOntologyDecision {
     });
   }
 
-  if (has(lower, /\b(send|post|publish|reply|respond|message|schedule a meeting|book|cancel|reschedule)\b/)) {
+  if (isExternalCommunicationAction(lower) || (
+    has(lower, /\b(draft|write a draft|compose)\b/) &&
+    has(lower, /\b(email|message|reply|post)\b/)
+  )) {
     return decision({
       actionType: has(lower, /\b(draft|write a draft|compose)\b/) && !has(lower, /\b(send|post|publish)\b/) ? "jarvis_draft" : "jarvis_external_write",
       actor: has(lower, /\b(draft|write a draft|compose)\b/) && !has(lower, /\b(send|post|publish)\b/) ? "jarvis" : "human_approval_required",

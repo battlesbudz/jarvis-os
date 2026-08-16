@@ -15,14 +15,19 @@ const SESSION_TTL_HOURS = parseInt(process.env.AGENT_SESSION_TTL_HOURS ?? "24", 
 const SESSION_TTL_MS = (isNaN(SESSION_TTL_HOURS) || SESSION_TTL_HOURS <= 0 ? 24 : SESSION_TTL_HOURS) * 60 * 60 * 1000;
 const MAX_CACHE_ENTRIES = 500;
 const DEFAULT_COMPACT_MESSAGE_THRESHOLD = parseInt(process.env.AGENT_SESSION_COMPACT_MESSAGES ?? "24", 10);
-const DEFAULT_KEEP_RECENT_TURNS = parseInt(process.env.AGENT_SESSION_KEEP_RECENT_TURNS ?? "4", 10);
+const DEFAULT_KEEP_RECENT_TURNS = parseInt(process.env.AGENT_SESSION_KEEP_RECENT_TURNS ?? "12", 10);
 const DEFAULT_SUMMARY_CHARS = parseInt(process.env.AGENT_SESSION_SUMMARY_CHARS ?? "1800", 10);
 const DEFAULT_LOADED_SUMMARY_COUNT = parseInt(process.env.AGENT_SESSION_SUMMARY_LOAD_COUNT ?? "3", 10);
 const DEFAULT_LOADED_SUMMARY_CHARS = parseInt(process.env.AGENT_SESSION_SUMMARY_LOAD_CHARS ?? "2400", 10);
 
 type OAIMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
-const processCache = new Map<string, { messages: AgentChatMessage[]; expiresAt: number }>();
+const processCache = new Map<string, {
+  agentId: string;
+  userId: string;
+  messages: AgentChatMessage[];
+  expiresAt: number;
+}>();
 
 export interface SessionCompactionOptions {
   maxMessagesBeforeCompact?: number;
@@ -251,21 +256,30 @@ export function compactSessionMessages(
   };
 }
 
-function cacheSet(sessionId: string, messages: AgentChatMessage[], expiresAt: number): void {
+function cacheSet(
+  sessionId: string,
+  agentId: string,
+  userId: string,
+  messages: AgentChatMessage[],
+  expiresAt: number,
+): void {
   if (processCache.size >= MAX_CACHE_ENTRIES) {
     const firstKey = processCache.keys().next().value;
     if (firstKey !== undefined) processCache.delete(firstKey);
   }
-  processCache.set(sessionId, { messages, expiresAt });
+  processCache.set(sessionId, { agentId, userId, messages, expiresAt });
 }
 
-function cacheGet(sessionId: string): AgentChatMessage[] | null {
+function cacheGet(sessionId: string, agentId: string, userId: string): AgentChatMessage[] | null {
   const entry = processCache.get(sessionId);
   if (!entry) return null;
   if (Date.now() > entry.expiresAt) {
     processCache.delete(sessionId);
     return null;
   }
+  // Session IDs are bearer-like continuity handles, not authorization. A warm
+  // process cache must enforce the same owner and agent scope as the DB query.
+  if (entry.agentId !== agentId || entry.userId !== userId) return null;
   return entry.messages;
 }
 
@@ -276,7 +290,7 @@ export async function resumeSession(
   opts: { includeSummaries?: boolean } = {},
 ): Promise<ResumeResult | null> {
   const includeSummaries = opts.includeSummaries !== false;
-  const cached = cacheGet(sdkSessionId);
+  const cached = cacheGet(sdkSessionId, agentId, userId);
   if (cached) {
     const messages = cached.map(fromAgentMessage);
     return {
@@ -308,7 +322,7 @@ export async function resumeSession(
 
     const row = rows[0];
     const messages = (row.messages ?? []) as AgentChatMessage[];
-    cacheSet(sdkSessionId, messages, row.expiresAt.getTime());
+    cacheSet(sdkSessionId, agentId, userId, messages, row.expiresAt.getTime());
     const mapped = messages.map(fromAgentMessage);
     return {
       messages: includeSummaries ? await withSessionSummaries(sdkSessionId, agentId, userId, mapped) : mapped,
@@ -387,7 +401,7 @@ export async function initSession(
         messageCount: compacted.compactedMessageCount,
       }).catch((err) => console.error("[SessionStore] initSession summary insert error:", err));
     }
-    cacheSet(sdkSessionId, stored, expiresAt.getTime());
+    cacheSet(sdkSessionId, agentId, userId, stored, expiresAt.getTime());
     console.log(`[SessionStore] session initialised: sdkSessionId=${sdkSessionId} agentId=${agentId} messages=${stored.length}`);
   } catch (err) {
     console.error("[SessionStore] initSession DB error:", err);
@@ -407,6 +421,10 @@ export async function appendToSession(
   try {
     const db = await getDb();
     const existing = await resumeSession(sdkSessionId, agentId, userId, { includeSummaries: false });
+    if (!existing?.resumed) {
+      console.warn(`[SessionStore] append rejected for missing, expired, or foreign session: sdkSessionId=${sdkSessionId}`);
+      return;
+    }
     const compacted = compactSessionMessages([...(existing?.messages ?? []), ...newMessages]);
     const merged = compacted.messages.map(toAgentMessage);
 
@@ -430,7 +448,7 @@ export async function appendToSession(
       }).catch((err) => console.error("[SessionStore] appendToSession summary insert error:", err));
     }
 
-    cacheSet(sdkSessionId, merged, expiresAt.getTime());
+    cacheSet(sdkSessionId, agentId, userId, merged, expiresAt.getTime());
   } catch (err) {
     console.error("[SessionStore] appendToSession DB error:", err);
   }

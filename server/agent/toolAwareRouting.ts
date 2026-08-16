@@ -1,6 +1,7 @@
 import type { ToolGroup } from "./tools/index";
 import {
   classifyActionOntology,
+  isConversationInspectionQuestion,
   type ActionActor,
   type ActionType,
 } from "./actionOntology";
@@ -86,8 +87,8 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
   {
     intent: "email",
     patterns: [
-      /\b(gmail|email|emails|inbox|mail|unread|message|messages)\b/i,
-      /\b(reply|respond|draft|compose|send)\s+.*\b(email|message|gmail)\b/i,
+      /\b(gmail|email|emails|inbox|mail|unread)\b/i,
+      /\b(reply|respond|draft|compose|send|check|read|review|summari[sz]e)\s+.*\b(email|message|gmail)\b/i,
     ],
     capabilityIds: ["email"],
     toolGroups: ["email"],
@@ -332,6 +333,12 @@ export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
   const query = text.trim().replace(/[\u2018\u2019]/g, "'");
   if (!query) return EMPTY_PLAN;
   const ontology = classifyActionOntology(query);
+  if (isConversationInspectionQuestion(query) && ontology.actionType === "unknown") {
+    return {
+      ...EMPTY_PLAN,
+      actionReason: "The request inspects this conversation and does not require a connected account.",
+    };
+  }
   const toolResolution = resolveToolsForAction(ontology);
 
   const ruleMatches = TOOL_AWARE_RULES.filter((rule) =>
