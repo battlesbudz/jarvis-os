@@ -10,7 +10,7 @@ const SERVER_YOUTUBE_TOOL_NAMES = new Set([
   "get_youtube_transcript",
 ]);
 const PHONE_COMPOUND_CONNECTOR_PATTERN = String.raw`(?:and\s+then|then|after(?:wards|\s+that)?|also|and)`;
-const PHONE_FOLLOW_UP_ACTION_PATTERN = String.raw`(?:open|launch|start|play|watch|tap|click|select|share|send|close|pause|subscribe|like|save|download|call|text|message|search|find|look\s+up)`;
+const PHONE_FOLLOW_UP_ACTION_PATTERN = String.raw`(?:open|launch|start|play|watch|tap|click|press|swipe|scroll|type|enter|select|share|send|close|pause|subscribe|like|save|download|call|text|message|search|find|look\s+up|look\s+for|back|home|recents|screenshot|screen\s+shot|screen\s+capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+to)`;
 
 export function isAndroidPhoneRuntimeToolName(name: string): boolean {
   return ANDROID_PHONE_RUNTIME_TOOL_NAME_SET.has(name);
@@ -152,7 +152,7 @@ function hasAdditionalPhoneActionAfterNotificationRead(text: string): boolean {
     .slice(1)
     .join(" ");
   if (!continuation.trim()) return false;
-  return /\b(?:open|launch|start|search|find|look\s+up|look\s+for|tap|click|press|swipe|scroll|type|enter|back|home|recents|screenshot|screen shot|screen capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+to)\b/i.test(continuation);
+  return new RegExp(String.raw`\b${PHONE_FOLLOW_UP_ACTION_PATTERN}\b`, "i").test(continuation);
 }
 
 function hasNotificationReadQualifier(text: string): boolean {
