@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 process.env.DATABASE_URL ||= "postgresql://jarvis_test:jarvis_test@localhost:5432/jarvis_test";
 
@@ -34,6 +36,12 @@ async function main(): Promise<void> {
   assert.equal(isPathAllowedForInspection("JARVIS_ROADMAP.md"), true);
   assert.equal(isPathAllowedForInspection("docs/capability-verification-matrix.md"), true);
   assert.equal(isPathAllowedForInspection("../private.md"), false);
+
+  const routesSource = readFileSync(resolve(__dirname, "../../routes.ts"), "utf8");
+  assert.match(routesSource, /case 'create_calendar_event':[\s\S]{0,500}getTool\('create_calendar_event'\)/);
+  assert.match(routesSource, /preview\.task = String\(args\.task \|\| ''\);/);
+  assert.match(routesSource, /preview\.context = String\(args\.context\);/);
+  assert.doesNotMatch(routesSource, /preview\.task = String\(args\.task \|\| ''\)\.slice/);
 
   console.log("OK: calendar validation/provider fallback and approval inbox idempotency are deterministic");
 }

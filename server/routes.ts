@@ -16,12 +16,10 @@ import { resizeTask, generateSmartPlan, unblockTask } from "./ai";
 import {
   getGoogleCalendarEvents,
   checkGoogleCalendarConnection,
-  createGoogleCalendarEvent,
 } from "./integrations/googleCalendar";
 import {
   getOutlookCalendarEvents,
   checkOutlookConnection,
-  createOutlookCalendarEvent,
   sendOutlookEmail,
   getRecentOutlookEmails,
 } from "./integrations/outlook";
@@ -519,26 +517,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return { result: 'error', label: 'Unknown provider', detail: `Unknown provider: ${provider}` };
         }
         case 'create_calendar_event': {
-          const title = String(args.title || '').trim();
-          const start = String(args.start || '').trim();
-          const end = String(args.end || '').trim();
-          const description = args.description ? String(args.description).trim() : undefined;
-          const location = args.location ? String(args.location).trim() : undefined;
-          const provider = (String(args.provider || 'google')).toLowerCase();
-          if (!title || !start || !end) return { result: 'error', label: 'Missing fields', detail: 'title, start, and end are required.' };
-          if (provider === 'google') {
-            const tokens = await getValidGoogleTokens(userId);
-            if (!tokens.length) return { result: 'error', label: 'Google not connected', detail: 'Connect Google in Profile to create calendar events.' };
-            const result = await createGoogleCalendarEvent(tokens[0], { title, start, end, description, location });
-            return { result: 'success', label: `Event created: ${title}`, detail: result.htmlLink || `Created on ${start.slice(0, 10)}` };
-          }
-          if (provider === 'microsoft') {
-            const msToken = await getValidMicrosoftToken(userId);
-            if (!msToken) return { result: 'error', label: 'Microsoft not connected', detail: 'Connect Microsoft in Profile to create Outlook calendar events.' };
-            await createOutlookCalendarEvent(msToken, { title, start, end, description, location });
-            return { result: 'success', label: `Event created: ${title}`, detail: `Created on ${start.slice(0, 10)}` };
-          }
-          return { result: 'error', label: 'Unknown provider', detail: `Unknown provider: ${provider}` };
+          const calendarTool = getTool('create_calendar_event');
+          if (!calendarTool) return { result: 'error', label: 'Calendar unavailable', detail: 'Calendar creation tool is not registered.' };
+          const googleTokens = await getValidGoogleTokens(userId);
+          const toolResult = await calendarTool.execute(args, {
+            userId,
+            googleAccessToken: googleTokens[0] ?? null,
+            channel: 'appchat',
+            signal,
+            state: { pendingAttachments: [] },
+          });
+          return {
+            result: toolResult.ok ? 'success' : 'error',
+            label: toolResult.label || 'Calendar event',
+            detail: toolResult.content || toolResult.detail || '',
+          };
         }
         case 'fetch_calendar': {
           const tokens = await getValidGoogleTokens(userId);
@@ -2380,8 +2373,11 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 preview.reason = connectedAccountPermission?.reason || 'This Composio action can change an external account.';
                 if (args.arguments) preview.data = typeof args.arguments === 'string' ? args.arguments : JSON.stringify(args.arguments).slice(0, 500);
               } else if (tc.function.name === 'delegate_to_codex') {
-                preview.task = String(args.task || '').slice(0, 500);
+                preview.task = String(args.task || '');
+                if (args.context) preview.context = String(args.context);
                 preview.access = args.sandbox === 'workspace-write' ? 'Workspace write' : 'Read-only';
+                if (args.working_directory) preview.workingDirectory = String(args.working_directory);
+                if (args.timeout_seconds != null) preview.timeoutSeconds = String(args.timeout_seconds);
                 if (args.allow_external_side_effects === true) preview.externalSideEffects = 'Allowed for this task';
                 preview.reason = 'Codex requested permission to modify the workspace or an external system.';
               } else if (androidSubmitApprovalRequired) {
