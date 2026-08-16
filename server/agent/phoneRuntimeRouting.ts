@@ -85,7 +85,7 @@ export function extractYoutubePhoneSearchQuery(text: string): string | null {
       // maintain an incomplete list of action verbs; the normal multi-tool
       // loop can still interpret legitimate search phrases containing one.
       if (new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i").test(query)) return null;
-      if (new RegExp(String.raw`[,;]\s*(?:please\s+)?${PHONE_FOLLOW_UP_ACTION_PATTERN}\b`, "i").test(query)) return null;
+      if (new RegExp(String.raw`[,;:.!?]\s*(?:please\s+)?${PHONE_FOLLOW_UP_ACTION_PATTERN}\b`, "i").test(query)) return null;
       return query;
     }
   }
