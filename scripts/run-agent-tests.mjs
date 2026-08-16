@@ -83,6 +83,7 @@ const tests = [
   { file: "server/agent/__tests__/qualityLoopCodexBypass.assert.ts" },
   { file: "server/agent/__tests__/orchestratorCodexVerifierBypass.assert.ts" },
   { file: "server/agent/__tests__/codexOAuth.assert.ts" },
+  { file: "server/agent/__tests__/codexHostedSubscription.assert.ts" },
   { file: "server/agent/__tests__/codexGatewayRecovery.assert.ts" },
   { file: "server/agent/__tests__/coachPromptClutter.assert.ts" },
   { file: "server/agent/__tests__/codexDelegation.assert.ts" },

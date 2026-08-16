@@ -3,6 +3,7 @@ import {
   InMemoryModelProviderAuthProfileRepository,
   getProviderCredential,
   getProviderStatus,
+  readChatGPTAuthTokenClaims,
   saveOpenAIApiKeyProfile,
   saveOpenAIOAuthProfile,
 } from "../providers/modelProviderAuthProfiles";
@@ -37,6 +38,24 @@ async function main() {
 
     process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY = "test-secret-for-provider-auth-profiles";
     const repo = new InMemoryModelProviderAuthProfileRepository();
+
+    const encodedClaims = Buffer.from(JSON.stringify({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: "acct_from_claims",
+        chatgpt_plan_type: "plus",
+      },
+    })).toString("base64url");
+    const claimsToken = `header.${encodedClaims}.signature`;
+    assert.deepEqual(readChatGPTAuthTokenClaims(claimsToken), {
+      accountId: "acct_from_claims",
+      planType: "plus",
+    });
+    const claimsProfile = await saveOpenAIOAuthProfile({
+      repo,
+      userId: "user-token-claims",
+      accessToken: claimsToken,
+    });
+    assert.equal(claimsProfile.accountId, "acct_from_claims");
 
     const apiProfile = await saveOpenAIApiKeyProfile({
       repo,

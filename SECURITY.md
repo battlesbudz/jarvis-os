@@ -52,13 +52,14 @@ Self-hosters are responsible for:
 
 - **Desktop connector / daemon:** Can execute local operations when paired and permitted. Set `JARVIS_DAEMON_ROOT` to a specific workspace directory, not a home directory or drive root.
 - **Android daemon:** May use accessibility, notification listener, wake/talk mode, and optional device-admin permissions. Build or download only trusted APKs from the official project release path.
-- **ChatGPT subscription path:** Runs through the desktop connector/Codex OAuth path. Do not expose local helper ports publicly.
+- **ChatGPT subscription path:** Per-user tokens are encrypted at rest and supplied only to an ephemeral, read-only Codex app-server process. They must never be sent to OpenAI Platform Chat Completions. The optional desktop gateway remains a separate trusted-host path; do not expose its local helper ports publicly.
 - **Provider profiles:** Stored provider credentials must remain encrypted and scoped to the owning user.
 
 ## Hardening Checklist
 
 - [ ] `JWT_SECRET` is at least 32 random bytes
 - [ ] `DASHBOARD_SECRET` is at least 32 random bytes if dashboard secret auth is enabled
+- [ ] `JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY` is stable and at least 32 random bytes when provider profiles are enabled
 - [ ] `NODE_ENV=production` in hosted environments
 - [ ] `DATABASE_URL` uses SSL in production
 - [ ] `APP_BASE_URL` and `EXPO_PUBLIC_DOMAIN` point to the intended public host

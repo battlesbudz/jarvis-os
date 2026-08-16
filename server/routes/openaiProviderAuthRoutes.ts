@@ -1,9 +1,12 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import {
+  assertProviderAuthEncryptionConfigured,
   deleteProviderProfiles,
   deleteOpenAIProviderProfiles,
   getProviderStatus,
+  isProviderAuthEncryptionConfigured,
+  readChatGPTAuthTokenClaims,
   saveOpenAIApiKeyProfile,
   saveOpenAIOAuthProfile,
   saveProviderApiKeyProfile,
@@ -261,7 +264,11 @@ async function fetchOpenAIUserInfo(
     if (!response.ok) return {};
     const data = await response.json() as any;
     return {
-      accountId: typeof data.sub === "string" ? data.sub : typeof data.account_id === "string" ? data.account_id : null,
+      accountId: typeof data.account_id === "string"
+        ? data.account_id
+        : typeof data.chatgpt_account_id === "string"
+          ? data.chatgpt_account_id
+          : null,
       email: typeof data.email === "string" ? data.email : null,
     };
   } catch {
@@ -292,12 +299,18 @@ export async function exchangeOpenAICodeForTokens(
   }
 
   const accessToken = String(data.access_token);
+  const tokenClaims = readChatGPTAuthTokenClaims(accessToken);
+  const idTokenClaims = typeof data.id_token === "string"
+    ? readChatGPTAuthTokenClaims(data.id_token)
+    : { accountId: null, planType: null };
   const userInfo = await fetchOpenAIUserInfo(accessToken, request.config);
   return {
     accessToken,
     refreshToken: typeof data.refresh_token === "string" ? data.refresh_token : null,
     expiresAt: data.expires_in ? new Date(Date.now() + Number(data.expires_in) * 1000) : null,
-    accountId: typeof data.account_id === "string" ? data.account_id : userInfo.accountId ?? null,
+    accountId: typeof data.account_id === "string"
+      ? data.account_id
+      : tokenClaims.accountId ?? idTokenClaims.accountId ?? userInfo.accountId ?? null,
     email: typeof data.email === "string" ? data.email : userInfo.email ?? null,
   };
 }
@@ -310,6 +323,9 @@ export async function completeOpenAIOAuthCallback(input: {
   currentUserId?: string;
   exchangeCodeForTokens?: (request: OpenAIOAuthTokenExchangeRequest) => Promise<RefreshOAuthTokenResult | null>;
 }): Promise<{ ok: true; userId: string; email: string | null; accountId: string | null }> {
+  // Fail before consuming state or exchanging a one-time authorization code.
+  // Otherwise a deployment mistake makes the user repeat the entire login flow.
+  assertProviderAuthEncryptionConfigured();
   const stateStore = input.stateStore ?? defaultStateStore;
   const record = await stateStore.consume(input.state);
   if (!record) throw new Error("OAuth state was not found or has expired");
@@ -458,6 +474,12 @@ export function registerOpenAIProviderAuthRoutes(
     try {
       const userId = await resolveUserId(req);
       if (!userId) return res.status(401).json({ error: "Authentication required" });
+      if (!isProviderAuthEncryptionConfigured()) {
+        return res.status(503).json({
+          error: "provider_auth_encryption_not_configured",
+          message: "ChatGPT subscription login is unavailable until JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY is configured on the Jarvis server.",
+        });
+      }
       const config = getConfig();
       if (!config) {
         return res.status(503).json({

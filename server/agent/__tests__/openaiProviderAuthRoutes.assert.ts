@@ -83,6 +83,17 @@ async function main() {
     });
     const defaultStartServer = await listen(defaultStartApp);
     try {
+      delete process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY;
+      const unavailableResponse = await fetch(`http://127.0.0.1:${defaultStartServer.port}/api/auth/openai-oauth/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const unavailableBody = await unavailableResponse.json() as any;
+      assert.equal(unavailableResponse.status, 503);
+      assert.equal(unavailableBody.error, "provider_auth_encryption_not_configured");
+      process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY = "test-secret-for-openai-auth-routes";
+
       const response = await fetch(`http://127.0.0.1:${defaultStartServer.port}/api/auth/openai-oauth/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -133,6 +144,25 @@ async function main() {
       `${DEFAULT_OPENAI_OAUTH_REDIRECT_URI}?code=abc123&state=${encodeURIComponent(start.state)}`,
     );
     assert.deepEqual(parsed, { code: "abc123", state: start.state });
+
+    let attemptedExchangeWithoutEncryption = false;
+    delete process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY;
+    await assert.rejects(
+      () => completeOpenAIOAuthCallback({
+        repo,
+        stateStore,
+        state: start.state,
+        code: "abc123",
+        currentUserId: "user-1",
+        exchangeCodeForTokens: async () => {
+          attemptedExchangeWithoutEncryption = true;
+          return null;
+        },
+      }),
+      /JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY is required/,
+    );
+    assert.equal(attemptedExchangeWithoutEncryption, false);
+    process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY = "test-secret-for-openai-auth-routes";
 
     await completeOpenAIOAuthCallback({
       repo,

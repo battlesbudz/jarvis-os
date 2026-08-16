@@ -72,7 +72,7 @@ Do not:
 - Commit `.env`, tokens, keystores, database dumps, logs with secrets, or generated private artifacts.
 - Weaken approval gates for email sends, calendar writes, public posts, purchases, deploys, daemon actions, memory rewrites, or code changes.
 - Add automatic pushing, deployment, or destructive host-device behavior.
-- Route ChatGPT subscription work around the desktop connector/Codex OAuth safety path.
+- Route ChatGPT subscription tokens through OpenAI Platform Chat Completions instead of the Codex OAuth provider.
 - Change daemon or Android permissions without focused tests.
 
 If your change touches provider routing, daemon permissions, Android control, settings UI, storage, approval gates, or memory behavior, add or update targeted assertions.

@@ -896,7 +896,10 @@ async function getUserOpenAIRouteChain(
   try {
     const status = await resolver({ userId });
     if (!status.openai.connected || !status.openai.defaultAuthType) return null;
-    return [{ providerName: "openai", model: openAIModelForExecutionTier(tier) }];
+    if (status.openai.defaultAuthType === "oauth") {
+      return [{ providerName: "chatgpt-codex-oauth", model: getCodexOAuthModel(), preferredAuthType: "oauth" }];
+    }
+    return [{ providerName: "openai", model: openAIModelForExecutionTier(tier), preferredAuthType: "api_key" }];
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.warn(`${logPrefix} provider_auth_status_unavailable: ${message.slice(0, 160)}`);
@@ -923,7 +926,9 @@ function defaultRouteForProviderProfile(
     return { providerName: "android-local-gemma", model: ANDROID_LOCAL_GEMMA_MODEL.slice("android-local-gemma/".length) };
   }
   if (providerId === "openai") {
-    return { providerName: "openai", model: openAIModelForExecutionTier(tier) };
+    return authType === "oauth"
+      ? { providerName: "chatgpt-codex-oauth", model: getCodexOAuthModel(), preferredAuthType: "oauth" }
+      : { providerName: "openai", model: openAIModelForExecutionTier(tier), preferredAuthType: "api_key" };
   }
   return null;
 }
@@ -940,8 +945,8 @@ function isCodexOnlyRouteChain(chain: FallbackChainEntry[] | null | undefined): 
   return !!chain && chain.length === 1 && isCodexOAuthRouteEntry(chain[0]);
 }
 
-function openAIOAuthChatSubscriptionChain(tier: ModelExecutionTier): FallbackChainEntry[] {
-  return [{ providerName: "openai", model: openAIModelForExecutionTier(tier), preferredAuthType: "oauth" }];
+function openAIOAuthChatSubscriptionChain(_tier: ModelExecutionTier): FallbackChainEntry[] {
+  return [{ providerName: "chatgpt-codex-oauth", model: getCodexOAuthModel(), preferredAuthType: "oauth" }];
 }
 
 function resolveCodexSubscriptionChain(

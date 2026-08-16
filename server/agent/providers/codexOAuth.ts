@@ -8,6 +8,18 @@ import type { ProviderChunk, ProviderQueryParams } from "./base";
 import { buildCodexSpawnCommand } from "./codexCommand";
 import { getCodexOAuthCommand } from "./env";
 import { fetchCodexGateway } from "../codexGatewayFetch";
+import {
+  getProviderCredential,
+  readChatGPTAuthTokenClaims,
+  refreshProviderOAuthCredential,
+  type GetProviderCredentialInput,
+  type ProviderCredential,
+} from "./modelProviderAuthProfiles";
+import {
+  runHostedCodexPrompt,
+  type HostedCodexAuthTokens,
+  type RunHostedCodexPromptInput,
+} from "./codexHostedAppServer";
 
 const CODEX_EXEC_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_EXEC_TIMEOUT_MS ?? 300_000);
 const CODEX_GATEWAY_TIMEOUT_MS = Number(process.env.JARVIS_CODEX_GATEWAY_TIMEOUT_MS ?? 120_000);
@@ -62,9 +74,26 @@ export interface CodexOAuthRuntimeStatus {
 }
 
 let daemonBridgeForTesting: CodexOAuthDaemonBridge | null = null;
+type ProviderCredentialResolver = (input: GetProviderCredentialInput) => Promise<ProviderCredential | null>;
+type ProviderCredentialRefresher = (input: { userId: string; provider?: string }) => Promise<ProviderCredential>;
+type HostedCodexPromptRunner = (input: RunHostedCodexPromptInput) => Promise<string>;
+
+let providerCredentialResolverForTesting: ProviderCredentialResolver | null = null;
+let providerCredentialRefresherForTesting: ProviderCredentialRefresher | null = null;
+let hostedCodexPromptRunnerForTesting: HostedCodexPromptRunner | null = null;
 
 export function _setCodexOAuthDaemonBridgeForTesting(bridge: CodexOAuthDaemonBridge | null): void {
   daemonBridgeForTesting = bridge;
+}
+
+export function _setCodexOAuthHostedRuntimeForTesting(input: {
+  credentialResolver?: ProviderCredentialResolver | null;
+  credentialRefresher?: ProviderCredentialRefresher | null;
+  promptRunner?: HostedCodexPromptRunner | null;
+} | null): void {
+  providerCredentialResolverForTesting = input?.credentialResolver ?? null;
+  providerCredentialRefresherForTesting = input?.credentialRefresher ?? null;
+  hostedCodexPromptRunnerForTesting = input?.promptRunner ?? null;
 }
 
 async function getCodexOAuthDaemonBridge(): Promise<CodexOAuthDaemonBridge> {
@@ -764,6 +793,49 @@ export async function runDaemonCodexOAuthPrompt(userId: string | undefined, prom
   return content;
 }
 
+function hostedTokensFromCredential(credential: ProviderCredential): HostedCodexAuthTokens {
+  const claims = readChatGPTAuthTokenClaims(credential.credential);
+  const chatgptAccountId = claims.accountId ?? credential.accountId;
+  if (!chatgptAccountId) {
+    throw new Error("The saved ChatGPT subscription profile is missing its ChatGPT account id. Reconnect the subscription in Settings.");
+  }
+  return {
+    accessToken: credential.credential,
+    chatgptAccountId,
+    chatgptPlanType: claims.planType,
+  };
+}
+
+async function getHostedSubscriptionCredential(userId: string): Promise<ProviderCredential | null> {
+  const resolver = providerCredentialResolverForTesting ?? getProviderCredential;
+  return resolver({
+    userId,
+    provider: "openai",
+    preferredAuthType: "oauth",
+    allowAuthTypeFallback: false,
+  });
+}
+
+async function refreshHostedSubscriptionCredential(userId: string): Promise<ProviderCredential> {
+  const refresher = providerCredentialRefresherForTesting ?? refreshProviderOAuthCredential;
+  return refresher({ userId, provider: "openai" });
+}
+
+async function runHostedUserCodexOAuthPrompt(
+  userId: string,
+  credential: ProviderCredential,
+  prompt: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const runner = hostedCodexPromptRunnerForTesting ?? runHostedCodexPrompt;
+  return runner({
+    ...hostedTokensFromCredential(credential),
+    prompt,
+    signal,
+    refreshTokens: async () => hostedTokensFromCredential(await refreshHostedSubscriptionCredential(userId)),
+  });
+}
+
 export class CodexOAuthProvider extends BaseProvider {
   async initialize(): Promise<void> {
     // Codex is launched per request so it can use the host's current OAuth login.
@@ -775,25 +847,33 @@ export class CodexOAuthProvider extends BaseProvider {
 
   async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
     const prompt = buildCodexOAuthProviderPrompt(params);
-    const runtimeStatus = await getCodexOAuthRuntimeStatus(params.userId);
-    if (!runtimeStatus.available) {
-      throw new Error(formatCodexRuntimeStatusMessage(runtimeStatus));
-    }
-
     let answer: string;
-    if (runtimeStatus.selectedRuntime === "daemon") {
-      try {
-        answer = await runDaemonCodexOAuthPrompt(runtimeStatus.resolvedUserId ?? params.userId, prompt, params.signal);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        throw new Error(formatCodexRuntimeFailureMessage(runtimeStatus, detail), { cause: error });
+    if (params.userId && params.preferredAuthType === "oauth") {
+      const credential = await getHostedSubscriptionCredential(params.userId);
+      if (!credential || credential.authType !== "oauth") {
+        throw new Error("ChatGPT subscription OAuth is selected but is not connected for this user.");
       }
-    } else if (runtimeStatus.selectedRuntime === "gateway") {
-      const gatewayUrl = getCodexGatewayUrl();
-      if (!gatewayUrl) throw new Error("JARVIS_CODEX_RUNTIME=gateway requires JARVIS_CODEX_GATEWAY_URL.");
-      answer = await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal);
+      answer = await runHostedUserCodexOAuthPrompt(params.userId, credential, prompt, params.signal);
     } else {
-      throw new Error(formatCodexRuntimeStatusMessage(runtimeStatus));
+      const runtimeStatus = await getCodexOAuthRuntimeStatus(params.userId);
+      if (!runtimeStatus.available) {
+        throw new Error(formatCodexRuntimeStatusMessage(runtimeStatus));
+      }
+
+      if (runtimeStatus.selectedRuntime === "daemon") {
+        try {
+          answer = await runDaemonCodexOAuthPrompt(runtimeStatus.resolvedUserId ?? params.userId, prompt, params.signal);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new Error(formatCodexRuntimeFailureMessage(runtimeStatus, detail), { cause: error });
+        }
+      } else if (runtimeStatus.selectedRuntime === "gateway") {
+        const gatewayUrl = getCodexGatewayUrl();
+        if (!gatewayUrl) throw new Error("JARVIS_CODEX_RUNTIME=gateway requires JARVIS_CODEX_GATEWAY_URL.");
+        answer = await runRemoteCodexOAuthPrompt(gatewayUrl, prompt, params.signal);
+      } else {
+        throw new Error(formatCodexRuntimeStatusMessage(runtimeStatus));
+      }
     }
 
     const parsed = parseCodexOAuthOrchestratorOutput(answer);

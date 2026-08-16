@@ -61,7 +61,7 @@ Deployment-specific workspaces can use any naming scheme, but public docs should
 - Do not store secrets, tokens, local connector state, database dumps, or keystores in source control.
 - Do not mix private personal/business workspace details into public docs.
 - Do not add automatic sends, deploys, purchases, destructive file operations, or device-control actions without explicit approval gates.
-- Do not bypass the desktop connector/Codex OAuth path for ChatGPT subscription use.
+- Route ChatGPT subscription profiles only through the Codex OAuth provider (hosted app-server or the explicitly configured trusted desktop gateway), never through OpenAI Platform Chat Completions.
 - Do not make route, storage, provider, approval, memory, or daemon changes without targeted assertions.
 
 ## Maintenance Rule

@@ -1,19 +1,22 @@
 # ChatGPT/Codex OAuth Provider
 
-Jarvis can optionally use the same no-OpenAI-API-key bridge that the grow room planner uses: a persistent host with the Codex CLI installed and logged in through ChatGPT.
+Jarvis supports two distinct OpenAI authentication paths:
 
-This is not OpenAI Platform API OAuth. The official OpenAI API still authenticates with API keys. This provider shells out to `codex exec` on the gateway host, so it only works where the host has a valid Codex/ChatGPT login.
+- **ChatGPT subscription:** a per-user OAuth profile is passed to the bundled Codex app-server through its external `chatgptAuthTokens` login. Subscription traffic never goes to the OpenAI Chat Completions API.
+- **OpenAI API key:** a per-user or deployment API key is sent through the OpenAI Platform SDK.
+
+The older trusted desktop/daemon gateway remains available for delegation and installations that intentionally keep the Codex login on a persistent workstation. It is not required for the Settings-screen subscription flow.
 
 ## Provider credential profiles
 
-Jarvis also has a reusable per-user provider credential layer for OpenAI. It is separate from the local Codex gateway above and stores the provider as `openai` for both supported auth methods:
+Jarvis stores both supported auth methods under the `openai` provider profile:
 
 - `api_key`: the user supplies an OpenAI API key.
 - `oauth`: the user completes the ChatGPT/Codex OAuth-style flow and Jarvis stores encrypted access and refresh tokens.
 
-The provider profile table is `model_provider_auth_profiles`. Tokens and API keys are encrypted at rest with `JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY`, `MODEL_PROVIDER_AUTH_ENCRYPTION_KEY`, or `JWT_SECRET` in local/dev environments. Production should set a dedicated encryption key.
+The provider profile table is `model_provider_auth_profiles`. Tokens and API keys are encrypted at rest with `JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY` (or the legacy `MODEL_PROVIDER_AUTH_ENCRYPTION_KEY`). A dedicated key is required; `JWT_SECRET` is deliberately not reused. The OAuth start endpoint returns `503 provider_auth_encryption_not_configured` before opening ChatGPT login when this key is missing.
 
-The OpenAI OAuth endpoints are configurable with `JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL`, `JARVIS_OPENAI_OAUTH_TOKEN_URL`, `JARVIS_OPENAI_OAUTH_CLIENT_ID`, and optional `JARVIS_OPENAI_OAUTH_CLIENT_SECRET`. Jarvis does not hard-code an undocumented OpenAI subscription token endpoint; the public OpenAI docs currently describe OAuth + PKCE for ChatGPT app/MCP integrations, not a stable third-party API-token exchange for arbitrary applications.
+The built-in flow uses the Codex OAuth client defaults. Advanced deployments can override them with `JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL`, `JARVIS_OPENAI_OAUTH_TOKEN_URL`, `JARVIS_OPENAI_OAUTH_CLIENT_ID`, and optional `JARVIS_OPENAI_OAUTH_CLIENT_SECRET`.
 
 The Settings screen exposes:
 
@@ -51,9 +54,24 @@ getProviderCredential(userId, "openai", preferredAuthType)
 
 Jarvis does not silently switch between OAuth and API-key auth. Set `JARVIS_OPENAI_AUTH_FALLBACK_ENABLED=true` only when an explicit fallback policy is wanted.
 
+For model execution, an OAuth profile routes to `chatgpt-codex-oauth`; an API-key profile routes to `openai`. `OpenAIProvider` rejects OAuth credentials as a defense-in-depth check.
+
 Leave `JARVIS_OPENAI_PREFERRED_AUTH_TYPE` unset to honor the user's selected default profile from Settings. Set it only when the deployment should require a specific OpenAI auth type globally, such as `oauth` or `api_key`.
 
-## Probe
+## Hosted subscription runtime
+
+The server dependency includes `@openai/codex`. For each subscription request Jarvis starts an ephemeral, read-only Codex app-server process, injects only that user's access token and ChatGPT account id, disables network and Codex tools, streams the answer back to Jarvis, and stops the process. Refresh requests are fulfilled from that user's encrypted refresh token and persisted back to the same profile.
+
+Optional runtime settings:
+
+```text
+JARVIS_CODEX_COMMAND=codex
+JARVIS_CODEX_OAUTH_MODEL=chatgpt-codex-oauth/auto
+JARVIS_CODEX_EXEC_TIMEOUT_MS=300000
+JARVIS_CODEX_HOSTED_APP_SERVER_ARGS=
+```
+
+## Desktop gateway probe
 
 ```powershell
 npm run jarvis:oauth:probe
@@ -61,7 +79,7 @@ npm run jarvis:oauth:probe
 
 The probe should report that Codex is logged in with ChatGPT.
 
-## Enable
+## Enable the desktop gateway
 
 Create a local `.env.local` file on the gateway host:
 
