@@ -11,6 +11,11 @@ const SERVER_YOUTUBE_TOOL_NAMES = new Set([
 ]);
 const PHONE_COMPOUND_CONNECTOR_PATTERN = String.raw`(?:and\s+then|then|after(?:wards|\s+that)?|also|and)`;
 const PHONE_FOLLOW_UP_ACTION_PATTERN = String.raw`(?:open|launch|start|play|watch|tap|click|press|swipe|scroll|type|enter|select|share|send|close|pause|subscribe|like|save|download|call|text|message|search|find|look\s+up|look\s+for|back|home|recents|screenshot|screen\s+shot|screen\s+capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+to|turn\s+(?:the\s+)?volume|raise\s+(?:the\s+)?volume|lower\s+(?:the\s+)?volume|volume\s+(?:up|down))`;
+const PHONE_PUNCTUATED_FOLLOW_UP_PATTERN = String.raw`[,;:.!?]\s*(?:(?:now|next|then)[\s,:-]+)?(?:please\s+)?${PHONE_FOLLOW_UP_ACTION_PATTERN}\b`;
+
+function hasPunctuatedPhoneFollowUpAction(text: string): boolean {
+  return new RegExp(PHONE_PUNCTUATED_FOLLOW_UP_PATTERN, "i").test(text);
+}
 
 export function isAndroidPhoneRuntimeToolName(name: string): boolean {
   return ANDROID_PHONE_RUNTIME_TOOL_NAME_SET.has(name);
@@ -85,7 +90,7 @@ export function extractYoutubePhoneSearchQuery(text: string): string | null {
       // maintain an incomplete list of action verbs; the normal multi-tool
       // loop can still interpret legitimate search phrases containing one.
       if (new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i").test(query)) return null;
-      if (new RegExp(String.raw`[,;:.!?]\s*(?:(?:now|next|then)[\s,:-]+)?(?:please\s+)?${PHONE_FOLLOW_UP_ACTION_PATTERN}\b`, "i").test(query)) return null;
+      if (hasPunctuatedPhoneFollowUpAction(query)) return null;
       return query;
     }
   }
@@ -147,6 +152,7 @@ export function isPhoneNotificationReadRequest(text: string): boolean {
 
 function hasAdditionalPhoneActionAfterNotificationRead(text: string): boolean {
   const normalized = normalizePhoneRuntimeRequestText(text);
+  if (hasPunctuatedPhoneFollowUpAction(normalized)) return true;
   const continuation = normalized
     .split(new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i"))
     .slice(1)

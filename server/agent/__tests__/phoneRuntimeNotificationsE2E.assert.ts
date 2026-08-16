@@ -141,6 +141,17 @@ async function main() {
     null,
     "plain-and compound phone requests must stay in the multi-tool loop",
   );
+  for (const request of [
+    "Read my notifications. Turn the volume down.",
+    "Read my notifications. Now turn the volume up.",
+    "Read my notifications: Next, please open Gmail.",
+  ]) {
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(request, phoneTools, connectedPhoneRuntime),
+      null,
+      `punctuation-separated notification actions must stay in the multi-tool loop: ${request}`,
+    );
+  }
   assert.equal(
     deterministicPhoneRuntimeToolCallFromRequest("Do I have any Gmail notifications?", phoneTools, connectedPhoneRuntime),
     null,
