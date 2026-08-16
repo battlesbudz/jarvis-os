@@ -65,11 +65,12 @@ export function extractYoutubePhoneSearchQuery(text: string): string | null {
 
   const youtube = String.raw`(?:you\s*tube|youtube|yt)`;
   const verb = String.raw`(?:search|find|look\s+up|look\s+for)`;
+  const requestPrefix = String.raw`^\s*(?:(?:hey|hi)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?`;
   const patterns = [
-    new RegExp(String.raw`\b(?:open|launch|start)(?:\s+up)?\s+(?:the\s+)?${youtube}(?:\s+app)?\s+(?:and|then)?\s*${verb}\s+(?:me\s+)?(?:for\s+)?(.+?)\s*[.!?]*$`, "i"),
-    new RegExp(String.raw`\b${verb}\s+(?:me\s+)?(?:on\s+)?${youtube}\s+(?:for\s+)?(.+?)\s*[.!?]*$`, "i"),
-    new RegExp(String.raw`\b${verb}\s+(?:me\s+)?(?:for\s+)?(.+?)\s+(?:on|in)\s+${youtube}\s*[.!?]*$`, "i"),
-    new RegExp(String.raw`\b${youtube}\s+${verb}\s+(?:for\s+)?(.+?)\s*[.!?]*$`, "i"),
+    new RegExp(String.raw`${requestPrefix}(?:open|launch|start)(?:\s+up)?\s+(?:the\s+)?${youtube}(?:\s+app)?\s+(?:and|then)?\s*${verb}\s+(?:me\s+)?(?:for\s+)?(.+?)\s*[.!?]*$`, "i"),
+    new RegExp(String.raw`${requestPrefix}${verb}\s+(?:me\s+)?(?:on\s+)?${youtube}\s+(?:for\s+)?(.+?)\s*[.!?]*$`, "i"),
+    new RegExp(String.raw`${requestPrefix}${verb}\s+(?:me\s+)?(?:for\s+)?(.+?)\s+(?:on|in)\s+${youtube}\s*[.!?]*$`, "i"),
+    new RegExp(String.raw`${requestPrefix}${youtube}\s+${verb}\s+(?:for\s+)?(.+?)\s*[.!?]*$`, "i"),
   ];
 
   for (const pattern of patterns) {

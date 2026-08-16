@@ -47,6 +47,10 @@ export function validateCalendarDateRange(start: string, end: string): string | 
   return null;
 }
 
+export function normalizeCalendarDateTimeForOutlook(value: string): string {
+  return new Date(value).toISOString();
+}
+
 export function resolveCalendarProvider(
   requestedProvider: string | undefined,
   connections: { googleConnected: boolean; microsoftConnected: boolean },
@@ -126,7 +130,13 @@ export const createCalendarEventTool: AgentTool = {
         if (!msToken) {
           return { ok: false, content: "Microsoft Calendar is not connected. Ask the user to connect their Microsoft account in Profile.", label: "Microsoft not connected" };
         }
-        await createOutlookCalendarEvent(msToken, { title, start, end, description, location });
+        await createOutlookCalendarEvent(msToken, {
+          title,
+          start: normalizeCalendarDateTimeForOutlook(start),
+          end: normalizeCalendarDateTimeForOutlook(end),
+          description,
+          location,
+        });
         const startDate = start.slice(0, 10);
         const startTime = start.slice(11, 16);
         return {

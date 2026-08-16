@@ -63,6 +63,15 @@ async function main() {
     null,
     "compound YouTube actions must stay in the multi-tool loop instead of leaking into the query",
   );
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest(
+      "Open Spotify and then open YouTube and search for jazz",
+      phoneTools,
+      connectedPhoneRuntime,
+    ),
+    null,
+    "actions before a YouTube search must stay in the multi-tool loop",
+  );
   for (const request of [
     "Open YouTube and search for cats, afterwards play the first video",
     "Open YouTube and search for cats, after that, tap the first video",

@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 process.env.DATABASE_URL ||= "postgresql://jarvis_test:jarvis_test@localhost:5432/jarvis_test";
 
 async function main(): Promise<void> {
-  const { resolveCalendarProvider, validateCalendarDateRange } = await import("../tools/calendarCreate");
+  const { normalizeCalendarDateTimeForOutlook, resolveCalendarProvider, validateCalendarDateRange } = await import("../tools/calendarCreate");
   const { buildInAppNotificationSourceId } = await import("../../channels/inAppChannel");
   const { isPathAllowedForInspection } = await import("../tools/selfEditTools");
 
@@ -23,6 +23,7 @@ async function main(): Promise<void> {
   assert.match(validateCalendarDateRange("2026-02-31T14:00:00Z", "2026-03-01T15:00:00Z") ?? "", /start must be a valid ISO 8601/i);
   assert.match(validateCalendarDateRange("2026-08-16T15:00:00Z", "2026-08-16T14:00:00Z") ?? "", /end must be later/i);
   assert.match(validateCalendarDateRange("2026-08-16T14:00:00", "2026-08-16T15:00:00") ?? "", /timezone/i);
+  assert.equal(normalizeCalendarDateTimeForOutlook("2026-08-16T14:00:00-04:00"), "2026-08-16T18:00:00.000Z");
 
   const firstApprovalId = buildInAppNotificationSourceId("approval_request", "gate-123", 1, "first");
   const repeatedApprovalId = buildInAppNotificationSourceId("approval_request", "gate-123", 2, "second");
