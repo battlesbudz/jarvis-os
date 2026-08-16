@@ -57,6 +57,7 @@ import { registerGoalSummaryRoutes } from "./routes/goalSummaryRoutes";
 import { registerBrainDumpRoutes } from "./routes/brainDumpRoutes";
 import { registerCoachAudioRoutes } from "./routes/coachAudioRoutes";
 import { executePendingCoachAction, registerCoachActionConfirmationRoutes } from "./routes/coachActionConfirmationRoutes";
+import { codexDelegationRequiresConfirmation } from "./agent/codexDelegationPolicy";
 import { registerCoachInsightRoutes } from "./routes/coachInsightRoutes";
 import { registerCoachSessionRoutes } from "./routes/coachSessionRoutes";
 import { listPendingPersonalCommitments } from "./commitments/dbCommitmentRepository";
@@ -109,7 +110,7 @@ import { getPublicBaseUrl } from "./publicUrl";
 import { estimateModelUsage, recordModelUsage } from "./agent/modelUsage";
 import type { AgentTool, ToolContext } from "./agent/types";
 import {
-  isCodexDelegationEnabled,
+  isCodexDelegationEnabledForUser,
 } from "./agent/codexDelegation";
 import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
 import { buildToolExecutionPolicy } from "./agent/toolExecutionPolicy";
@@ -1813,7 +1814,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         ? await buildYouTubeContextBlock(lastUserOrigText).catch(() => "")
         : "";
 
-      const codexDelegationEnabled = isCodexDelegationEnabled();
+      const codexDelegationEnabled = await isCodexDelegationEnabledForUser(userId);
       const buildInstruction = codexDelegationEnabled
         ? "When the user asks you to build, create, edit, inspect, or test a local code project or website, use delegate_to_codex so Codex can do the implementation work. If the user explicitly asks for the change to be permanent, pushed, published, deployed, or on GitHub, delegate that commit/push/publish requirement to Codex too and set allow_external_side_effects=true only for that exact requested action. If the user did not explicitly ask for commit/push/deploy, keep the work local and say that it still needs approval to be pushed."
         : "When the user asks you to build a standalone app, website, or landing page, use queue_background_job with agentType='app_project' so Jarvis can build it persistently in the hosted workspace.";
@@ -1852,7 +1853,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const useToolFocusedLoop = toolAwareRoute.shouldPreferTool;
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. " + buildInstruction + " Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally.\n\nYou have a weather_lookup tool for weather and forecast questions. Use it when the user asks about the weather and a location is available; if no location is available, ask for the city/state." + (process.env.TAVILY_API_KEY ? "\n\nYou also have search_web and web_search tools. Use them whenever the user asks about current events, live data (stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Prefer search_web when it is available. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever: (a) the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability; OR (b) you notice a pattern of repeated tool failures in this conversation (2+ different tools returning errors in the same session — call this proactively before the user notices to surface the root cause). It runs a full subsystem check and returns a plain-English diagnosis. When you proactively diagnose yourself, briefly tell the user you noticed something was off and present the diagnosis without being asked." + "\n\nSELF-INSPECTION & CODE PROPOSALS: You have three self-edit tools — list_source_files, read_source_file, and propose_code_change. Use them when: (a) the user asks you to 'look at your own code', 'inspect yourself', 'improve your tools', or 'fix a bug you noticed'; OR (b) you encounter a repeated failure and believe you can fix it with a targeted code change. Workflow: (1) call list_source_files to find the relevant file, (2) call read_source_file to read it fully, (3) call propose_code_change with the complete improved file content and a plain-English reason. The proposal is saved for user review — you NEVER write files directly. Keep proposals minimal and targeted: fix one specific issue per proposal. Never propose changes to the approval gate itself (codeProposalsRoutes.ts). After proposing, tell the user a suggestion is waiting in the Code Proposals screen for their review." },
+        { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. " + buildInstruction + " Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally.\n\nYou have a weather_lookup tool for weather and forecast questions. Use it when the user asks about the weather and a location is available; if no location is available, ask for the city/state." + (process.env.TAVILY_API_KEY ? "\n\nYou also have search_web and web_search tools. Use them whenever the user asks about current events, live data (stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Prefer search_web when it is available. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever: (a) the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability; OR (b) you notice a pattern of repeated tool failures in this conversation (2+ different tools returning errors in the same session — call this proactively before the user notices to surface the root cause). It runs a full subsystem check and returns a plain-English diagnosis. When you proactively diagnose yourself, briefly tell the user you noticed something was off and present the diagnosis without being asked." + "\n\nSELF-INSPECTION & CODE PROPOSALS: You have three self-edit tools — list_source_files, read_source_file, and propose_code_change. Use them when: (a) the user asks you to 'look at your own code', 'inspect yourself', 'improve your tools', or 'fix a bug you noticed'; OR (b) you encounter a repeated failure and believe you can fix it with a targeted code change. For roadmap or completeness assessments, you MUST read JARVIS_ROADMAP.md, ROADMAP.md, and docs/capability-verification-matrix.md before drawing conclusions. Label important conclusions as Verified (direct code/test evidence), Inferred (architecture evidence), or Unverified (not tested); never invent completion percentages. Treat intentional policies such as MAX_AUTO_BUILDS=0 as policy choices, not missing implementations. Workflow: (1) call list_source_files to find the relevant file, (2) call read_source_file to read it fully, (3) call propose_code_change with the complete improved file content and a plain-English reason. The proposal is saved for user review — you NEVER write files directly. Keep proposals minimal and targeted: fix one specific issue per proposal. Never propose changes to the approval gate itself (codeProposalsRoutes.ts). After proposing, tell the user a suggestion is waiting in the Code Proposals screen for their review." },
         ...(toolAwareInstruction ? [{ role: "system" as const, content: toolAwareInstruction }] : []),
         ...messages.map((m: { role: string; content: string }, idx: number) => {
           const isLast = idx === messages.length - 1;
@@ -2158,7 +2159,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             emitMeaningfulProgress({
               source: "runtime",
               stage: "tool_selection",
-              message: "Routing notification request to Android Device Control",
+              message: deterministicToolCall.function.name === "android_youtube_search"
+                ? "Routing YouTube search to Android Device Control"
+                : "Routing notification request to Android Device Control",
               detail: deterministicToolCall.function.name,
             });
           }
@@ -2354,9 +2357,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 )
               : null;
             const androidSubmitApprovalRequired = isAndroidSubmitCapableAction(tc.function.name, args, userRequestText);
+            const codexDelegationApprovalRequired = tc.function.name === 'delegate_to_codex' &&
+              codexDelegationRequiresConfirmation(args);
             const isHighStakes = tc.function.name === 'send_email' ||
               (tc.function.name === 'connected_accounts_execute' && connectedAccountPermission?.approvalRequired === true && args.dry_run !== true) ||
               (tc.function.name === 'daemon_action' && ['shell', 'file_write'].includes(String(args.action || ''))) ||
+              codexDelegationApprovalRequired ||
               androidSubmitApprovalRequired;
 
             if (isHighStakes) {
@@ -2373,6 +2379,11 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 preview.connection = String(args.account || args.connected_account_id || args.connectedAccountId || '');
                 preview.reason = connectedAccountPermission?.reason || 'This Composio action can change an external account.';
                 if (args.arguments) preview.data = typeof args.arguments === 'string' ? args.arguments : JSON.stringify(args.arguments).slice(0, 500);
+              } else if (tc.function.name === 'delegate_to_codex') {
+                preview.task = String(args.task || '').slice(0, 500);
+                preview.access = args.sandbox === 'workspace-write' ? 'Workspace write' : 'Read-only';
+                if (args.allow_external_side_effects === true) preview.externalSideEffects = 'Allowed for this task';
+                preview.reason = 'Codex requested permission to modify the workspace or an external system.';
               } else if (androidSubmitApprovalRequired) {
                 Object.assign(preview, buildAndroidSubmitConfirmationPreview(tc.function.name, args, userRequestText));
               } else {

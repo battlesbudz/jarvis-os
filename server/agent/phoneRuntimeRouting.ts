@@ -58,6 +58,30 @@ export function isYoutubeServerResearchRequest(text: string): boolean {
     /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|compare|rank|recommend|recommendation|best videos?|top videos?|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
 }
 
+export function extractYoutubePhoneSearchQuery(text: string): string | null {
+  if (!isYoutubePhoneActionRequest(text) || isYoutubeServerResearchRequest(text)) return null;
+  if (/\b(?:don't|do not|dont|never)\b[\s\S]{0,48}\b(?:search|find|look\s+up|look\s+for)\b/i.test(text)) return null;
+  if (/\b(?:and then|then|and)\s+(?:play|open|tap|press|select|choose|click|watch|return|go|scroll|swipe)\b/i.test(text)) return null;
+
+  const youtube = String.raw`(?:you\s*tube|youtube|yt)`;
+  const verb = String.raw`(?:search|find|look\s+up|look\s+for)`;
+  const patterns = [
+    new RegExp(String.raw`\b(?:open|launch|start)(?:\s+up)?\s+(?:the\s+)?${youtube}(?:\s+app)?\s+(?:and|then)?\s*${verb}\s+(?:me\s+)?(?:for\s+)?(.+?)\s*[.!?]*$`, "i"),
+    new RegExp(String.raw`\b${verb}\s+(?:me\s+)?(?:on\s+)?${youtube}\s+(?:for\s+)?(.+?)\s*[.!?]*$`, "i"),
+    new RegExp(String.raw`\b${verb}\s+(?:me\s+)?(?:for\s+)?(.+?)\s+(?:on|in)\s+${youtube}\s*[.!?]*$`, "i"),
+    new RegExp(String.raw`\b${youtube}\s+${verb}\s+(?:for\s+)?(.+?)\s*[.!?]*$`, "i"),
+  ];
+
+  for (const pattern of patterns) {
+    const query = text.match(pattern)?.[1]
+      ?.replace(/\s+(?:please|for me)\s*$/i, "")
+      .replace(/^["']|["']$/g, "")
+      .trim();
+    if (query) return query;
+  }
+  return null;
+}
+
 export function isMemoryPhoneBypassRequest(text: string): boolean {
   return /\b(?:memory|memories|remember|recall|what do you know about me|what have i told you|about me|living context)\b/i.test(text);
 }
@@ -134,6 +158,19 @@ export function deterministicPhoneRuntimeToolCallFromRequest(
   options: { androidActive: boolean; phoneRuntimeCoveredRequest: boolean },
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
   if (!options.androidActive || !options.phoneRuntimeCoveredRequest) return null;
+  const youtubeQuery = extractYoutubePhoneSearchQuery(requestText);
+  if (youtubeQuery) {
+    const hasYoutubeSearchTool = tools.some((tool) => phoneRuntimeChatToolName(tool) === "android_youtube_search");
+    if (!hasYoutubeSearchTool) return null;
+    return {
+      id: `jarvis_phone_runtime_${Date.now().toString(36)}_0`,
+      type: "function",
+      function: {
+        name: "android_youtube_search",
+        arguments: JSON.stringify({ query: youtubeQuery }),
+      },
+    };
+  }
   if (!isPhoneNotificationReadRequest(requestText)) return null;
   if (hasAdditionalPhoneActionAfterNotificationRead(requestText)) return null;
   if (hasNotificationReadQualifier(requestText)) return null;

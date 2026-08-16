@@ -6,6 +6,8 @@ import {
   runCodexDelegation,
 } from "../codexDelegation";
 import { isIntegrationOwner } from "../../integrationOwner";
+import { codexDelegationRequiresConfirmation } from "../codexDelegationPolicy";
+import { approvalReceiptCoversToolCall } from "../approvalReceipt";
 
 export const delegateToCodexTool: AgentTool = {
   name: "delegate_to_codex",
@@ -77,6 +79,21 @@ export const delegateToCodexTool: AgentTool = {
     const sandbox = normalizeCodexDelegationSandbox(args.sandbox);
     const timeoutMs = normalizeCodexDelegationTimeoutMs(args.timeout_seconds);
     const allowExternalSideEffects = args.allow_external_side_effects === true;
+    const requiresConfirmation = codexDelegationRequiresConfirmation({
+      sandbox,
+      allow_external_side_effects: allowExternalSideEffects,
+    });
+    const hasApprovalReceipt = approvalReceiptCoversToolCall(ctx.approvalReceipt, {
+      userId: ctx.userId,
+      toolName: "delegate_to_codex",
+    });
+    if (requiresConfirmation && !hasApprovalReceipt) {
+      return {
+        ok: false,
+        content: "Confirmation is required before Codex can write to the workspace or perform external side effects.",
+        label: "delegate_to_codex: confirmation required",
+      };
+    }
 
     try {
       const result = await runCodexDelegation({
@@ -87,6 +104,7 @@ export const delegateToCodexTool: AgentTool = {
         timeoutMs,
         allowExternalSideEffects,
         signal: ctx.signal,
+        userId: ctx.userId,
       });
 
       return {

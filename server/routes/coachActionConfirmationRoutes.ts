@@ -3,6 +3,7 @@ import type OpenAI from "openai";
 import { ackDaemonVoiceApproval } from "../daemon/bridge";
 import { getTool } from "../agent/tools/index";
 import type { ToolContext } from "../agent/types";
+import { createApprovalReceipt } from "../agent/approvalReceipt";
 
 type PendingConfirmation = {
   userId: string;
@@ -44,6 +45,7 @@ async function executeAgentTool(
   args: any,
   userId: string,
   fallbackLabel: string,
+  approvalReceipt?: ToolContext["approvalReceipt"],
 ): Promise<CoachToolResult> {
   const agentTool = getTool(toolName);
   if (!agentTool) {
@@ -53,9 +55,17 @@ async function executeAgentTool(
       detail: `The ${fallbackLabel.toLowerCase()} tool '${toolName}' is not registered.`,
     };
   }
+  const executionArgs = toolName === "delegate_to_codex"
+    ? { ...args }
+    : { ...args, approved: true, confirmed: true };
   const toolResult = await agentTool.execute(
-    { ...args, approved: true, confirmed: true },
-    { userId, channel: "appchat", state: { pendingAttachments: [] } } as ToolContext,
+    executionArgs,
+    {
+      userId,
+      channel: "appchat",
+      state: { pendingAttachments: [] },
+      ...(approvalReceipt ? { approvalReceipt } : {}),
+    } as ToolContext,
   );
   return {
     result: toolResult.ok ? "success" : "error",
@@ -81,6 +91,21 @@ export async function executePendingCoachAction({
   pendingConfirmations.delete(token);
   if (pending.tool === "connected_accounts_execute") {
     return executeAgentTool("connected_accounts_execute", pending.args, userId, "Connected account action");
+  }
+  if (pending.tool === "delegate_to_codex") {
+    return executeAgentTool(
+      "delegate_to_codex",
+      pending.args,
+      userId,
+      "Codex delegation",
+      createApprovalReceipt({
+        gateId: token,
+        userId,
+        toolName: "delegate_to_codex",
+        originalUserText: String(pending.args?.task || "Approved Codex delegation"),
+        expiresAt: new Date(pending.expiresAt),
+      }),
+    );
   }
   if (isAndroidAgentToolConfirmation(pending)) {
     return executeAgentTool(pending.tool, pending.args, userId, "Android action");
@@ -148,6 +173,8 @@ export function registerCoachActionConfirmationRoutes(
         ? `sending an email to ${preview.to || "the recipient"}`
         : tool === "connected_accounts_execute"
           ? `running the Composio ${preview.platform || "connected account"} action ${preview.action || ""}`.trim()
+          : tool === "delegate_to_codex"
+            ? "delegating a write or external action to Codex"
           : `running a terminal command (${preview.cmd || preview.action || "shell"})`;
       const prompt = `The user has just declined an action you proposed. You were about to ${toolLabel} but they cancelled. Acknowledge briefly and naturally in one sentence — do not re-propose the action. Stay in Jarvis's normal voice.`;
       const resp = await openai.chat.completions.create({

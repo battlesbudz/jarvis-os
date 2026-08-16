@@ -29,10 +29,40 @@ async function main() {
 
   const phoneTools = [
     chatTool("android_open_app"),
+    chatTool("android_youtube_search"),
     chatTool("android_capture_screen"),
     chatTool("android_read_notifications"),
   ];
   const connectedPhoneRuntime = { androidActive: true, phoneRuntimeCoveredRequest: true };
+
+  for (const [requestText, expectedQuery] of [
+    ["Search YouTube for Jarvis Best Clips", "Jarvis Best Clips"],
+    ["Find me local Gemma Android videos on YouTube", "local Gemma Android videos"],
+    ["Open YouTube and search for agent routing tests", "agent routing tests"],
+  ] as const) {
+    const toolCall = deterministicPhoneRuntimeToolCallFromRequest(requestText, phoneTools, connectedPhoneRuntime);
+    assert.equal(toolCall?.function.name, "android_youtube_search");
+    assert.deepEqual(JSON.parse(toolCall?.function.arguments ?? "{}"), { query: expectedQuery });
+  }
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest("Open YouTube", phoneTools, connectedPhoneRuntime),
+    null,
+    "opening YouTube without a search should stay an app-open action",
+  );
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest("Research and summarize the best YouTube videos about Gemma", phoneTools, connectedPhoneRuntime),
+    null,
+    "YouTube research should stay on the server research route",
+  );
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest(
+      "Open YouTube and search for cats and play the first video",
+      phoneTools,
+      connectedPhoneRuntime,
+    ),
+    null,
+    "compound YouTube actions must stay in the multi-tool loop instead of leaking into the query",
+  );
 
   for (const requestText of [
     "Read my notifications",

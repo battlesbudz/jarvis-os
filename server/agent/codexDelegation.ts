@@ -5,6 +5,13 @@ import path from "node:path";
 import { fetchCodexGateway } from "./codexGatewayFetch";
 import { buildCodexSpawnCommand } from "./providers/codexCommand";
 import { getCodexOAuthCommand } from "./providers/env";
+import { runHostedCodexPrompt, type RunHostedCodexPromptInput } from "./providers/codexHostedAppServer";
+import {
+  getProviderCredential,
+  readChatGPTAuthTokenClaims,
+  refreshProviderOAuthCredential,
+  type ProviderCredential,
+} from "./providers/modelProviderAuthProfiles";
 
 export type CodexDelegationSandbox = "read-only" | "workspace-write";
 
@@ -19,6 +26,7 @@ export interface CodexDelegationRequest extends CodexDelegationPromptInput {
   sandbox: CodexDelegationSandbox;
   timeoutMs: number;
   signal?: AbortSignal;
+  userId?: string;
 }
 
 export interface CodexDelegationResult {
@@ -29,13 +37,38 @@ export interface CodexDelegationResult {
 }
 
 type CodexDelegationRunner = (request: CodexDelegationRequest) => Promise<CodexDelegationResult>;
+type DelegationCredentialResolver = (userId: string) => Promise<ProviderCredential | null>;
+type DelegationCredentialRefresher = (userId: string) => Promise<ProviderCredential>;
+type HostedDelegationRunner = (input: RunHostedCodexPromptInput) => Promise<string>;
 
 const MAX_OUTPUT_CHARS = 20_000;
 let runnerOverride: CodexDelegationRunner | null = null;
+let credentialResolverOverride: DelegationCredentialResolver | null = null;
+let credentialRefresherOverride: DelegationCredentialRefresher | null = null;
+let hostedRunnerOverride: HostedDelegationRunner | null = null;
 
 export function isCodexDelegationEnabled(): boolean {
   return Boolean(getCodexGatewayUrl()) ||
     isLocalCodexDelegationEnabled();
+}
+
+async function resolveDelegationCredential(userId: string): Promise<ProviderCredential | null> {
+  if (credentialResolverOverride) return credentialResolverOverride(userId);
+  return getProviderCredential({
+    userId,
+    provider: "openai",
+    preferredAuthType: "oauth",
+    allowAuthTypeFallback: false,
+  });
+}
+
+export async function isCodexDelegationEnabledForUser(userId: string): Promise<boolean> {
+  if (isCodexDelegationEnabled()) return true;
+  try {
+    return (await resolveDelegationCredential(userId))?.authType === "oauth";
+  } catch {
+    return false;
+  }
 }
 
 export function isLocalCodexDelegationEnabled(): boolean {
@@ -168,6 +201,64 @@ async function runRemoteCodexDelegation(
   };
 }
 
+function hostedTokensFromCredential(credential: ProviderCredential): {
+  accessToken: string;
+  chatgptAccountId: string;
+  chatgptPlanType?: string | null;
+} {
+  const claims = readChatGPTAuthTokenClaims(credential.credential);
+  const chatgptAccountId = claims.accountId ?? credential.accountId;
+  if (!chatgptAccountId) {
+    throw new Error("The saved ChatGPT subscription is missing its account id. Reconnect it in Settings.");
+  }
+  return {
+    accessToken: credential.credential,
+    chatgptAccountId,
+    chatgptPlanType: claims.planType,
+  };
+}
+
+async function refreshDelegationCredential(userId: string): Promise<ProviderCredential> {
+  if (credentialRefresherOverride) return credentialRefresherOverride(userId);
+  return refreshProviderOAuthCredential({ userId, provider: "openai" });
+}
+
+async function runHostedSubscriptionCodexDelegation(
+  request: CodexDelegationRequest,
+): Promise<CodexDelegationResult> {
+  if (!request.userId) throw new Error("A user-scoped ChatGPT subscription is required for hosted Codex delegation.");
+  const credential = await resolveDelegationCredential(request.userId);
+  if (!credential || credential.authType !== "oauth") {
+    throw new Error("Codex delegation is unavailable. Connect a ChatGPT subscription in Settings or configure the desktop/gateway runtime.");
+  }
+
+  const startedAt = Date.now();
+  const runner = hostedRunnerOverride ?? runHostedCodexPrompt;
+  const content = await runner({
+    ...hostedTokensFromCredential(credential),
+    prompt: buildCodexDelegationPrompt(request),
+    cwd: request.cwd,
+    sandbox: request.sandbox,
+    networkAccess: request.allowExternalSideEffects === true,
+    signal: request.signal,
+    timeoutMs: request.timeoutMs,
+    baseInstructions: [
+      "You are Codex running as a controlled, user-authorized delegate for Jarvis.",
+      "Use the repository and built-in Codex tools only as needed for the scoped task.",
+      "Honor the prompt's side-effect boundary exactly. Never broaden authorization.",
+      "Return a concise final report with verification evidence and remaining blockers.",
+    ].join("\n"),
+    refreshTokens: async () => hostedTokensFromCredential(await refreshDelegationCredential(request.userId!)),
+  });
+
+  return {
+    content: truncateForTool(content),
+    cwd: request.cwd,
+    sandbox: request.sandbox,
+    durationMs: Date.now() - startedAt,
+  };
+}
+
 export async function runLocalCodexDelegation(request: CodexDelegationRequest): Promise<CodexDelegationResult> {
   if (!isLocalCodexDelegationEnabled()) {
     throw new Error("Codex delegation is not enabled on this host.");
@@ -265,7 +356,9 @@ export async function runCodexDelegation(request: CodexDelegationRequest): Promi
   if (runnerOverride) return runnerOverride(request);
   const gatewayUrl = getCodexGatewayUrl();
   if (gatewayUrl) return runRemoteCodexDelegation(gatewayUrl, request);
-  return runLocalCodexDelegation(request);
+  if (isLocalCodexDelegationEnabled()) return runLocalCodexDelegation(request);
+  if (request.userId) return runHostedSubscriptionCodexDelegation(request);
+  throw new Error("Codex delegation is not configured and no user-scoped ChatGPT subscription was supplied.");
 }
 
 export function _setCodexDelegationRunnerForTest(runner: CodexDelegationRunner | null): void {
@@ -273,4 +366,17 @@ export function _setCodexDelegationRunnerForTest(runner: CodexDelegationRunner |
     throw new Error("_setCodexDelegationRunnerForTest must not be called in production");
   }
   runnerOverride = runner;
+}
+
+export function _setHostedCodexDelegationForTest(input: {
+  credentialResolver?: DelegationCredentialResolver | null;
+  credentialRefresher?: DelegationCredentialRefresher | null;
+  runner?: HostedDelegationRunner | null;
+} | null): void {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("_setHostedCodexDelegationForTest must not be called in production");
+  }
+  credentialResolverOverride = input?.credentialResolver ?? null;
+  credentialRefresherOverride = input?.credentialRefresher ?? null;
+  hostedRunnerOverride = input?.runner ?? null;
 }

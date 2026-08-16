@@ -21,7 +21,7 @@ This roadmap is for public readers and contributors. It names the product-level 
 ## Near-Term Priorities
 
 1. Make local self-hosting reproducible from a clean machine.
-2. Add a capability/status table that stays aligned with implementation.
+2. Keep the [capability verification matrix](docs/capability-verification-matrix.md) aligned with implementation and real E2E evidence.
 3. Expand public screenshots beyond dashboard-only views.
 4. Document all staged-rename compatibility identifiers before changing them.
 5. Add more focused tests for safety-sensitive paths.

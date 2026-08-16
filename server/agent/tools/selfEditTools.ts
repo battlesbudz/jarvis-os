@@ -19,12 +19,20 @@ import { isIntegrationOwner } from "../../integrationOwner";
 import { desc, and, eq, gte } from "drizzle-orm";
 import {
   ALLOWED_SOURCE_DIRS,
-  isPathAllowed,
   isPathAllowedForProposal,
 } from "../safeWritePolicy";
 
 const MAX_FILE_LINES = 600;
 const PROJECT_ROOT = process.cwd();
+const INSPECTION_ROOT_FILES = new Set(["JARVIS_ROADMAP.md", "ROADMAP.md", "README.md", "AGENTS.md", "SOUL.md"]);
+const INSPECTION_DIRS = [...ALLOWED_SOURCE_DIRS, "docs", "scripts"];
+
+export function isPathAllowedForInspection(filePath: string): boolean {
+  const normalized = path.normalize(filePath).replace(/\\/g, "/");
+  if (!normalized || path.isAbsolute(normalized) || normalized.startsWith("..")) return false;
+  if (INSPECTION_ROOT_FILES.has(normalized)) return true;
+  return INSPECTION_DIRS.includes(normalized.split("/")[0]);
+}
 
 // ── list_source_files ──────────────────────────────────────────────────────────
 
@@ -32,8 +40,8 @@ export const listSourceFilesTool: AgentTool = {
   name: "list_source_files",
   description:
     "List source files in an allowed project directory. Use this to explore the codebase before proposing a change or when the user asks you to inspect your own code. " +
-    "Allowed base directories: server/, shared/, app/, components/, hooks/, constants/, lib/. " +
-    "Returns a tree of .ts and .tsx file paths relative to the project root.",
+    "Allowed base directories include source directories plus docs/ and scripts/. " +
+    "Returns inspectable .ts, .tsx, .js, .mjs, .json, and .md paths relative to the project root.",
   parameters: {
     type: "object",
     properties: {
@@ -50,10 +58,10 @@ export const listSourceFilesTool: AgentTool = {
       return { ok: false, content: "Access denied: self-edit tools are only available to the account owner.", label: "list_source_files: forbidden" };
     }
     const dir = String(args.directory ?? "").trim();
-    if (!isPathAllowed(dir)) {
+    if (!isPathAllowedForInspection(dir)) {
       return {
         ok: false,
-        content: `Access denied: '${dir}' is outside the allowed source directories (${ALLOWED_SOURCE_DIRS.join(", ")}).`,
+        content: `Access denied: '${dir}' is outside the allowed inspection directories (${INSPECTION_DIRS.join(", ")}).`,
         label: "list_source_files: denied",
       };
     }
@@ -62,7 +70,7 @@ export const listSourceFilesTool: AgentTool = {
       const absDir = path.join(PROJECT_ROOT, dir);
       const files = await collectSourceFiles(absDir, PROJECT_ROOT);
       if (files.length === 0) {
-        return { ok: true, content: `No .ts/.tsx files found in '${dir}'.`, label: "list_source_files: empty" };
+        return { ok: true, content: `No inspectable files found in '${dir}'.`, label: "list_source_files: empty" };
       }
       return {
         ok: true,
@@ -94,7 +102,7 @@ async function collectSourceFiles(absDir: string, root: string): Promise<string[
       if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") continue;
       const sub = await collectSourceFiles(abs, root);
       results.push(...sub);
-    } else if (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) {
+    } else if (/\.(?:ts|tsx|js|mjs|json|md)$/i.test(entry.name)) {
       results.push(path.relative(root, abs));
     }
   }
@@ -106,9 +114,9 @@ async function collectSourceFiles(absDir: string, root: string): Promise<string[
 export const readSourceFileTool: AgentTool = {
   name: "read_source_file",
   description:
-    "Read the contents of a single source file. Use this to understand existing code before proposing a change. " +
+    "Read a single source, test, or roadmap/documentation file. Use this to understand implementation and roadmap evidence before proposing a change or assessing project status. " +
     `Returns up to ${MAX_FILE_LINES} lines. For large files, use the offset parameter to page through sections. ` +
-    "Only files inside allowed base directories (server/, shared/, app/, components/, hooks/, constants/, lib/) can be read.",
+    "Source directories, docs/, scripts/, and canonical root documents such as JARVIS_ROADMAP.md and ROADMAP.md can be read.",
   parameters: {
     type: "object",
     properties: {
@@ -128,7 +136,7 @@ export const readSourceFileTool: AgentTool = {
       return { ok: false, content: "Access denied: self-edit tools are only available to the account owner.", label: "read_source_file: forbidden" };
     }
     const filePath = String(args.file_path ?? "").trim();
-    if (!isPathAllowed(filePath)) {
+    if (!isPathAllowedForInspection(filePath)) {
       return {
         ok: false,
         content: `Access denied: '${filePath}' is outside the allowed source directories.`,

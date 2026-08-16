@@ -66,6 +66,7 @@ const tests = [
   { file: "server/agent/__tests__/androidAppRuntime.assert.ts" },
   { file: "server/agent/__tests__/phoneRuntimeToolSurface.assert.ts" },
   { file: "server/agent/__tests__/phoneRuntimeNotificationsE2E.assert.ts" },
+  { file: "server/agent/__tests__/runtimeReliabilityPriorities.assert.ts" },
   { file: "server/agent/__tests__/postCoachRouteRegistry.assert.ts" },
   { file: "server/agent/__tests__/toolResolver.assert.ts" },
   { file: "server/agent/__tests__/webSearchFallback.assert.ts" },

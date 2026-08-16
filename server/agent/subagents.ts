@@ -331,7 +331,12 @@ export async function runSubAgent(opts: RunSubAgentOptions): Promise<SubAgentRes
         signal: opts.context.signal,
         approvalReceipt: opts.approvalReceipt,
       });
-      return { allowed: result.allowed, reason: result.reason, params: result.params };
+      return {
+        allowed: result.allowed,
+        reason: result.reason,
+        params: result.params,
+        approvalReceipt: result.approvalReceipt,
+      };
     },
   });
 

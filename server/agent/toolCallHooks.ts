@@ -20,7 +20,7 @@
 // ── Context ────────────────────────────────────────────────────────────────────
 
 import type { ApprovalReceipt } from "./approvalReceipt";
-import { approvalReceiptCoversToolCall } from "./approvalReceipt";
+import { approvalReceiptCoversToolCall, createApprovalReceipt } from "./approvalReceipt";
 import { withApprovalMarkerForTool } from "./approvalMarkers";
 
 export type ToolCallHookContext = {
@@ -78,12 +78,23 @@ export type ToolCallRunResult = {
   reason?: string;
   /** Rewritten params to use instead of the original (when allowed=true). */
   params?: Record<string, unknown>;
+  /** Trusted receipt produced by a server-owned approval gate. */
+  approvalReceipt?: ApprovalReceipt;
 };
 
 type ApprovalFlowResult = {
   allowed: boolean;
   gateId?: string;
+  approvalReceipt?: ApprovalReceipt;
 };
+
+function approvalOriginalText(toolName: string, params: Record<string, unknown>): string {
+  for (const key of ["task", "prompt", "description", "action", "cmd"]) {
+    const value = params[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return `Approved tool action: ${toolName}`;
+}
 
 // ── Registry ───────────────────────────────────────────────────────────────────
 
@@ -186,6 +197,7 @@ export class ToolCallHookRegistry {
           params: approvalResult.allowed
             ? withApprovalMarkerForTool(ctx.toolName, rewrittenParams, approvalResult.gateId)
             : undefined,
+          approvalReceipt: approvalResult.approvalReceipt,
         };
       }
 
@@ -216,7 +228,11 @@ async function runApprovalFlowWithOriginNotification(
       `[ToolCallHooks] approval receipt accepted: gate=${ctx.approvalReceipt?.gateId} tool=${ctx.toolName}`,
     );
     approval.onResolution?.("allow");
-    return { allowed: true, gateId: ctx.approvalReceipt?.gateId };
+    return {
+      allowed: true,
+      gateId: ctx.approvalReceipt?.gateId,
+      approvalReceipt: ctx.approvalReceipt,
+    };
   }
 
   const { requestApproval, awaitApproval } = await import("./agentApproval");
@@ -252,7 +268,17 @@ async function runApprovalFlowWithOriginNotification(
         detail: `gate=${gate.id} auto-approved`,
       });
       approval.onResolution?.("allow");
-      return { allowed: true, gateId: gate.id };
+      return {
+        allowed: true,
+        gateId: gate.id,
+        approvalReceipt: createApprovalReceipt({
+          gateId: gate.id,
+          userId,
+          toolName: ctx.toolName,
+          originalUserText: approvalOriginalText(ctx.toolName, ctx.params),
+          expiresAt: gate.expiresAt,
+        }),
+      };
     }
 
     try {
@@ -292,7 +318,19 @@ async function runApprovalFlowWithOriginNotification(
       });
     }
 
-    return { allowed: approved, gateId: approved ? gate.id : undefined };
+    return {
+      allowed: approved,
+      gateId: approved ? gate.id : undefined,
+      approvalReceipt: approved
+        ? createApprovalReceipt({
+            gateId: gate.id,
+            userId,
+            toolName: ctx.toolName,
+            originalUserText: approvalOriginalText(ctx.toolName, ctx.params),
+            expiresAt: gate.expiresAt,
+          })
+        : undefined,
+    };
   } catch (err) {
     console.error(`[ToolCallHooks] approval gate error for ${ctx.toolName}:`, err);
     approval.onResolution?.("deny");
