@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  buildDiagnosticConversationMessages,
   buildTurnDiagnosticBundle,
   diagnosticRecordHasFailure,
   formatDiagnosticBundleForClipboard,
   getActionableDiagnosticRecords,
   getDiagnosticRecordsForUser,
   isDiagnosticCopyRequest,
+  normalizeServerContextTrace,
   resolveDiagnosticCopyRequestTarget,
   resolveDiagnosticTarget,
   resolveDiagnosticTargetFromText,
@@ -99,6 +101,92 @@ function testSuccessfulTurnCopyBundle() {
   assert.match(copied, /Phone Gemma/);
   assert.equal(bundle.toolResults.length, 0);
   console.log("OK: successful turn copy includes model selection and context estimate");
+}
+
+function testTruthfulAppContextDiagnostics() {
+  const submitted = buildDiagnosticConversationMessages([
+    { id: "user-1", role: "user", content: "What did I say?" },
+    { id: "tool-protocol", role: "assistant", content: null },
+    { id: "assistant-1", role: "assistant", content: "You asked about context." },
+  ]);
+  assert.deepEqual(submitted.map((message) => message.id), ["user-1", "assistant-1"]);
+  assert.equal(submitted.some((message) => message.content.trim().length === 0), false);
+
+  const trace = normalizeServerContextTrace({
+    type: "context_trace",
+    clientMessageCount: 2,
+    recoveredSessionMessageCount: 18,
+    providerMessageCount: 20,
+    summarizedMessageCount: 4,
+    omittedMessageCount: 0,
+    offeredToolNames: ["memory_search", "memory_search", "web_search"],
+  });
+  assert.ok(trace);
+  assert.deepEqual(trace.offeredToolNames, ["memory_search", "web_search"]);
+
+  for (const source of ["in_app", "voice"] as const) {
+    const bundle = buildTurnDiagnosticBundle({
+      turnId: `${source}-truthful-context`,
+      source,
+      channel: source === "voice" ? "voice" : "appchat",
+      contextPacket: { appSubmittedMessages: submitted, serverContextTrace: trace },
+      offeredTools: trace.offeredToolNames,
+      selectedTools: ["memory_search"],
+      executedTools: ["memory_search"],
+      normalizedToolCalls: [{ tool: "memory_search", result: "success" }],
+      toolResults: [{ tool: "memory_search", result: "success" }],
+      timing: { startedAt: "2026-08-16T00:00:00.000Z" },
+      recentTurnHistory: submitted,
+      voiceTrace: source === "voice" ? { finalTranscript: "What did I say?", stateTransitions: [] } : undefined,
+    });
+    assert.deepEqual(bundle.offeredTools, ["memory_search", "web_search"]);
+    assert.deepEqual(bundle.selectedTools, ["memory_search"]);
+    assert.deepEqual(bundle.executedTools, ["memory_search"]);
+    assert.match(formatDiagnosticBundleForClipboard(bundle), /appSubmittedMessages/);
+  }
+
+  assert.equal(normalizeServerContextTrace(undefined), null);
+  const legacyServerBundle = buildTurnDiagnosticBundle({
+    turnId: "no-context-trace",
+    source: "in_app",
+    contextPacket: { appSubmittedMessages: submitted, serverContextTrace: null },
+    timing: { startedAt: "2026-08-16T00:00:00.000Z" },
+  });
+  assert.deepEqual(legacyServerBundle.offeredTools, []);
+  assert.deepEqual(legacyServerBundle.selectedTools, []);
+  assert.deepEqual(legacyServerBundle.executedTools, []);
+  console.log("OK: app and voice diagnostics distinguish submitted/provider context and tool stages");
+}
+
+function testAppContextTraceWiringContract() {
+  const insights = fs.readFileSync(path.join(process.cwd(), "app/(tabs)/insights.tsx"), "utf8");
+  assert.match(insights, /buildDiagnosticConversationMessages\(contextMessages\)\.reverse\(\)/);
+  assert.match(insights, /parsed\.type === 'context_trace'/);
+  assert.match(insights, /serverContextTrace = normalizeServerContextTrace\(parsed\)/);
+  assert.match(insights, /appSubmittedMessages: apiMessages/);
+  assert.match(insights, /offeredTools: serverContextTrace\?\.offeredToolNames \?\? \[\]/);
+  assert.match(insights, /originChannel: origin\.source === 'voice' \? 'voice' : 'appchat'/);
+  assert.match(
+    insights,
+    /if \(reply\.intent === 'restore'\)[\s\S]*?acceptedVoiceRestore = voiceRestore;[\s\S]*?const normalizedVoiceText/,
+    "accepted voice restore continues into the session-hydrated coach request",
+  );
+  assert.match(
+    insights,
+    /const retainAcceptedVoiceRestoreForRetry[\s\S]*?pendingVoiceRestore: message\.id === retryTargetId \? restore : undefined/,
+    "failed or aborted coach turns keep voice restoration retryable",
+  );
+  assert.match(
+    insights,
+    /if \(gotConfirmRequired\)[\s\S]*?clearAcceptedVoiceRestore\(\)[\s\S]*?if \(streamErrorMessage\)[\s\S]*?retainAcceptedVoiceRestoreForRetry\(\)/,
+    "voice restore markers clear only after a successful coach turn",
+  );
+  assert.doesNotMatch(
+    insights,
+    /reply\.intent === 'restore'[\s\S]{0,300}I restored the interrupted voice context/,
+    "accepted voice restore is not replaced with a local daemon-state recap",
+  );
+  console.log("OK: in-app and voice requests share stable-ID context trace diagnostics wiring");
 }
 
 function testTelegramTargetResolution() {
@@ -277,6 +365,8 @@ function testTelegramVoiceDiagnosticsCaptureMessageIdContract() {
 
 testFailedActionCopyBundle();
 testSuccessfulTurnCopyBundle();
+testTruthfulAppContextDiagnostics();
+testAppContextTraceWiringContract();
 testTelegramTargetResolution();
 testVoiceClarificationAndNoAudioBytes();
 testAndroidPlainTextClipboardContract();

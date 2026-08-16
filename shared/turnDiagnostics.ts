@@ -21,6 +21,22 @@ export interface DiagnosticVoiceTrace {
   stateTransitions: Array<{ state: string; at: string; detail?: string }>;
 }
 
+export interface DiagnosticConversationMessage {
+  id: string;
+  role: string;
+  content: string;
+}
+
+/** Server-authored accounting for the exact context/tool surface used for a turn. */
+export interface ServerContextTrace {
+  clientMessageCount: number;
+  recoveredSessionMessageCount: number;
+  providerMessageCount: number;
+  summarizedMessageCount: number;
+  omittedMessageCount: number;
+  offeredToolNames: string[];
+}
+
 export interface TurnDiagnosticBundle {
   schemaVersion: 1;
   turnId: string;
@@ -40,6 +56,8 @@ export interface TurnDiagnosticBundle {
     maxContextTokens?: number | null;
   };
   offeredTools: string[];
+  selectedTools: string[];
+  executedTools: string[];
   rawToolCalls: unknown[];
   normalizedToolCalls: unknown[];
   toolResults: unknown[];
@@ -99,6 +117,8 @@ export function buildTurnDiagnosticBundle(input: {
   runtimeIntent?: string | null;
   contextPacket: unknown;
   offeredTools?: string[];
+  selectedTools?: string[];
+  executedTools?: string[];
   rawToolCalls?: unknown[];
   normalizedToolCalls?: unknown[];
   toolResults?: unknown[];
@@ -128,6 +148,8 @@ export function buildTurnDiagnosticBundle(input: {
       maxContextTokens: input.maxContextTokens ?? null,
     },
     offeredTools: input.offeredTools ?? [],
+    selectedTools: input.selectedTools ?? [],
+    executedTools: input.executedTools ?? [],
     rawToolCalls: input.rawToolCalls ?? [],
     normalizedToolCalls: input.normalizedToolCalls ?? [],
     toolResults: input.toolResults ?? [],
@@ -136,6 +158,48 @@ export function buildTurnDiagnosticBundle(input: {
     androidState: input.androidState ?? null,
     recentTurnHistory: input.recentTurnHistory ?? [],
     voiceTrace: input.voiceTrace,
+  };
+}
+
+/**
+ * Preserves stable client message IDs while excluding provider protocol entries
+ * (for example an assistant tool-call message with `content: null`) from the
+ * human conversation transcript in copied diagnostics.
+ */
+export function buildDiagnosticConversationMessages(
+  messages: Array<{ id?: unknown; role?: unknown; content?: unknown }>,
+): DiagnosticConversationMessage[] {
+  return messages.flatMap((message, index) => {
+    if (typeof message.content !== "string" || message.content.trim().length === 0) return [];
+    return [{
+      id: typeof message.id === "string" && message.id.length > 0
+        ? message.id
+        : `legacy-${index}`,
+      role: typeof message.role === "string" ? message.role : "unknown",
+      content: message.content,
+    }];
+  });
+}
+
+export function normalizeServerContextTrace(value: unknown): ServerContextTrace | null {
+  if (!value || typeof value !== "object") return null;
+  const trace = value as Record<string, unknown>;
+  const countFields = [
+    "clientMessageCount",
+    "recoveredSessionMessageCount",
+    "providerMessageCount",
+    "summarizedMessageCount",
+    "omittedMessageCount",
+  ] as const;
+  if (countFields.some((field) => !Number.isInteger(trace[field]) || Number(trace[field]) < 0)) return null;
+  if (!Array.isArray(trace.offeredToolNames)) return null;
+  return {
+    clientMessageCount: Number(trace.clientMessageCount),
+    recoveredSessionMessageCount: Number(trace.recoveredSessionMessageCount),
+    providerMessageCount: Number(trace.providerMessageCount),
+    summarizedMessageCount: Number(trace.summarizedMessageCount),
+    omittedMessageCount: Number(trace.omittedMessageCount),
+    offeredToolNames: Array.from(new Set(trace.offeredToolNames.filter((name): name is string => typeof name === "string"))),
   };
 }
 

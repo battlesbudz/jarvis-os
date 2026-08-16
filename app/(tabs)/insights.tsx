@@ -81,16 +81,19 @@ import {
   stopAndroidNativeSpeechRecognition,
 } from '@/lib/android-daemon-native';
 import {
+  buildDiagnosticConversationMessages,
   buildTurnDiagnosticBundle,
   getActionableDiagnosticRecords,
   inferRuntimeIntent,
   isDiagnosticCopyRequest,
+  normalizeServerContextTrace,
   resolveDiagnosticCopyRequestTarget,
   resolveDiagnosticTargetFromText,
   resolveVoiceDiagnosticFollowupTarget,
   shouldClarifyVoiceDiagnosticTarget,
   type DiagnosticTurnRecord,
   type DiagnosticVoiceTrace,
+  type ServerContextTrace,
   type TurnDiagnosticBundle,
 } from '@shared/turnDiagnostics';
 import {
@@ -2759,6 +2762,33 @@ export default function InsightsScreen() {
     const diagnosticModelErrors: unknown[] = [];
     const diagnosticRawToolCalls: unknown[] = [];
     const diagnosticWorkingEvents: { message: string; at: string }[] = [];
+    let acceptedVoiceRestore: PendingVoiceRestore | null = null;
+    const clearAcceptedVoiceRestore = () => {
+      if (!acceptedVoiceRestore) return;
+      setMessages(prev => {
+        const updated = prev.map((message) => message.pendingVoiceRestore
+          ? { ...message, pendingVoiceRestore: undefined }
+          : message);
+        persistChatHistory(updated);
+        return updated;
+      });
+      acceptedVoiceRestore = null;
+    };
+    const retainAcceptedVoiceRestoreForRetry = () => {
+      if (!acceptedVoiceRestore) return;
+      const restore = acceptedVoiceRestore;
+      setMessages(prev => {
+        const retryTargetId = prev.some((message) => message.id === assistantId)
+          ? assistantId
+          : prev[0]?.id;
+        const updated = prev.map((message) => ({
+          ...message,
+          pendingVoiceRestore: message.id === retryTargetId ? restore : undefined,
+        }));
+        persistChatHistory(updated);
+        return updated;
+      });
+    };
     hasScrolledRef.current = false;
 
     const pendingVoiceConfirmMessage = origin.source === 'voice'
@@ -2901,67 +2931,73 @@ export default function InsightsScreen() {
       }
       const reply = normalizeVoiceRestoreReply(userMsg.content, { allowGenericReply: pendingVoiceRestoreIsLatest });
       if (pendingVoiceRestoreIsFresh && reply.intent !== 'unrelated') {
-        const shouldClearRestore = reply.intent === 'restore' || reply.intent === 'dismiss';
-        const assistantText = reply.intent === 'restore'
-          ? `${voiceRestore.recap || 'I restored the interrupted voice context.'}\nThe mic is still paused; tap Talk Mode when you want me listening again.`
-          : reply.intent === 'dismiss'
+        if (reply.intent === 'restore') {
+          // The server owns the authoritative sdkSessionId history. Keep the
+          // one-shot marker until /api/coach/chat succeeds so a reply
+          // such as "yes, restore it and ask the next question" is answered
+          // with recovered context and transient failures remain retryable.
+          acceptedVoiceRestore = voiceRestore;
+        } else {
+          const shouldClearRestore = reply.intent === 'dismiss';
+          const assistantText = shouldClearRestore
             ? "Okay, I won't restore that interrupted voice context."
             : 'Do you want me to restore the interrupted voice context or start fresh?';
-        const finishedAt = new Date();
-        const assistantMsg: ChatMessage = {
-          id: assistantId,
-          role: 'assistant',
-          content: assistantText,
-          ...(shouldClearRestore ? {} : { pendingVoiceRestore: voiceRestore }),
-          diagnostics: buildTurnDiagnosticBundle({
-            turnId: assistantId,
-            source: origin.source === 'voice' ? 'voice' : 'in_app',
-            channel: origin.source === 'voice' ? 'voice' : 'app',
-            requestText: userMsg.content,
-            responseText: assistantText,
-            selected: {
-              mode: coachingModeRef.current,
-              model: 'local-runtime',
-              profile: 'voice-restore',
-            },
-            runtimeIntent: 'voice_restore',
-            contextPacket: {
-              pendingVoiceRestore: voiceRestore,
-              voiceRestoreReply: reply,
-              cleared: shouldClearRestore,
-            },
-            timing: {
-              startedAt: diagnosticStartedAt.toISOString(),
-              finishedAt: finishedAt.toISOString(),
-              durationMs: finishedAt.getTime() - diagnosticStartedAt.getTime(),
-            },
-            androidState: {
-              micAutoResumed: false,
-            },
-            recentTurnHistory: messagesRef.current.slice(0, 8).map((message) => ({
-              role: message.role,
-              content: message.content,
-            })),
-            voiceTrace: origin.source === 'voice' ? origin.voiceTrace : undefined,
-          }),
-        };
-        setMessages(prev => {
-          const cleared = shouldClearRestore
-            ? prev.map((message) => message.pendingVoiceRestore
-              ? { ...message, pendingVoiceRestore: undefined }
-              : message)
-            : prev;
-          const updated = [assistantMsg, userMsg, ...cleared];
-          persistChatHistory(updated);
-          return updated;
-        });
-        setInput('');
-        setIntegrationError(null);
-        setConfirmClear(false);
-        if (talkModeRef.current && assistantText.trim()) {
-          speakTextRef.current(assistantText, assistantId);
+          const finishedAt = new Date();
+          const assistantMsg: ChatMessage = {
+            id: assistantId,
+            role: 'assistant',
+            content: assistantText,
+            ...(shouldClearRestore ? {} : { pendingVoiceRestore: voiceRestore }),
+            diagnostics: buildTurnDiagnosticBundle({
+              turnId: assistantId,
+              source: origin.source === 'voice' ? 'voice' : 'in_app',
+              channel: origin.source === 'voice' ? 'voice' : 'app',
+              requestText: userMsg.content,
+              responseText: assistantText,
+              selected: {
+                mode: coachingModeRef.current,
+                model: 'local-runtime',
+                profile: 'voice-restore',
+              },
+              runtimeIntent: 'voice_restore',
+              contextPacket: {
+                pendingVoiceRestore: voiceRestore,
+                voiceRestoreReply: reply,
+                cleared: shouldClearRestore,
+              },
+              timing: {
+                startedAt: diagnosticStartedAt.toISOString(),
+                finishedAt: finishedAt.toISOString(),
+                durationMs: finishedAt.getTime() - diagnosticStartedAt.getTime(),
+              },
+              androidState: {
+                micAutoResumed: false,
+              },
+              recentTurnHistory: messagesRef.current.slice(0, 8).map((message) => ({
+                role: message.role,
+                content: message.content,
+              })),
+              voiceTrace: origin.source === 'voice' ? origin.voiceTrace : undefined,
+            }),
+          };
+          setMessages(prev => {
+            const cleared = shouldClearRestore
+              ? prev.map((message) => message.pendingVoiceRestore
+                ? { ...message, pendingVoiceRestore: undefined }
+                : message)
+              : prev;
+            const updated = [assistantMsg, userMsg, ...cleared];
+            persistChatHistory(updated);
+            return updated;
+          });
+          setInput('');
+          setIntegrationError(null);
+          setConfirmClear(false);
+          if (talkModeRef.current && assistantText.trim()) {
+            speakTextRef.current(assistantText, assistantId);
+          }
+          return;
         }
-        return;
       }
     }
 
@@ -3095,7 +3131,9 @@ export default function InsightsScreen() {
     chatRunIdRef.current = null;
 
     const contextMessages = [userMsg, ...messagesRef.current].slice(0, CONTEXT_WINDOW);
-    const apiMessages = contextMessages.map(m => ({ role: m.role, content: m.content })).reverse();
+    const apiMessages = buildDiagnosticConversationMessages(contextMessages).reverse();
+    let serverContextTrace: ServerContextTrace | null = null;
+    let selectedToolNames: string[] = [];
     const buildDiagnostics = (params: {
       responseText?: string;
       executedActions?: ExecutedAction[];
@@ -3116,7 +3154,8 @@ export default function InsightsScreen() {
         },
         runtimeIntent: inferRuntimeIntent(userMsg.content),
         contextPacket: {
-          messages: apiMessages,
+          appSubmittedMessages: apiMessages,
+          serverContextTrace,
           sdkSessionId: sdkSessionIdRef.current,
           goals: goalsRef.current,
           stats: statsRef.current,
@@ -3124,7 +3163,9 @@ export default function InsightsScreen() {
           coachingMode: coachingModeRef.current,
           streamEvents: diagnosticStreamEvents.slice(),
         },
-        offeredTools: Array.from(new Set((params.executedActions ?? []).map((action) => action.tool))),
+        offeredTools: serverContextTrace?.offeredToolNames ?? [],
+        selectedTools: selectedToolNames.slice(),
+        executedTools: Array.from(new Set((params.executedActions ?? []).map((action) => action.tool))),
         rawToolCalls: diagnosticRawToolCalls.slice(),
         normalizedToolCalls: (params.executedActions ?? []).map((action) => ({
           tool: action.tool,
@@ -3145,10 +3186,7 @@ export default function InsightsScreen() {
             ? diagnosticWorkingEvents[diagnosticWorkingEvents.length - 1].message
             : null,
         },
-        recentTurnHistory: contextMessages.slice(0, 8).map((message) => ({
-          role: message.role,
-          content: message.content,
-        })),
+        recentTurnHistory: buildDiagnosticConversationMessages(contextMessages.slice(0, 8)),
         voiceTrace: origin.source === 'voice' ? origin.voiceTrace : undefined,
       });
     };
@@ -3177,6 +3215,7 @@ export default function InsightsScreen() {
           commitments: commitmentsRef.current,
           coachingMode: coachingModeRef.current,
           sdkSessionId: sdkSessionIdRef.current || undefined,
+          originChannel: origin.source === 'voice' ? 'voice' : 'appchat',
         }),
         signal: fetchAbort.signal,
       });
@@ -3239,6 +3278,8 @@ export default function InsightsScreen() {
               if (parsed.type === 'session_init' && parsed.sdkSessionId) {
                 sdkSessionIdRef.current = parsed.sdkSessionId;
                 saveCoachSessionId(parsed.sdkSessionId).catch(() => {});
+              } else if (parsed.type === 'context_trace') {
+                serverContextTrace = normalizeServerContextTrace(parsed);
               } else if (parsed.type === 'aborted') {
                 streamAborted = true;
                 break outer;
@@ -3268,6 +3309,9 @@ export default function InsightsScreen() {
                 break outer;
               } else if (parsed.type === 'confirm_required') {
                 gotConfirmRequired = true;
+                if (typeof parsed.tool === 'string') {
+                  selectedToolNames = Array.from(new Set([...selectedToolNames, parsed.tool]));
+                }
                 const pendingConfirm: PendingConfirm = {
                   token: parsed.token,
                   tool: parsed.tool,
@@ -3340,6 +3384,7 @@ export default function InsightsScreen() {
                   ...executedActions.filter((action) => action.tool !== 'queue_background_job' || action.label !== jobAction.label),
                   jobAction,
                 ];
+                selectedToolNames = Array.from(new Set([...selectedToolNames, jobAction.tool]));
                 queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
                 setMessages(prev => {
                   const updated = [...prev];
@@ -3356,6 +3401,10 @@ export default function InsightsScreen() {
                 const nextActions = parsed.actions ?? parsed.executedActions ?? [];
                 diagnosticRawToolCalls.push({ event: 'actions', actions: nextActions, attachments: parsed.attachments });
                 executedActions = nextActions;
+                selectedToolNames = Array.from(new Set([
+                  ...selectedToolNames,
+                  ...nextActions.map((action: ExecutedAction) => action.tool),
+                ]));
                 const parsedAtts = Array.isArray(parsed.attachments) ? parsed.attachments as import('@/lib/storage').McpAttachment[] : undefined;
                 setMessages(prev => {
                   const updated = [...prev];
@@ -3420,14 +3469,17 @@ export default function InsightsScreen() {
             return prev;
           });
         }
+        retainAcceptedVoiceRestoreForRetry();
         return;
       }
 
       if (gotConfirmRequired) {
+        clearAcceptedVoiceRestore();
         return;
       }
 
       if (streamErrorMessage) {
+        retainAcceptedVoiceRestoreForRetry();
         return;
       }
 
@@ -3453,6 +3505,11 @@ export default function InsightsScreen() {
         persistChatHistory(updated);
         return updated;
       });
+      if (fullContent.trim().length > 0 || finalActions.length > 0) {
+        clearAcceptedVoiceRestore();
+      } else {
+        retainAcceptedVoiceRestoreForRetry();
+      }
 
       // Auto-speak the reply in Talk Mode once streaming finishes.
       if (talkModeRef.current && outsideAppVoiceStateRef.current !== 'paused' && finalContent.trim()) {
@@ -3542,6 +3599,7 @@ export default function InsightsScreen() {
           }
           return prev;
         });
+        retainAcceptedVoiceRestoreForRetry();
         return;
       }
       // If Jarvis already sent partial content (e.g. a multi-step phone task that completed
@@ -3586,6 +3644,7 @@ export default function InsightsScreen() {
         persistChatHistory(updated);
         return updated;
       });
+      retainAcceptedVoiceRestoreForRetry();
     }
   }, [copyDiagnosticBundleToClipboard, getDiagnosticRecords, isStreaming, openMcpSheet]);
 
@@ -3616,7 +3675,11 @@ export default function InsightsScreen() {
           content: candidate.content,
         })),
       },
-      offeredTools: message.executedActions?.map((action) => action.tool) ?? [],
+      // Older persisted messages did not record the server's offered tool set.
+      // Keep that unknown instead of relabeling executed actions as offered.
+      offeredTools: [],
+      selectedTools: message.executedActions?.map((action) => action.tool) ?? [],
+      executedTools: message.executedActions?.map((action) => action.tool) ?? [],
       normalizedToolCalls: message.executedActions ?? [],
       toolResults: message.executedActions ?? [],
       modelErrors: message.content.trim().toLowerCase().startsWith('error:') ? [{ message: message.content }] : [],
