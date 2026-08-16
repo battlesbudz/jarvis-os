@@ -148,6 +148,12 @@ assert.match(
 
 assert.match(
   insights,
+  /recognizeAndroidSpeechOnce\(\{[\s\S]*?locale: 'en-US'/,
+  "Android Talk Mode should explicitly use its supported English locale",
+);
+
+assert.match(
+  insights,
   /addLocalVoiceTranscriptSegment\(continuationState, result\.text,[\s\S]*?submitVoiceTranscript\(continuationState\.transcript\)/,
   "Android Talk Mode should stitch recognition segments before submitting one canonical transcript",
 );
