@@ -94,6 +94,8 @@ import {
   type TurnDiagnosticBundle,
 } from '@shared/turnDiagnostics';
 import {
+  addLocalVoiceTranscriptSegment,
+  createLocalVoiceContinuationState,
   LOCAL_VOICE_SILENCE_POLL_MS,
   createLocalVoiceSilenceState,
   updateLocalVoiceSilenceState,
@@ -994,6 +996,8 @@ export default function InsightsScreen() {
   const outsideAppVoiceStateRef = useRef<string | null>(null);
   const isStreamingRef = useRef(false);
   const nativeSpeechActiveRef = useRef(false);
+  const nativeSpeechManualFinishRef = useRef(false);
+  const nativeSpeechCancelledRef = useRef(false);
   const startRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const stopRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const stopRecordingSilentlyRef = useRef<() => Promise<void>>(() => Promise.resolve());
@@ -1138,6 +1142,7 @@ export default function InsightsScreen() {
         }
       }
       if (Platform.OS === 'android' && nativeSpeechActiveRef.current) {
+        nativeSpeechCancelledRef.current = true;
         cancelAndroidNativeSpeechRecognition().catch(() => {});
         nativeSpeechActiveRef.current = false;
       }
@@ -1182,6 +1187,7 @@ export default function InsightsScreen() {
     }
 
     if (Platform.OS === 'android' && nativeSpeechActiveRef.current) {
+      nativeSpeechCancelledRef.current = true;
       nativeSpeechActiveRef.current = false;
       await cancelAndroidNativeSpeechRecognition().catch(() => {});
       setIsTranscribing(false);
@@ -1362,19 +1368,91 @@ export default function InsightsScreen() {
         }
 
         nativeSpeechActiveRef.current = true;
+        nativeSpeechManualFinishRef.current = false;
+        nativeSpeechCancelledRef.current = false;
         setIsRecording(true);
         try {
-          const result = await recognizeAndroidSpeechOnce({
-            interimResults: true,
-            timeoutMs: 60_000,
-          });
+          let continuationState = createLocalVoiceContinuationState();
+          let listeningForContinuation = false;
+
+          while (
+            !nativeSpeechCancelledRef.current &&
+            !(nativeSpeechManualFinishRef.current && continuationState.transcript)
+          ) {
+            let continuationTimer: ReturnType<typeof setTimeout> | null = null;
+            let continuationSpeechDetected = false;
+            const clearContinuationTimer = () => {
+              if (!continuationTimer) return;
+              clearTimeout(continuationTimer);
+              continuationTimer = null;
+            };
+            const armContinuationTimer = (delayMs: number) => {
+              clearContinuationTimer();
+              continuationTimer = setTimeout(() => {
+                if (continuationSpeechDetected || nativeSpeechManualFinishRef.current) return;
+                cancelAndroidNativeSpeechRecognition().catch(() => {});
+              }, delayMs);
+            };
+
+            if (listeningForContinuation) {
+              // Include a small startup allowance; the ready event resets this to the exact window.
+              armContinuationTimer(continuationState.continuationWindowMs + 1_000);
+            }
+
+            try {
+              const result = await recognizeAndroidSpeechOnce({
+                interimResults: true,
+                timeoutMs: 60_000,
+                onEvent: (event) => {
+                  if (!listeningForContinuation) return;
+                  if (event.type === 'ready' && nativeSpeechManualFinishRef.current) {
+                    stopAndroidNativeSpeechRecognition().catch(() => {});
+                    return;
+                  }
+                  if (event.type === 'ready' && !continuationSpeechDetected) {
+                    armContinuationTimer(continuationState.continuationWindowMs);
+                  }
+                  if (event.type === 'speech_start' || event.type === 'partial') {
+                    continuationSpeechDetected = true;
+                    clearContinuationTimer();
+                  }
+                },
+              });
+              clearContinuationTimer();
+              if (!result.text.trim() && continuationState.transcript) {
+                break;
+              }
+              continuationState = addLocalVoiceTranscriptSegment(continuationState, result.text, {
+                manualFinish: nativeSpeechManualFinishRef.current,
+              });
+            } catch (error) {
+              clearContinuationTimer();
+              const message = error instanceof Error ? error.message : String(error);
+              const endedEmptyContinuation = continuationState.transcript.length > 0 && (
+                /cancelled|no speech|did not hear|no.match|speech.timeout|timed out/i.test(message)
+              );
+              if (endedEmptyContinuation) break;
+              throw error;
+            }
+
+            if (
+              nativeSpeechManualFinishRef.current ||
+              !continuationState.shouldListenForContinuation
+            ) {
+              break;
+            }
+            listeningForContinuation = true;
+          }
+
           if (
             startedForTalkMode &&
             (talkModeStartSeqRef.current !== talkModeStartSeq || outsideAppVoiceStateRef.current === 'paused')
           ) {
             return;
           }
-          submitVoiceTranscript(result.text);
+          if (!nativeSpeechCancelledRef.current) {
+            submitVoiceTranscript(continuationState.transcript);
+          }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (/cancelled/i.test(message)) return;
@@ -1479,6 +1557,7 @@ export default function InsightsScreen() {
       transcribeAndSend(base64);
     } else if (Platform.OS === 'android' && nativeSpeechActiveRef.current) {
       setIsTranscribing(true);
+      nativeSpeechManualFinishRef.current = true;
       await stopAndroidNativeSpeechRecognition().catch((error) => {
         console.error('Failed to stop Android speech recognition:', error);
         nativeSpeechActiveRef.current = false;
