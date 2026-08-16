@@ -62,10 +62,6 @@ export function isYoutubeServerResearchRequest(text: string): boolean {
 export function extractYoutubePhoneSearchQuery(text: string): string | null {
   if (!isYoutubePhoneActionRequest(text) || isYoutubeServerResearchRequest(text)) return null;
   if (/\b(?:don't|do not|dont|never)\b[\s\S]{0,48}\b(?:search|find|look\s+up|look\s+for)\b/i.test(text)) return null;
-  if (new RegExp(
-    String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b[\s,;:—-]*(?:play|open|tap|press|select|choose|click|watch|return|go|scroll|swipe)\b`,
-    "i",
-  ).test(text)) return null;
 
   const youtube = String.raw`(?:you\s*tube|youtube|yt)`;
   const verb = String.raw`(?:search|find|look\s+up|look\s+for)`;
@@ -81,7 +77,14 @@ export function extractYoutubePhoneSearchQuery(text: string): string | null {
       ?.replace(/\s+(?:please|for me)\s*$/i, "")
       .replace(/^["']|["']$/g, "")
       .trim();
-    if (query) return query;
+    if (query) {
+      // A connector inside the captured query may introduce any follow-up
+      // phone action. Decline deterministic extraction rather than trying to
+      // maintain an incomplete list of action verbs; the normal multi-tool
+      // loop can still interpret legitimate search phrases containing one.
+      if (new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i").test(query)) return null;
+      return query;
+    }
   }
   return null;
 }
