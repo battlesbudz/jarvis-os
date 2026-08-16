@@ -71,6 +71,7 @@ export type AndroidNativeSpeechRecognitionOptions = {
   locale?: string;
   interimResults?: boolean;
   timeoutMs?: number;
+  onEvent?: (event: AndroidNativeSpeechRecognitionEvent) => void;
 };
 
 export type AndroidNativeSpeechRecognitionResult = {
@@ -261,7 +262,8 @@ export async function recognizeAndroidSpeechOnce(
     throw new Error("Android on-device speech recognition is only available in the Android APK.");
   }
 
-  const status = await getAndroidNativeSpeechStatus(options.locale ?? "");
+  const { onEvent, ...nativeOptions } = options;
+  const status = await getAndroidNativeSpeechStatus(nativeOptions.locale ?? "");
   if (status && !status.available) {
     throw new Error(status.message || "Android on-device speech recognition is not available.");
   }
@@ -281,6 +283,11 @@ export async function recognizeAndroidSpeechOnce(
     };
 
     subscription = addAndroidNativeSpeechRecognitionListener((event) => {
+      try {
+        onEvent?.(event);
+      } catch (error) {
+        console.warn("[android-native-speech] event observer failed:", error);
+      }
       const eventType = String(event?.type ?? "");
       if (eventType === "final") {
         const text = String(event.text ?? "").trim();
@@ -303,7 +310,7 @@ export async function recognizeAndroidSpeechOnce(
 
     startAndroidNativeSpeechRecognition({
       interimResults: true,
-      ...options,
+      ...nativeOptions,
       timeoutMs,
     }).catch((error) => {
       finish(() => reject(error instanceof Error ? error : new Error(String(error))));

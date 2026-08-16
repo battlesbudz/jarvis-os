@@ -140,4 +140,28 @@ assert.match(
   "Native Talk Mode should skip missing metering samples instead of treating them as silence",
 );
 
+assert.match(
+  insights,
+  /createLocalVoiceContinuationState\(\)[\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?onEvent:[\s\S]*?event\.type === 'speech_start' \|\| event\.type === 'partial'/,
+  "Android Talk Mode should reopen the recognizer and keep it open when continuation speech begins",
+);
+
+assert.match(
+  insights,
+  /recognizeAndroidSpeechOnce\(\{[\s\S]*?locale: 'en-US'/,
+  "Android Talk Mode should explicitly use its supported English locale",
+);
+
+assert.match(
+  insights,
+  /addLocalVoiceTranscriptSegment\(continuationState, result\.text,[\s\S]*?submitVoiceTranscript\(continuationState\.transcript\)/,
+  "Android Talk Mode should stitch recognition segments before submitting one canonical transcript",
+);
+
+assert.match(
+  insights,
+  /nativeSpeechManualFinishRef\.current = true;[\s\S]*?stopAndroidNativeSpeechRecognition\(\)/,
+  "Manual Android mic stop should finish the current transcript without opening another continuation window",
+);
+
 console.log("OK: in-app local voice loop wiring keeps chat, TTS, cleanup, and interrupt behavior aligned");
