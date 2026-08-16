@@ -10,7 +10,7 @@ const SERVER_YOUTUBE_TOOL_NAMES = new Set([
   "get_youtube_transcript",
 ]);
 const PHONE_COMPOUND_CONNECTOR_PATTERN = String.raw`(?:and\s+then|then|after(?:wards|\s+that)?|also|and)`;
-const PHONE_FOLLOW_UP_ACTION_PATTERN = String.raw`(?:open|launch|start|play|watch|tap|click|press|swipe|scroll|type|enter|select|share|send|close|pause|subscribe|like|save|download|call|text|message|search|find|look\s+up|look\s+for|back|home|recents|screenshot|screen\s+shot|screen\s+capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+to)`;
+const PHONE_FOLLOW_UP_ACTION_PATTERN = String.raw`(?:open|launch|start|play|watch|tap|click|press|swipe|scroll|type|enter|select|share|send|close|pause|subscribe|like|save|download|call|text|message|search|find|look\s+up|look\s+for|back|home|recents|screenshot|screen\s+shot|screen\s+capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+to|turn\s+(?:the\s+)?volume|raise\s+(?:the\s+)?volume|lower\s+(?:the\s+)?volume|volume\s+(?:up|down))`;
 
 export function isAndroidPhoneRuntimeToolName(name: string): boolean {
   return ANDROID_PHONE_RUNTIME_TOOL_NAME_SET.has(name);

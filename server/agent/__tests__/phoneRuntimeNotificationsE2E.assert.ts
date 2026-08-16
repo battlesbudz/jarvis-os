@@ -88,6 +88,8 @@ async function main() {
     "Open YouTube and search for cats: play the first video",
     "Open YouTube and search for cats. Now press the first result.",
     "Open YouTube and search for cats. Next, please scroll down.",
+    "Open YouTube and search for cats. Turn the volume down.",
+    "Open YouTube and search for cats; raise the volume.",
   ]) {
     assert.equal(
       deterministicPhoneRuntimeToolCallFromRequest(request, phoneTools, connectedPhoneRuntime),
