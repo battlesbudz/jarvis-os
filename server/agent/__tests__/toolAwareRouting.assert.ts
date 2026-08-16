@@ -31,6 +31,25 @@ function assertRoute(
   }
 }
 
+{
+  const exactDiagnostic = "So can you diagnose with the issue is that makes it so that you can't reliably see the entire context history of every message that I sent";
+  const plan = classifyToolAwareRoute(exactDiagnostic);
+  assert(!plan.shouldPreferTool, "conversation diagnostic: stays on conversation route");
+  assert(!plan.intents.includes("email"), "conversation diagnostic: is not classified as email");
+  assert(!plan.priorityToolNames.includes("connected_accounts_list"), "conversation diagnostic: does not offer connected accounts");
+}
+{
+  const plan = classifyToolAwareRoute("Send my previous message to Bob");
+  assert(plan.shouldPreferTool, "mixed conversation/external request: preserves external action route");
+  assert(plan.intents.includes("email"), "mixed conversation/external request: detects communication intent");
+  assert(plan.priorityToolNames.includes("connected_accounts_list"), "mixed conversation/external request: offers connected accounts");
+}
+{
+  const plan = classifyToolAwareRoute("Read my unread messages");
+  assert(plan.shouldPreferTool, "connected message read: preserves connected-account route");
+  assert(plan.intents.includes("email"), "connected message read: detects email intent");
+}
+
 assertRoute(
   "what's the weather in Philadelphia tomorrow?",
   "weather",

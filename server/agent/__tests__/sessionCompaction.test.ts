@@ -118,8 +118,26 @@ function testLoadedSessionSummariesAreCapped(): void {
   ok(formatted.length <= 520, "caps loaded summary prompt size");
 }
 
+function testDefaultCompactionKeepsTwelveRecentUserTurns(): void {
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [msg("system", "You are Jarvis.")];
+  for (let index = 0; index < 13; index++) {
+    messages.push(msg("user", `Question ${index}`), msg("assistant", `Answer ${index}`));
+  }
+  const compacted = compactSessionMessages(messages);
+  ok(compacted.compacted, "default compaction runs for a long session");
+  ok(
+    compacted.messages.some((message) => message.role === "user" && message.content === "Question 1"),
+    "default compaction retains twelve recent raw user turns",
+  );
+  ok(
+    !compacted.messages.some((message) => message.role === "user" && message.content === "Question 0"),
+    "default compaction summarizes turns older than the twelve-turn raw window",
+  );
+}
+
 testCompactsOldMessagesAndDropsToolChatter();
 testSkipsSmallSessions();
 testStructuredHandoffPreservesContinuityReferences();
 testLoadedSessionSummariesAreCapped();
+testDefaultCompactionKeepsTwelveRecentUserTurns();
 finish();
