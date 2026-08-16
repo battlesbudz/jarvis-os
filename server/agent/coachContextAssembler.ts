@@ -25,6 +25,16 @@ export interface AssembledCoachContext {
 const DEFAULT_MAX_ESTIMATED_TOKENS = 12_000;
 const MAX_SINGLE_MESSAGE_CHARS = 32_000;
 const SUMMARY_PREFIX = "UNTRUSTED CONTEXT: Prior session summary";
+const OVERSIZED_MESSAGE_NOTICE = "\n\n[... middle of oversized message omitted ...]\n\n";
+
+function boundMessageContent(content: string): string {
+  if (content.length <= MAX_SINGLE_MESSAGE_CHARS) return content;
+  // Preserve substantially more of the tail because pasted documents commonly
+  // put the user's actual question or instruction after the source material.
+  const tailChars = 20_000;
+  const headChars = MAX_SINGLE_MESSAGE_CHARS - tailChars - OVERSIZED_MESSAGE_NOTICE.length;
+  return content.slice(0, headChars) + OVERSIZED_MESSAGE_NOTICE + content.slice(-tailChars);
+}
 
 function normalizeVisibleMessages(messages: unknown[]): Array<{ role: "user" | "assistant"; content: string }> {
   const normalized: Array<{ role: "user" | "assistant"; content: string }> = [];
@@ -35,9 +45,7 @@ function normalizeVisibleMessages(messages: unknown[]): Array<{ role: "user" | "
     if (typeof candidate.content !== "string" || !candidate.content.trim()) continue;
     normalized.push({
       role: candidate.role,
-      content: candidate.content.length > MAX_SINGLE_MESSAGE_CHARS
-        ? candidate.content.slice(0, MAX_SINGLE_MESSAGE_CHARS)
-        : candidate.content,
+      content: boundMessageContent(candidate.content),
     });
   }
   return normalized;

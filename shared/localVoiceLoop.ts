@@ -9,6 +9,7 @@ export const LOCAL_VOICE_MAX_TRANSCRIPT_SEGMENTS = 8;
 const INCOMPLETE_TRANSCRIPT_ENDINGS = [
   /\b(?:and|and also|also|but|because|so|or|then|plus)$/i,
   /\b(?:not just|as well as|on top of that)$/i,
+  /\b(?:need|needed)(?:\s+\S+){1,4}\s+to$/i,
   /\b(?:want|wanted|trying|going|need|needed|supposed|able)\s+to$/i,
   /[,;:\-\u2014]$/,
 ];

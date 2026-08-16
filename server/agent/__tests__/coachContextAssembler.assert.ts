@@ -52,8 +52,23 @@ const bounded = assembleCoachContext({
 assert.ok(bounded.trace.omittedMessageCount > 0, "oversized context omits oldest messages");
 assert.ok(bounded.messages.at(-1)?.content.startsWith("29:"), "bounded context always preserves the latest turn");
 
+const oversizedQuestion = "What should I do next?";
+const oversized = assembleCoachContext({
+  clientMessages: [{
+    role: "user",
+    content: `Document start\n${"x".repeat(40_000)}\n${oversizedQuestion}`,
+  }],
+  maxEstimatedTokens: 20_000,
+});
+assert.equal(oversized.messages.length, 1);
+assert.equal(oversized.messages[0].content.length, 32_000, "oversized messages stay within the per-message bound");
+assert.ok(oversized.messages[0].content.startsWith("Document start"), "oversized messages preserve their source prefix");
+assert.ok(oversized.messages[0].content.endsWith(oversizedQuestion), "oversized messages preserve the latest instruction");
+assert.match(oversized.messages[0].content, /middle of oversized message omitted/);
+
 const here = dirname(fileURLToPath(import.meta.url));
 const routesSource = readFileSync(resolve(here, "../../routes.ts"), "utf8");
+const sessionStoreSource = readFileSync(resolve(here, "../providers/sessionStore.ts"), "utf8");
 assert.ok(!routesSource.includes("messages.slice(-6).map"), "tool-focused route has no six-message truncation");
 assert.ok(routesSource.includes('type: "context_trace"'), "route emits the privacy-safe context trace");
 for (const field of [
@@ -67,5 +82,15 @@ for (const field of [
   assert.ok(routesSource.includes(`${field}:`), `context trace emits direct ${field}`);
 }
 assert.ok(routesSource.includes("resumeSession(incomingAppSessionId"), "route hydrates provider context from sdkSessionId");
+assert.match(
+  sessionStoreSource,
+  /entry\.agentId !== agentId \|\| entry\.userId !== userId/,
+  "warm session cache reads enforce agent and user ownership",
+);
+assert.match(
+  sessionStoreSource,
+  /if \(!existing\?\.resumed\)[\s\S]*?append rejected/,
+  "foreign or expired sessions cannot be replaced through append",
+);
 
 console.log("OK: coach context is hydrated, deduplicated, bounded, summarized, and shared across routes");
