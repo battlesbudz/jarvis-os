@@ -477,7 +477,7 @@ export function registerOpenAIProviderAuthRoutes(
       if (!isProviderAuthEncryptionConfigured()) {
         return res.status(503).json({
           error: "provider_auth_encryption_not_configured",
-          message: "ChatGPT subscription login is unavailable until JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY is configured on the Jarvis server.",
+          message: "ChatGPT subscription login requires JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY or a stable JWT_SECRET of at least 32 characters on the Jarvis server.",
         });
       }
       const config = getConfig();

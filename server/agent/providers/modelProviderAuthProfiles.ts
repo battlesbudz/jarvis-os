@@ -273,29 +273,43 @@ export class DatabaseModelProviderAuthProfileRepository implements ModelProvider
 
 const databaseRepo = new DatabaseModelProviderAuthProfileRepository();
 
-export function isProviderAuthEncryptionConfigured(): boolean {
+function dedicatedProviderAuthSecret(): string | null {
   const value =
     process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY ||
     process.env.MODEL_PROVIDER_AUTH_ENCRYPTION_KEY;
-  return Boolean(value && value.trim().length >= 12);
+  return value && value.trim().length >= 12 ? value.trim() : null;
+}
+
+function jwtProviderAuthFallback(): string | null {
+  const value = process.env.JWT_SECRET;
+  return value && value.trim().length >= 32 ? value.trim() : null;
+}
+
+export function isProviderAuthEncryptionConfigured(): boolean {
+  return Boolean(dedicatedProviderAuthSecret() || jwtProviderAuthFallback());
 }
 
 export function assertProviderAuthEncryptionConfigured(): void {
   if (!isProviderAuthEncryptionConfigured()) {
-    throw new Error("JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY is required to store provider credentials");
+    throw new Error(
+      "A dedicated JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY or stable JWT_SECRET of at least 32 characters is required to store provider credentials",
+    );
   }
 }
 
-function encryptionSecret(): string {
-  const value =
-    process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY ||
-    process.env.MODEL_PROVIDER_AUTH_ENCRYPTION_KEY;
-  assertProviderAuthEncryptionConfigured();
-  return value!;
-}
-
 function encryptionKey(): Buffer {
-  return createHash("sha256").update(encryptionSecret()).digest();
+  const dedicated = dedicatedProviderAuthSecret();
+  if (dedicated) return createHash("sha256").update(dedicated).digest();
+
+  const jwtSecret = jwtProviderAuthFallback();
+  assertProviderAuthEncryptionConfigured();
+  // Domain separation prevents provider encryption from reusing the JWT
+  // signing key directly, while allowing existing hosted deployments to work
+  // without a second secret-management step.
+  return createHash("sha256")
+    .update("jarvis-provider-auth:v1\0", "utf8")
+    .update(jwtSecret!, "utf8")
+    .digest();
 }
 
 export function encryptProviderSecret(value: string): string {

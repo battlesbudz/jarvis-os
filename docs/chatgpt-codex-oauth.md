@@ -14,7 +14,7 @@ Jarvis stores both supported auth methods under the `openai` provider profile:
 - `api_key`: the user supplies an OpenAI API key.
 - `oauth`: the user completes the ChatGPT/Codex OAuth-style flow and Jarvis stores encrypted access and refresh tokens.
 
-The provider profile table is `model_provider_auth_profiles`. Tokens and API keys are encrypted at rest with `JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY` (or the legacy `MODEL_PROVIDER_AUTH_ENCRYPTION_KEY`). A dedicated key is required; `JWT_SECRET` is deliberately not reused. The OAuth start endpoint returns `503 provider_auth_encryption_not_configured` before opening ChatGPT login when this key is missing.
+The provider profile table is `model_provider_auth_profiles`. Tokens and API keys are encrypted at rest with `JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY` (or the legacy `MODEL_PROVIDER_AUTH_ENCRYPTION_KEY`). If neither is configured, Jarvis derives a domain-separated encryption key from a stable `JWT_SECRET` of at least 32 characters; it does not reuse the JWT signing key bytes directly. The OAuth start endpoint returns `503 provider_auth_encryption_not_configured` before opening ChatGPT login only when neither safe source is available.
 
 The built-in flow uses the Codex OAuth client defaults. Advanced deployments can override them with `JARVIS_OPENAI_OAUTH_AUTHORIZATION_URL`, `JARVIS_OPENAI_OAUTH_TOKEN_URL`, `JARVIS_OPENAI_OAUTH_CLIENT_ID`, and optional `JARVIS_OPENAI_OAUTH_CLIENT_SECRET`.
 

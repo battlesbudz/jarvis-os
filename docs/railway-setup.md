@@ -14,11 +14,13 @@ RAILPACK_NODE_VERSION=22
 ```
 
 ## Required Runtime Secrets
-The database URL and provider-credential encryption key are intentionally not committed to the repo. They must live in Railway service variables:
+The database URL and JWT secret are intentionally not committed to the repo. They must live in Railway service variables:
 
 ```txt
 DATABASE_URL=postgresql://...
-JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY=<at-least-32-random-bytes>
+JWT_SECRET=<at-least-32-random-bytes>
+# Recommended but optional when JWT_SECRET is stable and sufficiently long:
+# JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY=<at-least-32-random-bytes>
 ```
 
 Generate the encryption key locally with:
@@ -27,6 +29,6 @@ Generate the encryption key locally with:
 node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
 ```
 
-The encryption key must be stable across deploys. Changing or removing it makes existing per-user API-key and ChatGPT subscription profiles unreadable. Jarvis refuses to start a subscription login when it is absent, preventing the callback failure that would otherwise occur after the user signs in.
+Jarvis prefers the dedicated provider key. When it is absent, Jarvis derives a domain-separated provider-encryption key from a stable `JWT_SECRET`; it never uses the JWT signing key bytes directly. This lets an already secured Railway deployment store subscription credentials without an additional dashboard change. Changing the secret source later makes existing profiles unreadable, so reconnect provider profiles after intentionally switching keys.
 
 Local tests that need the database skip when `DATABASE_URL` is missing.

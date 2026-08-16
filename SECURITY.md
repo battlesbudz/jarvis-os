@@ -59,7 +59,7 @@ Self-hosters are responsible for:
 
 - [ ] `JWT_SECRET` is at least 32 random bytes
 - [ ] `DASHBOARD_SECRET` is at least 32 random bytes if dashboard secret auth is enabled
-- [ ] `JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY` is stable and at least 32 random bytes when provider profiles are enabled
+- [ ] `JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY` is stable and at least 32 random bytes when provider profiles are enabled, or the deployment intentionally uses the domain-separated fallback from a stable 32+ character `JWT_SECRET`
 - [ ] `NODE_ENV=production` in hosted environments
 - [ ] `DATABASE_URL` uses SSL in production
 - [ ] `APP_BASE_URL` and `EXPO_PUBLIC_DOMAIN` point to the intended public host

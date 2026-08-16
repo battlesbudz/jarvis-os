@@ -48,4 +48,4 @@ Decision: A Settings-screen ChatGPT subscription profile routes to `chatgpt-code
 
 Reason: ChatGPT subscription OAuth credentials are not OpenAI Platform API keys. Sending them to Chat Completions is an invalid and fragile authentication boundary. Codex app-server provides the supported host-app interface for supplying a user's ChatGPT access token and account id, including token refresh.
 
-Implication: Hosted Jarvis can serve a connected subscription without depending on an awake desktop gateway. Provider credentials require a stable dedicated encryption key, and `OpenAIProvider` must continue rejecting OAuth credentials as defense in depth.
+Implication: Hosted Jarvis can serve a connected subscription without depending on an awake desktop gateway. Provider credentials prefer a stable dedicated encryption key and may use a domain-separated key derived from a stable 32+ character `JWT_SECRET`; `OpenAIProvider` must continue rejecting OAuth credentials as defense in depth.
