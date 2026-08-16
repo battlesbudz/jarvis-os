@@ -28,7 +28,7 @@ async function main() {
   const previousFallback = process.env.JARVIS_OPENAI_AUTH_FALLBACK_ENABLED;
   process.env.OPENAI_API_KEY = "env-openai-key";
   delete process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-  process.env.JARVIS_OPENAI_PREFERRED_AUTH_TYPE = "oauth";
+  process.env.JARVIS_OPENAI_PREFERRED_AUTH_TYPE = "api_key";
   delete process.env.JARVIS_OPENAI_AUTH_FALLBACK_ENABLED;
 
   const clientConfigs: Array<{ apiKey: string; baseURL?: string }> = [];
@@ -57,12 +57,8 @@ async function main() {
       resolverCalls.push(input);
       return {
         provider: "openai",
-        authType: "oauth",
-        credential: "oauth-access-token",
-        refreshToken: "refresh-token",
-        expiresAt: new Date(Date.now() + 60_000),
-        accountId: "acct_runtime",
-        email: "runtime@example.com",
+        authType: "api_key",
+        credential: "user-openai-key",
       };
     });
 
@@ -72,10 +68,10 @@ async function main() {
       { type: "finish", reason: "stop" },
     ]);
 
-    assert.equal(clientConfigs[0].apiKey, "oauth-access-token");
+    assert.equal(clientConfigs[0].apiKey, "user-openai-key");
     assert.equal(resolverCalls[0].userId, "user-1");
     assert.equal(resolverCalls[0].provider, "openai");
-    assert.equal(resolverCalls[0].preferredAuthType, "oauth");
+    assert.equal(resolverCalls[0].preferredAuthType, "api_key");
     assert.equal(resolverCalls[0].allowAuthTypeFallback, false);
 
     _setOpenAIProviderCredentialResolverForTesting(async () => null);
@@ -87,8 +83,8 @@ async function main() {
       return null;
     });
     await assert.rejects(
-      () => collect(provider, "user-missing-oauth"),
-      /OpenAI oauth profile is required but is not connected/,
+      () => collect(provider, "user-missing-api-key"),
+      /OpenAI api_key profile is required but is not connected/,
     );
 
     process.env.JARVIS_OPENAI_AUTH_FALLBACK_ENABLED = "true";
@@ -99,8 +95,14 @@ async function main() {
     await collect(provider, "user-2");
     assert.equal(resolverCalls.at(-1).allowAuthTypeFallback, true);
 
+    process.env.JARVIS_OPENAI_PREFERRED_AUTH_TYPE = "oauth";
+    await assert.rejects(
+      () => collect(provider, "user-oauth"),
+      /must run through the chatgpt-codex-oauth provider/,
+    );
+
     console.log("OK: OpenAI provider resolves user-scoped provider credentials before env config");
-    console.log("OK: OpenAI provider keeps OAuth/API-key fallback disabled unless explicitly enabled");
+    console.log("OK: OpenAI provider refuses to send ChatGPT subscription tokens to Chat Completions");
   } finally {
     _setOpenAIProviderClientFactoryForTesting(null);
     _setOpenAIProviderCredentialResolverForTesting(null);

@@ -83,6 +83,11 @@ export class OpenAIProvider extends BaseProvider {
 
     const resolver = openAIProviderCredentialResolverForTesting ?? getProviderCredential;
     const preferredAuthType = params.preferredAuthType ?? getPreferredOpenAIAuthType();
+    if (preferredAuthType === "oauth") {
+      throw new Error(
+        "ChatGPT subscription OAuth must run through the chatgpt-codex-oauth provider, not OpenAI Chat Completions.",
+      );
+    }
     const allowAuthTypeFallback = isOpenAIAuthTypeFallbackEnabled();
     const credential = await resolver({
       userId: params.userId,
@@ -95,6 +100,11 @@ export class OpenAIProvider extends BaseProvider {
       throw new Error(`OpenAI ${preferredAuthType} profile is required but is not connected for this user`);
     }
     if (!credential) return this.getEnvClient();
+    if (credential.authType === "oauth") {
+      throw new Error(
+        "ChatGPT subscription OAuth must run through the chatgpt-codex-oauth provider, not OpenAI Chat Completions.",
+      );
+    }
 
     return createOpenAIClient({
       ...getOpenAIClientConfig(),

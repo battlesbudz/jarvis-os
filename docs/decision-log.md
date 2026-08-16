@@ -41,3 +41,11 @@ Decision: `agents/PRIME.md` is the master orchestration contract only. Detailed 
 Reason: PRIME had accumulated coaching styles, tool-specific actuation scripts, and placeholder sections that conflicted with approval-gated autonomy. Keeping PRIME structural makes the routing stack easier to audit and safer to execute.
 
 Implication: Future additions should not turn PRIME back into a dumping ground. Add route details to `agents/ROUTING.md`, safety policy to `agents/TOOL_POLICY.md`, coaching tone to `agents/COACHING.md`, and durable architecture decisions here.
+
+## 2026-08-16 - Run ChatGPT Subscription Profiles Through Codex App-Server
+
+Decision: A Settings-screen ChatGPT subscription profile routes to `chatgpt-codex-oauth` and the bundled Codex app-server external-token login. Only API-key profiles route to the OpenAI Platform provider.
+
+Reason: ChatGPT subscription OAuth credentials are not OpenAI Platform API keys. Sending them to Chat Completions is an invalid and fragile authentication boundary. Codex app-server provides the supported host-app interface for supplying a user's ChatGPT access token and account id, including token refresh.
+
+Implication: Hosted Jarvis can serve a connected subscription without depending on an awake desktop gateway. Provider credentials prefer a stable dedicated encryption key and may use a domain-separated key derived from a stable 32+ character `JWT_SECRET`; `OpenAIProvider` must continue rejecting OAuth credentials as defense in depth.

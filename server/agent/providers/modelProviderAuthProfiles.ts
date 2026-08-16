@@ -273,18 +273,43 @@ export class DatabaseModelProviderAuthProfileRepository implements ModelProvider
 
 const databaseRepo = new DatabaseModelProviderAuthProfileRepository();
 
-function encryptionSecret(): string {
+function dedicatedProviderAuthSecret(): string | null {
   const value =
     process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY ||
     process.env.MODEL_PROVIDER_AUTH_ENCRYPTION_KEY;
-  if (!value || value.trim().length < 12) {
-    throw new Error("JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY is required to store provider credentials");
+  return value && value.trim().length >= 12 ? value.trim() : null;
+}
+
+function jwtProviderAuthFallback(): string | null {
+  const value = process.env.JWT_SECRET;
+  return value && value.trim().length >= 32 ? value.trim() : null;
+}
+
+export function isProviderAuthEncryptionConfigured(): boolean {
+  return Boolean(dedicatedProviderAuthSecret() || jwtProviderAuthFallback());
+}
+
+export function assertProviderAuthEncryptionConfigured(): void {
+  if (!isProviderAuthEncryptionConfigured()) {
+    throw new Error(
+      "A dedicated JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY or stable JWT_SECRET of at least 32 characters is required to store provider credentials",
+    );
   }
-  return value;
 }
 
 function encryptionKey(): Buffer {
-  return createHash("sha256").update(encryptionSecret()).digest();
+  const dedicated = dedicatedProviderAuthSecret();
+  if (dedicated) return createHash("sha256").update(dedicated).digest();
+
+  const jwtSecret = jwtProviderAuthFallback();
+  assertProviderAuthEncryptionConfigured();
+  // Domain separation prevents provider encryption from reusing the JWT
+  // signing key directly, while allowing existing hosted deployments to work
+  // without a second secret-management step.
+  return createHash("sha256")
+    .update("jarvis-provider-auth:v1\0", "utf8")
+    .update(jwtSecret!, "utf8")
+    .digest();
 }
 
 export function encryptProviderSecret(value: string): string {
@@ -377,6 +402,7 @@ export async function saveOpenAIOAuthProfile(
 ): Promise<ModelProviderAuthProfileRecord> {
   const accessToken = input.accessToken.trim();
   if (!accessToken) throw new Error("OpenAI OAuth access token is required");
+  const tokenClaims = readChatGPTAuthTokenClaims(accessToken);
   return (input.repo ?? databaseRepo).upsertProfile({
     userId: input.userId,
     provider: "openai",
@@ -385,7 +411,7 @@ export async function saveOpenAIOAuthProfile(
     refreshTokenEncrypted: input.refreshToken?.trim() ? encryptProviderSecret(input.refreshToken) : undefined,
     apiKeyEncrypted: null,
     expiresAt: input.expiresAt ?? null,
-    accountId: input.accountId ?? null,
+    accountId: input.accountId ?? tokenClaims.accountId,
     email: input.email ?? null,
     isDefault: input.isDefault ?? true,
   });
@@ -399,6 +425,34 @@ export interface ProviderCredential {
   expiresAt: Date | null;
   accountId: string | null;
   email: string | null;
+}
+
+export interface ChatGPTAuthTokenClaims {
+  accountId: string | null;
+  planType: string | null;
+}
+
+function stringClaim(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+export function readChatGPTAuthTokenClaims(accessToken: string): ChatGPTAuthTokenClaims {
+  try {
+    const payloadSegment = accessToken.trim().split(".")[1];
+    if (!payloadSegment) return { accountId: null, planType: null };
+    const payload = JSON.parse(Buffer.from(payloadSegment, "base64url").toString("utf8")) as Record<string, unknown>;
+    const auth = payload["https://api.openai.com/auth"];
+    const authClaims = auth && typeof auth === "object" ? auth as Record<string, unknown> : {};
+    return {
+      accountId: stringClaim(authClaims.chatgpt_account_id)
+        ?? stringClaim(payload.chatgpt_account_id)
+        ?? stringClaim(payload.account_id),
+      planType: stringClaim(authClaims.chatgpt_plan_type)
+        ?? stringClaim(payload.chatgpt_plan_type),
+    };
+  } catch {
+    return { accountId: null, planType: null };
+  }
 }
 
 export interface RefreshOAuthTokenResult {
@@ -469,6 +523,41 @@ async function refreshOpenAIOAuthToken(profile: ProviderCredential): Promise<Ref
   }
 }
 
+async function refreshStoredOAuthProfile(input: {
+  repo: ModelProviderAuthProfileRepository;
+  selected: ModelProviderAuthProfileRecord;
+  resolved: ProviderCredential;
+  refresh?: RefreshOAuthTokenFn;
+}): Promise<ProviderCredential> {
+  const refreshed = await (input.refresh ?? refreshOpenAIOAuthToken)(input.resolved);
+  if (!refreshed?.accessToken) {
+    throw new Error("OpenAI OAuth token is expired and refresh failed");
+  }
+
+  const refreshedClaims = readChatGPTAuthTokenClaims(refreshed.accessToken);
+  const accountId = refreshed.accountId ?? refreshedClaims.accountId ?? input.selected.accountId;
+  const updated = await input.repo.updateOAuthTokens({
+    id: input.selected.id,
+    accessTokenEncrypted: encryptProviderSecret(refreshed.accessToken),
+    refreshTokenEncrypted: refreshed.refreshToken?.trim()
+      ? encryptProviderSecret(refreshed.refreshToken)
+      : input.selected.refreshTokenEncrypted,
+    expiresAt: refreshed.expiresAt ?? input.selected.expiresAt,
+    accountId,
+    email: refreshed.email ?? input.selected.email,
+  });
+
+  return {
+    provider: input.selected.provider,
+    authType: "oauth",
+    credential: refreshed.accessToken,
+    refreshToken: refreshed.refreshToken ?? input.resolved.refreshToken,
+    expiresAt: updated?.expiresAt ?? refreshed.expiresAt ?? input.selected.expiresAt,
+    accountId: updated?.accountId ?? accountId,
+    email: updated?.email ?? refreshed.email ?? input.selected.email,
+  };
+}
+
 export interface GetProviderCredentialInput {
   repo?: ModelProviderAuthProfileRepository;
   userId: string;
@@ -510,31 +599,32 @@ export async function getProviderCredential(
     return resolved;
   }
 
-  const refreshed = await (input.refresh ?? refreshOpenAIOAuthToken)(resolved);
-  if (!refreshed?.accessToken) {
-    throw new Error("OpenAI OAuth token is expired and refresh failed");
-  }
+  return refreshStoredOAuthProfile({ repo, selected, resolved, refresh: input.refresh });
+}
 
-  const updated = await repo.updateOAuthTokens({
-    id: selected.id,
-    accessTokenEncrypted: encryptProviderSecret(refreshed.accessToken),
-    refreshTokenEncrypted: refreshed.refreshToken?.trim()
-      ? encryptProviderSecret(refreshed.refreshToken)
-      : selected.refreshTokenEncrypted,
-    expiresAt: refreshed.expiresAt ?? selected.expiresAt,
-    accountId: refreshed.accountId ?? selected.accountId,
-    email: refreshed.email ?? selected.email,
-  });
-
-  return {
+export async function refreshProviderOAuthCredential(input: {
+  repo?: ModelProviderAuthProfileRepository;
+  userId: string;
+  provider?: ModelProviderName;
+  refresh?: RefreshOAuthTokenFn;
+}): Promise<ProviderCredential> {
+  const repo = input.repo ?? databaseRepo;
+  const provider = input.provider ?? "openai";
+  const profiles = await repo.listProfiles(input.userId, provider);
+  const selected = selectProfile(profiles, "oauth", false);
+  if (!selected) throw new Error("OpenAI OAuth profile is not connected for this user");
+  const credential = decryptProviderSecret(selected.accessTokenEncrypted);
+  if (!credential) throw new Error("OpenAI OAuth profile has no access token");
+  const resolved: ProviderCredential = {
     provider: selected.provider,
     authType: "oauth",
-    credential: refreshed.accessToken,
-    refreshToken: refreshed.refreshToken ?? resolved.refreshToken,
-    expiresAt: updated?.expiresAt ?? refreshed.expiresAt ?? selected.expiresAt,
-    accountId: updated?.accountId ?? refreshed.accountId ?? selected.accountId,
-    email: updated?.email ?? refreshed.email ?? selected.email,
+    credential,
+    refreshToken: decryptProviderSecret(selected.refreshTokenEncrypted),
+    expiresAt: selected.expiresAt,
+    accountId: selected.accountId,
+    email: selected.email,
   };
+  return refreshStoredOAuthProfile({ repo, selected, resolved, refresh: input.refresh });
 }
 
 export interface ProviderAuthTypeStatus {

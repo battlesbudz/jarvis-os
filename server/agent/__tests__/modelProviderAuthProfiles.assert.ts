@@ -3,6 +3,7 @@ import {
   InMemoryModelProviderAuthProfileRepository,
   getProviderCredential,
   getProviderStatus,
+  readChatGPTAuthTokenClaims,
   saveOpenAIApiKeyProfile,
   saveOpenAIOAuthProfile,
 } from "../providers/modelProviderAuthProfiles";
@@ -24,7 +25,7 @@ async function main() {
   try {
     delete process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY;
     delete process.env.MODEL_PROVIDER_AUTH_ENCRYPTION_KEY;
-    process.env.JWT_SECRET = "jwt-secret-must-not-encrypt-provider-credentials";
+    process.env.JWT_SECRET = "short-jwt-secret";
     await assert.rejects(
       () =>
         saveOpenAIApiKeyProfile({
@@ -32,11 +33,43 @@ async function main() {
           userId: "user-missing-encryption-key",
           apiKey: "sk-test-api-key",
         }),
-      /JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY is required/,
+      /JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY or stable JWT_SECRET/,
     );
+
+    process.env.JWT_SECRET = "stable-jwt-secret-for-provider-auth-fallback-testing";
+    const jwtFallbackRepo = new InMemoryModelProviderAuthProfileRepository();
+    await saveOpenAIApiKeyProfile({
+      repo: jwtFallbackRepo,
+      userId: "user-jwt-fallback",
+      apiKey: "sk-jwt-fallback-key",
+    });
+    assert.equal((await getProviderCredential({
+      repo: jwtFallbackRepo,
+      userId: "user-jwt-fallback",
+      provider: "openai",
+      preferredAuthType: "api_key",
+    }))?.credential, "sk-jwt-fallback-key");
 
     process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY = "test-secret-for-provider-auth-profiles";
     const repo = new InMemoryModelProviderAuthProfileRepository();
+
+    const encodedClaims = Buffer.from(JSON.stringify({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: "acct_from_claims",
+        chatgpt_plan_type: "plus",
+      },
+    })).toString("base64url");
+    const claimsToken = `header.${encodedClaims}.signature`;
+    assert.deepEqual(readChatGPTAuthTokenClaims(claimsToken), {
+      accountId: "acct_from_claims",
+      planType: "plus",
+    });
+    const claimsProfile = await saveOpenAIOAuthProfile({
+      repo,
+      userId: "user-token-claims",
+      accessToken: claimsToken,
+    });
+    assert.equal(claimsProfile.accountId, "acct_from_claims");
 
     const apiProfile = await saveOpenAIApiKeyProfile({
       repo,
@@ -211,7 +244,7 @@ async function main() {
     console.log("OK: model provider auth profiles store encrypted OpenAI API-key and OAuth credentials");
     console.log("OK: built-in ChatGPT/Codex OAuth profiles refresh without env config");
     console.log("OK: provider status is redacted and auth-type fallback is explicit only");
-    console.log("OK: provider credentials require a dedicated encryption key");
+    console.log("OK: provider credentials use a dedicated key or domain-separated stable JWT fallback");
   } finally {
     globalThis.fetch = originalFetch;
     if (previousSecret == null) delete process.env.JARVIS_PROVIDER_AUTH_ENCRYPTION_KEY;

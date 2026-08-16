@@ -209,7 +209,7 @@ async function runUserOpenAIProfileRouteAssertion(): Promise<void> {
     process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
     process.env.JARVIS_OPENAI_SMART_MODEL = "gpt-user-profile";
     delete process.env.PROVIDER_FALLBACK_CHAIN;
-    _overrideProviderForTesting("openai", new CapturingOpenAIProvider());
+    _overrideProviderForTesting("chatgpt-codex-oauth", new CapturingOpenAIProvider());
     _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
       assert.equal(userId, "user-openai");
       const openai = {
@@ -239,11 +239,12 @@ async function runUserOpenAIProfileRouteAssertion(): Promise<void> {
     });
 
     const capturedRequest = captured as ProviderQueryParams | null;
-    assert.equal(result.providerName, "openai");
-    assert.equal(result.model, "gpt-user-profile");
-    assert.equal(capturedRequest?.model, "gpt-user-profile");
+    assert.equal(result.providerName, "chatgpt-codex-oauth");
+    assert.equal(result.model, CODEX_MODEL);
+    assert.equal(capturedRequest?.model, CODEX_MODEL);
+    assert.equal(capturedRequest?.preferredAuthType, "oauth");
     assert.equal(capturedRequest?.userId, "user-openai");
-    console.log("OK: a saved user OpenAI provider profile overrides the default Codex OAuth route");
+    console.log("OK: a saved ChatGPT subscription profile routes through Codex app-server");
   } finally {
     _setOpenAIProviderStatusResolverForTesting(null);
     _clearProviderCacheForTesting();
@@ -741,8 +742,10 @@ async function runExplicitCodexSelectionOverridesDefaultProviderProfileAssertion
     async initialize(): Promise<void> {}
     async cleanup(): Promise<void> {}
 
-    async *query(): AsyncGenerator<ProviderChunk> {
-      throw new Error("connected ChatGPT subscription must not require the Codex daemon/gateway runtime");
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "chatgpt subscription route" };
+      yield { type: "finish", reason: "stop" };
     }
   }
 
@@ -750,10 +753,8 @@ async function runExplicitCodexSelectionOverridesDefaultProviderProfileAssertion
     async initialize(): Promise<void> {}
     async cleanup(): Promise<void> {}
 
-    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
-      captured = params;
-      yield { type: "text", delta: "chatgpt subscription route" };
-      yield { type: "finish", reason: "stop" };
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("connected ChatGPT subscription must not use OpenAI Chat Completions");
     }
   }
 
@@ -807,13 +808,13 @@ async function runExplicitCodexSelectionOverridesDefaultProviderProfileAssertion
     });
 
     const capturedRequest = captured as ProviderQueryParams | null;
-    assert.equal(result.providerName, "openai");
-    assert.equal(result.model, "gpt-4.1-mini");
+    assert.equal(result.providerName, "chatgpt-codex-oauth");
+    assert.equal(result.model, CODEX_MODEL);
     assert.equal(result.textContent, "chatgpt subscription route");
-    assert.equal(capturedRequest?.model, "gpt-4.1-mini");
+    assert.equal(capturedRequest?.model, CODEX_MODEL);
     assert.equal(capturedRequest?.preferredAuthType, "oauth");
     assert.equal(capturedRequest?.userId, "user-explicit-codex");
-    console.log("OK: a connected ChatGPT subscription selection uses the OpenAI OAuth chat route");
+    console.log("OK: a connected ChatGPT subscription selection uses the hosted Codex OAuth route");
   } finally {
     _setOpenAIProviderStatusResolverForTesting(null);
     _setUserSelectedModelResolverForTesting(null);
@@ -851,8 +852,10 @@ async function runLegacyCodexSelectionWithOAuthOverridesDefaultProviderProfileAs
     async initialize(): Promise<void> {}
     async cleanup(): Promise<void> {}
 
-    async *query(): AsyncGenerator<ProviderChunk> {
-      throw new Error("legacy ChatGPT subscription must not require the Codex daemon/gateway runtime");
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "legacy subscription route" };
+      yield { type: "finish", reason: "stop" };
     }
   }
 
@@ -860,10 +863,8 @@ async function runLegacyCodexSelectionWithOAuthOverridesDefaultProviderProfileAs
     async initialize(): Promise<void> {}
     async cleanup(): Promise<void> {}
 
-    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
-      captured = params;
-      yield { type: "text", delta: "legacy subscription route" };
-      yield { type: "finish", reason: "stop" };
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("legacy ChatGPT subscription must not use OpenAI Chat Completions");
     }
   }
 
@@ -917,13 +918,13 @@ async function runLegacyCodexSelectionWithOAuthOverridesDefaultProviderProfileAs
     });
 
     const capturedRequest = captured as ProviderQueryParams | null;
-    assert.equal(result.providerName, "openai");
-    assert.equal(result.model, "gpt-4.1-mini");
+    assert.equal(result.providerName, "chatgpt-codex-oauth");
+    assert.equal(result.model, CODEX_MODEL);
     assert.equal(result.textContent, "legacy subscription route");
-    assert.equal(capturedRequest?.model, "gpt-4.1-mini");
+    assert.equal(capturedRequest?.model, CODEX_MODEL);
     assert.equal(capturedRequest?.preferredAuthType, "oauth");
     assert.equal(capturedRequest?.userId, "user-legacy-codex-oauth");
-    console.log("OK: a legacy ChatGPT/Codex selection with OAuth uses the OpenAI OAuth chat route");
+    console.log("OK: a legacy ChatGPT/Codex selection with OAuth uses the hosted Codex route");
   } finally {
     _setOpenAIProviderStatusResolverForTesting(null);
     _setUserSelectedModelResolverForTesting(null);
@@ -952,8 +953,10 @@ async function runRequestedChatGPTSubscriptionUsesOAuthRouteAssertion(): Promise
     async initialize(): Promise<void> {}
     async cleanup(): Promise<void> {}
 
-    async *query(): AsyncGenerator<ProviderChunk> {
-      throw new Error("requested ChatGPT subscription must not require the Codex daemon/gateway runtime");
+    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
+      captured = params;
+      yield { type: "text", delta: "requested subscription route" };
+      yield { type: "finish", reason: "stop" };
     }
   }
 
@@ -961,10 +964,8 @@ async function runRequestedChatGPTSubscriptionUsesOAuthRouteAssertion(): Promise
     async initialize(): Promise<void> {}
     async cleanup(): Promise<void> {}
 
-    async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
-      captured = params;
-      yield { type: "text", delta: "requested subscription route" };
-      yield { type: "finish", reason: "stop" };
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("requested ChatGPT subscription must not use OpenAI Chat Completions");
     }
   }
 
@@ -1011,13 +1012,13 @@ async function runRequestedChatGPTSubscriptionUsesOAuthRouteAssertion(): Promise
     });
 
     const capturedRequest = captured as ProviderQueryParams | null;
-    assert.equal(result.providerName, "openai");
-    assert.equal(result.model, "gpt-4.1-mini");
+    assert.equal(result.providerName, "chatgpt-codex-oauth");
+    assert.equal(result.model, CODEX_MODEL);
     assert.equal(result.textContent, "requested subscription route");
-    assert.equal(capturedRequest?.model, "gpt-4.1-mini");
+    assert.equal(capturedRequest?.model, CODEX_MODEL);
     assert.equal(capturedRequest?.preferredAuthType, "oauth");
     assert.equal(capturedRequest?.userId, "user-requested-chatgpt-subscription");
-    console.log("OK: app-selected ChatGPT subscription requests use the OpenAI OAuth chat route");
+    console.log("OK: app-selected ChatGPT subscription requests use the hosted Codex route");
   } finally {
     _setOpenAIProviderStatusResolverForTesting(null);
     _setUserSelectedModelResolverForTesting(null);
