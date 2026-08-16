@@ -9,6 +9,7 @@ const SERVER_YOUTUBE_TOOL_NAMES = new Set([
   "youtube_search",
   "get_youtube_transcript",
 ]);
+const PHONE_COMPOUND_CONNECTOR_PATTERN = String.raw`(?:and\s+then|then|after(?:wards|\s+that)?|also|and)`;
 
 export function isAndroidPhoneRuntimeToolName(name: string): boolean {
   return ANDROID_PHONE_RUNTIME_TOOL_NAME_SET.has(name);
@@ -61,7 +62,10 @@ export function isYoutubeServerResearchRequest(text: string): boolean {
 export function extractYoutubePhoneSearchQuery(text: string): string | null {
   if (!isYoutubePhoneActionRequest(text) || isYoutubeServerResearchRequest(text)) return null;
   if (/\b(?:don't|do not|dont|never)\b[\s\S]{0,48}\b(?:search|find|look\s+up|look\s+for)\b/i.test(text)) return null;
-  if (/\b(?:and then|then|and)\s+(?:play|open|tap|press|select|choose|click|watch|return|go|scroll|swipe)\b/i.test(text)) return null;
+  if (new RegExp(
+    String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b[\s,;:—-]*(?:play|open|tap|press|select|choose|click|watch|return|go|scroll|swipe)\b`,
+    "i",
+  ).test(text)) return null;
 
   const youtube = String.raw`(?:you\s*tube|youtube|yt)`;
   const verb = String.raw`(?:search|find|look\s+up|look\s+for)`;
@@ -137,7 +141,10 @@ export function isPhoneNotificationReadRequest(text: string): boolean {
 
 function hasAdditionalPhoneActionAfterNotificationRead(text: string): boolean {
   const normalized = normalizePhoneRuntimeRequestText(text);
-  const continuation = normalized.split(/\b(?:and then|then|after(?:wards| that)?|also|and)\b/i).slice(1).join(" ");
+  const continuation = normalized
+    .split(new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i"))
+    .slice(1)
+    .join(" ");
   if (!continuation.trim()) return false;
   return /\b(?:open|launch|start|search|find|look\s+up|look\s+for|tap|click|press|swipe|scroll|type|enter|back|home|recents|screenshot|screen shot|screen capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+to)\b/i.test(continuation);
 }
