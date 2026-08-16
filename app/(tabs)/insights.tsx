@@ -1401,6 +1401,8 @@ export default function InsightsScreen() {
 
             try {
               const result = await recognizeAndroidSpeechOnce({
+                // Jarvis Talk Mode currently supports English only; avoid inheriting arbitrary device locales.
+                locale: 'en-US',
                 interimResults: true,
                 timeoutMs: 60_000,
                 onEvent: (event) => {
