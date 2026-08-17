@@ -49,6 +49,11 @@ async function main(): Promise<void> {
   const insightsSource = readFileSync(resolve(__dirname, "../../../app/(tabs)/insights.tsx"), "utf8");
   assert.match(insightsSource, /tool === 'delegate_to_codex'[\s\S]{0,160}data\.detail \|\| data\.label/);
   assert.match(insightsSource, /const execAction: ExecutedAction = \{[\s\S]{0,240}detail: data\.detail \|\| data\.error/);
+  assert.match(insightsSource, /isCodexDelegation = pendingConfirm\.tool === 'delegate_to_codex'/);
+  assert.match(insightsSource, /isCodexDelegation \? 'Approve Codex delegation\?'/);
+  assert.match(insightsSource, /isCodexDelegation \? \([\s\S]{0,1200}>Task<[\s\S]{0,1200}>Context<[\s\S]{0,1200}>Working directory<[\s\S]{0,1200}>Workspace access<[\s\S]{0,1200}>External side effects</);
+  assert.match(insightsSource, /spokenSuccessContent = data\.result === 'success' && tool === 'delegate_to_codex'[\s\S]{0,180}data\.label/);
+  assert.match(insightsSource, /speakConfirmationResult\(spokenSuccessContent\)/);
 
   console.log("OK: calendar validation/provider fallback and approval inbox idempotency are deterministic");
 }
