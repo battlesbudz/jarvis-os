@@ -46,6 +46,10 @@ async function main(): Promise<void> {
   assert.match(routesSource, /preview\.workingDirectory = normalizedWorkingDirectory;/);
   assert.match(routesSource, /normalizeCodexDelegationTimeoutMs\(args\.timeout_seconds\) \/ 1000/);
 
+  const insightsSource = readFileSync(resolve(__dirname, "../../../app/(tabs)/insights.tsx"), "utf8");
+  assert.match(insightsSource, /tool === 'delegate_to_codex'[\s\S]{0,160}data\.detail \|\| data\.label/);
+  assert.match(insightsSource, /const execAction: ExecutedAction = \{[\s\S]{0,240}detail: data\.detail \|\| data\.error/);
+
   console.log("OK: calendar validation/provider fallback and approval inbox idempotency are deterministic");
 }
 
