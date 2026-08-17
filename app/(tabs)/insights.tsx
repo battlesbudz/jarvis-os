@@ -3855,9 +3855,16 @@ export default function InsightsScreen() {
         tool,
         result: data.result || 'error',
         label: data.label || (data.result === 'success' ? 'Done' : 'Failed'),
+        detail: data.detail || data.error,
       };
       const successContent = data.result === 'success'
-        ? (tool === 'send_email' ? `Email sent successfully.` : tool === 'connected_accounts_execute' ? `Connected account action completed successfully.` : `Command executed successfully.`)
+        ? (tool === 'send_email'
+          ? `Email sent successfully.`
+          : tool === 'connected_accounts_execute'
+            ? `Connected account action completed successfully.`
+            : tool === 'delegate_to_codex'
+              ? (data.detail || data.label || 'Codex delegation completed successfully.')
+              : `Command executed successfully.`)
         : `Action failed: ${data.detail || data.error || 'Unknown error'}`;
       setMessages(prev => {
         const updated = [...prev];
