@@ -321,7 +321,7 @@ The immutable pair (`lineage_type`, `source_lineage_key`) identifies the logical
 
 #### Canonical approval decision dispatcher
 
-Every transition to `approved`, regardless of producer, calls one owner-aware `decideApprovalGate` service. This includes the Live Action Card, agent API, deliverable review, gateway, Discord, Telegram, Slack, WhatsApp, webchat, inbox triage, scheduled/internal automation, and creation-time policy auto-approval. Existing route/channel handlers and internal producers become thin authorized adapters and must not call `approveGate` or write `status = approved` directly. Creation-time auto-approval uses a dispatcher entry point that creates the approved gate, decision receipt, and continuation intent in one transaction before returning to execution. The service preserves the current gate/receipt authorization and policy semantics, resolves the canonical continuation owner (top-level job, direct email/Jarvis decision, Agent SDK run, or an in-job checkpoint), and returns one idempotent decision receipt.
+Every transition to `approved`, regardless of producer, calls one owner-aware `decideApprovalGate` service. This includes the Live Action Card, agent API, deliverable review, gateway, Discord, Telegram, Slack, WhatsApp, webchat, inbox triage, scheduled/internal automation, and creation-time policy auto-approval. Existing route/channel handlers and internal producers become thin authorized adapters and must not call `approveGate` or write `status = approved` directly. Every approval request carries a stable caller-supplied `toolExecutionId` derived from the logical workflow/run/tool-call identity, including across process and job retries. The dispatcher idempotently upserts the gate, decision receipt, continuation claim, and provider key by `(userId, toolExecutionId)`; a random gate ID is only a surrogate and never the effect idempotency key. Creation-time auto-approval uses this dispatcher entry point to create or reuse the approved gate, decision receipt, and continuation intent in one transaction before returning to execution. The service preserves the current gate/receipt authorization and policy semantics, resolves the canonical continuation owner (top-level job, direct email/Jarvis decision, Agent SDK run, or an in-job checkpoint), and returns one idempotent decision receipt.
 
 For an approval, a database transaction records the gate decision and creates or confirms a uniquely keyed continuation outbox/claim before the gate can become approved. A worker dispatches that durable intent to the canonical owner and writes the handoff/outcome protocol below. For rejection, the same transaction records the terminal rejection outcome. If the process exits after commit, reconciliation resumes the outbox; there is never an approved gate without durable continuation intent. Contract tests invoke every route/channel and internal producer, including inbox triage and policy auto-approval, and prove identical owner dispatch, duplicate-decision idempotency, rejection behavior, and recovery after a crash between decision commit and continuation dispatch. A static ownership test prevents new direct approved-state writes or `approveGate` calls outside the canonical dispatcher/storage implementation.
 
@@ -389,13 +389,13 @@ For approval continuations that do not create an agent job, the canonical approv
 
 3.  Last completed action and next planned action.
 
-4.  At most three active-action summaries.
+4.  Uncertainty and omitted counts. Reserve this budget before any optional section whenever a required source is unavailable or content is truncated.
 
-5.  At most three recent artifact references.
+5.  At most three active-action summaries.
 
-6.  Latest project-session summary when space remains.
+6.  At most three recent artifact references.
 
-7.  Uncertainty and omitted counts.
+7.  Latest project-session summary when space remains.
 
 ### 10.2 Context exclusions
 
