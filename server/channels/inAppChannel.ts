@@ -20,6 +20,18 @@ const NOTIFICATION_SUBJECTS: Record<string, string> = {
 // metadata. Skipping the generic in_app insert prevents duplicate items.
 const SELF_MANAGED_INBOX_TYPES = new Set(["nervous_system"]);
 
+export function buildInAppNotificationSourceId(
+  notificationType: string,
+  gateId?: string,
+  now = Date.now(),
+  randomSuffix = Math.random().toString(36).slice(2, 7),
+): string {
+  if (notificationType === "approval_request" && gateId?.trim()) {
+    return `in_app:approval_request:${gateId.trim()}`;
+  }
+  return `in_app:${notificationType}:${now}:${randomSuffix}`;
+}
+
 export const inAppChannel: Channel = {
   name: "in_app",
   // Rich in-app chat — full coaching + email/calendar + research + media.
@@ -48,7 +60,7 @@ export const inAppChannel: Channel = {
         // A middleware handler cancelled delivery — skip insertion.
         return { ok: true };
       }
-      const sourceId = `in_app:${notifType}:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
+      const sourceId = buildInAppNotificationSourceId(notifType, opts.gateId);
       const subject = NOTIFICATION_SUBJECTS[notifType] ?? "Jarvis notification";
       const suggestedActions: { label: string; actionType: string; payload?: Record<string, unknown> }[] =
         notifType === "approval_request" && opts.gateId

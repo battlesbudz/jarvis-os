@@ -29,10 +29,74 @@ async function main() {
 
   const phoneTools = [
     chatTool("android_open_app"),
+    chatTool("android_youtube_search"),
     chatTool("android_capture_screen"),
     chatTool("android_read_notifications"),
   ];
   const connectedPhoneRuntime = { androidActive: true, phoneRuntimeCoveredRequest: true };
+
+  for (const [requestText, expectedQuery] of [
+    ["Search YouTube for Jarvis Best Clips", "Jarvis Best Clips"],
+    ["Find me local Gemma Android videos on YouTube", "local Gemma Android videos"],
+    ["Open YouTube and search for agent routing tests", "agent routing tests"],
+  ] as const) {
+    const toolCall = deterministicPhoneRuntimeToolCallFromRequest(requestText, phoneTools, connectedPhoneRuntime);
+    assert.equal(toolCall?.function.name, "android_youtube_search");
+    assert.deepEqual(JSON.parse(toolCall?.function.arguments ?? "{}"), { query: expectedQuery });
+  }
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest("Open YouTube", phoneTools, connectedPhoneRuntime),
+    null,
+    "opening YouTube without a search should stay an app-open action",
+  );
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest("Research and summarize the best YouTube videos about Gemma", phoneTools, connectedPhoneRuntime),
+    null,
+    "YouTube research should stay on the server research route",
+  );
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest(
+      "Open YouTube and search for cats and play the first video",
+      phoneTools,
+      connectedPhoneRuntime,
+    ),
+    null,
+    "compound YouTube actions must stay in the multi-tool loop instead of leaking into the query",
+  );
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest(
+      "Open Spotify and then open YouTube and search for jazz",
+      phoneTools,
+      connectedPhoneRuntime,
+    ),
+    null,
+    "actions before a YouTube search must stay in the multi-tool loop",
+  );
+  for (const request of [
+    "Open YouTube and search for cats, afterwards play the first video",
+    "Open YouTube and search for cats, after that, tap the first video",
+    "Open YouTube and search for cats, also watch the first video",
+    "Open YouTube and search for cats and share the first video",
+    "Open YouTube and search for cats then close YouTube",
+    "Open YouTube and search for cats and subscribe to the channel",
+    "Open YouTube and search for cats and pause the first video",
+    "Open YouTube and search for cats, play the first video",
+    "Open YouTube and search for cats; share the first video",
+    "Open YouTube and search for cats, press the first result",
+    "Open YouTube and search for cats; scroll down",
+    "Open YouTube and search for cats. Press the first result.",
+    "Open YouTube and search for cats: play the first video",
+    "Open YouTube and search for cats. Now press the first result.",
+    "Open YouTube and search for cats. Next, please scroll down.",
+    "Open YouTube and search for cats. Turn the volume down.",
+    "Open YouTube and search for cats; raise the volume.",
+  ]) {
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(request, phoneTools, connectedPhoneRuntime),
+      null,
+      `compound YouTube connector must stay in the multi-tool loop: ${request}`,
+    );
+  }
 
   for (const requestText of [
     "Read my notifications",
@@ -77,6 +141,29 @@ async function main() {
     null,
     "plain-and compound phone requests must stay in the multi-tool loop",
   );
+  for (const request of [
+    "Read my notifications. Turn the volume down.",
+    "Read my notifications. Now turn the volume up.",
+    "Read my notifications: Next, please open Gmail.",
+    "Read my notifications. Go back.",
+    "Read my notifications. Go home.",
+    "Read my notifications. Notify me when you're done.",
+    "Read my notifications. Alert me when you're finished.",
+    "Read my notifications. Let me know when you're done.",
+    "Read my notifications. Wait for the screen to settle.",
+    "Read my notifications and notify me when you're done.",
+    "Read my notifications and wait for Gmail to open.",
+    "Read my notifications. Navigate to https://example.com.",
+    "Read my notifications. Browse to https://example.com.",
+    "Read my notifications and navigate to https://example.com.",
+    "Read my notifications and browse to https://example.com.",
+  ]) {
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(request, phoneTools, connectedPhoneRuntime),
+      null,
+      `punctuation-separated notification actions must stay in the multi-tool loop: ${request}`,
+    );
+  }
   assert.equal(
     deterministicPhoneRuntimeToolCallFromRequest("Do I have any Gmail notifications?", phoneTools, connectedPhoneRuntime),
     null,

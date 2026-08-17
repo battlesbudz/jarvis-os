@@ -107,6 +107,9 @@ async function main(): Promise<void> {
   const gatedResult = await onBeforeTool("send_email", { to: "sam@example.com" });
   assert.equal(gatedResult.allowed, true);
   assert.deepEqual(gatedResult.params, { to: "sam@example.com" });
+  assert.equal(gatedResult.approvalReceipt?.gateId, "gate_1");
+  assert.equal(gatedResult.approvalReceipt?.userId, "user_1");
+  assert.equal(gatedResult.approvalReceipt?.toolName, "send_email");
   assert.equal(requests.length, 2);
   assert.equal(requests[1].agentId, "coach_app:user_1");
   assert.equal(requests[1].userId, "user_1");

@@ -1,4 +1,5 @@
 import { isCloudBackgroundApprovalReady } from "./cloudBackgroundEscalation";
+import { codexDelegationRequiresConfirmation } from "./codexDelegationPolicy";
 
 const HIGH_RISK_TOOLS = new Set([
   // Email
@@ -57,6 +58,9 @@ export const STRICTLY_IRREVERSIBLE_TOOLS = new Set([
 export function requiresHumanApproval(toolName: string, toolArgs?: Record<string, unknown>): boolean {
   if (toolName === "queue_background_job" && toolArgs?.task_scoped_cloud === true) {
     return isCloudBackgroundApprovalReady(toolArgs);
+  }
+  if (toolName === "delegate_to_codex") {
+    return codexDelegationRequiresConfirmation(toolArgs ?? {});
   }
   return STRICTLY_IRREVERSIBLE_TOOLS.has(toolName);
 }

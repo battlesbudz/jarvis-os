@@ -45,6 +45,10 @@ export interface RunHostedCodexPromptInput extends HostedCodexAuthTokens {
   command?: string;
   timeoutMs?: number;
   refreshTokens?: () => Promise<HostedCodexAuthTokens>;
+  cwd?: string;
+  sandbox?: "read-only" | "workspace-write";
+  networkAccess?: boolean;
+  baseInstructions?: string;
 }
 
 export interface HostedCodexAppServerProcess {
@@ -306,13 +310,16 @@ export async function runHostedCodexPrompt(input: RunHostedCodexPromptInput): Pr
   if (!prompt) throw new Error("Prompt is required for the hosted Codex runtime.");
 
   const sessionRoot = await mkdtemp(join(tmpdir(), "jarvis-hosted-codex-"));
-  const workspace = join(sessionRoot, "workspace");
+  const workspace = input.cwd?.trim() || join(sessionRoot, "workspace");
   const codexHome = join(sessionRoot, "codex-home");
   let client: HostedCodexAppServerClient | null = null;
   const abort = () => client?.stop();
 
   try {
-    await Promise.all([mkdir(workspace), mkdir(codexHome)]);
+    await Promise.all([
+      input.cwd ? Promise.resolve() : mkdir(workspace),
+      mkdir(codexHome),
+    ]);
     const factory = processFactoryForTesting ?? defaultProcessFactory;
     const spawned = factory(
       input.command?.trim() || getCodexOAuthCommand(),
@@ -335,13 +342,13 @@ export async function runHostedCodexPrompt(input: RunHostedCodexPromptInput): Pr
     const threadResult = await liveClient.request("thread/start", {
       cwd: workspace,
       approvalPolicy: "never",
-      sandbox: "read-only",
+      sandbox: input.sandbox ?? "read-only",
       ephemeral: true,
       serviceName: "Jarvis Hosted Subscription",
-      baseInstructions: [
-        "You are Jarvis's hosted ChatGPT subscription runtime.",
-        "Answer only the latest Jarvis provider prompt.",
-        "Do not use Codex tools; Jarvis owns tool execution and approval gates.",
+      baseInstructions: input.baseInstructions ?? [
+          "You are Jarvis's hosted ChatGPT subscription runtime.",
+          "Answer only the latest Jarvis provider prompt.",
+          "Do not use Codex tools; Jarvis owns tool execution and approval gates.",
       ].join("\n"),
       threadSource: "user",
     }, 45_000);
@@ -357,7 +364,9 @@ export async function runHostedCodexPrompt(input: RunHostedCodexPromptInput): Pr
         threadId,
         input: [{ type: "text", text: prompt, text_elements: [] }],
         approvalPolicy: "never",
-        sandboxPolicy: { type: "readOnly", networkAccess: false },
+        sandboxPolicy: input.sandbox === "workspace-write"
+          ? { type: "workspaceWrite", writableRoots: [workspace], networkAccess: input.networkAccess === true }
+          : { type: "readOnly", networkAccess: input.networkAccess === true },
       });
     } catch (error) {
       liveClient.stop();

@@ -147,7 +147,12 @@ export interface RunAgentOptions {
   onBeforeTool?: (
     toolName: string,
     toolArgs: Record<string, unknown>,
-  ) => Promise<{ allowed: boolean; reason?: string; params?: Record<string, unknown> }>;
+  ) => Promise<{
+    allowed: boolean;
+    reason?: string;
+    params?: Record<string, unknown>;
+    approvalReceipt?: ToolContext["approvalReceipt"];
+  }>;
   /**
    * Optional callback fired when a tool fails due to an integration auth/
    * connectivity issue. The caller (e.g. the SSE route) can use this to
@@ -1361,6 +1366,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
 
           // ── Pre-execution hook gate check ─────────────────────────────
           let effectiveArgs = parsedArgs;
+          let toolApprovalReceipt = approvalReceipt;
           if (opts.onBeforeTool) {
             try {
               const gate = await opts.onBeforeTool(tc.function.name, parsedArgs);
@@ -1382,6 +1388,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
               // Apply rewritten params from hook (e.g. sanitisation, injection)
               if (gate.params) {
                 effectiveArgs = gate.params;
+              }
+              if (gate.approvalReceipt) {
+                toolApprovalReceipt = gate.approvalReceipt;
               }
             } catch (gateErr) {
               // Fail-closed: approval gate errors block the tool, not allow it.
@@ -1406,7 +1415,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentRunResult> {
           try {
             const result = await tool.execute(
               effectiveArgs,
-              approvalReceipt ? { ...context, approvalReceipt } : context,
+              toolApprovalReceipt ? { ...context, approvalReceipt: toolApprovalReceipt } : context,
             );
             toolCalls.push({
               name: tc.function.name,

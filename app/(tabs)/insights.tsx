@@ -219,6 +219,7 @@ interface ConfirmCardProps {
 function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: ConfirmCardProps) {
   const isEmail = pendingConfirm.tool === 'send_email';
   const isConnectedAccountAction = pendingConfirm.tool === 'connected_accounts_execute';
+  const isCodexDelegation = pendingConfirm.tool === 'delegate_to_codex';
   const preview = pendingConfirm.preview;
   const previewAction = String(preview.action || '');
   const isAndroidAction = pendingConfirm.tool.startsWith('android_') || previewAction.startsWith('android_');
@@ -227,12 +228,12 @@ function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: Confirm
     <View style={styles.confirmCard}>
       <View style={styles.confirmCardHeader}>
         <Ionicons
-          name={isEmail ? 'mail-outline' : isConnectedAccountAction ? 'git-network-outline' : isAndroidAction ? 'phone-portrait-outline' : 'terminal-outline'}
+          name={isEmail ? 'mail-outline' : isConnectedAccountAction ? 'git-network-outline' : isCodexDelegation ? 'code-slash-outline' : isAndroidAction ? 'phone-portrait-outline' : 'terminal-outline'}
           size={15}
           color={Colors.primary}
         />
         <Text style={styles.confirmCardTitle}>
-          {isEmail ? 'Send email?' : isConnectedAccountAction ? 'Approve connected account action?' : isAndroidAction ? 'Approve phone action?' : `Run terminal command?`}
+          {isEmail ? 'Send email?' : isConnectedAccountAction ? 'Approve connected account action?' : isCodexDelegation ? 'Approve Codex delegation?' : isAndroidAction ? 'Approve phone action?' : `Run terminal command?`}
         </Text>
       </View>
 
@@ -265,6 +266,35 @@ function ConfirmCard({ pendingConfirm, onConfirm, onCancel, isLoading }: Confirm
             <>
               <Text style={styles.confirmPreviewLabel}>Data</Text>
               <Text style={styles.confirmPreviewCode} numberOfLines={4}>{preview.data}</Text>
+            </>
+          )}
+        </View>
+      ) : isCodexDelegation ? (
+        <View style={styles.confirmPreview}>
+          <Text style={styles.confirmPreviewLabel}>Task</Text>
+          <Text style={styles.confirmPreviewCode}>{preview.task}</Text>
+          {!!preview.context && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Context</Text>
+              <Text style={styles.confirmPreviewValue}>{preview.context}</Text>
+            </>
+          )}
+          <Text style={styles.confirmPreviewLabel}>Working directory</Text>
+          <Text style={styles.confirmPreviewCode}>{preview.workingDirectory}</Text>
+          <Text style={styles.confirmPreviewLabel}>Workspace access</Text>
+          <Text style={styles.confirmPreviewValue}>{preview.access}</Text>
+          <Text style={styles.confirmPreviewLabel}>External side effects</Text>
+          <Text style={styles.confirmPreviewValue}>{preview.externalSideEffects || 'Not allowed'}</Text>
+          {!!preview.timeoutSeconds && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Timeout</Text>
+              <Text style={styles.confirmPreviewValue}>{preview.timeoutSeconds} seconds</Text>
+            </>
+          )}
+          {!!preview.reason && (
+            <>
+              <Text style={styles.confirmPreviewLabel}>Why approval is required</Text>
+              <Text style={styles.confirmPreviewValue}>{preview.reason}</Text>
             </>
           )}
         </View>
@@ -3855,10 +3885,20 @@ export default function InsightsScreen() {
         tool,
         result: data.result || 'error',
         label: data.label || (data.result === 'success' ? 'Done' : 'Failed'),
+        detail: data.detail || data.error,
       };
       const successContent = data.result === 'success'
-        ? (tool === 'send_email' ? `Email sent successfully.` : tool === 'connected_accounts_execute' ? `Connected account action completed successfully.` : `Command executed successfully.`)
+        ? (tool === 'send_email'
+          ? `Email sent successfully.`
+          : tool === 'connected_accounts_execute'
+            ? `Connected account action completed successfully.`
+            : tool === 'delegate_to_codex'
+              ? (data.detail || data.label || 'Codex delegation completed successfully.')
+              : `Command executed successfully.`)
         : `Action failed: ${data.detail || data.error || 'Unknown error'}`;
+      const spokenSuccessContent = data.result === 'success' && tool === 'delegate_to_codex'
+        ? (data.label || 'Codex delegation completed successfully.')
+        : successContent;
       setMessages(prev => {
         const updated = [...prev];
         const idx = updated.findIndex(m => m.id === msgId);
@@ -3879,7 +3919,7 @@ export default function InsightsScreen() {
         persistChatHistory(updated);
         return updated;
       });
-      speakConfirmationResult(successContent);
+      speakConfirmationResult(spokenSuccessContent);
     } catch (error) {
       const failureContent = 'Something went wrong while executing that action.';
       const execAction: ExecutedAction = {

@@ -9,6 +9,13 @@ const SERVER_YOUTUBE_TOOL_NAMES = new Set([
   "youtube_search",
   "get_youtube_transcript",
 ]);
+const PHONE_COMPOUND_CONNECTOR_PATTERN = String.raw`(?:and\s+then|then|after(?:wards|\s+that)?|also|and)`;
+const PHONE_FOLLOW_UP_ACTION_PATTERN = String.raw`(?:open|launch|start|wait|notify|alert|let\s+me\s+know|play|watch|tap|click|press|swipe|scroll|type|enter|select|share|send|close|pause|subscribe|like|save|download|call|text|message|search|find|look\s+up|look\s+for|navigate\s+to|browse\s+to|back|home|recents|screenshot|screen\s+shot|screen\s+capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+(?:back|home)|go\s+to|turn\s+(?:the\s+)?volume|raise\s+(?:the\s+)?volume|lower\s+(?:the\s+)?volume|volume\s+(?:up|down))`;
+const PHONE_PUNCTUATED_FOLLOW_UP_PATTERN = String.raw`[,;:.!?]\s*(?:(?:now|next|then)[\s,:-]+)?(?:please\s+)?${PHONE_FOLLOW_UP_ACTION_PATTERN}\b`;
+
+function hasPunctuatedPhoneFollowUpAction(text: string): boolean {
+  return new RegExp(PHONE_PUNCTUATED_FOLLOW_UP_PATTERN, "i").test(text);
+}
 
 export function isAndroidPhoneRuntimeToolName(name: string): boolean {
   return ANDROID_PHONE_RUNTIME_TOOL_NAME_SET.has(name);
@@ -56,6 +63,38 @@ export function isYoutubePhoneActionRequest(text: string): boolean {
 export function isYoutubeServerResearchRequest(text: string): boolean {
   return isYoutubePhoneRequest(text) &&
     /\b(?:summari[sz]e|summary|research|transcript|captions?|analy[sz]e|report|compare|rank|recommend|recommendation|best videos?|top videos?|best result|pick (?:a|the) video|choose (?:a|the) video)\b/i.test(text);
+}
+
+export function extractYoutubePhoneSearchQuery(text: string): string | null {
+  if (!isYoutubePhoneActionRequest(text) || isYoutubeServerResearchRequest(text)) return null;
+  if (/\b(?:don't|do not|dont|never)\b[\s\S]{0,48}\b(?:search|find|look\s+up|look\s+for)\b/i.test(text)) return null;
+
+  const youtube = String.raw`(?:you\s*tube|youtube|yt)`;
+  const verb = String.raw`(?:search|find|look\s+up|look\s+for)`;
+  const requestPrefix = String.raw`^\s*(?:(?:hey|hi)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?`;
+  const patterns = [
+    new RegExp(String.raw`${requestPrefix}(?:open|launch|start)(?:\s+up)?\s+(?:the\s+)?${youtube}(?:\s+app)?\s+(?:and|then)?\s*${verb}\s+(?:me\s+)?(?:for\s+)?(.+?)\s*[.!?]*$`, "i"),
+    new RegExp(String.raw`${requestPrefix}${verb}\s+(?:me\s+)?(?:on\s+)?${youtube}\s+(?:for\s+)?(.+?)\s*[.!?]*$`, "i"),
+    new RegExp(String.raw`${requestPrefix}${verb}\s+(?:me\s+)?(?:for\s+)?(.+?)\s+(?:on|in)\s+${youtube}\s*[.!?]*$`, "i"),
+    new RegExp(String.raw`${requestPrefix}${youtube}\s+${verb}\s+(?:for\s+)?(.+?)\s*[.!?]*$`, "i"),
+  ];
+
+  for (const pattern of patterns) {
+    const query = text.match(pattern)?.[1]
+      ?.replace(/\s+(?:please|for me)\s*$/i, "")
+      .replace(/^["']|["']$/g, "")
+      .trim();
+    if (query) {
+      // A connector inside the captured query may introduce any follow-up
+      // phone action. Decline deterministic extraction rather than trying to
+      // maintain an incomplete list of action verbs; the normal multi-tool
+      // loop can still interpret legitimate search phrases containing one.
+      if (new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i").test(query)) return null;
+      if (hasPunctuatedPhoneFollowUpAction(query)) return null;
+      return query;
+    }
+  }
+  return null;
 }
 
 export function isMemoryPhoneBypassRequest(text: string): boolean {
@@ -113,9 +152,13 @@ export function isPhoneNotificationReadRequest(text: string): boolean {
 
 function hasAdditionalPhoneActionAfterNotificationRead(text: string): boolean {
   const normalized = normalizePhoneRuntimeRequestText(text);
-  const continuation = normalized.split(/\b(?:and then|then|after(?:wards| that)?|also|and)\b/i).slice(1).join(" ");
+  if (hasPunctuatedPhoneFollowUpAction(normalized)) return true;
+  const continuation = normalized
+    .split(new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i"))
+    .slice(1)
+    .join(" ");
   if (!continuation.trim()) return false;
-  return /\b(?:open|launch|start|search|find|look\s+up|look\s+for|tap|click|press|swipe|scroll|type|enter|back|home|recents|screenshot|screen shot|screen capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+to)\b/i.test(continuation);
+  return new RegExp(String.raw`\b${PHONE_FOLLOW_UP_ACTION_PATTERN}\b`, "i").test(continuation);
 }
 
 function hasNotificationReadQualifier(text: string): boolean {
@@ -134,6 +177,19 @@ export function deterministicPhoneRuntimeToolCallFromRequest(
   options: { androidActive: boolean; phoneRuntimeCoveredRequest: boolean },
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
   if (!options.androidActive || !options.phoneRuntimeCoveredRequest) return null;
+  const youtubeQuery = extractYoutubePhoneSearchQuery(requestText);
+  if (youtubeQuery) {
+    const hasYoutubeSearchTool = tools.some((tool) => phoneRuntimeChatToolName(tool) === "android_youtube_search");
+    if (!hasYoutubeSearchTool) return null;
+    return {
+      id: `jarvis_phone_runtime_${Date.now().toString(36)}_0`,
+      type: "function",
+      function: {
+        name: "android_youtube_search",
+        arguments: JSON.stringify({ query: youtubeQuery }),
+      },
+    };
+  }
   if (!isPhoneNotificationReadRequest(requestText)) return null;
   if (hasAdditionalPhoneActionAfterNotificationRead(requestText)) return null;
   if (hasNotificationReadQualifier(requestText)) return null;

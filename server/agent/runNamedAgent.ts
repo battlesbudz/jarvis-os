@@ -483,7 +483,12 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
     const onBeforeTool = async (
       toolName: string,
       toolArgs: Record<string, unknown>,
-    ): Promise<{ allowed: boolean; reason?: string; params?: Record<string, unknown> }> => {
+    ): Promise<{
+      allowed: boolean;
+      reason?: string;
+      params?: Record<string, unknown>;
+      approvalReceipt?: ToolContext["approvalReceipt"];
+    }> => {
       const result = await toolCallHooks.run({
         toolName,
         params: toolArgs,
@@ -497,7 +502,12 @@ export async function runNamedAgent(opts: RunNamedAgentOptions): Promise<NamedAg
         signal,
         approvalReceipt: opts.approvalReceipt,
       });
-      return { allowed: result.allowed, reason: result.reason, params: result.params };
+      return {
+        allowed: result.allowed,
+        reason: result.reason,
+        params: result.params,
+        approvalReceipt: result.approvalReceipt,
+      };
     };
 
     // Crew specialists need more turns: they must call at least 2 tools before
