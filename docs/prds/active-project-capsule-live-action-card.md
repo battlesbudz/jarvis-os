@@ -226,7 +226,7 @@ The capsule answers the durable question, 'What are we working on?' Live Action 
 | LAC-004 | Ordering        | Every update carries a monotonically increasing version and event sequence; clients ignore older versions.                            |
 | LAC-005 | Persistence     | A fresh client can reconstruct all active cards and the last 30 days of terminal cards without stream history.                        |
 | LAC-006 | Progress        | Percent is nullable. currentStep, updatedAt, and progress kind are supported independently.                                           |
-| LAC-007 | Approval        | Map existing gates/checkpoints to waiting_approval; approval actions must route through the existing gate/receipt APIs.               |
+| LAC-007 | Approval        | Map existing gates/checkpoints to waiting_approval; every approval surface routes through one owner-aware decision dispatcher backed by the existing gate/receipt policy. |
 | LAC-008 | Waiting user    | Represent project questions, missing input, authentication, and recoverable choices with one primary next action.                     |
 | LAC-009 | Controls        | Render only adapter-declared controls. Commands are authenticated, idempotent, source-dispatched, and audited.                        |
 | LAC-010 | Cancel          | Display cancel_requested immediately, then reflect cancelled or the source's rejection/error.                                         |
@@ -318,6 +318,12 @@ The first version may project current agent job runtime events into these tables
 #### Retry lineage and canonical command targets
 
 The immutable pair (`lineage_type`, `source_lineage_key`) identifies the logical work across replacement source records; `source_type` and `source_id` identify the mutable current command owner. `lineage_type` is fixed when the action is first created and never changes during retry, approval continuation, or adapter reconciliation. For an initial agent job, `lineage_type = agent_job` and `source_lineage_key = <root job ID>`. Explicit user retries bypass the general `submitAgentJob` duplicate guard so they always persist a replacement job with `retryOfJobId`; they must never alias the lineage to an unrelated already-active duplicate. For a retry-created job, the projector follows `retryOfJobId` to the root, reuses the existing `liveActionId`, updates `source_id` to the newest canonical job ID, and appends `action.retry_scheduled` followed by the new queued/running events. Commands always dispatch to the current `source_id`; historical source IDs remain event metadata for audit and reconciliation. The replacement insert, lineage rebind, and event append are atomic and idempotent so concurrent retry projection cannot create a second card. If a canonical owner cannot bypass deduplication, it must persist an equivalent atomic lineage-rebind signal before returning success; an HTTP-only deduplication response is insufficient.
+
+#### Canonical approval decision dispatcher
+
+Every approval surface - Live Action Card, agent API, deliverable review, gateway, Discord, Telegram, Slack, WhatsApp, and webchat - calls one owner-aware `decideApprovalGate` service. Existing route/channel handlers become thin authenticated adapters and must not call `approveGate` directly. The service preserves the current gate/receipt authorization and policy semantics, resolves the canonical continuation owner (top-level job, direct email/Jarvis decision, Agent SDK run, or an in-job checkpoint), and returns one idempotent decision receipt.
+
+For an approval, a database transaction records the gate decision and creates or confirms a uniquely keyed continuation outbox/claim before the gate can become approved. A worker dispatches that durable intent to the canonical owner and writes the handoff/outcome protocol below. For rejection, the same transaction records the terminal rejection outcome. If the process exits after commit, reconciliation resumes the outbox; there is never an approved gate without durable continuation intent. Contract tests invoke every route/channel adapter and prove identical owner dispatch, duplicate-decision idempotency, rejection behavior, and recovery after a crash between decision commit and continuation dispatch.
 
 #### Approval continuation lineage
 
