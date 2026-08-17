@@ -293,7 +293,7 @@ Resolution precedence is explicit projectId on the current event, then session, 
 >
 > id, user_id, project_id?, parent_action_id?
 >
-> source_type, source_id, source_lineage_key, kind, title, status, version
+> lineage_type, source_lineage_key, source_type, source_id, kind, title, status, version
 >
 > current_step?, progress_kind, progress_value?
 >
@@ -303,7 +303,7 @@ Resolution precedence is explicit projectId on the current event, then session, 
 >
 > created_at, started_at?, updated_at, completed_at?
 >
-> UNIQUE(user_id, source_type, source_lineage_key)
+> UNIQUE(user_id, lineage_type, source_lineage_key)
 >
 > live_action_events
 >
@@ -317,11 +317,11 @@ The first version may project current agent job runtime events into these tables
 
 #### Retry lineage and canonical command targets
 
-`source_lineage_key` identifies the logical work across replacement source records. For an initial agent job it is the root job ID. Explicit user retries bypass the general `submitAgentJob` duplicate guard so they always persist a replacement job with `retryOfJobId`; they must never alias the lineage to an unrelated already-active duplicate. For a retry-created job, the projector follows `retryOfJobId` to the root, reuses the existing `liveActionId`, updates `source_id` to the newest canonical job ID, and appends `action.retry_scheduled` followed by the new queued/running events. Commands always dispatch to the current `source_id`; historical source IDs remain event metadata for audit and reconciliation. The replacement insert, lineage rebind, and event append are atomic and idempotent so concurrent retry projection cannot create a second card. If a canonical owner cannot bypass deduplication, it must persist an equivalent atomic lineage-rebind signal before returning success; an HTTP-only deduplication response is insufficient.
+The immutable pair (`lineage_type`, `source_lineage_key`) identifies the logical work across replacement source records; `source_type` and `source_id` identify the mutable current command owner. `lineage_type` is fixed when the action is first created and never changes during retry, approval continuation, or adapter reconciliation. For an initial agent job it is the root job ID. Explicit user retries bypass the general `submitAgentJob` duplicate guard so they always persist a replacement job with `retryOfJobId`; they must never alias the lineage to an unrelated already-active duplicate. For a retry-created job, the projector follows `retryOfJobId` to the root, reuses the existing `liveActionId`, updates `source_id` to the newest canonical job ID, and appends `action.retry_scheduled` followed by the new queued/running events. Commands always dispatch to the current `source_id`; historical source IDs remain event metadata for audit and reconciliation. The replacement insert, lineage rebind, and event append are atomic and idempotent so concurrent retry projection cannot create a second card. If a canonical owner cannot bypass deduplication, it must persist an equivalent atomic lineage-rebind signal before returning success; an HTTP-only deduplication response is insufficient.
 
 #### Approval continuation lineage
 
-A top-level approval that exists before execution is the lineage root for the resulting work. Its live action uses `approval_gate:<gateId>` as `source_lineage_key`. When `continueTopLevelApproval` creates a job carrying `input.originApprovalGateId`, the approval and job adapters atomically reuse that action's `liveActionId`, update `source_type` and `source_id` to the continuation job, append `action.approval_resolved` and queued/running events, and retain the gate ID in safe lineage metadata. The waiting approval card therefore visibly resumes instead of terminating beside a second job card. If an approval is already attention on a pre-existing action, that parent lineage remains authoritative and the gate never creates its own card. Adapter tests must cover both top-level gate-to-job continuation and approval checkpoints within an existing job.
+A top-level approval that exists before execution is the lineage root for the resulting work. Its live action uses `lineage_type = approval_gate` and the gate ID as `source_lineage_key`. When `continueTopLevelApproval` creates a job carrying `input.originApprovalGateId`, the approval and job adapters atomically reuse that action's `liveActionId`, update only the mutable `source_type` and `source_id` to the continuation job, append `action.approval_resolved` and queued/running events, and retain the gate ID in safe lineage metadata. The waiting approval card therefore visibly resumes instead of terminating beside a second job card. If an approval is already attention on a pre-existing action, that parent lineage remains authoritative and the gate never creates its own card. Adapter tests must cover both top-level gate-to-job continuation and approval checkpoints within an existing job.
 
 ### 9.3 Shared object contracts
 
