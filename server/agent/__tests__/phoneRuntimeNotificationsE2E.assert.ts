@@ -153,6 +153,10 @@ async function main() {
     "Read my notifications. Wait for the screen to settle.",
     "Read my notifications and notify me when you're done.",
     "Read my notifications and wait for Gmail to open.",
+    "Read my notifications. Navigate to https://example.com.",
+    "Read my notifications. Browse to https://example.com.",
+    "Read my notifications and navigate to https://example.com.",
+    "Read my notifications and browse to https://example.com.",
   ]) {
     assert.equal(
       deterministicPhoneRuntimeToolCallFromRequest(request, phoneTools, connectedPhoneRuntime),
