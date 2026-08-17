@@ -220,7 +220,7 @@ The capsule answers the durable question, 'What are we working on?' Live Action 
 
 | **ID**  | **Requirement** | **Acceptance statement**                                                                                                              |
 |---------|-----------------|---------------------------------------------------------------------------------------------------------------------------------------|
-| LAC-001 | Identity        | Create one stable liveActionId for each source action and enforce a unique sourceType + sourceId mapping per user.                    |
+| LAC-001 | Identity        | Create one stable liveActionId for each logical source-action lineage. Retry-created source records rebind that action to the current sourceId instead of creating a second card. |
 | LAC-002 | Projection      | Execution owners remain canonical; adapters project their state into live_actions and append user-visible events.                     |
 | LAC-003 | Idempotency     | Replayed or duplicate source events do not create duplicate cards or regress the action version.                                      |
 | LAC-004 | Ordering        | Every update carries a monotonically increasing version and event sequence; clients ignore older versions.                            |
@@ -237,7 +237,7 @@ The capsule answers the durable question, 'What are we working on?' Live Action 
 | LAC-015 | Hierarchy       | Support optional parentActionId for project -\> session -\> worker or research -\> artifact sub-actions.                              |
 | LAC-016 | Redaction       | Never persist or render secrets, authorization headers, cookies, raw shell commands, hidden reasoning, or unrestricted stdout/stderr. |
 | LAC-017 | Failure         | Display a user-safe error summary, failure category, retry eligibility, and next recovery action.                                     |
-| LAC-018 | Channels        | Provide a compact text serializer for Telegram/Discord/Slack and suppress high-frequency progress noise.                              |
+| LAC-018 | Channels        | Provide a compact text serializer for Telegram, Discord, Slack, WhatsApp, and webchat, and suppress high-frequency progress noise.    |
 
 ### 8.3 Accessibility and interaction
 
@@ -293,7 +293,7 @@ Resolution precedence is explicit projectId on the current event, then session, 
 >
 > id, user_id, project_id?, parent_action_id?
 >
-> source_type, source_id, kind, title, status, version
+> source_type, source_id, source_lineage_key, kind, title, status, version
 >
 > current_step?, progress_kind, progress_value?
 >
@@ -303,7 +303,7 @@ Resolution precedence is explicit projectId on the current event, then session, 
 >
 > created_at, started_at?, updated_at, completed_at?
 >
-> UNIQUE(user_id, source_type, source_id)
+> UNIQUE(user_id, source_type, source_lineage_key)
 >
 > live_action_events
 >
@@ -314,6 +314,10 @@ Resolution precedence is explicit projectId on the current event, then session, 
 > UNIQUE(action_id, sequence)
 
 The first version may project current agent job runtime events into these tables without modifying agent_jobs. Future execution owners publish the same event contract directly. Terminal records remain queryable for 30 days by default; audit or compliance retention remains with the canonical owner.
+
+#### Retry lineage and canonical command targets
+
+`source_lineage_key` identifies the logical work across replacement source records. For an initial agent job it is the root job ID. For a retry-created job, the projector follows `retryOfJobId` to the root, reuses the existing `liveActionId`, updates `source_id` to the newest canonical job ID, and appends `action.retry_scheduled` followed by the new queued/running events. Commands always dispatch to the current `source_id`; historical source IDs remain event metadata for audit and reconciliation. The update and event append are atomic and idempotent so concurrent retry projection cannot create a second card.
 
 ### 9.3 Shared object contracts
 
@@ -356,7 +360,7 @@ The first version may project current agent job runtime events into these tables
 
 | **Source**              | **Canonical owner**              | **Initial normalized mapping**                                |
 |-------------------------|----------------------------------|---------------------------------------------------------------|
-| Background worker       | agent_jobs + workerRuntime       | queued/running/progress/checkpoints/complete/failed/cancelled |
+| Background worker       | agent_jobs + workerRuntime       | queued/running/cancelling/progress/checkpoints/complete/delivered/failed/cancelled |
 | Project                 | jarvis_projects + sessions       | planning/building/waiting_for_input/paused/complete/failed    |
 | Approval                | existing approval gates/receipts | waiting_approval -\> resumed/rejected/expired                 |
 | Deliverable             | deliverables                     | artifact attached; succeeded with needs-review attention      |
@@ -592,8 +596,10 @@ Extend the existing runtime state-card builder with an optional projectCapsule s
 |----------------------------------|----------------------|--------------------------------------------------------------------|
 | agentJobs.queued                 | queued               | Preserve queue age; position only if authoritative                 |
 | agentJobs.running                | running              | Use workerRuntime progress/events when present                     |
+| agentJobs.cancelling             | running              | Show Cancelling attention after cancel_requested; remain non-terminal until the owner confirms cancellation |
 | agentJobs.resource_paused        | paused               | Expose resource reason and resume eligibility                      |
 | agentJobs.complete               | succeeded            | May also carry needs-review attention until deliverable acted on   |
+| agentJobs.delivered              | succeeded            | Preserve the succeeded card and mark its deliverable as delivered; do not regress to unknown or running |
 | agentJobs.failed                 | failed               | Map safe category and retry eligibility                            |
 | agentJobs.cancelled              | cancelled            | Terminal                                                           |
 | jarvisProjects.planning/building | running              | Current plan step is primary progress                              |
