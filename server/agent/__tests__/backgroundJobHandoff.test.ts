@@ -139,6 +139,7 @@ assert.match(jobQueueSource, /Limited-results PDF generated and available in Inb
 assert.match(jobQueueSource, /tx\.insert\(schema\.deliverableArtifacts\)/);
 assert.match(jobQueueSource, /\.for\("update"\)/);
 assert.match(jobQueueSource, /deliverable\.body !== mergedBody/);
+assert.match(jobQueueSource, /deliverable\.title !== mergedTitle/);
 
 const reviewRoutesSource = readFileSync(
   fileURLToPath(new URL("../deliverableReviewHttpRoutes.ts", import.meta.url)),
@@ -149,6 +150,20 @@ assert.match(reviewRoutesSource, /delete\(schema\.deliverableArtifacts\)/);
 assert.match(reviewRoutesSource, /hasDownloadableArtifact: false/);
 assert.match(reviewRoutesSource, /patch\.title !== existing\.title/);
 assert.match(reviewRoutesSource, /patch\.body !== existing\.body/);
+
+const slackWebhookSource = readFileSync(
+  fileURLToPath(new URL("../../channels/slackWebhook.ts", import.meta.url)),
+  "utf8",
+);
+assert.match(slackWebhookSource, /originChannelId: slackDestination/);
+assert.match(slackWebhookSource, /ev\.thread_ts/);
+
+const slackChannelSource = readFileSync(
+  fileURLToPath(new URL("../../channels/slackChannel.ts", import.meta.url)),
+  "utf8",
+);
+assert.match(slackChannelSource, /opts\.threadKey/);
+assert.match(slackChannelSource, /thread_ts/);
 
 const coachAgentSource = readFileSync(
   fileURLToPath(new URL("../../channels/coachAgent.ts", import.meta.url)),

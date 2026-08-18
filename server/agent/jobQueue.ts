@@ -244,7 +244,13 @@ async function notifyJobComplete(
       const originCh = getChannel(origin);
       if (originCh) {
         const result = await originCh
-          .sendMessage(userId, text, { notificationType: "approval_request", ...opts })
+          .sendMessage(userId, text, {
+            notificationType: "approval_request",
+            ...opts,
+            ...(origin === "slack" && originDiscordChannelId
+              ? { threadKey: originDiscordChannelId }
+              : {}),
+          })
           .catch(() => ({ ok: false as const }));
         if (result.ok) notified.push(origin);
       }
@@ -505,14 +511,22 @@ async function flushResearchBatch(key: string): Promise<void> {
     if (!mergedDeliverableId) return false;
     return db.transaction(async (tx) => {
       const [deliverable] = await tx
-        .select({ meta: schema.deliverables.meta, body: schema.deliverables.body })
+        .select({
+          meta: schema.deliverables.meta,
+          body: schema.deliverables.body,
+          title: schema.deliverables.title,
+        })
         .from(schema.deliverables)
         .where(eq(schema.deliverables.id, mergedDeliverableId))
         .limit(1)
         .for("update");
       // The debounce runs after the deliverable becomes editable. Never
       // resurrect an artifact generated from bytes the user has since changed.
-      if (!deliverable || deliverable.body !== mergedBody) return false;
+      if (
+        !deliverable
+        || deliverable.body !== mergedBody
+        || deliverable.title !== mergedTitle
+      ) return false;
       const meta = (deliverable.meta as Record<string, unknown> | null) ?? {};
       await tx
         .delete(schema.deliverableArtifacts)
@@ -685,12 +699,15 @@ async function notifySubAgentJobComplete(
   const jobInput = (job.input as Record<string, unknown>) ?? {};
   const originChannel = typeof jobInput.originChannel === "string" ? jobInput.originChannel : undefined;
   const originDiscordChannelId = typeof jobInput.originDiscordChannelId === "string" ? jobInput.originDiscordChannelId : undefined;
+  const originChannelId = typeof jobInput.originChannelId === "string" ? jobInput.originChannelId : undefined;
+  const originDestination = originDiscordChannelId
+    || (originChannel?.toLowerCase() === "slack" ? originChannelId : undefined);
 
   if (job.agentType !== "research" || !job.createdAt) {
-    await notifyJobComplete(job.userId, job.agentType as AgentJobType, deliverableTitle, notifyBody, originChannel, originDiscordChannelId, opts);
+    await notifyJobComplete(job.userId, job.agentType as AgentJobType, deliverableTitle, notifyBody, originChannel, originDestination, opts);
     return;
   }
-  scheduleResearchNotification(job.userId, new Date(job.createdAt), deliverableTitle, notifyBody, originChannel, originDiscordChannelId, jobId, promptedPdf);
+  scheduleResearchNotification(job.userId, new Date(job.createdAt), deliverableTitle, notifyBody, originChannel, originDestination, jobId, promptedPdf);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 

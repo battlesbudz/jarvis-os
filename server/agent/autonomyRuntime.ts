@@ -418,7 +418,7 @@ export async function routeAutonomyRequest(
     hasApproval,
   });
   const emailFileDeliveryRequested = durableReportRequested && (
-    /\bemail\b[^.!?\n]{0,80}\b[\w.+-]+@[\w.-]+\b/i.test(userText)
+    /\b(?:email|send)\b[^.!?\n]{0,80}\b[\w.+-]+@[\w.-]+\b/i.test(userText)
     || /\b(?:send|email)\b[^.!?\n]{0,120}\b(?:via|by)\s+email\b/i.test(userText)
   );
   if (emailFileDeliveryRequested) {

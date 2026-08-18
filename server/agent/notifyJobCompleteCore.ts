@@ -100,7 +100,12 @@ export async function _notifyJobCompleteCore(
       const originCh = getChannel(origin);
       if (originCh) {
         const result = await originCh
-          .sendMessage(userId, text, { notificationType: "approval_request" })
+          .sendMessage(userId, text, {
+            notificationType: "approval_request",
+            ...(origin === "slack" && originDiscordChannelId
+              ? { threadKey: originDiscordChannelId }
+              : {}),
+          })
           .catch(() => ({ ok: false as const }));
         if (result.ok) notified.push(origin);
       }

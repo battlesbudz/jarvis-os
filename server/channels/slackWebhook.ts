@@ -108,7 +108,14 @@ export function registerSlackWebhook(app: Express): void {
 
       try {
         const storedSessionId = await getSession(userId, "Slack");
-        const { reply, sdkSessionId } = await runCoachAgent({ userId, userText: text, channelName: "Slack", sdkSessionId: storedSessionId });
+        const slackDestination = `${String(ev.channel || "")}|${String(ev.thread_ts || "")}`;
+        const { reply, sdkSessionId } = await runCoachAgent({
+          userId,
+          userText: text,
+          channelName: "Slack",
+          originChannelId: slackDestination,
+          sdkSessionId: storedSessionId,
+        });
         if (sdkSessionId) {
           setSession(userId, "Slack", sdkSessionId);
         }

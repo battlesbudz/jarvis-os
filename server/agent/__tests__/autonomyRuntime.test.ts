@@ -166,13 +166,16 @@ async function main(): Promise<void> {
     assert.equal(submitCalls, 0);
   }
 
-  {
+  for (const emailFileText of [
+    "Email alice@example.com the report as a PDF",
+    "Send alice@example.com the report as a PDF",
+  ]) {
     let submitCalls = 0;
     let approvalCalls = 0;
     const result = await routeAutonomyRequest(
       {
         userId: "user_email_pdf",
-        userText: "Email alice@example.com the report as a PDF",
+        userText: emailFileText,
         channelName: "App Chat",
         readiness: "ready",
       },
