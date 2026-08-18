@@ -446,27 +446,33 @@ async function flushResearchBatch(key: string): Promise<void> {
           ),
         )
         .orderBy(asc(schema.deliverables.createdAt));
+      const activeSiblingDeliverables = siblingDeliverables.filter(
+        (deliverable) => deliverable.status === "pending_approval",
+      );
+      const activeJobIds = new Set(activeSiblingDeliverables.map((deliverable) => deliverable.jobId).filter(Boolean));
+      jobs.splice(0, jobs.length, ...jobs.filter((batchJob) => !batchJob.jobId || activeJobIds.has(batchJob.jobId)));
+      if (jobs.length === 0) return;
 
-      if (siblingDeliverables.length > 1) {
+      if (activeSiblingDeliverables.length > 1) {
         // Merge all bodies into one consolidated report
-        const sections = siblingDeliverables.map((d, i) => {
-          const heading = d.title && d.title !== siblingDeliverables[0].title
+        const sections = activeSiblingDeliverables.map((d, i) => {
+          const heading = d.title && d.title !== activeSiblingDeliverables[0].title
             ? `\n\n---\n\n## ${d.title}\n\n`
             : i === 0 ? "" : "\n\n---\n\n";
           return `${heading}${d.body || ""}`;
         });
         mergedBody = sections.join("").trim();
-        mergedTitle = `Research: ${siblingDeliverables[0].title}`;
+        mergedTitle = `Research: ${activeSiblingDeliverables[0].title}`;
         // Update the first deliverable with merged content
-        const firstId = siblingDeliverables[0].id;
+        const firstId = activeSiblingDeliverables[0].id;
         await db
           .update(schema.deliverables)
-          .set({ title: mergedTitle, body: mergedBody, summary: `Consolidated from ${siblingDeliverables.length} research threads.` })
+          .set({ title: mergedTitle, body: mergedBody, summary: `Consolidated from ${activeSiblingDeliverables.length} research threads.` })
           .where(eq(schema.deliverables.id, firstId));
         mergedDeliverableId = firstId;
         // Point all sibling jobs' result.deliverableId to the merged deliverable
         // so job-level views don't end up with stale / deleted IDs.
-        for (const d of siblingDeliverables.slice(1)) {
+        for (const d of activeSiblingDeliverables.slice(1)) {
           try {
             const [sibJob] = await db
               .select()
@@ -485,11 +491,11 @@ async function flushResearchBatch(key: string): Promise<void> {
           }
           await db.delete(schema.deliverables).where(eq(schema.deliverables.id, d.id));
         }
-        console.log(`[JobQueue] consolidated ${siblingDeliverables.length} research deliverables → ${firstId}`);
-      } else if (siblingDeliverables.length === 1) {
-        mergedDeliverableId = siblingDeliverables[0].id;
-        mergedBody = siblingDeliverables[0].body || "";
-        mergedTitle = siblingDeliverables[0].title || mergedTitle;
+        console.log(`[JobQueue] consolidated ${activeSiblingDeliverables.length} research deliverables → ${firstId}`);
+      } else if (activeSiblingDeliverables.length === 1) {
+        mergedDeliverableId = activeSiblingDeliverables[0].id;
+        mergedBody = activeSiblingDeliverables[0].body || "";
+        mergedTitle = activeSiblingDeliverables[0].title || mergedTitle;
       }
     } catch (mergeErr) {
       console.error("[JobQueue] deliverable merge failed (non-fatal):", mergeErr);
@@ -515,6 +521,7 @@ async function flushResearchBatch(key: string): Promise<void> {
           meta: schema.deliverables.meta,
           body: schema.deliverables.body,
           title: schema.deliverables.title,
+          status: schema.deliverables.status,
         })
         .from(schema.deliverables)
         .where(eq(schema.deliverables.id, mergedDeliverableId))
@@ -524,6 +531,7 @@ async function flushResearchBatch(key: string): Promise<void> {
       // resurrect an artifact generated from bytes the user has since changed.
       if (
         !deliverable
+        || deliverable.status !== "pending_approval"
         || deliverable.body !== mergedBody
         || deliverable.title !== mergedTitle
       ) return false;
@@ -2957,14 +2965,14 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     }
 
     // ── Format request detection ──────────────────────────────────────────────
-    // Research jobs are consolidated by the batch coordinator. Writing and
-    // planning retain their specialized workers, but requested PDFs are stored
-    // as durable Inbox artifacts and are never uploaded before Save to Drive.
+    // Persist requested PDFs with the deliverable transaction. Research may
+    // later replace its per-job artifact with one consolidated batch artifact,
+    // but the initial durable copy survives worker restarts before that timer.
     const wantsPdf = requestsReportFile(job.prompt || "");
     let pdfNote = "";
     let durableArtifact: { filename: string; mimeType: string; content: Buffer } | null = null;
 
-    if (wantsPdf && (job.agentType === "writing" || job.agentType === "planning")) {
+    if (wantsPdf && (job.agentType === "writing" || job.agentType === "planning" || job.agentType === "research")) {
       const filenameBase = sub.title.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() || "Jarvis document";
       try {
         const pdfBuffer = await markdownToPdfBuffer(sub.title, sub.body);
@@ -2973,14 +2981,16 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         sub.meta.pdfFilename = filename;
         sub.meta.hasDownloadableArtifact = true;
         durableArtifact = { filename, mimeType: "application/pdf", content: pdfBuffer };
-        pdfNote = `\n\n📄 PDF attached and available in Inbox. Use Save to Drive if you want an external copy.`;
-        (ctx.state.pendingAttachments ||= []).push({
-          kind: "document",
-          filename,
-          content: pdfBuffer,
-          caption: sub.title,
-          mimeType: "application/pdf",
-        });
+        if (job.agentType !== "research") {
+          pdfNote = `\n\n📄 PDF attached and available in Inbox. Use Save to Drive if you want an external copy.`;
+          (ctx.state.pendingAttachments ||= []).push({
+            kind: "document",
+            filename,
+            content: pdfBuffer,
+            caption: sub.title,
+            mimeType: "application/pdf",
+          });
+        }
       } catch (pdfErr) {
         const pdfMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
         const filename = `${filenameBase}.md`;
@@ -2990,14 +3000,16 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         sub.meta.fallbackFilename = filename;
         sub.meta.hasDownloadableArtifact = true;
         durableArtifact = { filename, mimeType: "text/markdown", content: Buffer.from(sub.body, "utf8") };
-        pdfNote = `\n\n⚠️ PDF generation failed; the Markdown fallback is attached and available in Inbox.`;
-        (ctx.state.pendingAttachments ||= []).push({
-          kind: "document",
-          filename,
-          content: sub.body,
-          caption: `${sub.title} (Markdown fallback)`,
-          mimeType: "text/markdown",
-        });
+        if (job.agentType !== "research") {
+          pdfNote = `\n\n⚠️ PDF generation failed; the Markdown fallback is attached and available in Inbox.`;
+          (ctx.state.pendingAttachments ||= []).push({
+            kind: "document",
+            filename,
+            content: sub.body,
+            caption: `${sub.title} (Markdown fallback)`,
+            mimeType: "text/markdown",
+          });
+        }
       }
     }
     // ─────────────────────────────────────────────────────────────────────────
