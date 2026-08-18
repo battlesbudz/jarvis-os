@@ -6,6 +6,24 @@ import { buildBackgroundJobPrompt, requestsReportFile, unsupportedReportFileForm
 const standalone = "Research sunflower seeds and make a report";
 assert.equal(buildBackgroundJobPrompt([{ role: "user", content: standalone }], standalone), standalone);
 
+for (const temporalStandalone of [
+  "Create a PDF report on this year's CRM trends",
+  "Create a PDF report on this quarter's CRM trends",
+  "Create a PDF report on this week's CRM trends",
+]) {
+  assert.equal(
+    buildBackgroundJobPrompt(
+      [
+        { role: "user", content: "Draft an email to Bob" },
+        { role: "assistant", content: "What should it say?" },
+        { role: "user", content: temporalStandalone },
+      ],
+      temporalStandalone,
+    ),
+    temporalStandalone,
+  );
+}
+
 const latest = "No, the whole point was to research this and give it back to me as a file";
 const prompt = buildBackgroundJobPrompt(
   [
