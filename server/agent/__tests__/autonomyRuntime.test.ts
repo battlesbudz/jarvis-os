@@ -46,6 +46,321 @@ async function main(): Promise<void> {
   }
 
   {
+    const submitted: Array<{ agentType: string; prompt: string }> = [];
+    const contextualPrompt = [
+      "Complete the latest user request as a self-contained background task.",
+      "Relevant conversation context (oldest to newest):",
+      "User: Research sunflower seed nutrition.",
+      "Latest user request:",
+      "Make it a PDF",
+      "End latest user request.",
+    ].join("\n");
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_contextual_pdf",
+        userText: "Make it a PDF",
+        backgroundPrompt: contextualPrompt,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        submitJob: async (job) => {
+          submitted.push({ agentType: job.agentType, prompt: job.prompt });
+          return { id: "job_contextual_pdf", isDuplicate: false };
+        },
+      },
+    );
+
+    assert.equal(result.handled, true);
+    assert.equal(result.decision.agentType, "deep_research");
+    assert.equal(submitted.length, 1);
+    assert.equal(submitted[0].agentType, "deep_research");
+    assert.equal(submitted[0].prompt, contextualPrompt);
+  }
+
+  {
+    const submitted: Array<{ agentType: string; prompt: string }> = [];
+    const contextualPrompt = [
+      "Complete the latest user request as a self-contained background task.",
+      "Relevant conversation context (oldest to newest):",
+      "User: Research an unrelated market.",
+      "Assistant: I can run that research in the background.",
+      "User: Summarize these notes.",
+      "Assistant: Here is the concise summary.",
+      "Latest user request:",
+      "Make it a PDF",
+      "End latest user request.",
+    ].join("\n");
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_inline_summary_pdf",
+        userText: "Make it a PDF",
+        backgroundPrompt: contextualPrompt,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        submitJob: async (job) => {
+          submitted.push({ agentType: job.agentType, prompt: job.prompt });
+          return { id: "job_inline_summary_pdf", isDuplicate: false };
+        },
+      },
+    );
+    assert.equal(result.handled, true);
+    assert.equal(result.decision.agentType, "writing");
+    assert.deepEqual(submitted, [{ agentType: "writing", prompt: contextualPrompt }]);
+  }
+
+  {
+    const submitted: Array<{ agentType: string; prompt: string }> = [];
+    let approvalCalls = 0;
+    const contextualPrompt = [
+      "Complete the latest user request as a self-contained background task.",
+      "Relevant conversation context (oldest to newest):",
+      "User: Draft an email to the board.",
+      "Assistant: I can send a summary when it is ready.",
+      "User: Research sunflower seed nutrition.",
+      "Latest user request:",
+      "Make it a PDF",
+      "End latest user request.",
+    ].join("\n");
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_stale_approval_context",
+        userText: "Make it a PDF",
+        backgroundPrompt: contextualPrompt,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        requestApproval: async () => {
+          approvalCalls += 1;
+          return { id: "unexpected_gate", status: "pending" };
+        },
+        submitJob: async (job) => {
+          submitted.push({ agentType: job.agentType, prompt: job.prompt });
+          return { id: "job_stale_approval_context", isDuplicate: false };
+        },
+      },
+    );
+
+    assert.equal(result.handled, true);
+    assert.equal(result.decision.mode, "queue_background_job");
+    assert.equal(result.decision.agentType, "deep_research");
+    assert.equal(approvalCalls, 0);
+    assert.deepEqual(submitted, [{ agentType: "deep_research", prompt: contextualPrompt }]);
+  }
+
+  for (const workerCase of [
+    { text: "Write a PDF memo for the board", expectedAgentType: "writing" },
+    { text: "Create a PDF memo for the board", expectedAgentType: "writing" },
+    { text: "Prepare a PDF memo for the board", expectedAgentType: "writing" },
+    { text: "Create a PDF project plan", expectedAgentType: "planning" },
+  ]) {
+    const submitted: string[] = [];
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_worker_pdf",
+        userText: workerCase.text,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        submitJob: async (job) => {
+          submitted.push(job.agentType);
+          return { id: `job_${workerCase.expectedAgentType}_pdf`, isDuplicate: false };
+        },
+      },
+    );
+
+    assert.equal(result.handled, true);
+    assert.equal(result.decision.agentType, workerCase.expectedAgentType);
+    assert.deepEqual(submitted, [workerCase.expectedAgentType]);
+  }
+
+  for (const selfDeliveryCase of [
+    { text: "Send me a PDF report on sunflower seeds" },
+    { text: "Send it as a PDF", backgroundPrompt: [
+      "Complete the latest user request as a self-contained background task.",
+      "Relevant conversation context (oldest to newest):",
+      "User: Research sunflower seed nutrition.",
+      "Latest user request:",
+      "Send it as a PDF",
+      "End latest user request.",
+    ].join("\n") },
+  ]) {
+    let approvalCalls = 0;
+    const submitted: string[] = [];
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_self_delivery_pdf",
+        userText: selfDeliveryCase.text,
+        backgroundPrompt: selfDeliveryCase.backgroundPrompt,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        requestApproval: async () => {
+          approvalCalls += 1;
+          return { id: "unexpected_self_delivery_gate", status: "pending" };
+        },
+        submitJob: async (job) => {
+          submitted.push(job.agentType);
+          return { id: "job_self_delivery_pdf", isDuplicate: false };
+        },
+      },
+    );
+    assert.equal(result.decision.mode, "queue_background_job");
+    assert.equal(approvalCalls, 0);
+    assert.equal(submitted.length, 1);
+  }
+
+  for (const externalDeliveryText of [
+    "Send it to Bob as a PDF",
+    "Send me and Bob the report as a PDF",
+    "Send me a PDF and email it to Bob",
+    "Send me a PDF and text Bob a copy",
+    "Send me a PDF and message Bob a copy",
+    "Send me a PDF and share it with Bob",
+    "Send me a PDF report and share it in #general",
+    "Send me a PDF and upload it to Google Drive",
+  ]) {
+    let approvalCalls = 0;
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_external_delivery_pdf",
+        userText: externalDeliveryText,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        requestApproval: async () => {
+          approvalCalls += 1;
+          return { id: "external_delivery_gate", status: "pending" };
+        },
+      },
+    );
+    assert.equal(result.decision.mode, "requires_approval");
+    assert.equal(approvalCalls, 1);
+  }
+
+  for (const selfDeliveryTopic of [
+    "Send me a PDF report about text-message marketing",
+    "Send me a PDF report about email marketing",
+    "Send me a PDF report about market share trends",
+  ]) {
+    let approvalCalls = 0;
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_self_delivery_topic",
+        userText: selfDeliveryTopic,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        requestApproval: async () => {
+          approvalCalls += 1;
+          return { id: "unexpected_topic_gate", status: "pending" };
+        },
+        submitJob: async () => ({ id: "self_delivery_topic_job", isDuplicate: false }),
+      },
+    );
+    assert.equal(result.decision.mode, "queue_background_job");
+    assert.equal(approvalCalls, 0);
+  }
+
+  {
+    let submitCalls = 0;
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_unsupported_csv",
+        userText: "Research competitors and export the results as CSV",
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        submitJob: async () => {
+          submitCalls += 1;
+          return { id: "not_queued", isDuplicate: false };
+        },
+      },
+    );
+    assert.equal(result.handled, true);
+    assert.equal(result.decision.mode, "answer_inline");
+    assert.match(result.reply || "", /can’t generate CSV/i);
+    assert.match(result.reply || "", /PDF or.*Markdown/i);
+    assert.equal(submitCalls, 0);
+  }
+
+  for (const emailFileText of [
+    "Email alice@example.com the report as a PDF",
+    "Send alice@example.com the report as a PDF",
+  ]) {
+    let submitCalls = 0;
+    let approvalCalls = 0;
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_email_pdf",
+        userText: emailFileText,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        submitJob: async () => {
+          submitCalls += 1;
+          return { id: "unexpected_email_pdf_job", isDuplicate: false };
+        },
+        requestApproval: async () => {
+          approvalCalls += 1;
+          return { id: "unexpected_email_pdf_gate", status: "pending" };
+        },
+      },
+    );
+    assert.equal(result.handled, true);
+    assert.equal(result.decision.mode, "answer_inline");
+    assert.match(result.reply || "", /can’t attach.*generated PDF/i);
+    assert.equal(submitCalls, 0);
+    assert.equal(approvalCalls, 0);
+  }
+
+  {
+    let submitCalls = 0;
+    let approvalCalls = 0;
+    const contextualPrompt = [
+      "Complete the latest user request as a self-contained background task.",
+      "Relevant conversation context (oldest to newest):",
+      "User: Email alice@example.com the report.",
+      "Latest user request:",
+      "Send it as a PDF",
+      "End latest user request.",
+    ].join("\n");
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_contextual_email_pdf",
+        userText: "Send it as a PDF",
+        backgroundPrompt: contextualPrompt,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        submitJob: async () => {
+          submitCalls += 1;
+          return { id: "unexpected_contextual_email_pdf_job", isDuplicate: false };
+        },
+        requestApproval: async () => {
+          approvalCalls += 1;
+          return { id: "unexpected_contextual_email_pdf_gate", status: "pending" };
+        },
+      },
+    );
+    assert.equal(result.handled, true);
+    assert.equal(result.decision.mode, "answer_inline");
+    assert.match(result.reply || "", /can’t attach.*generated PDF/i);
+    assert.equal(submitCalls, 0);
+    assert.equal(approvalCalls, 0);
+  }
+
+  {
     let submitCalls = 0;
     const observations: AutonomyRuntimeObservation[] = [];
     const approvalRequests: Array<{

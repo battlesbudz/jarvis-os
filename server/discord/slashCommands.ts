@@ -13,7 +13,9 @@ import { db } from "../db";
 import { eq, and, desc } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { channelLinks } from "@shared/schema";
-import { runCoachAgent } from "../channels/coachAgent";
+import { persistFastCoachExchange, runCoachAgent } from "../channels/coachAgent";
+import { getCoachAgentSessionAgentId } from "../channels/coachAgentSession";
+import { getSession as getCoachSession, setSession as setCoachSession } from "../channels/sessionStore";
 import { routeSlashCommand, getHelpText, SLASH_COMMANDS } from "../channels/slashCommandRouter";
 import { cancelAllForUser } from "../agent/jobClient";
 import { RESOURCE_PAUSED_STATUS } from "../agent/voiceRuntimeResourceCore";
@@ -527,35 +529,45 @@ async function handleChat(
 
   const guildId = interaction.guild_id as string | undefined;
   const originChannelId = interaction.channel_id as string | undefined;
+  const deliveryChannelId = isPublic ? originChannelId : undefined;
+  const sessionChannel = `Discord:slash:${isPublic ? "public" : "private"}:${originChannelId || "dm"}`;
 
   try {
-    const primeReply = await tryHandleDiscordChatWithPrime({
-      userId,
-      message,
-      originChannelId,
-      guildId,
-    });
-    if (primeReply) {
-      await editInteractionReply(
-        appId,
-        interaction.token,
-        primeReply,
-        isPublic ? undefined : EPHEMERAL,
-      );
-      return;
+    const storedSessionId = await getCoachSession(userId, sessionChannel);
+    try {
+      const primeReply = await tryHandleDiscordChatWithPrime({
+        userId,
+        message,
+        originChannelId: deliveryChannelId,
+        guildId,
+      });
+      if (primeReply) {
+        const primeSessionId = await persistFastCoachExchange({
+          userId,
+          channelName: "Discord",
+          channelLower: "discord",
+          userText: message,
+          reply: primeReply,
+          coachSessionAgentId: getCoachAgentSessionAgentId(userId),
+          sdkSessionId: storedSessionId,
+          persistGlobalHistory: false,
+        });
+        if (primeSessionId) setCoachSession(userId, sessionChannel, primeSessionId);
+        await editInteractionReply(appId, interaction.token, primeReply, isPublic ? undefined : EPHEMERAL);
+        return;
+      }
+    } catch (err) {
+      console.warn("[SlashCommands] PRIME runtime chat path failed; falling back to coach agent:", err);
     }
-  } catch (err) {
-    console.warn("[SlashCommands] PRIME runtime chat path failed; falling back to coach agent:", err);
-  }
-
-  try {
     const result = await runCoachAgent({
       userId,
       userText: message,
       channelName: "Discord",
-      originChannelId,
+      originChannelId: deliveryChannelId,
       discordGuildId: guildId,
+      sdkSessionId: storedSessionId,
     });
+    if (result.sdkSessionId) setCoachSession(userId, sessionChannel, result.sdkSessionId);
     await editInteractionReply(
       appId,
       interaction.token,

@@ -14,6 +14,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Linking,
+  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -34,6 +35,23 @@ class DriveApiError extends Error {
     super(message);
     this.code = code;
   }
+}
+
+const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let result = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i];
+    const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+    const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    result += BASE64_CHARS[b0 >> 2];
+    result += BASE64_CHARS[((b0 & 3) << 4) | (b1 >> 4)];
+    result += i + 1 < bytes.length ? BASE64_CHARS[((b1 & 15) << 2) | (b2 >> 6)] : '=';
+    result += i + 2 < bytes.length ? BASE64_CHARS[b2 & 63] : '=';
+  }
+  return result;
 }
 
 interface InboxItem {
@@ -341,6 +359,56 @@ export default function InboxScreen() {
 
   const [gutModalSignal, setGutModalSignal] = useState<GutSignal | null>(null);
   const [dailyPlanEditorOpen, setDailyPlanEditorOpen] = useState(false);
+  const [downloadingArtifactId, setDownloadingArtifactId] = useState<string | null>(null);
+
+  const downloadDeliverableArtifact = useCallback(async (deliverable: Deliverable) => {
+    setDownloadingArtifactId(deliverable.id);
+    try {
+      const response = await apiRequest('GET', `/api/deliverables/${deliverable.id}/artifact`);
+      const meta = (deliverable.meta || {}) as { pdfFilename?: string; fallbackFilename?: string };
+      const filename = (meta.pdfFilename || meta.fallbackFilename || `${deliverable.title}.pdf`)
+        .replace(/[^A-Za-z0-9._\- ]+/g, '_')
+        .slice(0, 120);
+      const buffer = await response.arrayBuffer();
+
+      if (Platform.OS === 'web') {
+        const objectUrl = URL.createObjectURL(new Blob([buffer], {
+          type: response.headers.get('content-type') || 'application/octet-stream',
+        }));
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      } else {
+        const FileSystem = await import('expo-file-system/legacy');
+        const base64 = arrayBufferToBase64(buffer);
+        if (Platform.OS === 'android') {
+          const permission = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+          if (!permission.granted) throw new Error('Choose a folder to save this file.');
+          const uri = await FileSystem.StorageAccessFramework.createFileAsync(
+            permission.directoryUri,
+            filename,
+            response.headers.get('content-type') || 'application/octet-stream',
+          );
+          await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+        } else {
+          if (!FileSystem.cacheDirectory) throw new Error('File cache is unavailable');
+          const uri = `${FileSystem.cacheDirectory}${Date.now()}-${filename}`;
+          await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+          // The native share sheet includes Save to Files, which exports the
+          // temporary cache entry into user-controlled persistent storage.
+          await Share.share({ url: uri, title: filename });
+        }
+      }
+    } catch (error) {
+      Alert.alert('Download failed', error instanceof Error ? error.message : 'Could not download this file.');
+    } finally {
+      setDownloadingArtifactId(null);
+    }
+  }, []);
 
   const respondGutMutation = useMutation({
     mutationFn: async ({ id, response }: { id: string; response: string }) => {
@@ -360,6 +428,11 @@ export default function InboxScreen() {
   const { data: deliverables = [], refetch: refetchDeliverables } = useQuery<Deliverable[]>({
     queryKey: ['/api/deliverables'],
     refetchInterval: 30000,
+  });
+
+  const { data: recentFileDeliverables = [], refetch: refetchRecentFiles } = useQuery<Deliverable[]>({
+    queryKey: ['/api/deliverables?triageSection=recent_files'],
+    refetchInterval: 60000,
   });
 
   const { data: autoHandledDeliverables = [], refetch: refetchAutoHandled } = useQuery<Deliverable[]>({
@@ -438,6 +511,7 @@ export default function InboxScreen() {
       refetchGut(),
       refetchDrafts(),
       refetchDeliverables(),
+      refetchRecentFiles(),
       refetchAutoHandled(),
       refetchActiveJobs(),
       refetchFailedJobs(),
@@ -449,6 +523,7 @@ export default function InboxScreen() {
     refetchGut,
     refetchDrafts,
     refetchDeliverables,
+    refetchRecentFiles,
     refetchAutoHandled,
     refetchActiveJobs,
     refetchFailedJobs,
@@ -493,6 +568,7 @@ export default function InboxScreen() {
     },
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=recent_files'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=auto_handled'] });
       queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
       const approvedItem = deliverables.find(d => d.id === variables);
@@ -533,6 +609,7 @@ export default function InboxScreen() {
     },
     onSuccess: (data, id) => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=recent_files'] });
       queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
       if (data.driveLink) {
         Alert.alert('Saved to Drive', 'Your document has been saved to Google Drive.', [
@@ -717,11 +794,12 @@ export default function InboxScreen() {
       refetch();
       refetchDrafts();
       refetchDeliverables();
+      refetchRecentFiles();
       refetchAutoHandled();
       refetchActiveJobs();
       refetchFailedJobs();
       refetchGut();
-    }, [refetch, refetchDrafts, refetchDeliverables, refetchAutoHandled, refetchActiveJobs, refetchFailedJobs, refetchGut])
+    }, [refetch, refetchDrafts, refetchDeliverables, refetchRecentFiles, refetchAutoHandled, refetchActiveJobs, refetchFailedJobs, refetchGut])
   );
 
   const handleAction = (itemId: string, actionType: string, sourceId?: string, payload?: Record<string, unknown>) => {
@@ -1050,6 +1128,9 @@ export default function InboxScreen() {
             noSourceUrls?: boolean;
             verificationPassed?: boolean | null;
             verificationRetries?: number;
+            hasDownloadableArtifact?: boolean;
+            pdfFilename?: string;
+            fallbackFilename?: string;
           } | null;
           const verificationPassed = meta?.verificationPassed;
           const verificationRetries = meta?.verificationRetries ?? 0;
@@ -1165,6 +1246,24 @@ export default function InboxScreen() {
                   </View>
                 </Pressable>
 
+                {meta?.hasDownloadableArtifact ? (
+                  <Pressable
+                    style={styles.downloadArtifactRow}
+                    onPress={() => downloadDeliverableArtifact(d)}
+                    disabled={busy || downloadingArtifactId === d.id}
+                    testID={`deliverable-download-${d.id}`}
+                  >
+                    {downloadingArtifactId === d.id ? (
+                      <ActivityIndicator size="small" color={Colors.primary} />
+                    ) : (
+                      <Ionicons name="download-outline" size={14} color={Colors.primary} />
+                    )}
+                    <Text style={styles.driveLinkText}>
+                      Download {meta.pdfFilename?.endsWith('.pdf') ? 'PDF' : 'file'}
+                    </Text>
+                  </Pressable>
+                ) : null}
+
                 {canSaveToDrive && d.driveLink ? (
                   <Pressable
                     style={styles.driveLinkRow}
@@ -1250,6 +1349,88 @@ export default function InboxScreen() {
                     </>
                   )}
                 </View>
+              </View>
+            </Animated.View>
+          );
+        })}
+      </View>
+    );
+  };
+
+  const renderRecentFiles = () => {
+    if (recentFileDeliverables.length === 0) return null;
+    return (
+      <View style={styles.draftSection}>
+        <View style={styles.draftHeader}>
+          <Ionicons name="folder-open-outline" size={16} color={Colors.primary} />
+          <Text style={styles.draftHeaderText}>
+            Recent files · {recentFileDeliverables.length}
+          </Text>
+        </View>
+        {recentFileDeliverables.map((d, index) => {
+          const meta = d.meta as { pdfFilename?: string; fallbackFilename?: string } | null;
+          const isDownloading = downloadingArtifactId === d.id;
+          const canSaveToDrive = d.review?.canSaveToDrive !== false;
+          return (
+            <Animated.View key={d.id} entering={FadeInDown.duration(300).delay(index * 50)}>
+              <View style={styles.draftCard}>
+                <View style={styles.cardHeader}>
+                  <View style={[styles.sourceIcon, { backgroundColor: Colors.primary + '15' }]}>
+                    <Ionicons name="document-attach-outline" size={18} color={Colors.primary} />
+                  </View>
+                  <View style={styles.cardHeaderText}>
+                    <Text style={styles.senderName} numberOfLines={1}>Generated report</Text>
+                    <Text style={styles.timestamp}>
+                      {new Date(d.actedAt || d.createdAt).toLocaleString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.subject} numberOfLines={2}>{d.title}</Text>
+                <Pressable
+                  style={styles.downloadArtifactRow}
+                  onPress={() => downloadDeliverableArtifact(d)}
+                  disabled={isDownloading}
+                  testID={`recent-file-download-${d.id}`}
+                >
+                  {isDownloading ? (
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                  ) : (
+                    <Ionicons name="download-outline" size={14} color={Colors.primary} />
+                  )}
+                  <Text style={styles.driveLinkText}>
+                    Download {meta?.pdfFilename?.toLowerCase().endsWith('.pdf') ? 'PDF' : 'file'}
+                  </Text>
+                </Pressable>
+                {canSaveToDrive && d.driveLink ? (
+                  <Pressable
+                    style={styles.driveLinkRow}
+                    onPress={() => Linking.openURL(d.driveLink!)}
+                    testID={`recent-file-drive-link-${d.id}`}
+                  >
+                    <Ionicons name="logo-google" size={14} color={Colors.primary} />
+                    <Text style={styles.driveLinkText}>Open in Drive</Text>
+                    <Ionicons name="open-outline" size={13} color={Colors.primary} />
+                  </Pressable>
+                ) : canSaveToDrive ? (
+                  <Pressable
+                    style={styles.saveToDriveRow}
+                    onPress={() => saveToDriveMutation.mutate(d.id)}
+                    disabled={busy}
+                    testID={`recent-file-save-to-drive-${d.id}`}
+                  >
+                    {saveToDriveMutation.isPending && saveToDriveMutation.variables === d.id ? (
+                      <ActivityIndicator size="small" color={Colors.primary} />
+                    ) : (
+                      <Ionicons name="logo-google" size={14} color={Colors.primary} />
+                    )}
+                    <Text style={styles.driveLinkText}>Save to Drive</Text>
+                  </Pressable>
+                ) : null}
               </View>
             </Animated.View>
           );
@@ -1527,6 +1708,7 @@ export default function InboxScreen() {
     <View>
       {renderDailyCommandCard()}
       {renderDeliverables()}
+      {renderRecentFiles()}
       {renderGutNoticed()}
       {renderRunningJobs()}
       {renderFailedJobs()}
@@ -2512,6 +2694,17 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary + '08',
     borderWidth: 1,
     borderColor: Colors.primary + '30',
+    borderRadius: 8,
+    marginBottom: 10,
+    alignSelf: 'flex-start' as const,
+  },
+  downloadArtifactRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.primary + '12',
     borderRadius: 8,
     marginBottom: 10,
     alignSelf: 'flex-start' as const,

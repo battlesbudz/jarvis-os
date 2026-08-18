@@ -95,6 +95,29 @@ export async function _notifyJobCompleteCore(
       return;
     }
 
+    if (origin === "slack" || origin === "whatsapp") {
+      const notified: string[] = [];
+      const originCh = getChannel(origin);
+      if (originCh) {
+        const result = await originCh
+          .sendMessage(userId, text, {
+            notificationType: "approval_request",
+            ...(origin === "slack" && originDiscordChannelId
+              ? { threadKey: originDiscordChannelId }
+              : {}),
+          })
+          .catch(() => ({ ok: false as const }));
+        if (result.ok) notified.push(origin);
+      }
+      const inAppCh = getChannel("in_app");
+      if (inAppCh) {
+        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request" }).catch(() => {});
+        notified.push("in_app");
+      }
+      console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [${notified.join(", ") || "none"}]`);
+      return;
+    }
+
     if (origin === "heartbeat/crew") {
       console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} -> [diagnostics]`);
       return;

@@ -900,7 +900,8 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       let result: Awaited<ReturnType<typeof runCoachAgent>> | null = null;
       let streamingFailed = false;
       const discordChannelId = message.channelId;
-      const storedSessionId = await getCoachSession(userId, "Discord");
+      const discordSessionChannel = `Discord:${discordChannelId}`;
+      const storedSessionId = await getCoachSession(userId, discordSessionChannel);
       const onProgressMessage = (msg: string) => {
         if (placeholder && !streamBuf) {
           placeholder.edit(`⏳ *${msg}*`).catch(() => {});
@@ -953,7 +954,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
       }
 
       if (result?.sdkSessionId) {
-        setCoachSession(userId, "Discord", result.sdkSessionId);
+        setCoachSession(userId, discordSessionChannel, result.sdkSessionId);
       }
 
       // Use streamed buffer as final reply when result is unavailable but

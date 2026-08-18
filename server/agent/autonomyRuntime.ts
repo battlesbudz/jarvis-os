@@ -11,10 +11,13 @@ import { decideContextPacks, type ContextPackDecision, type ContextTaskType } fr
 import { getCoachAppAgentId } from "./coreAgentIds";
 import type { AgentJobType, SubmitJobInput, SubmitJobResult } from "./jobClient";
 import { buildMindTrace, type JarvisMindTrace, type MindTraceToolInput } from "./mindTrace";
+import { requestsReportFile, unsupportedReportFileFormat } from "./backgroundJobHandoff";
 
 export interface AutonomyRuntimeInput {
   userId: string;
   userText: string;
+  /** Self-contained worker prompt when the latest turn depends on chat history. */
+  backgroundPrompt?: string;
   channelName: string;
   originChannelId?: string;
   readiness?: AutonomyReadiness;
@@ -333,19 +336,91 @@ function queuedReply(agentType: AgentJobType, job: SubmitJobResult): string {
   return `I've queued that as a ${agentType} background job. Job ID: ${job.id}. Open Inbox to watch it under Running Jobs; when it finishes, the result appears under Needs your review as a Jarvis deliverable. Approving it saves it to Documents, and Save to Drive creates a Drive file when available.`;
 }
 
+function contextualWorkerRoutingText(backgroundPrompt: string, userText: string): string {
+  const latestMarker = backgroundPrompt.lastIndexOf("Latest user request:");
+  const context = latestMarker >= 0
+    ? backgroundPrompt.slice(0, latestMarker)
+    : backgroundPrompt;
+  const priorUserTurns = Array.from(context.matchAll(/^User:\s*(.+)$/gim))
+    .map((match) => match[1].trim())
+    .filter(Boolean);
+  const nearestUserTurn = priorUserTurns.at(-1);
+  if (nearestUserTurn) {
+    const nearestDecision = decideAutonomyMode({
+      userText: nearestUserTurn,
+      readiness: "ready",
+      hasApproval: true,
+    });
+    if (nearestDecision.mode === "queue_background_job") {
+      return `${nearestUserTurn}\n${userText}`;
+    }
+  }
+  return [
+    "Write a document from the referenced conversation content.",
+    ...(nearestUserTurn ? [nearestUserTurn] : []),
+    userText,
+  ].join("\n");
+}
+
+function isSelfDirectedFileDelivery(userText: string, routingText: string): boolean {
+  const selfDirected = /^\s*send\s+me\b/i.test(userText)
+    || /^\s*send\s+(?:it|this|the\s+(?:report|document|file|results?|findings?))\b[^.!?\n]{0,60}\b(?:as|in|into)\s+(?:an?\s+)?pdf\b/i.test(userText);
+  if (!selfDirected) return false;
+
+  return !(
+    /\b[\w.+-]+@[\w.-]+\b/i.test(routingText)
+    || /\bsend\s+me\s+(?:,?\s*and|&)\s+\S+/i.test(routingText)
+    || /\b(?:send|deliver)\b[^.!?\n]{0,100}\bto\s+(?!me\b|my\b|an?\s+pdf\b|pdf\b)\S+/i.test(routingText)
+    || /\b(?:via|through)\s+(?:email|slack|discord|telegram|whatsapp|sms|text)\b/i.test(routingText)
+    || /(?:^|[;,]|\b(?:and|then)\b)\s*(?:(?:also|then)\s+)?share\b/i.test(routingText)
+    || /(?:^|[;,]|\b(?:and|then)\b)\s*(?:(?:also|then)\s+)?(?:upload|save)\b[^.!?\n]{0,60}\b(?:google\s+drive|drive|dropbox|onedrive|cloud)\b/i.test(routingText)
+    || /(?:^|[;,]|\b(?:and|then)\b)\s*(?:(?:also|then)\s+)?(?:email|message|text|sms|dm|post|schedule|delete|purchase|commit|contact|deploy|submit)\b/i.test(routingText)
+  );
+}
+
 export async function routeAutonomyRequest(
   input: AutonomyRuntimeInput,
   deps: AutonomyRuntimeDeps = {},
 ): Promise<AutonomyRuntimeResult> {
   const userText = input.userText.trim();
+  const backgroundPrompt = input.backgroundPrompt?.trim();
+  const unsupportedFormat = unsupportedReportFileFormat(backgroundPrompt || userText);
+  if (unsupportedFormat) {
+    const decision: AutonomyPolicyDecision = {
+      mode: "answer_inline",
+      reason: `The requested ${unsupportedFormat} format is not supported by the background report renderer.`,
+    };
+    return {
+      handled: true,
+      decision,
+      reply: `I can’t generate ${unsupportedFormat} from this background report flow yet. I can create a downloadable PDF or keep the result as Markdown instead.`,
+    };
+  }
+  // A short referential turn such as "Make it a PDF" may classify inline by
+  // itself. Use the bounded handoff only for routing when it establishes an
+  // explicit file request; keep the original turn for titles and approvals.
+  const durableReportRequested = requestsReportFile(backgroundPrompt || userText);
+  const routingText = backgroundPrompt && durableReportRequested
+    ? contextualWorkerRoutingText(backgroundPrompt, userText)
+    : userText;
   const hasApproval = input.hasApproval ?? inferExplicitApproval(userText);
-  const preliminary = decideAutonomyMode({
+  // Approval risk belongs exclusively to the current user turn. Bounded
+  // conversation context may contain stale external-action language, so use it
+  // only to recover the background worker and self-contained prompt.
+  const latestPreliminary = decideAutonomyMode({
     userText,
     readiness: "ready",
     hasApproval,
   });
+  const preliminary = latestPreliminary.mode === "requires_approval"
+    ? latestPreliminary
+    : decideAutonomyMode({
+        userText: routingText,
+        readiness: "ready",
+        hasApproval: true,
+      });
 
-  if (!userText || preliminary.mode === "answer_inline") {
+  if (!userText || (preliminary.mode === "answer_inline" && !durableReportRequested)) {
     await observeAutonomyDecision(deps, {
       mode: preliminary.mode,
       userId: input.userId,
@@ -357,11 +432,58 @@ export async function routeAutonomyRequest(
   }
 
   const readiness = input.readiness ?? await (deps.getReadiness ?? defaultReadiness)(input.userId);
-  const decision = decideAutonomyMode({
+  const latestPolicyDecision = decideAutonomyMode({
     userText,
     readiness,
     hasApproval,
   });
+  // The relevant prior user turn can carry the recipient while a referential
+  // latest turn carries only the requested format ("Send it as a PDF").
+  const emailDeliveryText = backgroundPrompt && durableReportRequested
+    ? routingText
+    : userText;
+  const emailFileDeliveryRequested = durableReportRequested && (
+    /\b(?:email|send)\b[^.!?\n]{0,80}\b[\w.+-]+@[\w.-]+\b/i.test(emailDeliveryText)
+    || /\b(?:send|email)\b[^.!?\n]{0,120}\b(?:via|by)\s+email\b/i.test(emailDeliveryText)
+  );
+  if (emailFileDeliveryRequested) {
+    const decision: AutonomyPolicyDecision = {
+      mode: "answer_inline",
+      reason: "The email approval workflow cannot attach generated report files safely.",
+    };
+    return {
+      handled: true,
+      decision,
+      reply: "I can create the PDF for download, or draft the email text, but I can’t attach and send a generated PDF through this approval flow yet. Please choose one of those options.",
+    };
+  }
+  const selfDirectedFileDelivery = durableReportRequested
+    && isSelfDirectedFileDelivery(userText, emailDeliveryText);
+  let policyDecision: AutonomyPolicyDecision = latestPolicyDecision.mode === "requires_approval"
+    && !selfDirectedFileDelivery
+    ? latestPolicyDecision
+    : decideAutonomyMode({
+        userText: routingText,
+        readiness,
+        hasApproval: true,
+      });
+  if (policyDecision.mode === "answer_inline" && durableReportRequested) {
+    policyDecision = {
+      mode: "queue_background_job",
+      agentType: "writing",
+      reason: "Explicit downloadable report requests require an artifact-capable worker.",
+    };
+  }
+  // Only deep_research persists generated files in deliverableArtifacts. Any
+  // explicit report-file request must use that durable path, even when its
+  // subject would otherwise classify as ordinary research.
+  const decision: AutonomyPolicyDecision = (
+    policyDecision.mode === "queue_background_job"
+    && durableReportRequested
+    && (policyDecision.agentType === "research" || policyDecision.agentType === "deep_research")
+  )
+    ? { ...policyDecision, agentType: "deep_research" }
+    : policyDecision;
 
   if (decision.mode === "answer_inline") {
     await observeAutonomyDecision(deps, {
@@ -404,6 +526,7 @@ export async function routeAutonomyRequest(
         toolArgs: {
           topLevelAutonomy: true,
           userText,
+          ...(backgroundPrompt ? { backgroundPrompt } : {}),
           channelName: input.channelName,
           ...(input.originChannelId ? { originChannelId: input.originChannelId } : {}),
         },
@@ -455,6 +578,7 @@ export async function routeAutonomyRequest(
 
   const agentType = (decision.agentType || "research") as AgentJobType;
   const title = deriveAutonomyTitle(userText);
+  const workerPrompt = backgroundPrompt || userText;
   const submitJob = deps.submitJob ?? defaultSubmitJob;
   let job: SubmitJobResult;
   try {
@@ -462,7 +586,7 @@ export async function routeAutonomyRequest(
       userId: input.userId,
       agentType,
       title,
-      prompt: userText,
+      prompt: workerPrompt,
       input: {
         originChannel: input.channelName,
         ...(input.originChannelId ? { originChannelId: input.originChannelId } : {}),

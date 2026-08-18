@@ -31,7 +31,6 @@ import { readRecentErrorsTool, listSourceFilesTool, readSourceFileTool, proposeC
 import { fetchCalendarTool } from "./tools/calendar";
 import { researchHasSourceUrls } from "./researchUtils";
 import { markdownToPdfBuffer } from "./tools/exportPdf";
-import { createDriveBinaryFile } from "../integrations/googleDrive";
 import { normalizeApprovalReceipt } from "./approvalReceipt";
 import { decideJobFailureRecovery } from "./jobObservability";
 import { buildWorkerRuntimeEvent, resolveWorkerType, withWorkerRuntimeEvent } from "./workerRuntime";
@@ -42,6 +41,7 @@ import {
   type BuildFeatureProgressInput,
 } from "./buildFeatureJobCore";
 import { recoverStaleResourcePausedJobsAfterVoice } from "./voiceRuntimeResourceScheduler";
+import { requestsReportFile } from "./backgroundJobHandoff";
 
 // Re-export from the shared client so existing callers don't break.
 export type { NotifyJobCompleteDeps } from "./notifyJobCompleteCore";
@@ -109,7 +109,7 @@ async function notifyJobComplete(
           // Include the Drive link when available so the user can access the file.
           const driveClause = att.driveLink
             ? ` You can also open it directly on Google Drive: ${att.driveLink}`
-            : " You can download the full report from your Jarvis inbox or Google Drive.";
+            : " You can download the full report from your Jarvis inbox, then use Save to Drive if you want an external copy.";
           const sizeNote =
             `⚠️ The generated PDF (${sizeMb} MB) exceeds Discord's 25 MB file size limit and could not be attached directly.${driveClause}`;
           if (channelId) {
@@ -239,6 +239,30 @@ async function notifyJobComplete(
       return;
     }
 
+    if (origin === "slack" || origin === "whatsapp") {
+      const notified: string[] = [];
+      const originCh = getChannel(origin);
+      if (originCh) {
+        const result = await originCh
+          .sendMessage(userId, text, {
+            notificationType: "approval_request",
+            ...opts,
+            ...(origin === "slack" && originDiscordChannelId
+              ? { threadKey: originDiscordChannelId }
+              : {}),
+          })
+          .catch(() => ({ ok: false as const }));
+        if (result.ok) notified.push(origin);
+      }
+      const inAppCh = getChannel("in_app");
+      if (inAppCh) {
+        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request", ...opts }).catch(() => {});
+        notified.push("in_app");
+      }
+      console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [${notified.join(", ") || "none"}]`);
+      return;
+    }
+
     if (origin === "app" || origin === "coach" || origin === "appchat" || origin === "voice") {
       // In-app (or voice) only — no external channel notification.
       const inAppCh = getChannel("in_app");
@@ -285,12 +309,14 @@ interface BatchedResearchJob {
   promptedPdf?: boolean;
   /** Originating channel (e.g. "Discord #general") for most-common-origin routing. */
   originChannel?: string;
-  /** Discord channel ID for direct-channel routing when origin is Discord. */
-  originDiscordChannelId?: string;
+  /** Channel/thread destination used by origins that support direct routing. */
+  originDestination?: string;
 }
 
 interface BatchedResearchNotification {
   userId: string;
+  /** Origin plus direct destination; prevents cross-channel/thread batching. */
+  scope: string;
   /** createdAt of the first job in this batch (ms since epoch). Used for window matching. */
   anchorTime: number;
   /** Each job's content, origin info (for routing), and PDF metadata (for consolidation). */
@@ -307,7 +333,12 @@ const researchNotificationBatches = new Map<string, BatchedResearchNotification>
  * triggering a second notification.
  * Map: userId → [{anchorTime, flushedAt}]
  */
-const flushedResearchBatches = new Map<string, Array<{ anchorTime: number; flushedAt: number }>>();
+const flushedResearchBatches = new Map<string, Array<{ anchorTime: number; flushedAt: number; scope: string }>>();
+
+function researchBatchScope(originChannel?: string, originDestination?: string): string {
+  const channel = (originChannel ?? "in_app").trim().toLowerCase() || "in_app";
+  return `${channel}:${originDestination ?? ""}`;
+}
 
 /** True sibling window — must match the guard in queueBackgroundJob. */
 const SIBLING_WINDOW_MS = 60 * 1000;
@@ -327,7 +358,7 @@ async function flushResearchBatch(key: string): Promise<void> {
   if (!batch) return;
   researchNotificationBatches.delete(key);
 
-  const { userId, anchorTime, jobs } = batch;
+  const { userId, anchorTime, jobs, scope } = batch;
   if (jobs.length === 0) return;
 
   // Before sending, query the DB for sibling research jobs that completed in
@@ -336,11 +367,14 @@ async function flushResearchBatch(key: string): Promise<void> {
   // Merge any extras into the total count so the combined notification is
   // accurate. This is best-effort — failures fall through safely.
   let allSiblingJobIds: string[] = jobs.filter((j) => j.jobId).map((j) => j.jobId!);
+  const pdfRequestedByJobId = new Map(
+    jobs.flatMap((job) => job.jobId ? [[job.jobId, job.promptedPdf === true] as const] : []),
+  );
   try {
     const windowStart = new Date(anchorTime - SIBLING_WINDOW_MS);
     const windowEnd   = new Date(anchorTime + SIBLING_WINDOW_MS);
     const allSiblings = await db
-      .select({ id: schema.agentJobs.id, title: schema.agentJobs.title })
+      .select({ id: schema.agentJobs.id, title: schema.agentJobs.title, prompt: schema.agentJobs.prompt, input: schema.agentJobs.input })
       .from(schema.agentJobs)
       .where(
         and(
@@ -352,14 +386,22 @@ async function flushResearchBatch(key: string): Promise<void> {
         ),
       );
     const knownIds = new Set(allSiblingJobIds);
-    const knownTitles = new Set(jobs.map((j) => j.title));
     for (const row of allSiblings) {
+      const input = row.input && typeof row.input === "object" && !Array.isArray(row.input)
+        ? row.input as Record<string, unknown>
+        : {};
+      const siblingOrigin = typeof input.originChannel === "string" ? input.originChannel : undefined;
+      const siblingDestination = typeof input.originDiscordChannelId === "string"
+        ? input.originDiscordChannelId
+        : siblingOrigin?.toLowerCase() === "slack" && typeof input.originChannelId === "string"
+          ? input.originChannelId
+          : undefined;
+      if (researchBatchScope(siblingOrigin, siblingDestination) !== scope) continue;
       const t = row.title ?? "";
-      if (!knownTitles.has(t)) {
-        jobs.push({ title: t, body: "", jobId: row.id });
-        knownTitles.add(t);
-      }
-      if (row.id && !knownIds.has(row.id)) {
+      const promptedPdf = requestsReportFile(row.prompt ?? "");
+      pdfRequestedByJobId.set(row.id, promptedPdf);
+      if (!knownIds.has(row.id)) {
+        jobs.push({ title: t, body: "", originChannel: siblingOrigin, originDestination: siblingDestination, jobId: row.id, promptedPdf });
         allSiblingJobIds.push(row.id);
         knownIds.add(row.id);
       }
@@ -373,7 +415,7 @@ async function flushResearchBatch(key: string): Promise<void> {
   const userFlushed = flushedResearchBatches.get(userId) ?? [];
   // Evict stale entries before appending.
   const fresh = userFlushed.filter((f) => now - f.flushedAt < FLUSHED_BATCH_TTL_MS);
-  fresh.push({ anchorTime, flushedAt: now });
+  fresh.push({ anchorTime, flushedAt: now, scope });
   flushedResearchBatches.set(userId, fresh);
 
   // ── Resolve most-common originating channel for routing ──────────────────
@@ -387,17 +429,17 @@ async function flushResearchBatch(key: string): Promise<void> {
     }
   }
   let batchOriginChannel: string | undefined;
-  let batchOriginDiscordChannelId: string | undefined;
+  let batchOriginDestination: string | undefined;
   if (originCounts.size > 0) {
     let maxCount = 0;
     for (const [ch, count] of originCounts.entries()) {
       if (count > maxCount) { maxCount = count; batchOriginChannel = ch; }
     }
-    // When the winning origin is Discord, find the Discord channel ID from the
-    // first matching job (most common when there are multiple distinct IDs).
-    if (batchOriginChannel?.startsWith("discord")) {
-      const discordJobs = jobs.filter(j => j.originChannel?.toLowerCase().startsWith("discord") && j.originDiscordChannelId);
-      batchOriginDiscordChannelId = discordJobs[0]?.originDiscordChannelId;
+    // Preserve the direct destination for Discord channels and Slack threads.
+    if (batchOriginChannel?.startsWith("discord") || batchOriginChannel === "slack") {
+      batchOriginDestination = jobs.find(
+        (job) => job.originChannel?.toLowerCase() === batchOriginChannel && job.originDestination,
+      )?.originDestination;
     }
   }
 
@@ -408,144 +450,177 @@ async function flushResearchBatch(key: string): Promise<void> {
   let mergedDeliverableId: string | null = null;
   let mergedTitle = jobs[0].title;
   let mergedBody = "";
-  const wantsPdf = jobs.some((j) => j.promptedPdf);
+  let wantsPdf = jobs.some((job) => job.promptedPdf);
+  const notifyOpts: ChannelSendOpts = {};
+  let pdfNote = "";
+  let batchAttachment: NonNullable<ChannelSendOpts["attachments"]>[number] | null = null;
 
   if (allSiblingJobIds.length > 0) {
     try {
-      const siblingDeliverables = await db
-        .select()
-        .from(schema.deliverables)
-        .where(
-          and(
-            eq(schema.deliverables.userId, userId),
-            sql`${schema.deliverables.jobId} = ANY(${allSiblingJobIds})`,
-          ),
-        )
-        .orderBy(asc(schema.deliverables.createdAt));
+      const hasActiveDeliverables = await db.transaction(async (tx) => {
+        // Lock every candidate through consolidation so review actions cannot
+        // edit, discard, or revise a sibling between this read and its update
+        // or deletion.
+        const siblingDeliverables = await tx
+          .select()
+          .from(schema.deliverables)
+          .where(
+            and(
+              eq(schema.deliverables.userId, userId),
+              sql`${schema.deliverables.jobId} = ANY(${allSiblingJobIds})`,
+            ),
+          )
+          .orderBy(asc(schema.deliverables.createdAt))
+          .for("update");
+        const activeSiblingDeliverables = siblingDeliverables.filter(
+          (deliverable) => deliverable.status === "pending_approval" && !deliverable.driveLink,
+        );
+        let artifactBaseMeta = (activeSiblingDeliverables[0]?.meta as Record<string, unknown> | null) ?? {};
+        const activeJobIds = new Set(
+          activeSiblingDeliverables
+            .map((deliverable) => deliverable.jobId)
+            .filter((jobId): jobId is string => typeof jobId === "string"),
+        );
+        jobs.splice(0, jobs.length, ...jobs.filter((batchJob) => !batchJob.jobId || activeJobIds.has(batchJob.jobId)));
+        wantsPdf = jobs.some((job) => job.promptedPdf)
+          || Array.from(activeJobIds).some((jobId) => pdfRequestedByJobId.get(jobId) === true);
+        if (jobs.length === 0) return false;
 
-      if (siblingDeliverables.length > 1) {
-        // Merge all bodies into one consolidated report
-        const sections = siblingDeliverables.map((d, i) => {
-          const heading = d.title && d.title !== siblingDeliverables[0].title
-            ? `\n\n---\n\n## ${d.title}\n\n`
-            : i === 0 ? "" : "\n\n---\n\n";
-          return `${heading}${d.body || ""}`;
-        });
-        mergedBody = sections.join("").trim();
-        mergedTitle = `Research: ${siblingDeliverables[0].title}`;
-        // Update the first deliverable with merged content
-        const firstId = siblingDeliverables[0].id;
-        await db
-          .update(schema.deliverables)
-          .set({ title: mergedTitle, body: mergedBody, summary: `Consolidated from ${siblingDeliverables.length} research threads.` })
-          .where(eq(schema.deliverables.id, firstId));
-        mergedDeliverableId = firstId;
-        // Point all sibling jobs' result.deliverableId to the merged deliverable
-        // so job-level views don't end up with stale / deleted IDs.
-        for (const d of siblingDeliverables.slice(1)) {
-          try {
-            const [sibJob] = await db
-              .select()
-              .from(schema.agentJobs)
-              .where(eq(schema.agentJobs.id, d.jobId ?? ""))
-              .limit(1);
-            if (sibJob) {
-              const currentResult = (sibJob.result as Record<string, unknown>) ?? {};
-              await db
-                .update(schema.agentJobs)
-                .set({ result: { ...currentResult, deliverableId: firstId, mergedInto: firstId } })
-                .where(eq(schema.agentJobs.id, sibJob.id));
-            }
-          } catch {
-            // Non-fatal — stale pointer is cosmetic
+        if (activeSiblingDeliverables.length > 1) {
+          // Merge all bodies into one consolidated report
+          const sections = activeSiblingDeliverables.map((d, i) => {
+            const heading = d.title && d.title !== activeSiblingDeliverables[0].title
+              ? `\n\n---\n\n## ${d.title}\n\n`
+              : i === 0 ? "" : "\n\n---\n\n";
+            return `${heading}${d.body || ""}`;
+          });
+          mergedBody = sections.join("").trim();
+          mergedTitle = `Research: ${activeSiblingDeliverables[0].title}`;
+          // Update the first deliverable with merged content
+          const firstDeliverable = activeSiblingDeliverables[0];
+          const firstId = firstDeliverable.id;
+          const mergedMeta = {
+            ...((firstDeliverable.meta as Record<string, unknown> | null) ?? {}),
+            hasDownloadableArtifact: false,
+          };
+          delete mergedMeta.pdfGenerated;
+          delete mergedMeta.pdfFilename;
+          delete mergedMeta.pdfDriveLink;
+          delete mergedMeta.pdfError;
+          delete mergedMeta.fallbackFilename;
+          artifactBaseMeta = mergedMeta;
+          await tx
+            .update(schema.deliverables)
+            .set({
+              title: mergedTitle,
+              body: mergedBody,
+              summary: `Consolidated from ${activeSiblingDeliverables.length} research threads.`,
+              meta: mergedMeta,
+              driveLink: null,
+            })
+            .where(eq(schema.deliverables.id, firstId));
+          if (!wantsPdf) {
+            await tx
+              .delete(schema.deliverableArtifacts)
+              .where(eq(schema.deliverableArtifacts.deliverableId, firstId));
           }
-          await db.delete(schema.deliverables).where(eq(schema.deliverables.id, d.id));
+          mergedDeliverableId = firstId;
+          // Point all sibling jobs' result.deliverableId to the merged deliverable
+          // so job-level views don't end up with stale / deleted IDs.
+          for (const d of activeSiblingDeliverables.slice(1)) {
+            try {
+              const [sibJob] = await tx
+                .select()
+                .from(schema.agentJobs)
+                .where(eq(schema.agentJobs.id, d.jobId ?? ""))
+                .limit(1);
+              if (sibJob) {
+                const currentResult = (sibJob.result as Record<string, unknown>) ?? {};
+                await tx
+                  .update(schema.agentJobs)
+                  .set({ result: { ...currentResult, deliverableId: firstId, mergedInto: firstId } })
+                  .where(eq(schema.agentJobs.id, sibJob.id));
+              }
+            } catch {
+              // Non-fatal — stale pointer is cosmetic
+            }
+            await tx.delete(schema.deliverables).where(eq(schema.deliverables.id, d.id));
+          }
+          console.log(`[JobQueue] consolidated ${activeSiblingDeliverables.length} research deliverables → ${firstId}`);
+        } else if (activeSiblingDeliverables.length === 1) {
+          mergedDeliverableId = activeSiblingDeliverables[0].id;
+          mergedBody = activeSiblingDeliverables[0].body || "";
+          mergedTitle = activeSiblingDeliverables[0].title || mergedTitle;
         }
-        console.log(`[JobQueue] consolidated ${siblingDeliverables.length} research deliverables → ${firstId}`);
-      } else if (siblingDeliverables.length === 1) {
-        mergedDeliverableId = siblingDeliverables[0].id;
-        mergedBody = siblingDeliverables[0].body || "";
-        mergedTitle = siblingDeliverables[0].title || mergedTitle;
-      }
+
+        if (wantsPdf && mergedBody && mergedDeliverableId) {
+          let filename: string;
+          let mimeType: string;
+          let content: Buffer;
+          let caption = mergedTitle;
+          try {
+            content = await markdownToPdfBuffer(mergedTitle, mergedBody);
+            filename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".pdf";
+            mimeType = "application/pdf";
+            pdfNote = `\n\n📄 PDF attached and available in Inbox. Use Save to Drive if you want an external copy.`;
+            console.log(`[JobQueue] generated durable consolidated PDF for batch anchorTime=${anchorTime} size=${content.length}B`);
+          } catch (pdfErr) {
+            const message = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
+            console.error("[JobQueue] batch PDF generation failed:", message);
+            filename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".md";
+            mimeType = "text/markdown";
+            content = Buffer.from(mergedBody, "utf8");
+            caption = `${mergedTitle} (PDF failed — Markdown fallback)`;
+            pdfNote = `\n\n⚠️ PDF generation failed — the Markdown fallback is available in Inbox.`;
+          }
+
+          // Keep rendering inside the row-lock transaction so approval cannot
+          // observe a merged report without its requested artifact. Move this
+          // to a durable outbox only if render throughput becomes a bottleneck.
+          await tx
+            .delete(schema.deliverableArtifacts)
+            .where(eq(schema.deliverableArtifacts.deliverableId, mergedDeliverableId));
+          await tx.insert(schema.deliverableArtifacts).values({
+            deliverableId: mergedDeliverableId,
+            userId,
+            filename,
+            mimeType,
+            sizeBytes: content.length,
+            data: content,
+          });
+          await tx
+            .update(schema.deliverables)
+            .set({
+              meta: {
+                ...artifactBaseMeta,
+                pdfGenerated: mimeType === "application/pdf",
+                pdfFilename: filename,
+                hasDownloadableArtifact: true,
+              },
+              driveLink: null,
+            })
+            .where(eq(schema.deliverables.id, mergedDeliverableId));
+          batchAttachment = {
+            kind: "document",
+            filename,
+            content,
+            caption,
+            mimeType,
+          };
+        }
+        return true;
+      });
+      if (!hasActiveDeliverables) return;
     } catch (mergeErr) {
+      batchAttachment = null;
+      pdfNote = "";
       console.error("[JobQueue] deliverable merge failed (non-fatal):", mergeErr);
     }
   }
   // ─────────────────────────────────────────────────────────────────────────
 
-  // ── Optional PDF generation from merged body ──────────────────────────────
-  // If any sibling job's prompt requested a PDF, generate ONE PDF from the
-  // consolidated body and deliver it as a channel attachment.
-  const notifyOpts: ChannelSendOpts = {};
-  let pdfNote = "";
-  let batchDriveLink: string | undefined;
-
-  if (wantsPdf && mergedBody) {
-    try {
-      const pdfBuffer = await markdownToPdfBuffer(mergedTitle, mergedBody);
-      const filename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".pdf";
-      console.log(`[JobQueue] generated consolidated PDF for batch anchorTime=${anchorTime} size=${pdfBuffer.length}B`);
-
-      // Attempt Drive upload so the link is available for oversized-file fallbacks.
-      let driveLink: string | undefined;
-      try {
-        const tokens = await getValidGoogleTokens(userId).catch(() => []);
-        const googleAccessToken = tokens?.[0] || null;
-        if (googleAccessToken) {
-          const driveFile = await createDriveBinaryFile(googleAccessToken, filename, pdfBuffer, "application/pdf");
-          driveLink = driveFile.webViewLink || undefined;
-          batchDriveLink = driveLink;
-          pdfNote = `\n\n📄 PDF attached and saved to Google Drive: ${driveLink}`;
-          console.log(`[JobQueue] research batch PDF → Drive: ${driveLink}`);
-        } else {
-          pdfNote = `\n\n📄 PDF attached (${filename}).`;
-        }
-      } catch (driveErr) {
-        const driveMsg = driveErr instanceof Error ? driveErr.message : String(driveErr);
-        console.error(`[JobQueue] research batch PDF Drive upload failed:`, driveMsg);
-        pdfNote = `\n\n📄 PDF attached (Drive upload failed: ${driveMsg}).`;
-      }
-
-      notifyOpts.attachments = [
-        {
-          kind: "document",
-          filename,
-          content: pdfBuffer,
-          caption: mergedTitle,
-          mimeType: "application/pdf",
-          driveLink,
-        },
-      ];
-    } catch (pdfErr) {
-      const pdfMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
-      console.error("[JobQueue] batch PDF generation failed:", pdfMsg);
-      pdfNote = `\n\n⚠️ PDF generation failed — here is the markdown version instead.`;
-      // Attach the merged markdown as a .md file so the user still receives
-      // the full content in the channel even when PDF rendering fails.
-      if (mergedBody) {
-        const mdFilename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".md";
-        notifyOpts.attachments = [
-          {
-            kind: "document",
-            filename: mdFilename,
-            content: mergedBody,
-            caption: `${mergedTitle} (PDF failed — markdown fallback)`,
-            mimeType: "text/markdown",
-          },
-        ];
-      }
-    }
-  }
+  if (batchAttachment) notifyOpts.attachments = [batchAttachment];
   // ─────────────────────────────────────────────────────────────────────────
-
-  // Persist the Drive link on the deliverable so the app can surface it.
-  if (batchDriveLink && mergedDeliverableId) {
-    await db
-      .update(schema.deliverables)
-      .set({ driveLink: batchDriveLink })
-      .where(eq(schema.deliverables.id, mergedDeliverableId))
-      .catch((e) => console.error("[JobQueue] failed to save driveLink on deliverable:", e));
-  }
 
   const bodiedJobs = jobs.filter((j) => j.body);
   const notifyBody = (bodiedJobs[0]?.body ?? jobs[0].body) + pdfNote;
@@ -556,11 +631,11 @@ async function flushResearchBatch(key: string): Promise<void> {
   );
 
   if (jobs.length === 1) {
-    await notifyJobComplete(userId, "research", mergedTitle, notifyBody, batchOriginChannel, batchOriginDiscordChannelId, notifyOpts);
+    await notifyJobComplete(userId, "research", mergedTitle, notifyBody, batchOriginChannel, batchOriginDestination, notifyOpts);
   } else {
     const combinedTitle = `Research complete (${jobs.length} results) — ${mergedTitle}`;
     console.log(`[JobQueue] flushing batched research notification: ${jobs.length} job(s) → userId=${userId} batchOriginChannel=${batchOriginChannel || "none"}`);
-    await notifyJobComplete(userId, "research", combinedTitle, notifyBody, batchOriginChannel, batchOriginDiscordChannelId, notifyOpts);
+    await notifyJobComplete(userId, "research", combinedTitle, notifyBody, batchOriginChannel, batchOriginDestination, notifyOpts);
   }
 }
 
@@ -579,18 +654,20 @@ function scheduleResearchNotification(
   deliverableTitle: string,
   notifyBody: string,
   originChannel?: string,
-  originDiscordChannelId?: string,
+  originDestination?: string,
   jobId?: string,
   promptedPdf?: boolean,
 ): void {
   const newTime = createdAt.getTime();
   const now = Date.now();
+  const scope = researchBatchScope(originChannel, originDestination);
 
   // Check whether a batch for this window was already flushed (notification sent).
   const userFlushed = flushedResearchBatches.get(userId) ?? [];
   const alreadyFlushed = userFlushed.some(
     (f) =>
       Math.abs(f.anchorTime - newTime) <= SIBLING_WINDOW_MS &&
+      f.scope === scope &&
       now - f.flushedAt < FLUSHED_BATCH_TTL_MS,
   );
   if (alreadyFlushed) {
@@ -603,8 +680,9 @@ function scheduleResearchNotification(
   // Find an existing pending batch for this user whose anchor is within 60 s.
   for (const [key, batch] of researchNotificationBatches.entries()) {
     if (batch.userId !== userId) continue;
+    if (batch.scope !== scope) continue;
     if (Math.abs(batch.anchorTime - newTime) <= SIBLING_WINDOW_MS) {
-      batch.jobs.push({ title: deliverableTitle, body: notifyBody, originChannel, originDiscordChannelId, jobId, promptedPdf });
+      batch.jobs.push({ title: deliverableTitle, body: notifyBody, originChannel, originDestination, jobId, promptedPdf });
       // Debounce: extend the flush timer so it fires after the last arrival.
       clearTimeout(batch.timer);
       batch.timer = setTimeout(() => flushResearchBatch(key).catch((e) =>
@@ -616,14 +694,15 @@ function scheduleResearchNotification(
 
   // No matching batch — start a new one. Per-job origin is tracked so that
   // flushResearchBatch can compute the most-common origin across all siblings.
-  const key = `${userId}:research:${newTime}`;
+  const key = `${userId}:research:${scope}:${newTime}`;
   const timer = setTimeout(() => flushResearchBatch(key).catch((e) =>
     console.error("[JobQueue] flushResearchBatch failed:", e),
   ), NOTIFICATION_FLUSH_DELAY_MS);
   researchNotificationBatches.set(key, {
     userId,
+    scope,
     anchorTime: newTime,
-    jobs: [{ title: deliverableTitle, body: notifyBody, originChannel, originDiscordChannelId, jobId, promptedPdf }],
+    jobs: [{ title: deliverableTitle, body: notifyBody, originChannel, originDestination, jobId, promptedPdf }],
     timer,
   });
 }
@@ -647,12 +726,15 @@ async function notifySubAgentJobComplete(
   const jobInput = (job.input as Record<string, unknown>) ?? {};
   const originChannel = typeof jobInput.originChannel === "string" ? jobInput.originChannel : undefined;
   const originDiscordChannelId = typeof jobInput.originDiscordChannelId === "string" ? jobInput.originDiscordChannelId : undefined;
+  const originChannelId = typeof jobInput.originChannelId === "string" ? jobInput.originChannelId : undefined;
+  const originDestination = originDiscordChannelId
+    || (originChannel?.toLowerCase() === "slack" ? originChannelId : undefined);
 
   if (job.agentType !== "research" || !job.createdAt) {
-    await notifyJobComplete(job.userId, job.agentType as AgentJobType, deliverableTitle, notifyBody, originChannel, originDiscordChannelId, opts);
+    await notifyJobComplete(job.userId, job.agentType as AgentJobType, deliverableTitle, notifyBody, originChannel, originDestination, opts);
     return;
   }
-  scheduleResearchNotification(job.userId, new Date(job.createdAt), deliverableTitle, notifyBody, originChannel, originDiscordChannelId, jobId, promptedPdf);
+  scheduleResearchNotification(job.userId, new Date(job.createdAt), deliverableTitle, notifyBody, originChannel, originDestination, jobId, promptedPdf);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1008,6 +1090,8 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
     const originChannel = typeof jobInput.originChannel === "string" ? jobInput.originChannel : undefined;
     const originChannelId = typeof jobInput.originChannelId === "string" ? jobInput.originChannelId : undefined;
     const originDiscordChannelId = typeof jobInput.originDiscordChannelId === "string" ? jobInput.originDiscordChannelId : undefined;
+    const originNotificationDestination = originDiscordChannelId
+      || (originChannel?.toLowerCase() === "slack" ? originChannelId : undefined);
     const approvalReceipt = normalizeApprovalReceipt(jobInput.approvalReceipt);
     if (typeof jobInput.approvalGateId === "string") {
       jobInput = await appendWorkerEventToJob({
@@ -2258,6 +2342,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           const childInput: Record<string, unknown> = {
             parentJobId: job.id,
             originChannel,
+            originChannelId,
             originDiscordChannelId,
             model: "gpt-4.1-mini",
           };
@@ -2285,7 +2370,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           job.title,
           "Planning research phases…",
           originChannel,
-          originDiscordChannelId,
+          originNotificationDestination,
         );
 
         let plan = await planResearch(job.prompt, job.userId);
@@ -2309,7 +2394,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             job.title,
             `Phase 1: researching ${plan.prerequisiteTopics.length} prerequisite topic(s)…`,
             originChannel,
-            originDiscordChannelId,
+            originNotificationDestination,
           );
 
           const phase1Ids = await submitResearchJobs(
@@ -2343,7 +2428,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           job.title,
           `Phase 2: researching ${plan.mainTopics.length} main topic(s)…`,
           originChannel,
-          originDiscordChannelId,
+          originNotificationDestination,
         );
 
         const phase2Ids = await submitResearchJobs(
@@ -2369,18 +2454,71 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         }
 
         if (allBodies.length === 0) {
-          // Absolute fallback: deliver whatever phase 1 produced, or a fail message
+          // Absolute fallback: preserve the limited result in the requested file
+          // format so partial failure does not remove the Inbox download.
           const fallbackBody = priorContext || "Deep research could not complete — all phases timed out or failed.";
-          await db.insert(schema.deliverables).values({
-            userId: job.userId,
-            jobId: job.id,
-            agentType: "deep_research",
-            type: "research",
-            title: job.title,
-            summary: "Deep research completed with limited results.",
-            body: fallbackBody,
-            meta: { deepResearch: true, fallback: true },
-            driveLink: null,
+          const fallbackMeta: Record<string, unknown> = { deepResearch: true, fallback: true };
+          const fallbackNotifyOpts: ChannelSendOpts = {};
+          let fallbackArtifact: { filename: string; mimeType: string; content: Buffer } | null = null;
+          let fallbackNote = "";
+          if (requestsReportFile(job.prompt)) {
+            const filenameBase = job.title.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() || "Jarvis research report";
+            try {
+              const content = await markdownToPdfBuffer(job.title, fallbackBody);
+              const filename = `${filenameBase}.pdf`;
+              fallbackArtifact = { filename, mimeType: "application/pdf", content };
+              fallbackMeta.pdfGenerated = true;
+              fallbackMeta.pdfFilename = filename;
+              fallbackMeta.hasDownloadableArtifact = true;
+              fallbackNotifyOpts.attachments = [{
+                kind: "document",
+                filename,
+                content,
+                caption: `${job.title} (limited results)`,
+                mimeType: "application/pdf",
+              }];
+              fallbackNote = `\n\n📄 Limited-results PDF generated and available in Inbox.`;
+            } catch (pdfErr) {
+              const message = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
+              const filename = `${filenameBase}.md`;
+              const content = Buffer.from(fallbackBody, "utf8");
+              fallbackArtifact = { filename, mimeType: "text/markdown", content };
+              fallbackMeta.pdfGenerated = false;
+              fallbackMeta.pdfError = message;
+              fallbackMeta.fallbackFilename = filename;
+              fallbackMeta.hasDownloadableArtifact = true;
+              fallbackNotifyOpts.attachments = [{
+                kind: "document",
+                filename,
+                content,
+                caption: `${job.title} (limited Markdown fallback)`,
+                mimeType: "text/markdown",
+              }];
+              fallbackNote = `\n\n⚠️ PDF generation failed; a limited-results Markdown file is available in Inbox.`;
+            }
+          }
+          await db.transaction(async (tx) => {
+            const [created] = await tx.insert(schema.deliverables).values({
+              userId: job.userId,
+              jobId: job.id,
+              agentType: "deep_research",
+              type: "research",
+              title: job.title,
+              summary: "Deep research completed with limited results.",
+              body: fallbackBody,
+              meta: fallbackMeta,
+              driveLink: null,
+            }).returning({ id: schema.deliverables.id });
+            if (fallbackArtifact && created) {
+              await tx.insert(schema.deliverableArtifacts).values({
+                deliverableId: created.id,
+                userId: job.userId,
+                filename: fallbackArtifact.filename,
+                mimeType: fallbackArtifact.mimeType,
+                sizeBytes: fallbackArtifact.content.length,
+                data: fallbackArtifact.content,
+              });
+            }
           });
           await completeJob(job.id, {
             result: { type: "research", title: job.title },
@@ -2391,9 +2529,10 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             job.userId,
             "deep_research",
             job.title,
-            fallbackBody,
+            fallbackBody + fallbackNote,
             originChannel,
-            originDiscordChannelId,
+            originNotificationDestination,
+            fallbackNotifyOpts,
           );
           return;
         }
@@ -2418,7 +2557,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             job.title,
             "Synthesising findings into one report…",
             originChannel,
-            originDiscordChannelId,
+            originNotificationDestination,
           );
 
           const synthesisPrompt =
@@ -2444,22 +2583,84 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         }
 
         // ── Step 5: Save deliverable and notify ───────────────────────────────
+        // Deep research returns before the normal research notification batch,
+        // so it must create requested files here instead of merely promising one.
+        const notifyOpts: ChannelSendOpts = {};
+        const artifactMeta: Record<string, unknown> = {};
+        let artifactNote = "";
+        let durableArtifact: { filename: string; mimeType: string; content: Buffer } | null = null;
+
+        if (requestsReportFile(job.prompt)) {
+          const filenameBase = finalTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() || "Jarvis research report";
+          try {
+            const pdfBuffer = await markdownToPdfBuffer(finalTitle, finalBody);
+            const filename = `${filenameBase}.pdf`;
+
+            // Keep reviewable output inside Jarvis until the user explicitly
+            // chooses Save to Drive. The save route handles Drive preferences,
+            // scope validation, folder selection, and the external write.
+            notifyOpts.attachments = [{
+              kind: "document",
+              filename,
+              content: pdfBuffer,
+              caption: finalTitle,
+              mimeType: "application/pdf",
+            }];
+            durableArtifact = { filename, mimeType: "application/pdf", content: pdfBuffer };
+            artifactMeta.pdfGenerated = true;
+            artifactMeta.pdfFilename = filename;
+            artifactMeta.hasDownloadableArtifact = true;
+            artifactNote = `\n\n📄 PDF generated (${filename}). It is attached on channels that support job files; the report is also available in Inbox. Use Save to Drive if you want an external copy.`;
+          } catch (pdfErr) {
+            const filename = `${filenameBase}.md`;
+            const message = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
+            console.error(`[JobQueue] deep_research PDF generation failed for ${job.id}:`, message);
+            notifyOpts.attachments = [{
+              kind: "document",
+              filename,
+              content: finalBody,
+              caption: `${finalTitle} (PDF unavailable — markdown fallback)`,
+              mimeType: "text/markdown",
+            }];
+            durableArtifact = { filename, mimeType: "text/markdown", content: Buffer.from(finalBody, "utf8") };
+            artifactMeta.pdfGenerated = false;
+            artifactMeta.pdfError = message;
+            artifactMeta.fallbackFilename = filename;
+            artifactMeta.hasDownloadableArtifact = true;
+            artifactNote = `\n\n⚠️ PDF generation failed; the complete report remains available in Inbox and is attached as ${filename} on supported channels.`;
+          }
+        }
+
         const summarySentence = finalBody.slice(0, 200).replace(/\n+/g, " ").trim();
-        await db.insert(schema.deliverables).values({
-          userId: job.userId,
-          jobId: job.id,
-          agentType: "deep_research",
-          type: "research",
-          title: finalTitle,
-          summary: summarySentence,
-          body: finalBody,
-          meta: {
-            deepResearch: true,
-            prerequisiteTopics: plan.prerequisiteTopics,
-            mainTopics: plan.mainTopics,
-            synthesisGoal: plan.synthesisGoal,
-          },
-          driveLink: null,
+        await db.transaction(async (tx) => {
+          const [createdDeliverable] = await tx.insert(schema.deliverables).values({
+            userId: job.userId,
+            jobId: job.id,
+            agentType: "deep_research",
+            type: "research",
+            title: finalTitle,
+            summary: summarySentence,
+            body: finalBody,
+            meta: {
+              deepResearch: true,
+              prerequisiteTopics: plan.prerequisiteTopics,
+              mainTopics: plan.mainTopics,
+              synthesisGoal: plan.synthesisGoal,
+              ...artifactMeta,
+            },
+            driveLink: null,
+          }).returning({ id: schema.deliverables.id });
+
+          if (durableArtifact && createdDeliverable) {
+            await tx.insert(schema.deliverableArtifacts).values({
+              deliverableId: createdDeliverable.id,
+              userId: job.userId,
+              filename: durableArtifact.filename,
+              mimeType: durableArtifact.mimeType,
+              sizeBytes: durableArtifact.content.length,
+              data: durableArtifact.content,
+            });
+          }
         });
 
         await completeJob(job.id, {
@@ -2474,9 +2675,10 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           job.userId,
           "deep_research",
           finalTitle,
-          finalBody,
+          finalBody + artifactNote,
           originChannel,
-          originDiscordChannelId,
+          originNotificationDestination,
+          notifyOpts,
         );
 
         if (hasWorkflow) {
@@ -2494,7 +2696,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           job.title,
           `Deep research failed: ${deepMsg}`,
           originChannel,
-          originDiscordChannelId,
+          originNotificationDestination,
         );
       }
       return;
@@ -2782,85 +2984,85 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     }
 
     // ── Format request detection ──────────────────────────────────────────────
-    // Detect whether the user explicitly asked for a PDF or Word document.
-    // "word"/"docx" requests are also mapped to PDF (best available format).
-    // For research jobs: the batch coordinator (flushResearchBatch) generates
-    // ONE consolidated PDF from all sibling results — no per-job PDF here.
-    // For writing jobs: generate immediately since they are not batched.
-    const promptLower = (job.prompt || "").toLowerCase();
-    const wantsPdf = /\b(pdf|word|docx|as pdf|in pdf|export pdf|save pdf|generate pdf|as word|in word)\b/.test(promptLower);
-
+    // Persist requested PDFs with the deliverable transaction. Research may
+    // later replace its per-job artifact with one consolidated batch artifact,
+    // but the initial durable copy survives worker restarts before that timer.
+    const wantsPdf = requestsReportFile(job.prompt || "");
     let pdfNote = "";
+    let durableArtifact: { filename: string; mimeType: string; content: Buffer } | null = null;
 
-    if (wantsPdf && job.agentType === "writing") {
-      // Writing jobs are individual — generate PDF right here.
+    if (wantsPdf && (job.agentType === "writing" || job.agentType === "planning" || job.agentType === "research")) {
+      const filenameBase = sub.title.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() || "Jarvis document";
       try {
         const pdfBuffer = await markdownToPdfBuffer(sub.title, sub.body);
-        const filename = sub.title.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".pdf";
+        const filename = `${filenameBase}.pdf`;
         sub.meta.pdfGenerated = true;
         sub.meta.pdfFilename = filename;
-
-        let driveLink: string | null = null;
-        if (googleAccessToken) {
-          try {
-            const driveFile = await createDriveBinaryFile(
-              googleAccessToken,
-              filename,
-              pdfBuffer,
-              "application/pdf",
-            );
-            driveLink = driveFile.webViewLink || null;
-            sub.meta.pdfDriveLink = driveLink;
-            pdfNote = `\n\n📄 PDF attached and saved to Google Drive: ${driveLink}`;
-            console.log(`[JobQueue] writing job ${job.id} PDF → Drive: ${driveLink}`);
-          } catch (driveErr) {
-            const driveMsg = driveErr instanceof Error ? driveErr.message : String(driveErr);
-            console.error(`[JobQueue] writing PDF Drive upload failed for job ${job.id}:`, driveMsg);
-            pdfNote = `\n\n📄 PDF attached (Drive upload failed: ${driveMsg}).`;
-          }
-        } else {
-          pdfNote = `\n\n📄 PDF attached.`;
+        sub.meta.hasDownloadableArtifact = true;
+        durableArtifact = { filename, mimeType: "application/pdf", content: pdfBuffer };
+        if (job.agentType !== "research") {
+          pdfNote = `\n\n📄 PDF attached and available in Inbox. Use Save to Drive if you want an external copy.`;
+          (ctx.state.pendingAttachments ||= []).push({
+            kind: "document",
+            filename,
+            content: pdfBuffer,
+            caption: sub.title,
+            mimeType: "application/pdf",
+          });
         }
-
-        // Attach PDF for channel delivery (driveLink included so oversized-file
-        // fallback in Discord/other channels can reference the stored copy).
-        ctx.state.pendingAttachments!.push({
-          kind: "document",
-          filename,
-          content: pdfBuffer,
-          caption: sub.title,
-          mimeType: "application/pdf",
-          driveLink: (sub.meta?.pdfDriveLink as string | undefined) ?? undefined,
-        });
       } catch (pdfErr) {
         const pdfMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
-        console.error(`[JobQueue] writing PDF generation failed for job ${job.id}:`, pdfMsg);
-        pdfNote = `\n\n⚠️ PDF generation failed — here is the markdown version instead. (${pdfMsg})`;
+        const filename = `${filenameBase}.md`;
+        console.error(`[JobQueue] ${job.agentType} PDF generation failed for job ${job.id}:`, pdfMsg);
+        sub.meta.pdfGenerated = false;
         sub.meta.pdfError = pdfMsg;
+        sub.meta.fallbackFilename = filename;
+        sub.meta.hasDownloadableArtifact = true;
+        durableArtifact = { filename, mimeType: "text/markdown", content: Buffer.from(sub.body, "utf8") };
+        if (job.agentType !== "research") {
+          pdfNote = `\n\n⚠️ PDF generation failed; the Markdown fallback is attached and available in Inbox.`;
+          (ctx.state.pendingAttachments ||= []).push({
+            kind: "document",
+            filename,
+            content: sub.body,
+            caption: `${sub.title} (Markdown fallback)`,
+            mimeType: "text/markdown",
+          });
+        }
       }
     }
-    // Research jobs: wantsPdf is passed to the batch coordinator, which
-    // generates ONE consolidated PDF from all sibling deliverables.
     // ─────────────────────────────────────────────────────────────────────────
 
     const deliverableMeta = { ...sub.meta, ...getRevisionDeliverableMeta(jobInput) };
 
-    const inserted = await db
-      .insert(schema.deliverables)
-      .values({
-        userId: job.userId,
-        jobId: job.id,
-        agentType: job.agentType,
-        type: sub.type,
-        title: sub.title,
-        summary: sub.summary,
-        body: sub.body,
-        meta: deliverableMeta,
-        driveLink: (sub.meta?.pdfDriveLink as string | undefined) ?? null,
-      })
-      .returning({ id: schema.deliverables.id });
+    const deliverableId = await db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(schema.deliverables)
+        .values({
+          userId: job.userId,
+          jobId: job.id,
+          agentType: job.agentType,
+          type: sub.type,
+          title: sub.title,
+          summary: sub.summary,
+          body: sub.body,
+          meta: deliverableMeta,
+          driveLink: null,
+        })
+        .returning({ id: schema.deliverables.id });
 
-    const deliverableId = inserted[0]?.id || "";
+      if (durableArtifact && inserted) {
+        await tx.insert(schema.deliverableArtifacts).values({
+          deliverableId: inserted.id,
+          userId: job.userId,
+          filename: durableArtifact.filename,
+          mimeType: durableArtifact.mimeType,
+          sizeBytes: durableArtifact.content.length,
+          data: durableArtifact.content,
+        });
+      }
+      return inserted?.id || "";
+    });
     await completeJob(job.id, {
       result: { deliverableId, type: sub.type, title: sub.title },
       turns: sub.turns,

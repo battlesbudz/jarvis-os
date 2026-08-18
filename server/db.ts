@@ -1035,6 +1035,23 @@ export async function ensureTablesExist() {
         ADD COLUMN IF NOT EXISTS triage_note TEXT
     `).catch(handleSchemaStepError);
 
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS deliverable_artifacts (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        deliverable_id VARCHAR NOT NULL REFERENCES deliverables(id) ON DELETE CASCADE,
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        filename TEXT NOT NULL,
+        mime_type VARCHAR NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        data BYTEA NOT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS deliverable_artifacts_deliverable_uidx
+        ON deliverable_artifacts (deliverable_id)
+    `).catch(handleSchemaStepError);
+
     // ── Phase 5: multi-channel + computer control ──────────────────
     await db.execute(sql`
       CREATE TABLE IF NOT EXISTS channel_links (

@@ -7,7 +7,7 @@ import { db } from "../db";
 import { eq, and, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
-import { findDuplicateJob } from "./tools/jobDuplicateGuard";
+import { findDuplicateJob, findDuplicateJobWithDb } from "./tools/jobDuplicateGuard";
 import { buildInitialWorkerRuntime } from "./workerRuntime";
 import {
   RESOURCE_PAUSED_STATUS,
@@ -42,6 +42,8 @@ export interface SubmitJobInput {
 
 /** Injectable dependencies for submitAgentJob — used by tests to avoid a real DB. */
 export interface SubmitJobDeps {
+  /** Use an existing transaction for duplicate checks and insertion. */
+  db?: Pick<typeof db, "select" | "insert">;
   /** Duplicate-check function. Defaults to the real findDuplicateJob. */
   findDuplicate?: typeof findDuplicateJob;
   /**
@@ -98,7 +100,7 @@ export function getModelForJobType(
 }
 
 /** Real DB insert used when no stub is provided via deps.insertJob. */
-async function realInsertJob(values: {
+async function realInsertJob(dbClient: Pick<typeof db, "insert">, values: {
   userId: string;
   agentType: string;
   title: string;
@@ -106,7 +108,7 @@ async function realInsertJob(values: {
   input: Record<string, unknown>;
   status: string;
 }): Promise<string> {
-  const inserted = await db
+  const inserted = await dbClient
     .insert(schema.agentJobs)
     .values({
       userId: values.userId,
@@ -156,8 +158,10 @@ export async function submitAgentJob(
   input: SubmitJobInput,
   deps: SubmitJobDeps = {},
 ): Promise<SubmitJobResult> {
-  const guardFn = deps.findDuplicate ?? findDuplicateJob;
-  const insertFn = deps.insertJob ?? realInsertJob;
+  const guardFn = deps.findDuplicate ?? (deps.db
+    ? (userId, agentType, title) => findDuplicateJobWithDb(deps.db!, userId, agentType, title)
+    : findDuplicateJob);
+  const insertFn = deps.insertJob ?? ((values) => realInsertJob(deps.db ?? db, values));
   const callerInput = (input.input || {}) as Record<string, unknown>;
   const cloudBackgroundTask = callerInput.cloudBackgroundTask;
   const isCloudBackgroundJob =

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 import { and, eq } from "drizzle-orm";
-import { agentJobs, deliverables, proactiveScheduleLog, userPreferences, users } from "@shared/schema";
+import { agentJobs, deliverableArtifacts, deliverables, proactiveScheduleLog, userPreferences, users } from "@shared/schema";
 import type { db as dbType } from "../../db";
 import type { ApprovalGate } from "../agentApproval";
 import type { SubmitJobInput } from "../jobClient";
@@ -72,6 +72,9 @@ async function run(): Promise<void> {
   const approvedGateIds: string[] = [];
   const rejectedGateIds: string[] = [];
   const submittedJobs: SubmitJobInput[] = [];
+  let onSubmitAgentJob: (() => Promise<void>) | undefined;
+  let revisionTransactionPassed = false;
+  let revisionDuplicateCheckSkipped = false;
   const topLevelGate: ApprovalGate = {
     id: "http_gate_approve",
     agentId: "coach",
@@ -106,8 +109,11 @@ async function run(): Promise<void> {
       agentType: "email",
       isDuplicate: false,
     }),
-    submitAgentJob: async (input) => {
+    submitAgentJob: async (input, transaction, options) => {
       submittedJobs.push(input);
+      revisionTransactionPassed = transaction !== undefined;
+      revisionDuplicateCheckSkipped = options?.skipDuplicateCheck === true;
+      await onSubmitAgentJob?.();
       return { id: "revision_job_1", isDuplicate: false };
     },
   });
@@ -194,6 +200,27 @@ async function run(): Promise<void> {
       body: "Original operating plan.",
     });
 
+    await db
+      .update(deliverables)
+      .set({
+        driveLink: "https://drive.google.com/file/d/stale",
+        meta: {
+          pdfGenerated: true,
+          pdfFilename: "Draft operating plan.pdf",
+          pdfDriveLink: "https://drive.google.com/file/d/stale",
+          hasDownloadableArtifact: true,
+        },
+      })
+      .where(eq(deliverables.id, normalDeliverable.id));
+    await db.insert(deliverableArtifacts).values({
+      deliverableId: normalDeliverable.id,
+      userId: user.id,
+      filename: "Draft operating plan.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 9,
+      data: Buffer.from("stale pdf"),
+    });
+
     const editNormal = await requestJson(
       port,
       "PUT",
@@ -202,6 +229,90 @@ async function run(): Promise<void> {
       { title: "Edited operating plan", body: "Edited body." },
     );
     assert.equal(editNormal.status, 200, "HTTP route allows editing normal pending deliverables");
+    const [editedNormalRow] = await db
+      .select({ driveLink: deliverables.driveLink, meta: deliverables.meta })
+      .from(deliverables)
+      .where(eq(deliverables.id, normalDeliverable.id))
+      .limit(1);
+    assert.equal(editedNormalRow.driveLink, null, "editing content clears a stale Drive link");
+    assert.equal(
+      (editedNormalRow.meta as Record<string, unknown>).hasDownloadableArtifact,
+      true,
+      "editing content keeps the regenerated artifact downloadable",
+    );
+    assert.equal(
+      (editedNormalRow.meta as Record<string, unknown>).pdfFilename,
+      "Edited operating plan.pdf",
+      "editing content updates PDF metadata to the corrected title",
+    );
+    const artifactsAfterEdit = await db
+      .select({
+        filename: deliverableArtifacts.filename,
+        mimeType: deliverableArtifacts.mimeType,
+        data: deliverableArtifacts.data,
+      })
+      .from(deliverableArtifacts)
+      .where(eq(deliverableArtifacts.deliverableId, normalDeliverable.id));
+    assert.equal(artifactsAfterEdit.length, 1, "editing content replaces the persisted artifact");
+    assert.equal(artifactsAfterEdit[0].filename, "Edited operating plan.pdf");
+    assert.equal(artifactsAfterEdit[0].mimeType, "application/pdf");
+    assert.equal(Buffer.from(artifactsAfterEdit[0].data).subarray(0, 4).toString(), "%PDF");
+    assert.notEqual(Buffer.from(artifactsAfterEdit[0].data).toString(), "stale pdf");
+
+    const unchangedDeliverable = await insertDeliverable(db, user.id, {
+      type: "document",
+      title: "Unchanged generated report",
+      body: "Keep these exact report contents.",
+      meta: {
+        pdfGenerated: true,
+        pdfFilename: "Unchanged generated report.pdf",
+        hasDownloadableArtifact: true,
+      },
+    });
+    await db
+      .update(deliverables)
+      .set({ driveLink: "https://drive.google.com/file/d/keep" })
+      .where(eq(deliverables.id, unchangedDeliverable.id));
+    await db.insert(deliverableArtifacts).values({
+      deliverableId: unchangedDeliverable.id,
+      userId: user.id,
+      filename: "Unchanged generated report.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 8,
+      data: Buffer.from("keep pdf"),
+    });
+
+    const noOpEdit = await requestJson(
+      port,
+      "PUT",
+      `/api/deliverables/${unchangedDeliverable.id}`,
+      token,
+      {
+        title: "Unchanged generated report",
+        body: "Keep these exact report contents.",
+      },
+    );
+    assert.equal(noOpEdit.status, 200, "HTTP route accepts a no-op edit save");
+    const [unchangedAfterEdit] = await db
+      .select({ driveLink: deliverables.driveLink, meta: deliverables.meta })
+      .from(deliverables)
+      .where(eq(deliverables.id, unchangedDeliverable.id))
+      .limit(1);
+    assert.equal(
+      unchangedAfterEdit.driveLink,
+      "https://drive.google.com/file/d/keep",
+      "a no-op edit preserves the existing Drive link",
+    );
+    assert.equal(
+      (unchangedAfterEdit.meta as Record<string, unknown>).hasDownloadableArtifact,
+      true,
+      "a no-op edit preserves downloadable artifact metadata",
+    );
+    const unchangedArtifacts = await db
+      .select({ id: deliverableArtifacts.id })
+      .from(deliverableArtifacts)
+      .where(eq(deliverableArtifacts.deliverableId, unchangedDeliverable.id));
+    assert.equal(unchangedArtifacts.length, 1, "a no-op edit preserves persisted artifact bytes");
 
     const discardNormal = await requestJson(
       port,
@@ -275,7 +386,16 @@ async function run(): Promise<void> {
       title: "Plan that needs revision",
       body: "This plan needs more concrete operational actions.",
       jobId: originalJob.id,
+      meta: { hasDownloadableArtifact: true, pdfGenerated: true, pdfFilename: "operating-plan.pdf" },
     });
+    onSubmitAgentJob = async () => {
+      const [reserved] = await db
+        .select({ status: deliverables.status })
+        .from(deliverables)
+        .where(eq(deliverables.id, revisionSource.id))
+        .limit(1);
+      assert.equal(reserved.status, "pending_approval", "revision submission never hides its source in an unrecoverable status");
+    };
     const reviseResponse = await requestJson(
       port,
       "POST",
@@ -283,13 +403,17 @@ async function run(): Promise<void> {
       token,
       { instructions: "Add exact owners and next operational actions." },
     );
+    onSubmitAgentJob = undefined;
     assert.equal(reviseResponse.status, 200, "HTTP route queues revision jobs");
     assert.equal(reviseResponse.body.jobId, "revision_job_1");
     assert.equal(submittedJobs.length, 1, "revision route submits one new job");
+    assert.equal(revisionTransactionPassed, true, "revision route inserts the job through its locking transaction");
+    assert.equal(revisionDuplicateCheckSkipped, true, "revision route never reuses another deliverable's revision job");
     assert.equal(submittedJobs[0].userId, user.id);
     assert.equal(submittedJobs[0].agentType, "coach");
     assert.match(submittedJobs[0].title, /^Revision: Plan that needs revision/);
     assert.match(submittedJobs[0].prompt, /Return a complete replacement deliverable/);
+    assert.match(submittedJobs[0].prompt, /Preserve the replacement as a PDF file/);
     assert.match(submittedJobs[0].prompt, /Add exact owners and next operational actions/);
     assert.equal(submittedJobs[0].input?.revisionOfDeliverableId, revisionSource.id);
     assert.equal(submittedJobs[0].input?.revisionOfJobId, originalJob.id);
@@ -309,6 +433,31 @@ async function run(): Promise<void> {
       .where(eq(agentJobs.id, originalJob.id))
       .limit(1);
     assert.equal(originalJobAfter.status, "delivered", "revision route closes the original complete job");
+
+    const unsupportedRevisionSource = await insertDeliverable(db, user.id, {
+      type: "report",
+      status: "pending_approval",
+      title: "PDF report needing another format",
+      body: "Existing report body",
+      meta: { hasDownloadableArtifact: true },
+    });
+    const jobsBeforeUnsupportedRevision = submittedJobs.length;
+    const unsupportedRevision = await requestJson(
+      port,
+      "POST",
+      `/api/deliverables/${unsupportedRevisionSource.id}/revise`,
+      token,
+      { instructions: "Change the output to DOCX" },
+    );
+    assert.equal(unsupportedRevision.status, 400, "revision route rejects unsupported output formats");
+    assert.match(String(unsupportedRevision.body.error), /DOCX.*not supported/i);
+    assert.equal(submittedJobs.length, jobsBeforeUnsupportedRevision, "unsupported revisions do not queue a replacement job");
+    const [unsupportedRevisionAfter] = await db
+      .select()
+      .from(deliverables)
+      .where(eq(deliverables.id, unsupportedRevisionSource.id))
+      .limit(1);
+    assert.equal(unsupportedRevisionAfter.status, "pending_approval", "unsupported revisions keep the source reviewable");
 
     const revisionRoot = await insertDeliverable(db, user.id, {
       type: "document",

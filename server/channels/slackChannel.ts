@@ -14,6 +14,7 @@ export async function postSlackMessage(
   botToken: string,
   channel: string,
   text: string,
+  threadTs?: string,
 ): Promise<{ ok: boolean; ts?: string; error?: string }> {
   try {
     const res = await fetch("https://slack.com/api/chat.postMessage", {
@@ -22,7 +23,7 @@ export async function postSlackMessage(
         Authorization: `Bearer ${botToken}`,
         "Content-Type": "application/json; charset=utf-8",
       },
-      body: JSON.stringify({ channel, text }),
+      body: JSON.stringify({ channel, text, ...(threadTs ? { thread_ts: threadTs } : {}) }),
     });
     const data = await res.json();
     if (!data.ok) return { ok: false, error: data.error || "slack error" };
@@ -92,7 +93,8 @@ export const slackChannel: Channel = {
     const botToken = await getSlackBotToken(userId);
     if (!botToken) return { ok: false, error: "no slack bot token" };
 
-    let target = link.meta.imChannelId;
+    const [originTarget, originThreadTs] = opts.threadKey?.split("|", 2) ?? [];
+    let target = originTarget || link.meta.imChannelId;
     if (!target && link.meta.slackUserId) {
       target = (await openSlackDm(botToken, link.meta.slackUserId)) || undefined;
       if (target) {
@@ -109,7 +111,7 @@ export const slackChannel: Channel = {
         ? `${body}\n\n_(${opts.attachments.length} attachment(s) generated — open the JARVIS app to download.)_`
         : `_(${opts.attachments.length} attachment(s) generated — open the JARVIS app to download.)_`;
     }
-    const result = await postSlackMessage(botToken, target, body);
+    const result = await postSlackMessage(botToken, target, body, originThreadTs || undefined);
     return { ok: result.ok, messageId: result.ts, error: result.error };
   },
 };

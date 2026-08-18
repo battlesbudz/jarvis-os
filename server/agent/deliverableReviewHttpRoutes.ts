@@ -1,14 +1,18 @@
 import type { Express, Request, Response } from "express";
-import { and, eq } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, eq, isNull } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { userDocuments } from "@shared/schema";
 import type { db as dbType } from "../db";
 import { loadDeliverableForReviewAction } from "./deliverableReviewActions";
 import type { ApprovalGate } from "./agentApproval";
-import type { SubmitJobInput, SubmitJobResult } from "./jobClient";
+import type { SubmitJobDeps, SubmitJobInput, SubmitJobResult } from "./jobClient";
 import type { ContinueTopLevelApprovalResult } from "./topLevelApprovalContinuation";
+import { markdownToPdfBuffer } from "./tools/exportPdf";
+import { unsupportedReportFileFormat } from "./backgroundJobHandoff";
 
 type Db = typeof dbType;
+type SubmitAgentJobOptions = { skipDuplicateCheck?: boolean };
 
 export interface DeliverableReviewRoutesDeps {
   db: Db;
@@ -19,7 +23,7 @@ export interface DeliverableReviewRoutesDeps {
   handleJarvisApprovalDecision?: (input: { gate: ApprovalGate; approved: boolean; originChannelId?: string }) => Promise<{ handled: boolean; continuation?: unknown }>;
   isAgentSdkApprovalGate?: (gate: ApprovalGate) => boolean | Promise<boolean>;
   resumeAgentSdkRunFromApprovalGate?: (input: { gate: ApprovalGate; approved: boolean; originChannelId?: string }) => Promise<unknown>;
-  submitAgentJob?: (input: SubmitJobInput) => Promise<SubmitJobResult>;
+  submitAgentJob?: (input: SubmitJobInput, transaction?: SubmitJobDeps["db"], options?: SubmitAgentJobOptions) => Promise<SubmitJobResult>;
 }
 
 const paramValue = (value: string | string[]): string => Array.isArray(value) ? (value[0] ?? "") : value;
@@ -89,9 +93,11 @@ async function defaultResumeAgentSdkRunFromApprovalGate(input: { gate: ApprovalG
   return resumeAgentSdkRunFromApprovalGate(input);
 }
 
-async function defaultSubmitAgentJob(input: SubmitJobInput): Promise<SubmitJobResult> {
+async function defaultSubmitAgentJob(input: SubmitJobInput, transaction?: SubmitJobDeps["db"], options?: SubmitAgentJobOptions): Promise<SubmitJobResult> {
   const { submitAgentJob } = await import("./jobQueue");
-  return submitAgentJob(input);
+  const submitDeps: SubmitJobDeps = transaction ? { db: transaction } : {};
+  if (options?.skipDuplicateCheck) submitDeps.findDuplicate = async () => null;
+  return submitAgentJob(input, submitDeps);
 }
 
 async function resumeDirectEmailApprovalIfOwned(gate: ApprovalGate, approved: boolean): Promise<{ handled: boolean; continuation?: unknown }> {
@@ -173,15 +179,43 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         const result = await createGmailDraft(token, to, meta.subject || d.title, meta.emailBody || d.body);
         resultExtra = { gmailDraftUrl: result.gmailUrl, gmailDraftId: result.draftId };
       } else {
-        await db.insert(userDocuments).values({
-          userId,
-          name: d.title.slice(0, 200),
-          mimeType: "text/markdown",
-          sizeBytes: Buffer.byteLength(d.body, "utf8"),
-          status: "ready",
-          extractedText: d.body,
-          summary: d.summary || null,
+        const approved = await db.transaction(async (tx) => {
+          const [locked] = await tx
+            .select()
+            .from(schema.deliverables)
+            .where(and(
+              eq(schema.deliverables.id, id),
+              eq(schema.deliverables.userId, userId),
+              eq(schema.deliverables.status, "pending_approval"),
+            ))
+            .limit(1)
+            .for("update");
+          if (!locked) return false;
+          await tx.insert(userDocuments).values({
+            userId,
+            name: locked.title.slice(0, 200),
+            mimeType: "text/markdown",
+            sizeBytes: Buffer.byteLength(locked.body, "utf8"),
+            status: "ready",
+            extractedText: locked.body,
+            summary: locked.summary || null,
+          });
+          await tx
+            .update(schema.deliverables)
+            .set({ status: "approved", actedAt: new Date() })
+            .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.status, "pending_approval")));
+          if (locked.jobId) {
+            await tx
+              .update(schema.agentJobs)
+              .set({ status: "delivered" })
+              .where(and(eq(schema.agentJobs.id, locked.jobId), eq(schema.agentJobs.status, "complete")));
+          }
+          return true;
         });
+        if (!approved) {
+          return res.status(409).json({ error: "Deliverable changed while approval was being prepared; reload and try again." });
+        }
+        return res.json({ ok: true, ...resultExtra });
       }
 
       await db
@@ -210,6 +244,36 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
       const d = reviewAction.deliverable;
       let continuation: unknown = undefined;
+      if (d.type !== "approval_gate") {
+        const rejected = await db.transaction(async (tx) => {
+          const [locked] = await tx
+            .select({ jobId: schema.deliverables.jobId })
+            .from(schema.deliverables)
+            .where(and(
+              eq(schema.deliverables.id, id),
+              eq(schema.deliverables.userId, userId),
+              eq(schema.deliverables.status, "pending_approval"),
+            ))
+            .limit(1)
+            .for("update");
+          if (!locked) return false;
+          await tx
+            .update(schema.deliverables)
+            .set({ status: "rejected", actedAt: new Date() })
+            .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.status, "pending_approval")));
+          if (locked.jobId) {
+            await tx
+              .update(schema.agentJobs)
+              .set({ status: "delivered" })
+              .where(and(eq(schema.agentJobs.id, locked.jobId), eq(schema.agentJobs.status, "complete")));
+          }
+          return true;
+        });
+        if (!rejected) {
+          return res.status(409).json({ error: "Deliverable changed while rejection was being prepared; reload and try again." });
+        }
+        return res.json({ ok: true });
+      }
       if (d.type === "approval_gate") {
         const meta = (d.meta as { gateId?: string }) || {};
         const gate = meta.gateId ? await getGate(meta.gateId) : undefined;
@@ -280,11 +344,111 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       if (Object.keys(patch).length === 0) {
         return res.status(400).json({ error: "No editable fields provided" });
       }
-      const [updated] = await db
-        .update(schema.deliverables)
-        .set(patch)
-        .where(eq(schema.deliverables.id, id))
-        .returning();
+
+      // Generated report artifacts are snapshots of the editable title and
+      // body. Re-render them before committing the edit so approval, download,
+      // and Save to Drive all use the corrected bytes.
+      const artifactSourceChanged = (
+        patch.title !== undefined && patch.title !== existing.title
+      ) || (
+        patch.body !== undefined && patch.body !== existing.body
+      );
+      const existingMeta = deliverableMeta(existing);
+      const shouldRegenerateArtifact = artifactSourceChanged
+        && existingMeta.hasDownloadableArtifact === true
+        && (
+          existingMeta.pdfGenerated === true
+          || typeof existingMeta.pdfFilename === "string"
+          || typeof existingMeta.fallbackFilename === "string"
+        );
+      let replacementArtifact: {
+        filename: string;
+        mimeType: string;
+        content: Buffer;
+      } | null = null;
+
+      if (artifactSourceChanged) {
+        const nextMeta = {
+          ...existingMeta,
+          ...(patch.meta && typeof patch.meta === "object" ? patch.meta as Record<string, unknown> : {}),
+          hasDownloadableArtifact: false,
+        };
+        delete nextMeta.pdfGenerated;
+        delete nextMeta.pdfFilename;
+        delete nextMeta.pdfDriveLink;
+        delete nextMeta.pdfError;
+        delete nextMeta.fallbackFilename;
+
+        if (shouldRegenerateArtifact) {
+          const nextTitle = typeof patch.title === "string" ? patch.title : existing.title;
+          const nextBody = typeof patch.body === "string" ? patch.body : existing.body;
+          const filenameBase = nextTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() || "Jarvis document";
+          try {
+            const content = await markdownToPdfBuffer(nextTitle, nextBody);
+            const filename = `${filenameBase}.pdf`;
+            replacementArtifact = { filename, mimeType: "application/pdf", content };
+            nextMeta.pdfGenerated = true;
+            nextMeta.pdfFilename = filename;
+            nextMeta.hasDownloadableArtifact = true;
+          } catch (pdfErr) {
+            const filename = `${filenameBase}.md`;
+            const message = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
+            replacementArtifact = {
+              filename,
+              mimeType: "text/markdown",
+              content: Buffer.from(nextBody, "utf8"),
+            };
+            nextMeta.pdfGenerated = false;
+            nextMeta.pdfError = message;
+            nextMeta.fallbackFilename = filename;
+            nextMeta.hasDownloadableArtifact = true;
+            console.error(`[deliverables] PDF regeneration failed for ${id}; stored Markdown fallback:`, message);
+          }
+        }
+
+        patch.meta = nextMeta;
+        patch.driveLink = null;
+      }
+
+      const updated = await db.transaction(async (tx) => {
+        const [row] = await tx
+          .update(schema.deliverables)
+          .set(patch)
+          .where(and(
+            eq(schema.deliverables.id, id),
+            eq(schema.deliverables.userId, userId),
+            eq(schema.deliverables.status, "pending_approval"),
+            eq(schema.deliverables.title, existing.title),
+            eq(schema.deliverables.body, existing.body),
+            existing.driveLink !== null
+              ? eq(schema.deliverables.driveLink, existing.driveLink)
+              : isNull(schema.deliverables.driveLink),
+          ))
+          .returning();
+        if (!row) return null;
+        if (artifactSourceChanged) {
+          await tx
+            .delete(schema.deliverableArtifacts)
+            .where(and(
+              eq(schema.deliverableArtifacts.deliverableId, id),
+              eq(schema.deliverableArtifacts.userId, userId),
+            ));
+          if (replacementArtifact) {
+            await tx.insert(schema.deliverableArtifacts).values({
+              deliverableId: id,
+              userId,
+              filename: replacementArtifact.filename,
+              mimeType: replacementArtifact.mimeType,
+              sizeBytes: replacementArtifact.content.length,
+              data: replacementArtifact.content,
+            });
+          }
+        }
+        return row;
+      });
+      if (!updated) {
+        return res.status(409).json({ error: "Deliverable changed while this edit was being prepared; reload and try again." });
+      }
       res.json({ ok: true, deliverable: updated });
     } catch (err) {
       console.error("Error editing deliverable:", err);
@@ -316,42 +480,76 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         ? { ...(job.input as Record<string, unknown>) }
         : {};
       delete baseInput.retryCount;
+      const preserveDownloadableArtifact = deliverableMeta(d).hasDownloadableArtifact === true;
 
       const revisionPrompt = [
         "Revise this Jarvis deliverable according to the user's requested changes.",
         "",
         `Original task: ${job?.prompt || d.title}`,
+        ...(preserveDownloadableArtifact
+          ? ["Original output requirement: Preserve the replacement as a PDF file unless the requested changes explicitly change the format."]
+          : []),
         "",
         "Current deliverable:",
-        d.body.slice(0, 30000),
+        d.body,
         "",
         "Requested changes:",
         instructions,
         "",
         "Return a complete replacement deliverable, not a patch note.",
       ].join("\n");
+      const unsupportedFormat = unsupportedReportFileFormat(revisionPrompt);
+      if (unsupportedFormat) {
+        return res.status(400).json({
+          error: `The requested ${unsupportedFormat} format is not supported. Request PDF or Markdown instead.`,
+        });
+      }
 
-      const revision = await submitAgentJob({
-        userId,
-        agentType: d.agentType as any,
-        title: `Revision: ${d.title}`.slice(0, 200),
-        prompt: revisionPrompt,
-        input: {
-          ...baseInput,
-          revisionOfDeliverableId: d.id,
-          revisionOfJobId: d.jobId,
-          revisionInstructions: instructions.slice(0, 2000),
-        },
+      const revision = await db.transaction(async (tx) => {
+        const [locked] = await tx
+          .select({ id: schema.deliverables.id })
+          .from(schema.deliverables)
+          .where(and(
+            eq(schema.deliverables.id, id),
+            eq(schema.deliverables.userId, userId),
+            eq(schema.deliverables.status, "pending_approval"),
+            eq(schema.deliverables.title, d.title),
+            eq(schema.deliverables.body, d.body),
+          ))
+          .limit(1)
+          .for("update");
+        if (!locked) return null;
+
+        const submitted = await submitAgentJob({
+          userId,
+          agentType: d.agentType as any,
+          title: `Revision: ${d.title}`.slice(0, 200),
+          prompt: revisionPrompt,
+          input: {
+            ...baseInput,
+            revisionOfDeliverableId: d.id,
+            revisionOfJobId: d.jobId,
+            revisionInstructions: instructions.slice(0, 2000),
+          },
+        }, tx, { skipDuplicateCheck: true });
+
+        await tx
+          .update(schema.deliverables)
+          .set({
+            status: "discarded",
+            actedAt: new Date(),
+            triageNote: `Revision requested: ${instructions.slice(0, 500)}`,
+          })
+          .where(and(
+            eq(schema.deliverables.id, id),
+            eq(schema.deliverables.userId, userId),
+            eq(schema.deliverables.status, "pending_approval"),
+          ));
+        return submitted;
       });
-
-      await db
-        .update(schema.deliverables)
-        .set({
-          status: "discarded",
-          actedAt: new Date(),
-          triageNote: `Revision requested: ${instructions.slice(0, 500)}`,
-        })
-        .where(eq(schema.deliverables.id, id));
+      if (!revision) {
+        return res.status(409).json({ error: "Deliverable changed while the revision was being prepared; reload and try again." });
+      }
 
       if (d.jobId) {
         await db
@@ -439,16 +637,32 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       const id = paramValue(req.params.id);
       const reviewAction = await loadDeliverableForReviewAction(db, userId, id, "discard");
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
-      const d = reviewAction.deliverable;
-      await db
-        .update(schema.deliverables)
-        .set({ status: "discarded", actedAt: new Date() })
-        .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)));
-      if (d?.jobId) {
-        await db
-          .update(schema.agentJobs)
-          .set({ status: "delivered" })
-          .where(and(eq(schema.agentJobs.id, d.jobId), eq(schema.agentJobs.status, "complete")));
+      const discarded = await db.transaction(async (tx) => {
+        const [locked] = await tx
+          .select({ jobId: schema.deliverables.jobId })
+          .from(schema.deliverables)
+          .where(and(
+            eq(schema.deliverables.id, id),
+            eq(schema.deliverables.userId, userId),
+            eq(schema.deliverables.status, "pending_approval"),
+          ))
+          .limit(1)
+          .for("update");
+        if (!locked) return false;
+        await tx
+          .update(schema.deliverables)
+          .set({ status: "discarded", actedAt: new Date() })
+          .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.status, "pending_approval")));
+        if (locked.jobId) {
+          await tx
+            .update(schema.agentJobs)
+            .set({ status: "delivered" })
+            .where(and(eq(schema.agentJobs.id, locked.jobId), eq(schema.agentJobs.status, "complete")));
+        }
+        return true;
+      });
+      if (!discarded) {
+        return res.status(409).json({ error: "Deliverable changed while discard was being prepared; reload and try again." });
       }
       res.json({ ok: true });
     } catch (err) {
@@ -464,33 +678,87 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       const id = paramValue(req.params.id);
       const reviewAction = await loadDeliverableForReviewAction(db, userId, id, "save_to_drive");
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
-      const d = reviewAction.deliverable;
-      if (d.driveLink) return res.json({ ok: true, driveLink: d.driveLink });
 
       const { getUserDriveSettings } = await import("../driveRoutes");
-      const { createDriveTextFile } = await import("../integrations/googleDrive");
+      const { createDriveBinaryFile, createDriveTextFile, deleteDriveFile } = await import("../integrations/googleDrive");
       const drive = await getUserDriveSettings(userId);
-      if (!drive.enabled || !drive.accessToken) {
+      const accessToken = drive.accessToken;
+      if (!drive.enabled || !accessToken) {
         return res.status(400).json({ error: "Google Drive is not connected. Enable it in Settings.", code: "DRIVE_NOT_CONNECTED" });
       }
 
-      const content = d.body || d.summary || d.title;
-      const baseName = (d.title.slice(0, 95) || "Jarvis Document").replace(/\.md$/, "");
-      const fileName = `${baseName}.md`;
-      const created = await createDriveTextFile(
-        drive.accessToken,
-        fileName,
-        content,
-        { folderId: drive.folderId || undefined },
-      );
+      let newlyCreatedDriveFileId: string | null = null;
+      let saved;
+      try {
+        saved = await db.transaction(async (tx) => {
+        const [locked] = await tx
+          .select()
+          .from(schema.deliverables)
+          .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)))
+          .limit(1)
+          .for("update");
+        if (
+          !locked
+          || locked.type === "approval_gate"
+          || (locked.status !== "pending_approval" && locked.status !== "approved")
+        ) return null;
+        if (locked.driveLink) return { driveLink: locked.driveLink, deliverable: locked };
 
-      const [updated] = await db
-        .update(schema.deliverables)
-        .set({ driveLink: created.webViewLink })
-        .where(eq(schema.deliverables.id, id))
-        .returning();
+        const [artifact] = await tx
+          .select()
+          .from(schema.deliverableArtifacts)
+          .where(and(
+            eq(schema.deliverableArtifacts.deliverableId, locked.id),
+            eq(schema.deliverableArtifacts.userId, userId),
+          ))
+          .limit(1);
+        // Keep the row locked through upload. Consolidation excludes rows once
+        // they have a Drive link, so whichever action wins cannot make the
+        // external copy stale. Use a durable upload outbox if latency grows.
+        const saveKey = createHash("sha256")
+          .update(locked.id)
+          .update("\0")
+          .update(locked.title)
+          .update("\0")
+          .update(artifact ? Buffer.from(artifact.data) : Buffer.from(locked.body || locked.summary || locked.title, "utf8"))
+          .digest("hex");
+        const created = artifact
+          ? await createDriveBinaryFile(
+              accessToken,
+              artifact.filename,
+              Buffer.from(artifact.data),
+              artifact.mimeType,
+              { folderId: drive.folderId || undefined, idempotencyKey: saveKey },
+            )
+          : await createDriveTextFile(
+              accessToken,
+              `${(locked.title.slice(0, 95) || "Jarvis Document").replace(/\.md$/, "")}.md`,
+              locked.body || locked.summary || locked.title,
+              { folderId: drive.folderId || undefined, idempotencyKey: saveKey },
+            );
+        if (!created.reused) newlyCreatedDriveFileId = created.fileId;
 
-      res.json({ ok: true, driveLink: created.webViewLink, deliverable: updated });
+        const [updated] = await tx
+          .update(schema.deliverables)
+          .set({ driveLink: created.webViewLink })
+          .where(eq(schema.deliverables.id, locked.id))
+          .returning();
+        return { driveLink: created.webViewLink, deliverable: updated };
+        });
+      } catch (saveErr) {
+        if (newlyCreatedDriveFileId) {
+          try {
+            await deleteDriveFile(accessToken, newlyCreatedDriveFileId);
+          } catch (cleanupErr) {
+            console.error(`[deliverables] Failed to compensate Drive upload ${newlyCreatedDriveFileId}:`, cleanupErr);
+          }
+        }
+        throw saveErr;
+      }
+      if (!saved) {
+        return res.status(409).json({ error: "Deliverable changed while Save to Drive was being prepared; reload and try again." });
+      }
+      res.json({ ok: true, driveLink: saved.driveLink, deliverable: saved.deliverable });
     } catch (err) {
       console.error("Error saving deliverable to Drive:", err);
       res.status(500).json({ error: "Failed to save to Drive" });
