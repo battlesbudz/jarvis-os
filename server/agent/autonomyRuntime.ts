@@ -11,6 +11,7 @@ import { decideContextPacks, type ContextPackDecision, type ContextTaskType } fr
 import { getCoachAppAgentId } from "./coreAgentIds";
 import type { AgentJobType, SubmitJobInput, SubmitJobResult } from "./jobClient";
 import { buildMindTrace, type JarvisMindTrace, type MindTraceToolInput } from "./mindTrace";
+import { requestsReportFile } from "./backgroundJobHandoff";
 
 export interface AutonomyRuntimeInput {
   userId: string;
@@ -340,9 +341,16 @@ export async function routeAutonomyRequest(
   deps: AutonomyRuntimeDeps = {},
 ): Promise<AutonomyRuntimeResult> {
   const userText = input.userText.trim();
+  const backgroundPrompt = input.backgroundPrompt?.trim();
+  // A short referential turn such as "Make it a PDF" may classify inline by
+  // itself. Use the bounded handoff only for routing when it establishes an
+  // explicit file request; keep the original turn for titles and approvals.
+  const routingText = backgroundPrompt && requestsReportFile(backgroundPrompt)
+    ? backgroundPrompt
+    : userText;
   const hasApproval = input.hasApproval ?? inferExplicitApproval(userText);
   const preliminary = decideAutonomyMode({
-    userText,
+    userText: routingText,
     readiness: "ready",
     hasApproval,
   });
@@ -360,7 +368,7 @@ export async function routeAutonomyRequest(
 
   const readiness = input.readiness ?? await (deps.getReadiness ?? defaultReadiness)(input.userId);
   const decision = decideAutonomyMode({
-    userText,
+    userText: routingText,
     readiness,
     hasApproval,
   });
@@ -457,7 +465,7 @@ export async function routeAutonomyRequest(
 
   const agentType = (decision.agentType || "research") as AgentJobType;
   const title = deriveAutonomyTitle(userText);
-  const backgroundPrompt = input.backgroundPrompt?.trim() || userText;
+  const workerPrompt = backgroundPrompt || userText;
   const submitJob = deps.submitJob ?? defaultSubmitJob;
   let job: SubmitJobResult;
   try {
@@ -465,7 +473,7 @@ export async function routeAutonomyRequest(
       userId: input.userId,
       agentType,
       title,
-      prompt: backgroundPrompt,
+      prompt: workerPrompt,
       input: {
         originChannel: input.channelName,
         ...(input.originChannelId ? { originChannelId: input.originChannelId } : {}),

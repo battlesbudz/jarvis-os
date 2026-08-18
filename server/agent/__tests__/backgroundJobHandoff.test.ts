@@ -32,6 +32,35 @@ assert.equal(requestsReportFile("Prepare a PDF report on sunflower seeds"), true
 assert.equal(requestsReportFile("Create a DOCX report on sunflower seeds"), false);
 assert.equal(requestsReportFile("Create a Word document with the report"), false);
 
+const contextualRevisionPrompt = [
+  "Revise this Jarvis deliverable according to the user's requested changes.",
+  "",
+  "Original task: Complete the latest user request as a self-contained background task.",
+  "Latest user request:",
+  "Give me the report as a PDF",
+  "End latest user request.",
+  "",
+  "Requested changes:",
+  "Do not make this a PDF; return Markdown only.",
+  "",
+  "Return a complete replacement deliverable, not a patch note.",
+].join("\n");
+assert.equal(
+  requestsReportFile(contextualRevisionPrompt),
+  false,
+  "outer revision instructions override embedded contextual artifact intent",
+);
+
+const contextualPdfRevisionPrompt = contextualRevisionPrompt.replace(
+  "Do not make this a PDF; return Markdown only.",
+  "Keep the revised report as a PDF.",
+);
+assert.equal(
+  requestsReportFile(contextualPdfRevisionPrompt),
+  true,
+  "outer revision instructions can explicitly preserve PDF output",
+);
+
 const multilineFollowUp = "Research sunflower seeds thoroughly.\n\nGive me the report as a PDF";
 const multilinePrompt = buildBackgroundJobPrompt(
   [

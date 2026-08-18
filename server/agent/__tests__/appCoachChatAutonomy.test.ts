@@ -89,6 +89,34 @@ async function main(): Promise<void> {
     assert.match(followUpJobs[0].prompt, /background research task/i);
   }
 
+  {
+    const ellipticalJobs: Array<{ agentType: string; prompt: string }> = [];
+    const elliptical = await routeAppCoachChatAutonomy(
+      {
+        userId: "user_app_elliptical_pdf",
+        messages: [
+          { role: "user", content: "Research sunflower seed nutrition." },
+          { role: "assistant", content: "Here is the research summary." },
+          { role: "user", content: "Make it a PDF" },
+        ],
+        originChannel: "voice",
+      },
+      {
+        getReadiness: async () => "ready",
+        submitJob: async (job) => {
+          ellipticalJobs.push({ agentType: job.agentType, prompt: job.prompt });
+          return { id: "job_app_elliptical_pdf", isDuplicate: false };
+        },
+      },
+    );
+
+    assert.equal(elliptical.handled, true, "elliptical PDF follow-ups enter the background route");
+    assert.equal(ellipticalJobs.length, 1);
+    assert.equal(ellipticalJobs[0].agentType, "deep_research");
+    assert.match(ellipticalJobs[0].prompt, /sunflower seed nutrition/i);
+    assert.match(ellipticalJobs[0].prompt, /Latest user request:\nMake it a PDF/);
+  }
+
   assert.equal(savedHistory.length, 1);
   assert.equal(savedHistory[0].userId, "user_app_1");
   assert.deepEqual(savedHistory[0].data.slice(0, 2), [

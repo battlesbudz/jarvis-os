@@ -8,7 +8,7 @@ import {
   buildCodexGatewayRecoveryReply,
   classifyCodexGatewayRecoveryRequest,
 } from "./codexGatewayRecovery";
-import { buildBackgroundJobPrompt } from "./backgroundJobHandoff";
+import { buildBackgroundJobPrompt, requestsReportFile } from "./backgroundJobHandoff";
 
 export interface AppCoachChatMessage {
   role?: string;
@@ -100,14 +100,20 @@ export async function routeAppCoachChatAutonomy(
     };
   }
 
+  const backgroundPrompt = buildBackgroundJobPrompt(input.messages, userText);
+  const contextualFileFollowUp = backgroundPrompt !== userText
+    && requestsReportFile(backgroundPrompt);
   const preliminary = decideAutonomyMode({
     userText,
     readiness: "ready",
     hasApproval: false,
   });
   if (
-    preliminary.mode !== "queue_background_job" ||
-    (preliminary.agentType !== "research" && preliminary.agentType !== "deep_research")
+    !contextualFileFollowUp &&
+    (
+      preliminary.mode !== "queue_background_job" ||
+      (preliminary.agentType !== "research" && preliminary.agentType !== "deep_research")
+    )
   ) {
     return { handled: false, userText, decision: preliminary };
   }
@@ -116,7 +122,7 @@ export async function routeAppCoachChatAutonomy(
     {
       userId,
       userText,
-      backgroundPrompt: buildBackgroundJobPrompt(input.messages, userText),
+      backgroundPrompt,
       channelName,
     },
     deps,

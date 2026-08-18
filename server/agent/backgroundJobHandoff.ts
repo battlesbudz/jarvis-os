@@ -8,6 +8,8 @@ const MAX_CONTEXT_CHARS = 6_000;
 const MAX_MESSAGE_CHARS = 1_600;
 const LATEST_REQUEST_MARKER = "Latest user request:";
 const LATEST_REQUEST_END_MARKER = "End latest user request.";
+const REVISION_REQUEST_MARKER = "Requested changes:";
+const REVISION_REQUEST_END_MARKER = "Return a complete replacement deliverable";
 
 function textContent(message: BackgroundJobChatMessage): string {
   return typeof message.content === "string"
@@ -78,16 +80,30 @@ export function requestsReportFile(prompt: string): boolean {
   // A contextual handoff contains earlier turns that may merely mention PDFs.
   // Creation intent belongs to the latest request, so evaluate that section
   // when present instead of treating format discussion in context as intent.
+  const revisionStart = prompt.lastIndexOf(REVISION_REQUEST_MARKER);
+  const revisionEnd = revisionStart >= 0
+    ? prompt.indexOf(REVISION_REQUEST_END_MARKER, revisionStart + REVISION_REQUEST_MARKER.length)
+    : -1;
   const latestStart = prompt.lastIndexOf(LATEST_REQUEST_MARKER);
   const latestEnd = latestStart >= 0
     ? prompt.indexOf(LATEST_REQUEST_END_MARKER, latestStart + LATEST_REQUEST_MARKER.length)
     : -1;
-  const request = latestStart >= 0
+  const request = revisionStart >= 0
     ? prompt.slice(
-        latestStart + LATEST_REQUEST_MARKER.length,
-        latestEnd >= 0 ? latestEnd : undefined,
+        revisionStart + REVISION_REQUEST_MARKER.length,
+        revisionEnd >= 0 ? revisionEnd : undefined,
       ).trim()
-    : prompt.trim();
+    : latestStart >= 0
+      ? prompt.slice(
+          latestStart + LATEST_REQUEST_MARKER.length,
+          latestEnd >= 0 ? latestEnd : undefined,
+        ).trim()
+      : prompt.trim();
+
+  // DOCX generation is not currently supported. Reject those explicit formats
+  // before the generic "document" matcher so Jarvis does not promise a PDF as
+  // though it were the requested Word file.
+  if (/\b(?:docx|word\s+document)\b/i.test(request)) return false;
 
   const artifact = String.raw`(?:pdf|downloadable\s+file|document|file)`;
   const action = String.raw`(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give)`;
