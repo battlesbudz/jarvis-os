@@ -39,6 +39,8 @@ assert.equal(requestsReportFile("Export the findings as an XLSX spreadsheet"), f
 assert.equal(unsupportedReportFileFormat("Research competitors and export the results as a CSV file"), "CSV");
 assert.equal(unsupportedReportFileFormat("Create a downloadable JSON file with the findings"), "JSON");
 assert.equal(unsupportedReportFileFormat("Explain how JSON parsing works"), null);
+assert.equal(unsupportedReportFileFormat("Return this object as JSON"), null);
+assert.equal(unsupportedReportFileFormat("Convert this snippet to HTML"), null);
 assert.equal(unsupportedReportFileFormat("Write a JSON parser"), null);
 assert.equal(unsupportedReportFileFormat("Create a CSV importer"), null);
 assert.equal(unsupportedReportFileFormat("Create a PDF report comparing JSON file formats"), null);
@@ -157,6 +159,7 @@ assert.match(jobQueueSource, /deliverable\.body !== mergedBody/);
 assert.match(jobQueueSource, /deliverable\.title !== mergedTitle/);
 assert.match(jobQueueSource, /deliverable\.status !== "pending_approval"/);
 assert.match(jobQueueSource, /activeSiblingDeliverables/);
+assert.match(jobQueueSource, /if \(!hasActiveDeliverables\) return/);
 assert.match(jobQueueSource, /const siblingDeliverables = await tx[\s\S]*?\.for\("update"\)/);
 assert.doesNotMatch(jobQueueSource, /const siblingDeliverables = await db/);
 assert.match(jobQueueSource, /batchOriginChannel === "slack"/);
