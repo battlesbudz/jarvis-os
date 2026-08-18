@@ -155,7 +155,9 @@ export function unsupportedReportFileFormat(prompt: string): string | null {
     "i",
   );
   const downloadableArtifact = new RegExp(String.raw`\bdownloadable\s+(${namedArtifact})\b`, "i");
-  const output = request.match(outputSyntax)?.[1]
+  const explicitArtifactIntent = /\b(?:downloadable|file|document|report|results?|findings?)\b/i.test(request)
+    || /\b(?:export|attach|save)\b/i.test(request);
+  const output = (explicitArtifactIntent ? request.match(outputSyntax)?.[1] : undefined)
     || request.match(directArtifact)?.[1]
     || request.match(downloadableArtifact)?.[1];
   return output?.match(UNSUPPORTED_REPORT_FORMAT)?.[1]?.toUpperCase() ?? null;
