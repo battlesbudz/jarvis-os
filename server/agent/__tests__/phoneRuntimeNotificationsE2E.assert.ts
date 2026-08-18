@@ -20,6 +20,7 @@ async function main() {
     deterministicPhoneRuntimeToolCallFromRequest,
     hasContextualPhoneRuntimeActionRequest,
     hasPhoneRuntimeActionRequest,
+    hasUnsupportedPhoneDeviceControlRequest,
     isContextualPhoneRuntimeCoveredRequest,
     isPhoneRuntimeCoveredRequest,
   } = await import("../phoneRuntimeRouting");
@@ -37,6 +38,11 @@ async function main() {
     chatTool("android_read_notifications"),
   ];
   const connectedPhoneRuntime = { androidActive: true, phoneRuntimeCoveredRequest: true };
+
+  assert.equal(hasUnsupportedPhoneDeviceControlRequest("Open Facebook and record screen"), true);
+  assert.equal(hasUnsupportedPhoneDeviceControlRequest("Record screen and open Facebook"), true);
+  assert.equal(hasUnsupportedPhoneDeviceControlRequest("Open Facebook and check the weather"), false);
+  assert.equal(hasUnsupportedPhoneDeviceControlRequest("Open Facebook"), false);
 
   assert.equal(isPhoneRuntimeCoveredRequest("Open Amazon"), true);
   const amazonOpen = deterministicPhoneRuntimeToolCallFromRequest("Open Amazon", phoneTools, connectedPhoneRuntime);

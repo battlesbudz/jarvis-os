@@ -410,6 +410,16 @@ export function isPhoneDeviceControlKeywordRequest(text: string): boolean {
   return PHONE_DEVICE_CONTROL_KEYWORDS.some((keyword) => normalized.includes(keyword));
 }
 
+export function hasUnsupportedPhoneDeviceControlRequest(text: string): boolean {
+  const normalized = normalizePhoneRuntimeRequestText(text);
+  const segments = phoneOpenClauses(normalized).flatMap((clause) => (
+    clause.split(new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i"))
+  )).map((segment) => stripPhoneDiscoursePreamble(segment.trim())).filter(Boolean);
+  return segments.some((segment) => (
+    isPhoneDeviceControlKeywordRequest(segment) && !hasPhoneRuntimeAction(segment)
+  ));
+}
+
 export function isPhoneNotificationReadRequest(text: string): boolean {
   const normalized = normalizePhoneRuntimeRequestText(text);
   if (!/\bnotifications?\b/i.test(normalized)) return false;

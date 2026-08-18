@@ -92,6 +92,7 @@ import {
   filterPhoneRuntimeModelTools,
   hasContextualPhoneRuntimeActionRequest,
   hasPhoneRuntimeActionRequest,
+  hasUnsupportedPhoneDeviceControlRequest,
   isAndroidPhoneRuntimeToolName,
   isContextualPhoneRuntimeCoveredRequest,
   isMemoryPhoneBypassRequest,
@@ -1769,7 +1770,8 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         isPhoneDeviceControlKeywordRequest(lastUserContent)
       );
       const youtubeServerResearchRequest = androidActive && isYoutubeServerResearchRequest(lastUserContent);
-      const keepDaemonActionFallback = androidActive && isDeviceControlRequest && !phoneRuntimeActionRequest && !youtubeServerResearchRequest;
+      const keepDaemonActionFallback = androidActive && !memoryPhoneBypassRequest &&
+        hasUnsupportedPhoneDeviceControlRequest(lastUserContent) && !youtubeServerResearchRequest;
 
       // Absolute prohibition injected at the TOP of the system message so the model
       // reads it before any other context. Without this, the model pattern-matches
