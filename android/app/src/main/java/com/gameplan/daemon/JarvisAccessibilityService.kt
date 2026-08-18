@@ -152,13 +152,22 @@ class JarvisAccessibilityService : AccessibilityService() {
     // by polling accessibility foreground signals after dispatch.
     fun launchApp(packageName: String, activityName: String? = null): Boolean {
         val pm = packageManager
+        var verificationActivity = activityName
         val intent = if (activityName == null) {
             pm.getLaunchIntentForPackage(packageName)
         } else {
             Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_LAUNCHER)
                 setClassName(packageName, activityName)
-            }.takeIf { pm.resolveActivity(it, 0)?.activityInfo?.name == activityName }
+            }.takeIf {
+                val activityInfo = pm.resolveActivity(it, 0)?.activityInfo
+                if (activityInfo?.name == activityName) {
+                    verificationActivity = activityInfo.targetActivity ?: activityInfo.name
+                    true
+                } else {
+                    false
+                }
+            }
         } ?: return false
         intent.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or
@@ -175,7 +184,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         // Verify the target package actually came to foreground.
         // Emulator system apps and Samsung Galaxy Fold devices can publish accessibility roots late,
         // so wait long enough and consult multiple accessibility foreground signals.
-        return waitForForeground(packageName, activityName, timeoutMs = 12_000, launchAttemptStartedAtUptimeMs)
+        return waitForForeground(packageName, verificationActivity, timeoutMs = 12_000, launchAttemptStartedAtUptimeMs)
     }
 
     fun browseUrl(url: String): Boolean {
