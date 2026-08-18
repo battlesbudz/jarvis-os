@@ -29,7 +29,7 @@ const PHONE_DEVICE_CONTROL_KEYWORDS = [
   "search youtube", "find a youtube", "look up on youtube",
 ];
 const PHONE_COMPOUND_CONNECTOR_PATTERN = String.raw`(?:and\s+then|then|after(?:wards|\s+that)?|also|and)`;
-const PHONE_FOLLOW_UP_ACTION_PATTERN = String.raw`(?:open|launch|start|check|read|show|list|view|take|make|create|write|draft|schedule|add|update|delete|remove|archive|summari[sz]e|wait|notify|alert|let\s+me\s+know|play|watch|tap|click|press|swipe|scroll|type|enter|select|share|send|close|pause|subscribe|like|save|download|call|text|message|search|find|look\s+up|look\s+for|navigate\s+to|browse\s+to|back|home|recents|screenshot|screen\s+shot|screen\s+capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+(?:back|home)|go\s+to|turn\s+(?:on|off)|enable|disable|change|adjust|set|turn\s+(?:the\s+)?volume|raise\s+(?:the\s+)?volume|lower\s+(?:the\s+)?volume|volume\s+(?:up|down))`;
+const PHONE_FOLLOW_UP_ACTION_PATTERN = String.raw`(?:open|launch|start|check|get|fetch|read|show|list|view|take|make|create|write|draft|schedule|add|update|delete|remove|archive|summari[sz]e|wait|notify|alert|let\s+me\s+know|play|watch|tap|click|press|swipe|scroll|type|enter|select|share|send|close|pause|subscribe|like|save|download|call|text|message|search|find|look\s+up|look\s+for|navigate\s+to|browse\s+to|back|home|recents|screenshot|screen\s+shot|screen\s+capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+(?:back|home)|go\s+to|turn\s+(?:on|off)|enable|disable|change|adjust|set|turn\s+(?:the\s+)?volume|raise\s+(?:the\s+)?volume|lower\s+(?:the\s+)?volume|volume\s+(?:up|down))`;
 const PHONE_PUNCTUATED_FOLLOW_UP_PATTERN = String.raw`[,;:.!?]\s*(?:(?:now|next|then)[\s,:-]+)?(?:please\s+)?${PHONE_FOLLOW_UP_ACTION_PATTERN}\b`;
 const REQUEST_ACTION_CLAUSE_PATTERN = /^\s*(?:(?:please|then|next|now)[\s,:-]+)*(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:check|get|fetch|read|show|list|research|investigate|analy[sz]e|explain|compare|review|evaluate|calculate|translate|proofread|open|launch|start|take|make|create|send|email|reply|forward|invite|book|buy|order|pay|upload|download|share|post|publish|remind|write|draft|schedule|reschedule|cancel|add|update|change|set|delete|remove|archive|find|search|look\s+up|tell|summari[sz]e|call|text|message|navigate|browse|tap|press|swipe|scroll|type|enter|enable|disable|turn)\b/i;
 const REQUEST_QUESTION_CLAUSE_PATTERN = /^\s*(?:what(?:['’]s|\s+is|\s+are)?|who(?:['’]s|\s+is|\s+are)?|where(?:['’]s|\s+is|\s+are)?|when|how|why|which)\b/i;
@@ -75,8 +75,9 @@ const RETRACTED_PHONE_OPEN_PATTERN = /\b(?:open|launch|start)\b[\s\S]{0,80}\b(?:
 const DEFERRED_PHONE_OPEN_PATTERN = /\b(?:not\s+(?:now|yet)|tomorrow|tonight|later|this\s+(?:morning|afternoon|evening|night|weekend|week|month|year)|next\s+(?:morning|afternoon|evening|night|day|week|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december|\d{4}-\d{1,2}-\d{1,2})|at\s+(?:(?:[01]?\d|2[0-3])(?::[0-5]\d)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?:\s*(?:a\.?m\.?|p\.?m\.?))?|at\s+(?:noon|midnight)|in\s+(?:(?:(?:a|one)\s+)?(?:little\s+)?(?:while|bit|moment)|(?:\d+|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|few|couple(?:\s+of)?)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?))|(?:after|when|whenever|as\s+soon\s+as|as\s+long\s+as|provided\s+that|if|unless)\s+\S+|once\s+(?!(?:again|more)\b)\S+)\b/i;
 const ORDERED_PHONE_ACTION_PATTERN = /\b(?:after|before)\s+(?:(?:you|i|we)\s+)?(?:open(?:ing)?|launch(?:ing)?|start(?:ing)?|read(?:ing)?|check(?:ing)?|view(?:ing)?|captur(?:e|ing)|tak(?:e|ing)|tap(?:ping)?|click(?:ing)?|press(?:ing)?|swip(?:e|ing)|scroll(?:ing)?|typ(?:e|ing)|enter(?:ing)?|select(?:ing)?|play(?:ing)?|watch(?:ing)?|clos(?:e|ing)|return(?:ing)?|go(?:ing)?)\b/i;
 const PHONE_WEB_TARGET_QUALIFIER_PATTERN = /\b(?:website|web\s*site|site|webpage|web\s+page)\b/i;
+const PHONE_CLAUSE_CONTINUATION_PATTERN = String.raw`(?:(?:(?:actually|instead|wait|no|sorry)[\s,!:-]+)*(?:(?:now|next|then)[\s,:-]+)?(?:please\s+)?${PHONE_FOLLOW_UP_ACTION_PATTERN}\b|(?:wait|no|never\s*mind|cancel(?:\s+(?:that|it))?|scratch\s+that|forget\s+it|stop|(?:do\s+not|don['’]?t|dont))\b)`;
 const PHONE_OPEN_CLAUSE_SEPARATOR_PATTERN = new RegExp(
-  String.raw`(?:;+|\r?\n+|[!?]+(?:\s+|$)|\.(?:\s+|$))|(?:,|:|[&—–]|-(?=\s))(?=\s*(?:(?:now|next|then)[\s,:-]+)?(?:please\s+)?${PHONE_FOLLOW_UP_ACTION_PATTERN}\b)`,
+  String.raw`(?:;+|\r?\n+)|(?:[.!?]+|,|:|[&—–]|-(?=\s))(?=\s*${PHONE_CLAUSE_CONTINUATION_PATTERN})`,
   "i",
 );
 
@@ -100,10 +101,11 @@ function isDeferredPhoneOpenRequest(text: string): boolean {
   const targetAndQualifiers = command ? immediateText.slice(command.length) : immediateText;
   const appSuffixes = [...targetAndQualifiers.matchAll(/\bapp(?:lication)?\b/gi)];
   const appSuffix = appSuffixes[appSuffixes.length - 1];
-  const qualifierText = appSuffix
-    ? targetAndQualifiers.slice((appSuffix.index ?? 0) + appSuffix[0].length)
-    : targetAndQualifiers;
-  return DEFERRED_PHONE_OPEN_PATTERN.test(qualifierText);
+  if (appSuffix) {
+    const qualifierText = targetAndQualifiers.slice((appSuffix.index ?? 0) + appSuffix[0].length);
+    return DEFERRED_PHONE_OPEN_PATTERN.test(qualifierText);
+  }
+  return new RegExp(String.raw`^.+?\s+${DEFERRED_PHONE_OPEN_PATTERN.source}`, "i").test(targetAndQualifiers);
 }
 
 function phoneOpenClauses(text: string): string[] {
@@ -169,11 +171,11 @@ function extractExplicitPhoneAppTarget(text: string): string | null {
   if (appMatch) return appMatch.trim();
 
   const genericTarget = immediateText.slice(command.length).trim().match(
-    /^(?:up\s+)?(?:the\s+)?([\p{L}\p{N}][\p{L}\p{N} &'’+-]{0,79}?)(?:(?:\s*,\s*|\s+)(?:please|for\s+me|on\s+(?:my|the)\s+(?:phone|device)|directly|(?:right\s+)?now|once\s+(?:again|more)|again))*\s*[.!?]*$/iu,
+    /^(?:up\s+)?(?:the\s+)?([\p{L}\p{N}][\p{L}\p{N} .&'’+-]{0,79}?)(?:(?:\s*,\s*|\s+)(?:please|for\s+me|on\s+(?:my|the)\s+(?:phone|device)|directly|(?:right\s+)?now|once\s+(?:again|more)|again))*\s*[.!?]*$/iu,
   )?.[1]?.trim();
   const isNonAppObjectTarget = !/\b(?:app|application)\b/i.test(genericTarget ?? "") &&
     /\b(?:attachment|pdf|presentation|slides?|slide\s+deck|spreadsheet|workbook)\b/i.test(genericTarget ?? "");
-  if (!genericTarget || isNonAppObjectTarget || /^(?:it|that|(?:the\s+)?app)(?:\s|$)/i.test(genericTarget) || /\b(?:search|website|web\s*site|site|webpage|web\s+page|url|link|file|folder|document|project|open|launch|start|not|never|neither|nor|either|or|and|but|except|excluding|without|avoid)\b|\b(?:other|rather)\s+than\b|\binstead\s+of\b/i.test(genericTarget)) {
+  if (!genericTarget || isNonAppObjectTarget || /\.(?!\s)/.test(genericTarget) || /^(?:it|that|(?:the\s+)?app)(?:\s|$)/i.test(genericTarget) || /\b(?:search|website|web\s*site|site|webpage|web\s+page|url|link|file|folder|document|project|open|launch|start|not|never|neither|nor|either|or|and|but|except|excluding|without|avoid)\b|\b(?:other|rather)\s+than\b|\binstead\s+of\b/i.test(genericTarget)) {
     return null;
   }
   return genericTarget;
@@ -205,6 +207,7 @@ function stripPhoneDiscoursePreamble(clause: string): string {
 }
 
 function cancelsPhoneOpenTarget(clause: string, target: string): boolean {
+  if (/^\s*(?:wait|no)\s*[.!?]*$/i.test(clause)) return true;
   const cancellation = stripPhoneDiscoursePreamble(clause);
   if (/^(?:wait|no|never\s*mind|cancel(?:\s+(?:that|it))?|scratch\s+that|forget\s+it|stop|(?:do\s+not|don['’]?t|dont)(?:\s+(?:do\s+(?:it|that)|open|launch|start))?)\s*[.!?]*$/i.test(cancellation)) {
     return true;

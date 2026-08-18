@@ -98,6 +98,16 @@ async function main() {
       { appName },
     );
   }
+  for (const appName of ["Dr. Driving", "St. John Ambulance"]) {
+    const requestText = `Open ${appName}`;
+    assert.equal(isPhoneRuntimeCoveredRequest(requestText), true);
+    assert.deepEqual(
+      JSON.parse(
+        deterministicPhoneRuntimeToolCallFromRequest(requestText, phoneTools, connectedPhoneRuntime)?.function.arguments ?? "{}",
+      ),
+      { appName },
+    );
+  }
   for (const excludedGenericAppRequest of [
     "Open anything but Facebook",
     "Open neither Amazon nor Facebook",
@@ -319,6 +329,14 @@ async function main() {
     );
   }
   assert.equal(isPhoneRuntimeCoveredRequest("Open the When I Work app"), true);
+  assert.equal(isPhoneRuntimeCoveredRequest("Open When I Work"), true);
+  assert.deepEqual(
+    JSON.parse(
+      deterministicPhoneRuntimeToolCallFromRequest("Open When I Work", phoneTools, connectedPhoneRuntime)
+        ?.function.arguments ?? "{}",
+    ),
+    { appName: "When I Work" },
+  );
   assert.deepEqual(
     JSON.parse(
       deterministicPhoneRuntimeToolCallFromRequest(
