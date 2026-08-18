@@ -6,6 +6,8 @@ export interface BackgroundJobChatMessage {
 const MAX_CONTEXT_MESSAGES = 8;
 const MAX_CONTEXT_CHARS = 6_000;
 const MAX_MESSAGE_CHARS = 1_600;
+const LATEST_REQUEST_MARKER = "Latest user request:";
+const LATEST_REQUEST_END_MARKER = "End latest user request.";
 
 function textContent(message: BackgroundJobChatMessage): string {
   return typeof message.content === "string"
@@ -63,8 +65,9 @@ export function buildBackgroundJobPrompt(
     "Relevant conversation context (oldest to newest):",
     context,
     "",
-    "Latest user request:",
+    LATEST_REQUEST_MARKER,
     latest,
+    LATEST_REQUEST_END_MARKER,
     "",
     "Resolve references such as ‘this’, ‘that’, and ‘it’ from the context above. Preserve the requested subject, scope, and output format. Do not treat speech-to-text artifacts as the research topic when the intended topic is clear from context.",
   ].join("\n");
@@ -75,18 +78,28 @@ export function requestsReportFile(prompt: string): boolean {
   // A contextual handoff contains earlier turns that may merely mention PDFs.
   // Creation intent belongs to the latest request, so evaluate that section
   // when present instead of treating format discussion in context as intent.
-  const latestMarker = "Latest user request:";
-  const request = prompt.includes(latestMarker)
-    ? prompt.slice(prompt.lastIndexOf(latestMarker) + latestMarker.length).split("\n\n")[0]?.trim() || ""
+  const latestStart = prompt.lastIndexOf(LATEST_REQUEST_MARKER);
+  const latestEnd = latestStart >= 0
+    ? prompt.indexOf(LATEST_REQUEST_END_MARKER, latestStart + LATEST_REQUEST_MARKER.length)
+    : -1;
+  const request = latestStart >= 0
+    ? prompt.slice(
+        latestStart + LATEST_REQUEST_MARKER.length,
+        latestEnd >= 0 ? latestEnd : undefined,
+      ).trim()
     : prompt.trim();
 
   const artifact = String.raw`(?:pdf|docx|word\s+document|downloadable\s+file|document|file)`;
-  const action = String.raw`(?:create|make|generate|produce|export|attach|send|deliver|return|provide|save|give)`;
+  const action = String.raw`(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give)`;
   const negatedAction = new RegExp(
     String.raw`\b(?:do\s+not|don't|dont|never|without|no\s+need\s+to)\s+(?:\w+\s+){0,3}${action}\b[^.!?\n]{0,80}\b${artifact}\b`,
     "i",
   );
-  if (negatedAction.test(request)) return false;
+  const negatedArtifact = new RegExp(
+    String.raw`\b(?:not\s+(?:(?:as|in)\s+)?(?:an?\s+)?|without\s+(?:an?\s+)?)${artifact}\b`,
+    "i",
+  );
+  if (negatedAction.test(request) || negatedArtifact.test(request)) return false;
 
   return new RegExp(String.raw`\b${action}\b[^.!?\n]{0,80}\b${artifact}\b`, "i").test(request)
     || new RegExp(String.raw`\b(?:want|need|would\s+like)\b[^.!?\n]{0,50}\b${artifact}\b`, "i").test(request)

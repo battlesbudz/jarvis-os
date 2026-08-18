@@ -26,6 +26,22 @@ assert.equal(requestsReportFile("Create a downloadable file with the report"), t
 assert.equal(requestsReportFile("Deep dive into how PDF parsers work"), false);
 assert.equal(requestsReportFile("Do not create a PDF; just summarize it here"), false);
 assert.equal(requestsReportFile("Give me the report as a PDF"), true);
+assert.equal(requestsReportFile("Give me the report, but not as a PDF"), false);
+assert.equal(requestsReportFile("Give me the report without a PDF"), false);
+assert.equal(requestsReportFile("Prepare a PDF report on sunflower seeds"), true);
+
+const multilineFollowUp = "Research sunflower seeds thoroughly.\n\nGive me the report as a PDF";
+const multilinePrompt = buildBackgroundJobPrompt(
+  [
+    { role: "user", content: "We were discussing sunflower seeds." },
+    { role: "assistant", content: "What should the research cover?" },
+    { role: "user", content: multilineFollowUp },
+  ],
+  multilineFollowUp,
+);
+assert.match(multilinePrompt, /Research sunflower seeds thoroughly\.\n\nGive me the report as a PDF/);
+assert.match(multilinePrompt, /End latest user request\./);
+assert.equal(requestsReportFile(multilinePrompt), true);
 
 const definiteFollowUp = "Give me the report as a PDF";
 const definitePrompt = buildBackgroundJobPrompt(
