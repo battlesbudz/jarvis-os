@@ -241,6 +241,30 @@ async function main(): Promise<void> {
     assert.equal(approvalCalls, 1);
   }
 
+  for (const selfDeliveryTopic of [
+    "Send me a PDF report about text-message marketing",
+    "Send me a PDF report about email marketing",
+  ]) {
+    let approvalCalls = 0;
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_self_delivery_topic",
+        userText: selfDeliveryTopic,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        requestApproval: async () => {
+          approvalCalls += 1;
+          return { id: "unexpected_topic_gate", status: "pending" };
+        },
+        submitJob: async () => ({ id: "self_delivery_topic_job", isDuplicate: false }),
+      },
+    );
+    assert.equal(result.decision.mode, "queue_background_job");
+    assert.equal(approvalCalls, 0);
+  }
+
   {
     let submitCalls = 0;
     const result = await routeAutonomyRequest(
