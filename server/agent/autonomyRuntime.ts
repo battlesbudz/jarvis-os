@@ -404,7 +404,7 @@ export async function routeAutonomyRequest(
         hasApproval: true,
       });
 
-  if (!userText || preliminary.mode === "answer_inline") {
+  if (!userText || (preliminary.mode === "answer_inline" && !durableReportRequested)) {
     await observeAutonomyDecision(deps, {
       mode: preliminary.mode,
       userId: input.userId,
@@ -441,13 +441,20 @@ export async function routeAutonomyRequest(
       reply: "I can create the PDF for download, or draft the email text, but I can’t attach and send a generated PDF through this approval flow yet. Please choose one of those options.",
     };
   }
-  const policyDecision = latestPolicyDecision.mode === "requires_approval"
+  let policyDecision: AutonomyPolicyDecision = latestPolicyDecision.mode === "requires_approval"
     ? latestPolicyDecision
     : decideAutonomyMode({
         userText: routingText,
         readiness,
         hasApproval: true,
       });
+  if (policyDecision.mode === "answer_inline" && durableReportRequested) {
+    policyDecision = {
+      mode: "queue_background_job",
+      agentType: "writing",
+      reason: "Explicit downloadable report requests require an artifact-capable worker.",
+    };
+  }
   // Only deep_research persists generated files in deliverableArtifacts. Any
   // explicit report-file request must use that durable path, even when its
   // subject would otherwise classify as ordinary research.
