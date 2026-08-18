@@ -57,6 +57,38 @@ async function main(): Promise<void> {
   assert.equal(submitted[0].input?.originChannel, "App Chat");
   assert.equal(submitted[0].input?.autonomyPolicy, true);
 
+  {
+    const followUpJobs: Array<{ agentType: string; prompt: string }> = [];
+    const followUp = await routeAppCoachChatAutonomy(
+      {
+        userId: "user_app_follow_up",
+        messages: [
+          { role: "user", content: "Tell me about sunflower seeds." },
+          { role: "assistant", content: "Sunflower seeds are nutritious and versatile." },
+          { role: "user", content: "Make me a report on sunflower seeds and give it to me as a PDF." },
+          { role: "assistant", content: "Here is a short inline report." },
+          { role: "user", content: "No, the whole point was for you to do a background research task and give this report back to me as a file." },
+        ],
+        originChannel: "voice",
+      },
+      {
+        getReadiness: async () => "ready",
+        submitJob: async (job) => {
+          followUpJobs.push({ agentType: job.agentType, prompt: job.prompt });
+          return { id: "job_app_follow_up", isDuplicate: false };
+        },
+      },
+    );
+
+    assert.equal(followUp.handled, true);
+    assert.equal(followUpJobs.length, 1);
+    assert.equal(followUpJobs[0].agentType, "deep_research");
+    assert.match(followUpJobs[0].prompt, /sunflower seeds/i);
+    assert.match(followUpJobs[0].prompt, /PDF/i);
+    assert.match(followUpJobs[0].prompt, /Latest user request:/);
+    assert.match(followUpJobs[0].prompt, /background research task/i);
+  }
+
   assert.equal(savedHistory.length, 1);
   assert.equal(savedHistory[0].userId, "user_app_1");
   assert.deepEqual(savedHistory[0].data.slice(0, 2), [

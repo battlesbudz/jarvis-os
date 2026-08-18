@@ -30,6 +30,7 @@ const tests = [
   { file: "server/agent/__tests__/autonomyRuntime.test.ts" },
   { file: "server/agent/__tests__/primeRuntimeMindTrace.test.ts" },
   { file: "server/agent/__tests__/appCoachChatAutonomy.test.ts" },
+  { file: "server/agent/__tests__/backgroundJobHandoff.test.ts" },
   { file: "server/discord/__tests__/primeRuntimeChat.test.ts" },
   { file: "server/agent/__tests__/jarvisCoreRuntime.assert.ts" },
   { file: "server/agent/__tests__/appProjectRunner.test.ts" },

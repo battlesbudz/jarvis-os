@@ -8,6 +8,7 @@ import {
   buildCodexGatewayRecoveryReply,
   classifyCodexGatewayRecoveryRequest,
 } from "./codexGatewayRecovery";
+import { buildBackgroundJobPrompt } from "./backgroundJobHandoff";
 
 export interface AppCoachChatMessage {
   role?: string;
@@ -115,6 +116,7 @@ export async function routeAppCoachChatAutonomy(
     {
       userId,
       userText,
+      backgroundPrompt: buildBackgroundJobPrompt(input.messages, userText),
       channelName,
     },
     deps,

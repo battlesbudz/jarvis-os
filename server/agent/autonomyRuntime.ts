@@ -15,6 +15,8 @@ import { buildMindTrace, type JarvisMindTrace, type MindTraceToolInput } from ".
 export interface AutonomyRuntimeInput {
   userId: string;
   userText: string;
+  /** Self-contained worker prompt when the latest turn depends on chat history. */
+  backgroundPrompt?: string;
   channelName: string;
   originChannelId?: string;
   readiness?: AutonomyReadiness;
@@ -455,6 +457,7 @@ export async function routeAutonomyRequest(
 
   const agentType = (decision.agentType || "research") as AgentJobType;
   const title = deriveAutonomyTitle(userText);
+  const backgroundPrompt = input.backgroundPrompt?.trim() || userText;
   const submitJob = deps.submitJob ?? defaultSubmitJob;
   let job: SubmitJobResult;
   try {
@@ -462,7 +465,7 @@ export async function routeAutonomyRequest(
       userId: input.userId,
       agentType,
       title,
-      prompt: userText,
+      prompt: backgroundPrompt,
       input: {
         originChannel: input.channelName,
         ...(input.originChannelId ? { originChannelId: input.originChannelId } : {}),

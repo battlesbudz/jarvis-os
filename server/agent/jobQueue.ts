@@ -42,6 +42,7 @@ import {
   type BuildFeatureProgressInput,
 } from "./buildFeatureJobCore";
 import { recoverStaleResourcePausedJobsAfterVoice } from "./voiceRuntimeResourceScheduler";
+import { requestsReportFile } from "./backgroundJobHandoff";
 
 // Re-export from the shared client so existing callers don't break.
 export type { NotifyJobCompleteDeps } from "./notifyJobCompleteCore";
@@ -2444,6 +2445,67 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         }
 
         // ── Step 5: Save deliverable and notify ───────────────────────────────
+        // Deep research returns before the normal research notification batch,
+        // so it must create requested files here instead of merely promising one.
+        const notifyOpts: ChannelSendOpts = {};
+        const artifactMeta: Record<string, unknown> = {};
+        let driveLink: string | null = null;
+        let artifactNote = "";
+
+        if (requestsReportFile(job.prompt)) {
+          const filenameBase = finalTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() || "Jarvis research report";
+          try {
+            const pdfBuffer = await markdownToPdfBuffer(finalTitle, finalBody);
+            const filename = `${filenameBase}.pdf`;
+            const tokens = await getValidGoogleTokens(job.userId).catch(() => []);
+            const googleAccessToken = tokens?.[0] || null;
+
+            if (googleAccessToken) {
+              try {
+                const driveFile = await createDriveBinaryFile(
+                  googleAccessToken,
+                  filename,
+                  pdfBuffer,
+                  "application/pdf",
+                );
+                driveLink = driveFile.webViewLink || null;
+              } catch (driveErr) {
+                console.error(`[JobQueue] deep_research PDF Drive upload failed for ${job.id}:`, driveErr);
+              }
+            }
+
+            notifyOpts.attachments = [{
+              kind: "document",
+              filename,
+              content: pdfBuffer,
+              caption: finalTitle,
+              mimeType: "application/pdf",
+              driveLink: driveLink || undefined,
+            }];
+            artifactMeta.pdfGenerated = true;
+            artifactMeta.pdfFilename = filename;
+            if (driveLink) artifactMeta.pdfDriveLink = driveLink;
+            artifactNote = driveLink
+              ? `\n\n📄 PDF generated and saved to Google Drive: ${driveLink}`
+              : `\n\n📄 PDF generated (${filename}). It is attached on channels that support job files; the report is also available in Inbox.`;
+          } catch (pdfErr) {
+            const filename = `${filenameBase}.md`;
+            const message = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
+            console.error(`[JobQueue] deep_research PDF generation failed for ${job.id}:`, message);
+            notifyOpts.attachments = [{
+              kind: "document",
+              filename,
+              content: finalBody,
+              caption: `${finalTitle} (PDF unavailable — markdown fallback)`,
+              mimeType: "text/markdown",
+            }];
+            artifactMeta.pdfGenerated = false;
+            artifactMeta.pdfError = message;
+            artifactMeta.fallbackFilename = filename;
+            artifactNote = `\n\n⚠️ PDF generation failed; the complete report remains available in Inbox and is attached as ${filename} on supported channels.`;
+          }
+        }
+
         const summarySentence = finalBody.slice(0, 200).replace(/\n+/g, " ").trim();
         await db.insert(schema.deliverables).values({
           userId: job.userId,
@@ -2458,8 +2520,9 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             prerequisiteTopics: plan.prerequisiteTopics,
             mainTopics: plan.mainTopics,
             synthesisGoal: plan.synthesisGoal,
+            ...artifactMeta,
           },
-          driveLink: null,
+          driveLink,
         });
 
         await completeJob(job.id, {
@@ -2474,9 +2537,10 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           job.userId,
           "deep_research",
           finalTitle,
-          finalBody,
+          finalBody + artifactNote,
           originChannel,
           originDiscordChannelId,
+          notifyOpts,
         );
 
         if (hasWorkflow) {
