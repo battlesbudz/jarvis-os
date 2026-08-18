@@ -58,5 +58,22 @@ const deliverableRoutesSource = readFileSync(
 assert.match(deliverableRoutesSource, /\/api\/deliverables\/:id\/artifact/);
 assert.match(deliverableRoutesSource, /Content-Disposition/);
 assert.match(deliverableRoutesSource, /deliverableArtifacts\.userId, userId/);
+assert.match(deliverableRoutesSource, /triageSection === "recent_files"/);
+assert.match(deliverableRoutesSource, /innerJoin\(\s*schema\.deliverableArtifacts/);
+
+const databaseSource = readFileSync(
+  fileURLToPath(new URL("../../db.ts", import.meta.url)),
+  "utf8",
+);
+assert.match(databaseSource, /CREATE TABLE IF NOT EXISTS deliverable_artifacts/);
+assert.match(databaseSource, /deliverable_artifacts_deliverable_uidx/);
+
+const inboxSource = readFileSync(
+  fileURLToPath(new URL("../../../app/(tabs)/inbox.tsx", import.meta.url)),
+  "utf8",
+);
+assert.match(inboxSource, /triageSection=recent_files/);
+assert.match(inboxSource, /recent-file-download-/);
+assert.match(inboxSource, /renderRecentFiles\(\)/);
 
 console.log("All background job handoff assertions passed.");

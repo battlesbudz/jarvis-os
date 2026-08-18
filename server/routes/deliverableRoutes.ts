@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, gte, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { db } from "../db";
 
@@ -36,6 +36,27 @@ export function registerDeliverableRoutes(app: Express): void {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const triageSection = typeof req.query.triageSection === "string" ? req.query.triageSection : null;
+
+      if (triageSection === "recent_files") {
+        const items = await db
+          .select({ ...getTableColumns(schema.deliverables) })
+          .from(schema.deliverables)
+          .innerJoin(
+            schema.deliverableArtifacts,
+            and(
+              eq(schema.deliverableArtifacts.deliverableId, schema.deliverables.id),
+              eq(schema.deliverableArtifacts.userId, userId),
+            ),
+          )
+          .where(and(
+            eq(schema.deliverables.userId, userId),
+            eq(schema.deliverables.status, "approved"),
+          ))
+          .orderBy(desc(schema.deliverables.createdAt))
+          .limit(50);
+        const { attachDeliverableReviewState } = await import("../agent/reviewLoop");
+        return res.json(items.map(attachDeliverableReviewState));
+      }
 
       if (triageSection === "auto_handled") {
         const since = new Date(Date.now() - 48 * 60 * 60 * 1000);

@@ -413,6 +413,11 @@ export default function InboxScreen() {
     refetchInterval: 30000,
   });
 
+  const { data: recentFileDeliverables = [], refetch: refetchRecentFiles } = useQuery<Deliverable[]>({
+    queryKey: ['/api/deliverables?triageSection=recent_files'],
+    refetchInterval: 60000,
+  });
+
   const { data: autoHandledDeliverables = [], refetch: refetchAutoHandled } = useQuery<Deliverable[]>({
     queryKey: ['/api/deliverables?triageSection=auto_handled'],
     refetchInterval: 60000,
@@ -489,6 +494,7 @@ export default function InboxScreen() {
       refetchGut(),
       refetchDrafts(),
       refetchDeliverables(),
+      refetchRecentFiles(),
       refetchAutoHandled(),
       refetchActiveJobs(),
       refetchFailedJobs(),
@@ -500,6 +506,7 @@ export default function InboxScreen() {
     refetchGut,
     refetchDrafts,
     refetchDeliverables,
+    refetchRecentFiles,
     refetchAutoHandled,
     refetchActiveJobs,
     refetchFailedJobs,
@@ -544,6 +551,7 @@ export default function InboxScreen() {
     },
     onSuccess: (data, variables) => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=recent_files'] });
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=auto_handled'] });
       queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
       const approvedItem = deliverables.find(d => d.id === variables);
@@ -768,11 +776,12 @@ export default function InboxScreen() {
       refetch();
       refetchDrafts();
       refetchDeliverables();
+      refetchRecentFiles();
       refetchAutoHandled();
       refetchActiveJobs();
       refetchFailedJobs();
       refetchGut();
-    }, [refetch, refetchDrafts, refetchDeliverables, refetchAutoHandled, refetchActiveJobs, refetchFailedJobs, refetchGut])
+    }, [refetch, refetchDrafts, refetchDeliverables, refetchRecentFiles, refetchAutoHandled, refetchActiveJobs, refetchFailedJobs, refetchGut])
   );
 
   const handleAction = (itemId: string, actionType: string, sourceId?: string, payload?: Record<string, unknown>) => {
@@ -1330,6 +1339,62 @@ export default function InboxScreen() {
     );
   };
 
+  const renderRecentFiles = () => {
+    if (recentFileDeliverables.length === 0) return null;
+    return (
+      <View style={styles.draftSection}>
+        <View style={styles.draftHeader}>
+          <Ionicons name="folder-open-outline" size={16} color={Colors.primary} />
+          <Text style={styles.draftHeaderText}>
+            Recent files · {recentFileDeliverables.length}
+          </Text>
+        </View>
+        {recentFileDeliverables.map((d, index) => {
+          const meta = d.meta as { pdfFilename?: string; fallbackFilename?: string } | null;
+          const isDownloading = downloadingArtifactId === d.id;
+          return (
+            <Animated.View key={d.id} entering={FadeInDown.duration(300).delay(index * 50)}>
+              <View style={styles.draftCard}>
+                <View style={styles.cardHeader}>
+                  <View style={[styles.sourceIcon, { backgroundColor: Colors.primary + '15' }]}>
+                    <Ionicons name="document-attach-outline" size={18} color={Colors.primary} />
+                  </View>
+                  <View style={styles.cardHeaderText}>
+                    <Text style={styles.senderName} numberOfLines={1}>Generated report</Text>
+                    <Text style={styles.timestamp}>
+                      {new Date(d.actedAt || d.createdAt).toLocaleString([], {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: 'numeric',
+                        minute: '2-digit',
+                      })}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.subject} numberOfLines={2}>{d.title}</Text>
+                <Pressable
+                  style={styles.downloadArtifactRow}
+                  onPress={() => downloadDeliverableArtifact(d)}
+                  disabled={isDownloading}
+                  testID={`recent-file-download-${d.id}`}
+                >
+                  {isDownloading ? (
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                  ) : (
+                    <Ionicons name="download-outline" size={14} color={Colors.primary} />
+                  )}
+                  <Text style={styles.driveLinkText}>
+                    Download {meta?.pdfFilename?.toLowerCase().endsWith('.pdf') ? 'PDF' : 'file'}
+                  </Text>
+                </Pressable>
+              </View>
+            </Animated.View>
+          );
+        })}
+      </View>
+    );
+  };
+
   const renderAutoHandledDeliverables = () => {
     const totalCount = autoHandledDeliverables.length + dismissedInboxItems.length;
     if (totalCount === 0) return null;
@@ -1599,6 +1664,7 @@ export default function InboxScreen() {
     <View>
       {renderDailyCommandCard()}
       {renderDeliverables()}
+      {renderRecentFiles()}
       {renderGutNoticed()}
       {renderRunningJobs()}
       {renderFailedJobs()}
