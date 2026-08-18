@@ -221,6 +221,7 @@ async function main(): Promise<void> {
     "Send me a PDF and email it to Bob",
     "Send me a PDF and text Bob a copy",
     "Send me a PDF and message Bob a copy",
+    "Send me a PDF and share it with Bob",
   ]) {
     let approvalCalls = 0;
     const result = await routeAutonomyRequest(
@@ -244,6 +245,7 @@ async function main(): Promise<void> {
   for (const selfDeliveryTopic of [
     "Send me a PDF report about text-message marketing",
     "Send me a PDF report about email marketing",
+    "Send me a PDF report about market share trends",
   ]) {
     let approvalCalls = 0;
     const result = await routeAutonomyRequest(
