@@ -417,11 +417,11 @@ export async function routeAutonomyRequest(
     readiness,
     hasApproval,
   });
-  if (
-    durableReportRequested
-    && latestPolicyDecision.mode === "requires_approval"
-    && inferApprovalToolName(userText) === "send_email"
-  ) {
+  const emailFileDeliveryRequested = durableReportRequested && (
+    /\bemail\b[^.!?\n]{0,80}\b[\w.+-]+@[\w.-]+\b/i.test(userText)
+    || /\b(?:send|email)\b[^.!?\n]{0,120}\b(?:via|by)\s+email\b/i.test(userText)
+  );
+  if (emailFileDeliveryRequested) {
     const decision: AutonomyPolicyDecision = {
       mode: "answer_inline",
       reason: "The email approval workflow cannot attach generated report files safely.",
