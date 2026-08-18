@@ -73,6 +73,8 @@ assert.equal(unsupportedReportFileFormat("Download a CSV file of the results"), 
 assert.equal(unsupportedReportFileFormat("I need a CSV file of the results"), "CSV");
 assert.equal(unsupportedReportFileFormat("Change the output to DOCX"), "DOCX");
 assert.equal(unsupportedReportFileFormat("Create a downloadable JSON file with the findings"), "JSON");
+assert.equal(unsupportedReportFileFormat("Create a CSV report of monthly sales"), "CSV");
+assert.equal(unsupportedReportFileFormat("Write an HTML report"), "HTML");
 assert.equal(unsupportedReportFileFormat("Write a report explaining how to export data as CSV"), null);
 assert.equal(unsupportedReportFileFormat("Write a report about why companies export data as CSV"), null);
 assert.equal(unsupportedReportFileFormat("Prepare a guide on how best to convert JSON to XML"), null);

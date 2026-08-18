@@ -161,7 +161,7 @@ function explicitlyRequestsGenericDownload(request: string): boolean {
 export function unsupportedReportFileFormat(prompt: string): string | null {
   const request = artifactRequestText(prompt);
   const rawFormat = String.raw`(?:docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)`;
-  const namedArtifact = String.raw`(?:docx(?:\s+file)?|word\s+document|csv\s+file|json\s+file|xlsx?(?:\s+(?:file|spreadsheet))?|spreadsheet|pptx?(?:\s+(?:file|presentation))?|powerpoint(?:\s+presentation)?|html\s+file|xml\s+file|rtf(?:\s+(?:file|document))?|tsv\s+file)`;
+  const namedArtifact = String.raw`(?:docx(?:\s+(?:file|report|output))?|word\s+(?:document|report|output)|csv\s+(?:file|report|output)|json\s+(?:file|report|output)|xlsx?(?:\s+(?:file|spreadsheet|report|output))?|spreadsheet|pptx?(?:\s+(?:file|presentation|report|output))?|powerpoint(?:\s+(?:presentation|report|output))?|html\s+(?:file|report|output)|xml\s+(?:file|report|output)|rtf(?:\s+(?:file|document|report|output))?|tsv\s+(?:file|report|output))`;
   const outputSyntax = new RegExp(
     String.raw`\b(?:export|return|provide|deliver|attach|send|give|save|format|convert|switch|change)\b(?:\s+\w+){0,8}\s+(?:as|in|to|into)\s+(?:an?\s+)?(${rawFormat})\b`,
     "i",

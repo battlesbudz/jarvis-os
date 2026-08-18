@@ -373,6 +373,7 @@ function isSelfDirectedFileDelivery(userText: string, routingText: string): bool
     || /\b(?:send|deliver)\b[^.!?\n]{0,100}\bto\s+(?!me\b|my\b|an?\s+pdf\b|pdf\b)\S+/i.test(routingText)
     || /\b(?:via|through)\s+(?:email|slack|discord|telegram|whatsapp|sms|text)\b/i.test(routingText)
     || /(?:^|[;,]|\b(?:and|then)\b)\s*(?:(?:also|then)\s+)?share\b[^.!?\n]{0,80}\bwith\s+(?!me\b|my\b)\S+/i.test(routingText)
+    || /(?:^|[;,]|\b(?:and|then)\b)\s*(?:(?:also|then)\s+)?(?:upload|save)\b[^.!?\n]{0,60}\b(?:google\s+drive|drive|dropbox|onedrive|cloud)\b/i.test(routingText)
     || /(?:^|[;,]|\b(?:and|then)\b)\s*(?:(?:also|then)\s+)?(?:email|message|text|sms|dm|post|schedule|delete|purchase|commit|contact|deploy|submit)\b/i.test(routingText)
   );
 }
