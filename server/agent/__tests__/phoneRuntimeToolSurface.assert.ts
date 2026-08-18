@@ -24,7 +24,7 @@ assert.match(routesSource, /keepDaemonActionFallback[\s\S]*focusedToolNames\.add
 assert.match(routesSource, /routeRequiredToolNames[\s\S]*keepDaemonActionFallback[\s\S]*\["daemon_action"\]/);
 assert.match(routesSource, /const youtubeServerResearchRequest = androidActive && isYoutubeServerResearchRequest\(lastUserContent\)/);
 assert.match(routesSource, /keepDaemonActionFallback[\s\S]*hasUnsupportedPhoneDeviceControlRequest\(lastUserContent\)[\s\S]*!youtubeServerResearchRequest/);
-assert.match(routesSource, /const useFocusedRequestTools = toolAwareRoute\.shouldPreferTool \|\| routeRequiredToolNames\.length > 0/);
+assert.match(routesSource, /const useFocusedRequestTools = toolAwareRoute\.shouldPreferTool \|\|[\s\S]*phoneRuntimeCoveredRequest \|\|[\s\S]*keepDaemonActionFallback \|\|[\s\S]*youtubeServerResearchRequest/);
 assert.match(routesSource, /usePhoneRuntimeToolSurfaceOnly[\s\S]*filterPhoneRuntimeModelTools\(firstTurnToolPolicy\.tools,\s*\{/);
 assert.match(routesSource, /allowServerYoutubeTools:\s*youtubeServerResearchRequest/);
 assert.match(routesSource, /usePhoneRuntimeToolSurfaceOnly\s*=\s*androidActive && phoneRuntimeCoveredRequest/);

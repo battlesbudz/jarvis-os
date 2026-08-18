@@ -2068,7 +2068,10 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           focusedToolNames.add("jarvis_self_diagnose");
         }
         toolAwareRoute.blockedToolNames.forEach((name) => focusedToolNames.delete(name));
-        const useFocusedRequestTools = toolAwareRoute.shouldPreferTool || routeRequiredToolNames.length > 0;
+        const useFocusedRequestTools = toolAwareRoute.shouldPreferTool ||
+          phoneRuntimeCoveredRequest ||
+          keepDaemonActionFallback ||
+          youtubeServerResearchRequest;
         const focusedRequestTools =
           useFocusedRequestTools
             ? requestTools.filter((tool) => {

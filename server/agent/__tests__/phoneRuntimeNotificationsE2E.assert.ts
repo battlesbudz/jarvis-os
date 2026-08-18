@@ -443,6 +443,7 @@ async function main() {
     "Open Amazon. Actually, open Facebook.",
     "Open Amazon. No, open Facebook.",
     "Open Amazon. Instead, open Facebook.",
+    "Open Amazon; scratch that and open Uber",
   ]) {
     assert.equal(isPhoneRuntimeCoveredRequest(orderedAppRequest), true);
     assert.equal(

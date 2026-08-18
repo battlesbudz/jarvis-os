@@ -199,7 +199,9 @@ function hasCurrentTargetBeforePhoneOpenFollowUp(text: string): boolean {
 }
 
 function stripPhoneDiscoursePreamble(clause: string): string {
-  return clause.replace(/^(?:(?:actually|instead|wait|no|sorry)[\s,!:-]+)+/i, "");
+  return clause
+    .replace(/^\s*scratch\s+that(?:\s+and)?[\s,!:-]*/i, "")
+    .replace(/^(?:(?:actually|instead|wait|no|sorry)[\s,!:-]+)+/i, "");
 }
 
 function cancelsPhoneOpenTarget(clause: string, target: string): boolean {
