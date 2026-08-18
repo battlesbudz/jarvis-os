@@ -177,6 +177,7 @@ export async function persistFastCoachExchange(input: {
 
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
   const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId, signal } = input;
+  const destinationScopedSlack = channelName === "Slack" && !!originChannelId;
   const coachSessionAgentId = getCoachAgentSessionAgentId(userId);
   const channelLower = channelName.toLowerCase();
   const telegramE2eProbeId = channelName === "Telegram" ? getTelegramE2eProbeId(userText) : null;
@@ -326,7 +327,7 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
     db.select().from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId)).limit(1),
     // Skip chat_history fetch when the session cache is warm — the cached
     // message list replaces the rolling 10-message DB window.
-    sessionResumed
+    sessionResumed || destinationScopedSlack
       ? Promise.resolve([] as any[])
       : db.select().from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId)).limit(1),
     listPendingPersonalCommitments(userId, 10),
@@ -474,11 +475,6 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
       }
     }
   }
-
-  // Slack sessions are scoped by channel/thread. Never fall back to the
-  // user-global chat history when a destination has no session yet, or a
-  // referential handoff could import content from another Slack destination.
-  if (!sessionResumed && channelName === "Slack" && originChannelId) chatMessages = [];
 
   // When the session was resumed the cached messages replace the DB window;
   // otherwise fall back to the last 10 messages from the chat_history table.
@@ -811,13 +807,15 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
         const userMsgEntry = { id: ackTs.toString(), role: "user", content: userText };
         const asstMsgEntry = { id: (ackTs + 1).toString(), role: "assistant", content: ackReply };
         const updatedChatBuild = [asstMsgEntry, userMsgEntry, ...chatMessages].slice(0, 100);
-        db.insert(schema.chatHistory)
-          .values({ userId, data: updatedChatBuild })
-          .onConflictDoUpdate({
-            target: schema.chatHistory.userId,
-            set: { data: updatedChatBuild, updatedAt: new Date() },
-          })
-          .catch((err: unknown) => console.error("[coach] build-intent chat history persist failed:", err));
+        if (!destinationScopedSlack) {
+          db.insert(schema.chatHistory)
+            .values({ userId, data: updatedChatBuild })
+            .onConflictDoUpdate({
+              target: schema.chatHistory.userId,
+              set: { data: updatedChatBuild, updatedAt: new Date() },
+            })
+            .catch((err: unknown) => console.error("[coach] build-intent chat history persist failed:", err));
+        }
         // Persist the ack to build_sessions so the suspended-build reminder can
         // fire even after the ack message has scrolled out of the 20-msg window.
         const persistedJobId = buildResult.jobId ?? buildResult.duplicateJobId ?? null;
@@ -862,13 +860,15 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     const userMsgEntry  = { id: Date.now().toString(),       role: "user",      content: userText    };
     const asstMsgEntry  = { id: (Date.now() + 1).toString(), role: "assistant", content: resumeReply };
     const updatedChatResume = [asstMsgEntry, userMsgEntry, ...chatMessages].slice(0, 100);
-    db.insert(schema.chatHistory)
-      .values({ userId, data: updatedChatResume })
-      .onConflictDoUpdate({
-        target: schema.chatHistory.userId,
-        set: { data: updatedChatResume, updatedAt: new Date() },
-      })
-      .catch((err: unknown) => console.error("[coach] build-resume chat history persist failed:", err));
+    if (!destinationScopedSlack) {
+      db.insert(schema.chatHistory)
+        .values({ userId, data: updatedChatResume })
+        .onConflictDoUpdate({
+          target: schema.chatHistory.userId,
+          set: { data: updatedChatResume, updatedAt: new Date() },
+        })
+        .catch((err: unknown) => console.error("[coach] build-resume chat history persist failed:", err));
+    }
     logInteraction(userId, channelLower as any, "outbound", resumeReply).catch(() => {});
     console.log(`[${channelName}] build-session resume detected — sending ack with BUILD_ACK_MARKER`);
     return { reply: resumeReply, rawReply: resumeReply, attachments: [], sdkSessionId: activeSessionId };
@@ -895,13 +895,15 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
         const userMsgEntry = { id: autonomyTs.toString(), role: "user", content: userText };
         const asstMsgEntry = { id: (autonomyTs + 1).toString(), role: "assistant", content: autonomyReply };
         const updatedChatAutonomy = [asstMsgEntry, userMsgEntry, ...chatMessages].slice(0, 100);
-        db.insert(schema.chatHistory)
-          .values({ userId, data: updatedChatAutonomy })
-          .onConflictDoUpdate({
-            target: schema.chatHistory.userId,
-            set: { data: updatedChatAutonomy, updatedAt: new Date() },
-          })
-          .catch((err: unknown) => console.error("[coach] autonomy-policy chat history persist failed:", err));
+        if (!destinationScopedSlack) {
+          db.insert(schema.chatHistory)
+            .values({ userId, data: updatedChatAutonomy })
+            .onConflictDoUpdate({
+              target: schema.chatHistory.userId,
+              set: { data: updatedChatAutonomy, updatedAt: new Date() },
+            })
+            .catch((err: unknown) => console.error("[coach] autonomy-policy chat history persist failed:", err));
+        }
         logInteraction(userId, channelLower as any, "outbound", autonomyReply).catch(() => {});
         console.log(
           `[${channelName}] autonomy-policy handled mode=${autonomyResult.decision.mode}` +
@@ -1151,18 +1153,21 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     console.error("[coach] session update failed (non-blocking):", err);
   }
 
-  // Save chat history (channel-agnostic — single conversation thread per user)
+  // Destination-scoped Slack history lives only in its provider session. Do not
+  // copy it into the user-global history where another destination can read it.
   const userMsg = { id: Date.now().toString(), role: "user", content: userText };
   const assistantMsg = { id: (Date.now() + 1).toString(), role: "assistant", content: reply };
   const updatedChat = [assistantMsg, userMsg, ...chatMessages].slice(0, 100);
 
   try {
-    await db.insert(schema.chatHistory)
-      .values({ userId, data: updatedChat })
-      .onConflictDoUpdate({
-        target: schema.chatHistory.userId,
-        set: { data: updatedChat, updatedAt: new Date() },
-      });
+    if (!destinationScopedSlack) {
+      await db.insert(schema.chatHistory)
+        .values({ userId, data: updatedChat })
+        .onConflictDoUpdate({
+          target: schema.chatHistory.userId,
+          set: { data: updatedChat, updatedAt: new Date() },
+        });
+    }
   } catch (err) {
     console.error("[coach] chat history persist failed:", err);
   }

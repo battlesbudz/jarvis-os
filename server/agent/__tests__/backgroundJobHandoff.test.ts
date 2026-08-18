@@ -287,14 +287,8 @@ const slackWebhookSource = readFileSync(
 assert.match(slackWebhookSource, /originChannelId: slackDestination/);
 assert.match(slackWebhookSource, /ev\.thread_ts/);
 assert.match(slackWebhookSource, /Slack:\$\{teamId\}:\$\{slackDestination\}/);
-assert.match(slackWebhookSource, /getSession\(userId, slackSessionScope\)/);
-assert.match(slackWebhookSource, /setSession\(userId, slackSessionScope, sdkSessionId\)/);
-
-const coachAgentSource = readFileSync(
-  fileURLToPath(new URL("../../channels/coachAgent.ts", import.meta.url)),
-  "utf8",
-);
-assert.match(coachAgentSource, /channelName === "Slack" && originChannelId\) chatMessages = \[\]/);
+assert.match(slackWebhookSource, /getSession\(userId, slackSessionChannel\)/);
+assert.match(slackWebhookSource, /setSession\(userId, slackSessionChannel/);
 
 const slackChannelSource = readFileSync(
   fileURLToPath(new URL("../../channels/slackChannel.ts", import.meta.url)),
@@ -308,6 +302,8 @@ const coachAgentSource = readFileSync(
   "utf8",
 );
 assert.match(coachAgentSource, /backgroundPrompt: buildBackgroundJobPrompt\(recentMessages, userText\)/);
+assert.match(coachAgentSource, /sessionResumed \|\| destinationScopedSlack/);
+assert.match(coachAgentSource, /if \(!destinationScopedSlack\) \{[\s\S]*?db\.insert\(schema\.chatHistory\)/);
 
 const deliverableRoutesSource = readFileSync(
   fileURLToPath(new URL("../../routes/deliverableRoutes.ts", import.meta.url)),
