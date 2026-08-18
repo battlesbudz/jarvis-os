@@ -60,6 +60,8 @@ assert.equal(requestsReportFile("Write a document about sunflower seeds"), true)
 assert.equal(requestsReportFile("Write a report about sunflower seeds"), false);
 assert.equal(requestsReportFile("I need a PDF report on sunflower seeds"), true);
 assert.equal(requestsReportFile("I want a PDF report"), true);
+assert.equal(requestsReportFile("I would like a PDF report on sunflower seeds"), true);
+assert.equal(requestsReportFile("I'd like a PDF report"), true);
 assert.equal(requestsReportFile("I don't want a PDF report"), false);
 assert.equal(requestsReportFile("Do not download a PDF report"), false);
 assert.equal(requestsReportFile("Create a DOCX report on sunflower seeds"), false);

@@ -134,7 +134,7 @@ function artifactRequestText(prompt: string): string {
 const UNSUPPORTED_REPORT_FORMAT = /\b(docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)\b/i;
 
 function explicitlyRequestsPdfOutput(request: string): boolean {
-  const createPdf = /\b(?:create|make|generate|produce|prepare|compile|download|need|want)\b(?:\s+\w+){0,4}\s+(?:an?\s+)?pdf\b(?:\s+(?:report|memo|document|file|plan))?/i;
+  const createPdf = /\b(?:create|make|generate|produce|prepare|compile|download|need|want|would\s+like|i['’]d\s+like)\b(?:\s+\w+){0,4}\s+(?:an?\s+)?pdf\b(?:\s+(?:report|memo|document|file|plan))?/i;
   const writePdf = /\bwrite\s+(?:me\s+)?(?:an?\s+)?pdf\s+(?:report|memo|document|plan)\b/i;
   const deliverPdf = /\b(?:give\s+me|return|provide(?:\s+me)?|deliver(?:\s+me)?|send(?:\s+me)?)\s+(?:an?\s+)?pdf\b(?:\s+(?:report|memo|document|file|plan))?/i;
   const transformToPdf = /\b(?:give|return|provide|deliver|export|save|format|attach|send|keep|preserve|change|switch|convert)\b(?:\s+\w+){0,8}\s+(?:as|in|to|into)\s+(?:an?\s+)?pdf\b/i;
