@@ -150,6 +150,18 @@ const tersePrompt = buildBackgroundJobPrompt(
 assert.match(tersePrompt, /Latest user request:\nPDF please/);
 assert.equal(requestsReportFile(tersePrompt), true);
 
+const longReport = `Report start ${"complete report content ".repeat(400)}Report end`;
+const longReportPrompt = buildBackgroundJobPrompt(
+  [
+    { role: "user", content: "Write a detailed report." },
+    { role: "assistant", content: longReport },
+    { role: "user", content: "Make it a PDF" },
+  ],
+  "Make it a PDF",
+);
+assert.match(longReportPrompt, /Report start/);
+assert.match(longReportPrompt, /Report end/);
+
 const jobQueueSource = readFileSync(
   fileURLToPath(new URL("../jobQueue.ts", import.meta.url)),
   "utf8",
@@ -176,6 +188,10 @@ assert.match(jobQueueSource, /activeSiblingDeliverables/);
 assert.match(jobQueueSource, /if \(!hasActiveDeliverables\) return/);
 assert.match(jobQueueSource, /const siblingDeliverables = await tx[\s\S]*?\.for\("update"\)/);
 assert.doesNotMatch(jobQueueSource, /const siblingDeliverables = await db/);
+assert.match(
+  jobQueueSource,
+  /if \(activeSiblingDeliverables\.length > 1\)[\s\S]*?hasDownloadableArtifact: false[\s\S]*?delete\(schema\.deliverableArtifacts\)[\s\S]*?mergedDeliverableId = firstId/,
+);
 assert.match(jobQueueSource, /batchOriginChannel === "slack"/);
 assert.match(jobQueueSource, /originNotificationDestination = originDiscordChannelId/);
 assert.doesNotMatch(jobQueueSource, /Jarvis inbox or Google Drive/);

@@ -11,10 +11,10 @@ const LATEST_REQUEST_END_MARKER = "End latest user request.";
 const REVISION_REQUEST_MARKER = "Requested changes:";
 const REVISION_REQUEST_END_MARKER = "Return a complete replacement deliverable";
 
-function textContent(message: BackgroundJobChatMessage): string {
-  return typeof message.content === "string"
-    ? message.content.replace(/\s+/g, " ").trim().slice(0, MAX_MESSAGE_CHARS)
-    : "";
+function textContent(message: BackgroundJobChatMessage, maxChars?: number): string {
+  if (typeof message.content !== "string") return "";
+  const content = message.content.replace(/\s+/g, " ").trim();
+  return maxChars === undefined ? content : content.slice(0, maxChars);
 }
 
 function isTersePdfFollowUp(text: string): boolean {
@@ -51,11 +51,14 @@ export function buildBackgroundJobPrompt(
   }
 
   const end = latestIndex >= 0 ? latestIndex : messages.length;
-  const context = messages
+  const contextMessages = messages
     .slice(Math.max(0, end - MAX_CONTEXT_MESSAGES), end)
-    .filter((message) => message.role === "user" || message.role === "assistant")
+    .filter((message) => message.role === "user" || message.role === "assistant");
+  const referencedMessage = contextMessages.at(-1);
+  const olderContext = contextMessages
+    .slice(0, -1)
     .map((message) => {
-      const content = textContent(message);
+      const content = textContent(message, MAX_MESSAGE_CHARS);
       if (!content) return "";
       return `${message.role === "assistant" ? "Assistant" : "User"}: ${content}`;
     })
@@ -63,6 +66,11 @@ export function buildBackgroundJobPrompt(
     .join("\n")
     .slice(-MAX_CONTEXT_CHARS)
     .trim();
+  const referencedContent = referencedMessage ? textContent(referencedMessage) : "";
+  const referencedContext = referencedContent
+    ? `${referencedMessage?.role === "assistant" ? "Assistant" : "User"}: ${referencedContent}`
+    : "";
+  const context = [olderContext, referencedContext].filter(Boolean).join("\n");
 
   if (!context) return latest;
 

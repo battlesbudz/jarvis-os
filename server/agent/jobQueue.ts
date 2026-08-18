@@ -469,11 +469,30 @@ async function flushResearchBatch(key: string): Promise<void> {
           mergedBody = sections.join("").trim();
           mergedTitle = `Research: ${activeSiblingDeliverables[0].title}`;
           // Update the first deliverable with merged content
-          const firstId = activeSiblingDeliverables[0].id;
+          const firstDeliverable = activeSiblingDeliverables[0];
+          const firstId = firstDeliverable.id;
+          const mergedMeta = {
+            ...((firstDeliverable.meta as Record<string, unknown> | null) ?? {}),
+            hasDownloadableArtifact: false,
+          };
+          delete mergedMeta.pdfGenerated;
+          delete mergedMeta.pdfFilename;
+          delete mergedMeta.pdfDriveLink;
+          delete mergedMeta.pdfError;
+          delete mergedMeta.fallbackFilename;
           await tx
             .update(schema.deliverables)
-            .set({ title: mergedTitle, body: mergedBody, summary: `Consolidated from ${activeSiblingDeliverables.length} research threads.` })
+            .set({
+              title: mergedTitle,
+              body: mergedBody,
+              summary: `Consolidated from ${activeSiblingDeliverables.length} research threads.`,
+              meta: mergedMeta,
+              driveLink: null,
+            })
             .where(eq(schema.deliverables.id, firstId));
+          await tx
+            .delete(schema.deliverableArtifacts)
+            .where(eq(schema.deliverableArtifacts.deliverableId, firstId));
           mergedDeliverableId = firstId;
           // Point all sibling jobs' result.deliverableId to the merged deliverable
           // so job-level views don't end up with stale / deleted IDs.
