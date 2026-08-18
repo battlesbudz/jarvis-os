@@ -281,7 +281,17 @@ assert.match(reviewRoutesSource, /Deliverable changed while approval was being p
 assert.match(reviewRoutesSource, /Deliverable changed while rejection was being prepared/);
 assert.match(reviewRoutesSource, /Deliverable changed while discard was being prepared/);
 assert.match(reviewRoutesSource, /save-to-drive[\s\S]*?db\.transaction\(async \(tx\)[\s\S]*?\.for\("update"\)[\s\S]*?createDriveBinaryFile/);
+assert.match(reviewRoutesSource, /idempotencyKey: saveKey/);
+assert.match(reviewRoutesSource, /deleteDriveFile\(accessToken, newlyCreatedDriveFileId\)/);
 assert.doesNotMatch(reviewRoutesSource, /revision_pending/);
+
+const googleDriveSource = readFileSync(
+  fileURLToPath(new URL("../../integrations/googleDrive.ts", import.meta.url)),
+  "utf8",
+);
+assert.match(googleDriveSource, /appProperties has \{ key='jarvisSaveKey'/);
+assert.match(googleDriveSource, /appProperties: \{ jarvisSaveKey: options\.idempotencyKey \}/);
+assert.match(googleDriveSource, /export async function deleteDriveFile/);
 
 const slackWebhookSource = readFileSync(
   fileURLToPath(new URL("../../channels/slackWebhook.ts", import.meta.url)),

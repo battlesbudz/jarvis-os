@@ -45,6 +45,34 @@ export interface CreatedDriveFile {
   name: string;
   mimeType: string;
   webViewLink: string;
+  reused?: boolean;
+}
+
+function escapeDriveQueryValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+}
+
+async function findIdempotentDriveFile(
+  drive: ReturnType<typeof buildDriveClient>,
+  folderId: string,
+  idempotencyKey?: string,
+): Promise<CreatedDriveFile | null> {
+  if (!idempotencyKey) return null;
+  const list = await drive.files.list({
+    q: `'${escapeDriveQueryValue(folderId)}' in parents and trashed=false and appProperties has { key='jarvisSaveKey' and value='${escapeDriveQueryValue(idempotencyKey)}' }`,
+    fields: "files(id,name,mimeType,webViewLink)",
+    spaces: "drive",
+    pageSize: 1,
+  });
+  const existing = list.data.files?.[0];
+  if (!existing?.id) return null;
+  return {
+    fileId: existing.id,
+    name: existing.name || "Jarvis file",
+    mimeType: existing.mimeType || "application/octet-stream",
+    webViewLink: existing.webViewLink || `https://drive.google.com/file/d/${existing.id}/view`,
+    reused: true,
+  };
 }
 
 /**
@@ -56,10 +84,12 @@ export async function createDriveTextFile(
   accessToken: string,
   name: string,
   body: string,
-  options: { mimeType?: string; convertToDoc?: boolean; folderId?: string } = {}
+  options: { mimeType?: string; convertToDoc?: boolean; folderId?: string; idempotencyKey?: string } = {}
 ): Promise<CreatedDriveFile> {
   const drive = buildDriveClient(accessToken);
   const folderId = options.folderId || await ensureJarvisFolder(accessToken);
+  const existing = await findIdempotentDriveFile(drive, folderId, options.idempotencyKey);
+  if (existing) return existing;
 
   const sourceMime = options.mimeType || "text/markdown";
   const targetMime = options.convertToDoc
@@ -71,6 +101,7 @@ export async function createDriveTextFile(
       name,
       mimeType: targetMime,
       parents: [folderId],
+      ...(options.idempotencyKey ? { appProperties: { jarvisSaveKey: options.idempotencyKey } } : {}),
     },
     media: {
       mimeType: sourceMime,
@@ -164,16 +195,19 @@ export async function createDriveBinaryFile(
   name: string,
   buffer: Buffer,
   mimeType: string,
-  options: { folderId?: string } = {}
+  options: { folderId?: string; idempotencyKey?: string } = {}
 ): Promise<CreatedDriveFile> {
   const drive = buildDriveClient(accessToken);
   const folderId = options.folderId || await ensureJarvisFolder(accessToken);
+  const existing = await findIdempotentDriveFile(drive, folderId, options.idempotencyKey);
+  if (existing) return existing;
 
   const res = await drive.files.create({
     requestBody: {
       name,
       mimeType,
       parents: [folderId],
+      ...(options.idempotencyKey ? { appProperties: { jarvisSaveKey: options.idempotencyKey } } : {}),
     },
     media: {
       mimeType,
@@ -191,6 +225,11 @@ export async function createDriveBinaryFile(
     mimeType: res.data.mimeType || mimeType,
     webViewLink: res.data.webViewLink || `https://drive.google.com/file/d/${res.data.id}/view`,
   };
+}
+
+export async function deleteDriveFile(accessToken: string, fileId: string): Promise<void> {
+  const drive = buildDriveClient(accessToken);
+  await drive.files.delete({ fileId });
 }
 
 /**

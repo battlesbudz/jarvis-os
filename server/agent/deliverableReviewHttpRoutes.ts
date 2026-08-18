@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from "express";
+import { createHash } from "node:crypto";
 import { and, eq, isNull } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { userDocuments } from "@shared/schema";
@@ -679,14 +680,17 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
 
       const { getUserDriveSettings } = await import("../driveRoutes");
-      const { createDriveBinaryFile, createDriveTextFile } = await import("../integrations/googleDrive");
+      const { createDriveBinaryFile, createDriveTextFile, deleteDriveFile } = await import("../integrations/googleDrive");
       const drive = await getUserDriveSettings(userId);
       const accessToken = drive.accessToken;
       if (!drive.enabled || !accessToken) {
         return res.status(400).json({ error: "Google Drive is not connected. Enable it in Settings.", code: "DRIVE_NOT_CONNECTED" });
       }
 
-      const saved = await db.transaction(async (tx) => {
+      let newlyCreatedDriveFileId: string | null = null;
+      let saved;
+      try {
+        saved = await db.transaction(async (tx) => {
         const [locked] = await tx
           .select()
           .from(schema.deliverables)
@@ -711,20 +715,28 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         // Keep the row locked through upload. Consolidation excludes rows once
         // they have a Drive link, so whichever action wins cannot make the
         // external copy stale. Use a durable upload outbox if latency grows.
+        const saveKey = createHash("sha256")
+          .update(locked.id)
+          .update("\0")
+          .update(locked.title)
+          .update("\0")
+          .update(artifact ? Buffer.from(artifact.data) : Buffer.from(locked.body || locked.summary || locked.title, "utf8"))
+          .digest("hex");
         const created = artifact
           ? await createDriveBinaryFile(
               accessToken,
               artifact.filename,
               Buffer.from(artifact.data),
               artifact.mimeType,
-              { folderId: drive.folderId || undefined },
+              { folderId: drive.folderId || undefined, idempotencyKey: saveKey },
             )
           : await createDriveTextFile(
               accessToken,
               `${(locked.title.slice(0, 95) || "Jarvis Document").replace(/\.md$/, "")}.md`,
               locked.body || locked.summary || locked.title,
-              { folderId: drive.folderId || undefined },
+              { folderId: drive.folderId || undefined, idempotencyKey: saveKey },
             );
+        if (!created.reused) newlyCreatedDriveFileId = created.fileId;
 
         const [updated] = await tx
           .update(schema.deliverables)
@@ -732,7 +744,17 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
           .where(eq(schema.deliverables.id, locked.id))
           .returning();
         return { driveLink: created.webViewLink, deliverable: updated };
-      });
+        });
+      } catch (saveErr) {
+        if (newlyCreatedDriveFileId) {
+          try {
+            await deleteDriveFile(accessToken, newlyCreatedDriveFileId);
+          } catch (cleanupErr) {
+            console.error(`[deliverables] Failed to compensate Drive upload ${newlyCreatedDriveFileId}:`, cleanupErr);
+          }
+        }
+        throw saveErr;
+      }
       if (!saved) {
         return res.status(409).json({ error: "Deliverable changed while Save to Drive was being prepared; reload and try again." });
       }
