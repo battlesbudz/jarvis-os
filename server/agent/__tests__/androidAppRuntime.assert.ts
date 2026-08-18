@@ -96,6 +96,7 @@ async function main() {
           { label: "Calendar", packageName: "com.google.android.calendar" },
           { label: "Teams", packageName: "com.microsoft.teams" },
           { label: "The Weather Channel", packageName: "com.weather.Weather" },
+          { label: "Keep Notes", packageName: "com.google.android.keep" },
           { label: "Acme", packageName: "com.example.acme.one" },
           { label: "Acme", packageName: "com.example.acme.two" },
         ],
@@ -105,7 +106,7 @@ async function main() {
   const amazonWithLiveInventory = await resolveAndroidAppName("user-phone", "Amazon");
   assert.equal(amazonWithLiveInventory.app?.packageName, "com.amazon.mShop.android.shopping");
   const chromeWithLiveInventory = await resolveAndroidAppName("user-phone", "Chrome");
-  assert.equal(chromeWithLiveInventory.app?.packageName, "com.android.chrome");
+  assert.equal(chromeWithLiveInventory.app?.packageName, "com.chrome.beta");
   const doorWithLiveInventory = await resolveAndroidAppName("user-phone", "door");
   assert.equal(doorWithLiveInventory.app, null);
   const doorDashWithLiveInventory = await resolveAndroidAppName("user-phone", "DoorDash");
@@ -113,7 +114,7 @@ async function main() {
   const facebookAliasWithLiveInventory = await resolveAndroidAppName("user-phone", "FB");
   assert.equal(facebookAliasWithLiveInventory.app?.packageName, "com.facebook.katana");
   const spotifyWithLivePrefix = await resolveAndroidAppName("user-phone", "Spotify");
-  assert.equal(spotifyWithLivePrefix.app?.packageName, "com.spotify.music");
+  assert.equal(spotifyWithLivePrefix.app?.packageName, "com.example.spotify.plus");
   const unicodeAppWithLiveInventory = await resolveAndroidAppName("user-phone", "Pokémon GO");
   assert.equal(unicodeAppWithLiveInventory.app?.packageName, "com.nianticlabs.pokemongo");
   const nonLatinAppWithLiveInventory = await resolveAndroidAppName("user-phone", "微信");
@@ -124,6 +125,8 @@ async function main() {
   assert.equal(calendarWithLiveInventory.app?.packageName, "com.google.android.calendar");
   const leadingArticleWithLiveInventory = await resolveAndroidAppName("user-phone", "Weather Channel");
   assert.equal(leadingArticleWithLiveInventory.app?.packageName, "com.weather.Weather");
+  const notesWithLiveInventory = await resolveAndroidAppName("user-phone", "Notes");
+  assert.equal(notesWithLiveInventory.app?.packageName, "com.google.android.keep");
   const ambiguousLiveLabel = await resolveAndroidAppName("user-phone", "Acme");
   assert.equal(ambiguousLiveLabel.app, null);
   const missingTeamSpeak = await resolveAndroidAppName("user-phone", "TeamSpeak");

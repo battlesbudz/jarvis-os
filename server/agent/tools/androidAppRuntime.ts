@@ -376,9 +376,14 @@ export async function resolveAndroidAppName(
   if (exactLiveMatches.length > 1 && !exactLiveMatch) {
     return { app: null, liveInventoryAvailable, liveInventoryError };
   }
+  const staticPackageInstalled = staticMatch
+    ? installedApps.some((app) => app.packageName === staticMatch.app.packageName)
+    : false;
   const best = exactLiveMatch
     ? { app: exactLiveMatch.app, source: "live_inventory" as const, score: 100, alias: exactLiveMatch.match.alias }
-    : (staticMatch?.score === 100 ? staticMatch : (liveMatch && liveMatch.score >= 50 ? liveMatch : staticMatch));
+    : (staticMatch?.score === 100 && (!liveMatch || staticPackageInstalled)
+        ? staticMatch
+        : (liveMatch && liveMatch.score >= 50 ? liveMatch : staticMatch));
   if (best && best.score >= 50) {
     return {
       app: { ...best.app, source: best.source, matchedAlias: best.alias },

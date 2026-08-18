@@ -492,6 +492,7 @@ async function main() {
     "Set my calendar event's title to Planning. Open Facebook.",
     "Open Gmail then archive the current email",
     "Open Amazon after checking the weather",
+    "Open Amazon before checking the weather",
   ]) {
     assert.equal(hasPhoneRuntimeActionRequest(mixedDomainRequest), true);
     assert.equal(isPhoneRuntimeCoveredRequest(mixedDomainRequest), false);
