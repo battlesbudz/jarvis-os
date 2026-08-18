@@ -160,6 +160,9 @@ function explicitlyRequestsGenericDownload(request: string): boolean {
 /** Identify an explicit requested file format that this renderer cannot create. */
 export function unsupportedReportFileFormat(prompt: string): string | null {
   const request = artifactRequestText(prompt);
+  if (/^\s*(?:how\s+(?:(?:do|can|should|would)\s+(?:i|we|one|someone)|to)|(?:explain|show|teach)\s+(?:me\s+)?how\s+to)\b/i.test(request)) {
+    return null;
+  }
   const rawFormat = String.raw`(?:docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)`;
   const namedArtifact = String.raw`(?:docx(?:\s+(?:file|report|output))?|word\s+(?:document|report|output)|csv\s+(?:file|report|output)|json\s+(?:file|report|output)|xlsx?(?:\s+(?:file|spreadsheet|report|output))?|spreadsheet|pptx?(?:\s+(?:file|presentation|report|output))?|powerpoint(?:\s+(?:presentation|report|output))?|html\s+(?:file|report|output)|xml\s+(?:file|report|output)|rtf(?:\s+(?:file|document|report|output))?|tsv\s+(?:file|report|output))`;
   const outputSyntax = new RegExp(
@@ -202,7 +205,7 @@ export function requestsReportFile(prompt: string): boolean {
     "i",
   );
   const negatedArtifact = new RegExp(
-    String.raw`\b(?:not\s+(?:(?:as|in)\s+)?(?:an?\s+)?|without\s+(?:an?\s+)?)${artifact}\b`,
+    String.raw`(?:\b(?:not\s+(?:(?:as|in)\s+)?(?:an?\s+)?|without\s+(?:an?\s+)?)${artifact}\b|\bno(?:\s+\w+){0,3}\s+pdf\b)`,
     "i",
   );
   if (negatedAction.test(request) || negatedArtifact.test(request)) return false;

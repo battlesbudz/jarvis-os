@@ -64,6 +64,7 @@ assert.equal(requestsReportFile("I would like a PDF report on sunflower seeds"),
 assert.equal(requestsReportFile("I'd like a PDF report"), true);
 assert.equal(requestsReportFile("I don't want a PDF report"), false);
 assert.equal(requestsReportFile("Do not download a PDF report"), false);
+assert.equal(requestsReportFile("I need absolutely no PDF output; write a report about CRM"), false);
 assert.equal(requestsReportFile("Create a DOCX report on sunflower seeds"), false);
 assert.equal(requestsReportFile("Create a Word document with the report"), false);
 assert.equal(requestsReportFile("Research competitors and export the results as a CSV file"), false);
@@ -77,6 +78,7 @@ assert.equal(unsupportedReportFileFormat("Change the output to DOCX"), "DOCX");
 assert.equal(unsupportedReportFileFormat("Create a downloadable JSON file with the findings"), "JSON");
 assert.equal(unsupportedReportFileFormat("Create a CSV report of monthly sales"), "CSV");
 assert.equal(unsupportedReportFileFormat("Write an HTML report"), "HTML");
+assert.equal(unsupportedReportFileFormat("How do I create a CSV file?"), null);
 assert.equal(unsupportedReportFileFormat("Write a report explaining how to export data as CSV"), null);
 assert.equal(unsupportedReportFileFormat("Write a report about why companies export data as CSV"), null);
 assert.equal(unsupportedReportFileFormat("Prepare a guide on how best to convert JSON to XML"), null);
