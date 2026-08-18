@@ -286,6 +286,15 @@ const slackWebhookSource = readFileSync(
 );
 assert.match(slackWebhookSource, /originChannelId: slackDestination/);
 assert.match(slackWebhookSource, /ev\.thread_ts/);
+assert.match(slackWebhookSource, /Slack:\$\{teamId\}:\$\{slackDestination\}/);
+assert.match(slackWebhookSource, /getSession\(userId, slackSessionScope\)/);
+assert.match(slackWebhookSource, /setSession\(userId, slackSessionScope, sdkSessionId\)/);
+
+const coachAgentSource = readFileSync(
+  fileURLToPath(new URL("../../channels/coachAgent.ts", import.meta.url)),
+  "utf8",
+);
+assert.match(coachAgentSource, /channelName === "Slack" && originChannelId\) chatMessages = \[\]/);
 
 const slackChannelSource = readFileSync(
   fileURLToPath(new URL("../../channels/slackChannel.ts", import.meta.url)),

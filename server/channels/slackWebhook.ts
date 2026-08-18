@@ -107,8 +107,9 @@ export function registerSlackWebhook(app: Express): void {
       if (!botToken) return;
 
       try {
-        const storedSessionId = await getSession(userId, "Slack");
         const slackDestination = `${String(ev.channel || "")}|${String(ev.thread_ts || "")}`;
+        const slackSessionScope = `Slack:${teamId}:${slackDestination}`;
+        const storedSessionId = await getSession(userId, slackSessionScope);
         const { reply, sdkSessionId } = await runCoachAgent({
           userId,
           userText: text,
@@ -117,7 +118,7 @@ export function registerSlackWebhook(app: Express): void {
           sdkSessionId: storedSessionId,
         });
         if (sdkSessionId) {
-          setSession(userId, "Slack", sdkSessionId);
+          setSession(userId, slackSessionScope, sdkSessionId);
         }
         if (reply && reply.trim()) {
           await postSlackMessage(botToken, ev.channel, reply);
@@ -142,6 +143,8 @@ export function registerSlackWebhook(app: Express): void {
       const slackUserId = String(req.body.user_id || "");
       const text = String(req.body.text || "").trim();
       const responseUrl = String(req.body.response_url || "");
+      const slackCommandDestination = `${String(req.body.channel_id || "")}|`;
+      const slackSessionScope = `Slack:${teamId}:${slackCommandDestination}`;
 
       const userId = await findUserBySlackId(teamId, slackUserId);
       if (!userId) {
@@ -175,14 +178,14 @@ export function registerSlackWebhook(app: Express): void {
           await respond(`*Today's plan*\n${lines}\n\n_${plan.reasoning}_`);
         } else if (subcommand === "brain-dump" || subcommand === "braindump") {
           if (!arg) { await respond("Add the thought after the command, e.g. `/jarvis brain-dump finish Q3 deck`."); return; }
-          const braindumpSession = await getSession(userId, "Slack");
-          const braindumpResult = await runCoachAgent({ userId, userText: `Brain dump: ${arg}`, channelName: "Slack", sdkSessionId: braindumpSession });
-          if (braindumpResult.sdkSessionId) setSession(userId, "Slack", braindumpResult.sdkSessionId);
+          const braindumpSession = await getSession(userId, slackSessionScope);
+          const braindumpResult = await runCoachAgent({ userId, userText: `Brain dump: ${arg}`, channelName: "Slack", originChannelId: slackCommandDestination, sdkSessionId: braindumpSession });
+          if (braindumpResult.sdkSessionId) setSession(userId, slackSessionScope, braindumpResult.sdkSessionId);
           await respond(braindumpResult.reply);
         } else if (subcommand === "status") {
-          const statusSession = await getSession(userId, "Slack");
-          const statusResult = await runCoachAgent({ userId, userText: arg || "What's the status of my day?", channelName: "Slack", sdkSessionId: statusSession });
-          if (statusResult.sdkSessionId) setSession(userId, "Slack", statusResult.sdkSessionId);
+          const statusSession = await getSession(userId, slackSessionScope);
+          const statusResult = await runCoachAgent({ userId, userText: arg || "What's the status of my day?", channelName: "Slack", originChannelId: slackCommandDestination, sdkSessionId: statusSession });
+          if (statusResult.sdkSessionId) setSession(userId, slackSessionScope, statusResult.sdkSessionId);
           await respond(statusResult.reply);
         } else {
           await respond("Unknown subcommand. Try `/jarvis plan`, `/jarvis brain-dump <thought>`, or `/jarvis status`.");

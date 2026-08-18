@@ -475,6 +475,11 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
     }
   }
 
+  // Slack sessions are scoped by channel/thread. Never fall back to the
+  // user-global chat history when a destination has no session yet, or a
+  // referential handoff could import content from another Slack destination.
+  if (!sessionResumed && channelName === "Slack" && originChannelId) chatMessages = [];
+
   // When the session was resumed the cached messages replace the DB window;
   // otherwise fall back to the last 10 messages from the chat_history table.
   const recentMessages = sessionResumed
