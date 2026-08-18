@@ -178,6 +178,63 @@ async function main(): Promise<void> {
     assert.deepEqual(submitted, [workerCase.expectedAgentType]);
   }
 
+  for (const selfDeliveryCase of [
+    { text: "Send me a PDF report on sunflower seeds" },
+    { text: "Send it as a PDF", backgroundPrompt: [
+      "Complete the latest user request as a self-contained background task.",
+      "Relevant conversation context (oldest to newest):",
+      "User: Research sunflower seed nutrition.",
+      "Latest user request:",
+      "Send it as a PDF",
+      "End latest user request.",
+    ].join("\n") },
+  ]) {
+    let approvalCalls = 0;
+    const submitted: string[] = [];
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_self_delivery_pdf",
+        userText: selfDeliveryCase.text,
+        backgroundPrompt: selfDeliveryCase.backgroundPrompt,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        requestApproval: async () => {
+          approvalCalls += 1;
+          return { id: "unexpected_self_delivery_gate", status: "pending" };
+        },
+        submitJob: async (job) => {
+          submitted.push(job.agentType);
+          return { id: "job_self_delivery_pdf", isDuplicate: false };
+        },
+      },
+    );
+    assert.equal(result.decision.mode, "queue_background_job");
+    assert.equal(approvalCalls, 0);
+    assert.equal(submitted.length, 1);
+  }
+
+  {
+    let approvalCalls = 0;
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_external_delivery_pdf",
+        userText: "Send it to Bob as a PDF",
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        requestApproval: async () => {
+          approvalCalls += 1;
+          return { id: "external_delivery_gate", status: "pending" };
+        },
+      },
+    );
+    assert.equal(result.decision.mode, "requires_approval");
+    assert.equal(approvalCalls, 1);
+  }
+
   {
     let submitCalls = 0;
     const result = await routeAutonomyRequest(

@@ -362,6 +362,18 @@ function contextualWorkerRoutingText(backgroundPrompt: string, userText: string)
   ].join("\n");
 }
 
+function isSelfDirectedFileDelivery(userText: string, routingText: string): boolean {
+  const selfDirected = /^\s*send\s+me\b/i.test(userText)
+    || /^\s*send\s+(?:it|this|the\s+(?:report|document|file|results?|findings?))\b[^.!?\n]{0,60}\b(?:as|in|into)\s+(?:an?\s+)?pdf\b/i.test(userText);
+  if (!selfDirected) return false;
+
+  return !(
+    /\b[\w.+-]+@[\w.-]+\b/i.test(routingText)
+    || /\b(?:send|deliver)\b[^.!?\n]{0,100}\bto\s+(?!me\b|my\b|an?\s+pdf\b|pdf\b)\S+/i.test(routingText)
+    || /\b(?:via|through)\s+(?:email|slack|discord|telegram|whatsapp|sms|text)\b/i.test(routingText)
+  );
+}
+
 export async function routeAutonomyRequest(
   input: AutonomyRuntimeInput,
   deps: AutonomyRuntimeDeps = {},
@@ -441,7 +453,10 @@ export async function routeAutonomyRequest(
       reply: "I can create the PDF for download, or draft the email text, but I can’t attach and send a generated PDF through this approval flow yet. Please choose one of those options.",
     };
   }
+  const selfDirectedFileDelivery = durableReportRequested
+    && isSelfDirectedFileDelivery(userText, emailDeliveryText);
   let policyDecision: AutonomyPolicyDecision = latestPolicyDecision.mode === "requires_approval"
+    && !selfDirectedFileDelivery
     ? latestPolicyDecision
     : decideAutonomyMode({
         userText: routingText,
