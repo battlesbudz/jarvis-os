@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import express from "express";
 import { and, eq } from "drizzle-orm";
-import { agentJobs, deliverables, proactiveScheduleLog, userPreferences, users } from "@shared/schema";
+import { agentJobs, deliverableArtifacts, deliverables, proactiveScheduleLog, userPreferences, users } from "@shared/schema";
 import type { db as dbType } from "../../db";
 import type { ApprovalGate } from "../agentApproval";
 import type { SubmitJobInput } from "../jobClient";
@@ -194,6 +194,27 @@ async function run(): Promise<void> {
       body: "Original operating plan.",
     });
 
+    await db
+      .update(deliverables)
+      .set({
+        driveLink: "https://drive.google.com/file/d/stale",
+        meta: {
+          pdfGenerated: true,
+          pdfFilename: "Draft operating plan.pdf",
+          pdfDriveLink: "https://drive.google.com/file/d/stale",
+          hasDownloadableArtifact: true,
+        },
+      })
+      .where(eq(deliverables.id, normalDeliverable.id));
+    await db.insert(deliverableArtifacts).values({
+      deliverableId: normalDeliverable.id,
+      userId: user.id,
+      filename: "Draft operating plan.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 9,
+      data: Buffer.from("stale pdf"),
+    });
+
     const editNormal = await requestJson(
       port,
       "PUT",
@@ -202,6 +223,27 @@ async function run(): Promise<void> {
       { title: "Edited operating plan", body: "Edited body." },
     );
     assert.equal(editNormal.status, 200, "HTTP route allows editing normal pending deliverables");
+    const [editedNormalRow] = await db
+      .select({ driveLink: deliverables.driveLink, meta: deliverables.meta })
+      .from(deliverables)
+      .where(eq(deliverables.id, normalDeliverable.id))
+      .limit(1);
+    assert.equal(editedNormalRow.driveLink, null, "editing content clears a stale Drive link");
+    assert.equal(
+      (editedNormalRow.meta as Record<string, unknown>).hasDownloadableArtifact,
+      false,
+      "editing content marks the generated artifact unavailable",
+    );
+    assert.equal(
+      (editedNormalRow.meta as Record<string, unknown>).pdfFilename,
+      undefined,
+      "editing content removes stale PDF metadata",
+    );
+    const artifactsAfterEdit = await db
+      .select({ id: deliverableArtifacts.id })
+      .from(deliverableArtifacts)
+      .where(eq(deliverableArtifacts.deliverableId, normalDeliverable.id));
+    assert.equal(artifactsAfterEdit.length, 0, "editing content invalidates persisted artifact bytes");
 
     const discardNormal = await requestJson(
       port,

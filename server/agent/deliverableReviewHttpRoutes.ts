@@ -280,11 +280,43 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       if (Object.keys(patch).length === 0) {
         return res.status(400).json({ error: "No editable fields provided" });
       }
-      const [updated] = await db
-        .update(schema.deliverables)
-        .set(patch)
-        .where(eq(schema.deliverables.id, id))
-        .returning();
+
+      // Generated artifacts are snapshots of the editable fields. Invalidate
+      // them (and any stale Drive link) whenever that source content changes so
+      // downloads and later Save to Drive actions cannot use pre-edit bytes.
+      const artifactSourceChanged = patch.title !== undefined
+        || patch.summary !== undefined
+        || patch.body !== undefined;
+      if (artifactSourceChanged) {
+        const nextMeta = {
+          ...deliverableMeta(existing),
+          ...(patch.meta && typeof patch.meta === "object" ? patch.meta as Record<string, unknown> : {}),
+          hasDownloadableArtifact: false,
+        };
+        delete nextMeta.pdfGenerated;
+        delete nextMeta.pdfFilename;
+        delete nextMeta.pdfDriveLink;
+        delete nextMeta.fallbackFilename;
+        patch.meta = nextMeta;
+        patch.driveLink = null;
+      }
+
+      const updated = await db.transaction(async (tx) => {
+        const [row] = await tx
+          .update(schema.deliverables)
+          .set(patch)
+          .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)))
+          .returning();
+        if (artifactSourceChanged) {
+          await tx
+            .delete(schema.deliverableArtifacts)
+            .where(and(
+              eq(schema.deliverableArtifacts.deliverableId, id),
+              eq(schema.deliverableArtifacts.userId, userId),
+            ));
+        }
+        return row;
+      });
       res.json({ ok: true, deliverable: updated });
     } catch (err) {
       console.error("Error editing deliverable:", err);

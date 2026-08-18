@@ -66,6 +66,17 @@ assert.match(jobQueueSource, /PDF generation failed; the complete report remains
 assert.match(jobQueueSource, /driveLink,/);
 assert.match(jobQueueSource, /schema\.deliverableArtifacts/);
 assert.match(jobQueueSource, /hasDownloadableArtifact = true/);
+assert.match(jobQueueSource, /getUserDriveSettings\(job\.userId\)/);
+assert.match(jobQueueSource, /drive\?\.enabled && drive\.accessToken/);
+assert.match(jobQueueSource, /folderId: drive\.folderId \|\| undefined/);
+
+const reviewRoutesSource = readFileSync(
+  fileURLToPath(new URL("../deliverableReviewHttpRoutes.ts", import.meta.url)),
+  "utf8",
+);
+assert.match(reviewRoutesSource, /const artifactSourceChanged =/);
+assert.match(reviewRoutesSource, /delete\(schema\.deliverableArtifacts\)/);
+assert.match(reviewRoutesSource, /hasDownloadableArtifact: false/);
 
 const deliverableRoutesSource = readFileSync(
   fileURLToPath(new URL("../../routes/deliverableRoutes.ts", import.meta.url)),

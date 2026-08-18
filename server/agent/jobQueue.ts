@@ -2458,16 +2458,20 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           try {
             const pdfBuffer = await markdownToPdfBuffer(finalTitle, finalBody);
             const filename = `${filenameBase}.pdf`;
-            const tokens = await getValidGoogleTokens(job.userId).catch(() => []);
-            const googleAccessToken = tokens?.[0] || null;
+            // A Google token can remain valid for Calendar/Gmail after Drive is
+            // disabled, so only auto-upload when the user's Drive preference and
+            // scope are both active. Otherwise the artifact stays available in Inbox.
+            const { getUserDriveSettings } = await import("../driveRoutes");
+            const drive = await getUserDriveSettings(job.userId).catch(() => null);
 
-            if (googleAccessToken) {
+            if (drive?.enabled && drive.accessToken) {
               try {
                 const driveFile = await createDriveBinaryFile(
-                  googleAccessToken,
+                  drive.accessToken,
                   filename,
                   pdfBuffer,
                   "application/pdf",
+                  { folderId: drive.folderId || undefined },
                 );
                 driveLink = driveFile.webViewLink || null;
               } catch (driveErr) {
