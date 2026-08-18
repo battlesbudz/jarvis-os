@@ -7,7 +7,7 @@ Remove duplicated approval friction while preserving bounded, observable, and re
 - **Prepared:** August 16, 2026
 - **Audience:** Product, core runtime, agent, mobile, connector, security, and QA contributors
 - **Target:** Five sequential implementation PRs behind per-user feature flags
-- **Source baseline:** Jarvis OS `main` at `941fed0`, which includes runtime reliability PR `#253`, with the remaining integration dependencies listed in Section 17
+- **Source baseline:** Jarvis OS `main` at `30183c7`, which includes runtime reliability PR `#253` and the Active Project Capsule + Universal Live Action Card PRD `#261`, with the remaining integration dependencies and cross-PR sequencing listed in Section 17
 
 > **Product decision:** A clear, authenticated, user-issued command is authorization for one bounded execution of that command. Jarvis must not ask the user to approve the same requested action again in another screen. Safety moves from repeated approval prompts to scoped authority, capability checks, idempotency, recoverability, audit, limits, clarification, and hard blocks.
 
@@ -163,6 +163,7 @@ interface AuthorityExecutionStep {
   targetFingerprint: string;
   idempotencyKey: string;
   maxAttempts: number;
+  attemptCount: number; // durable number of attempts already started
   status: "pending" | "consuming" | "consumed" | "retryable_failed" | "failed" | "cancelled" | "reconciliation_required";
   startedAt?: string;
   consumedAt?: string;
@@ -175,7 +176,7 @@ The parent authority is the scope, provenance, cancellation, workflow-plan, and 
 
 Before any external/irreversible step can enter `consuming`, one transaction must persist every required or selected conditional external step, the ordered/dependency-aware step manifest, a manifest hash and revision, and an immutable `closed` marker on the parent. Read-only planning may occur while the plan is `planning`, and discovered steps may be atomically registered then, but no external step can be consumed and the parent cannot complete until closure. Closing the plan verifies every manifest key has exactly one child record unique on `(authorityId, stepKey)`; retry/reconstruction returns those same records. A closed plan cannot be reopened or extended. If execution later discovers a materially new external action or target, it must stop and obtain newly classified authority rather than append to the closed parent.
 
-Final consumption locks the selected child step and rechecks the closed manifest membership/hash/revision, parent status, epochs, scope, dependency outcomes, and applicable grant head; consuming one step neither consumes nor authorizes another. A recoverable attempt failure becomes `retryable_failed` and may return to `pending` only while attempts remain and policy permits. A definitive failure or exhausted attempt budget atomically marks that step `failed`, transitions the parent to terminal `failed` with a sanitized reason/recovery reference, and marks every unstarted manifested step `cancelled` with `upstream_failure`; no new side effect may start. Any step already past an uncertain boundary becomes or remains `reconciliation_required`, and the failed parent records `reconciliationStatus: "required"` until audit-only reconciliation resolves it. Reconciliation may record the external outcome and compensate where supported, but it cannot reactivate the parent or start a remaining step.
+Final consumption locks the selected child step and rechecks the closed manifest membership/hash/revision, parent status, epochs, scope, dependency outcomes, and applicable grant head; consuming one step neither consumes nor authorizes another. `attemptCount` starts at zero and is atomically incremented in the same transaction that moves a child from `pending` or `retryable_failed` to `consuming`, before external work begins. Retry and reconstruction reuse the persisted count and must not start an attempt when `attemptCount >= maxAttempts`. A recoverable attempt failure becomes `retryable_failed` and may return to `pending` only while attempts remain and policy permits. A definitive failure or exhausted attempt budget atomically marks that step `failed`, transitions the parent to terminal `failed` with a sanitized reason/recovery reference, and marks every unstarted manifested step `cancelled` with `upstream_failure`; no new side effect may start. Any step already past an uncertain boundary becomes or remains `reconciliation_required`, and the failed parent records `reconciliationStatus: "required"` until audit-only reconciliation resolves it. Reconciliation may record the external outcome and compensate where supported, but it cannot reactivate the parent or start a remaining step.
 
 Parent completion is derived only when the manifest is closed and every manifested required/selected external step is `consumed`, with no step failed, cancelled, consuming, or awaiting reconciliation. Parent failure is derived from any definitive manifested-step failure and is a separate terminal result from completion. Parent cancellation/disablement is likewise distinct from completion: it marks all unstarted manifested steps cancelled while preserving completed-step audit history.
 
@@ -733,13 +734,16 @@ Implementation PRs are sequential. Each starts from the newly updated `main` aft
 
 ## 17. Dependencies and sequencing constraints
 
-The implementation must not begin from a stale `main`. Runtime reliability PR `#253` is already integrated in source baseline `941fed0`. The following remaining open work overlaps the planned file ownership and should be settled first:
+The implementation must not begin from a stale `main`. Runtime reliability PR `#253` and the documentation-only Active Project Capsule + Universal Live Action Card PR `#261` are already integrated in source baseline `30183c7`. The following work overlaps the planned file ownership and must be sequenced explicitly:
 
 | PR | Overlap | Required treatment |
 |---|---|---|
+| `#261` — Active Project Capsule + Universal Live Action Card PRD | Shared schemas/migrations, job and deliverable adapters, Inbox/Mission Control UI, and lifecycle vocabulary including `waiting_approval` | Treat Live Action Card state as a projection/read model, not execution authority. Merge Trusted Execution PR 1's canonical authority contract before the Live Action Card implementation's shared-schema migration; then make its adapters project Trusted Execution states. `waiting_approval` may remain only for legacy or uncovered flows until Trusted Execution PR 5 migrates them. Land the Live Action Card UI before Trusted Execution PR 5 removes legacy approval UI, and reuse those components rather than creating parallel status models. |
 | `#255` — memory save/correction routing | Memory review semantics and approval language | Settle before final policy and migration behavior |
-| `#258` — background report handoff | `autonomyRuntime.ts`, `jobQueue.ts`, background context/PDF flow | Merge and use as PR 2 baseline |
-| `#260` — Android notification/search reliability | Android action ontology, diagnostics, device behavior | Merge and use as PR 3 baseline |
+| `#258` — background report handoff | `autonomyRuntime.ts`, `jobQueue.ts`, background context/PDF flow | Merge and use as PR 2 baseline; its lifecycle events must feed the Live Action Card projection through the shared adapter contract rather than a second canonical status store |
+| `#260` — Android notification/search reliability | Android action ontology, diagnostics, device behavior | Merge and use as PR 3 baseline; device execution state must project through the same shared lifecycle vocabulary |
+
+Before either implementation sequence edits shared schemas, migrations, adapters, or status enums, its issue must link both PRDs and record the ownership/mapping decision above. Trusted Execution owns authorization, consumption, retries, terminal outcomes, and removal of covered approval gates. Active Project Capsule + Universal Live Action Card owns the user-visible read model and controls, sourced from canonical execution records. Any conflict is resolved in that direction before code lands.
 
 The documentation-only PR for this PRD may merge independently. Implementation branches must be created from current `main` only after their listed dependencies land and must be rebased after every preceding Trusted Execution PR.
 
