@@ -67,6 +67,26 @@ assert.equal(
   "outer revision instructions can explicitly preserve PDF output",
 );
 
+const ordinaryPdfRevisionPrompt = contextualRevisionPrompt.replace(
+  "Do not make this a PDF; return Markdown only.",
+  "Add another source and strengthen the conclusion.",
+);
+assert.equal(
+  requestsReportFile(ordinaryPdfRevisionPrompt),
+  true,
+  "ordinary content revisions inherit the prior PDF output",
+);
+
+const markdownRevisionPrompt = contextualRevisionPrompt.replace(
+  "Do not make this a PDF; return Markdown only.",
+  "Change the revised report to Markdown instead.",
+);
+assert.equal(
+  requestsReportFile(markdownRevisionPrompt),
+  false,
+  "an explicit Markdown revision replaces the prior PDF output",
+);
+
 const multilineFollowUp = "Research sunflower seeds thoroughly.\n\nGive me the report as a PDF";
 const multilinePrompt = buildBackgroundJobPrompt(
   [

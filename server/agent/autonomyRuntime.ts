@@ -362,11 +362,21 @@ export async function routeAutonomyRequest(
     ? backgroundPrompt
     : userText;
   const hasApproval = input.hasApproval ?? inferExplicitApproval(userText);
-  const preliminary = decideAutonomyMode({
-    userText: routingText,
+  // Approval risk belongs exclusively to the current user turn. Bounded
+  // conversation context may contain stale external-action language, so use it
+  // only to recover the background worker and self-contained prompt.
+  const latestPreliminary = decideAutonomyMode({
+    userText,
     readiness: "ready",
     hasApproval,
   });
+  const preliminary = latestPreliminary.mode === "requires_approval"
+    ? latestPreliminary
+    : decideAutonomyMode({
+        userText: routingText,
+        readiness: "ready",
+        hasApproval: true,
+      });
 
   if (!userText || preliminary.mode === "answer_inline") {
     await observeAutonomyDecision(deps, {
@@ -380,11 +390,18 @@ export async function routeAutonomyRequest(
   }
 
   const readiness = input.readiness ?? await (deps.getReadiness ?? defaultReadiness)(input.userId);
-  const policyDecision = decideAutonomyMode({
-    userText: routingText,
+  const latestPolicyDecision = decideAutonomyMode({
+    userText,
     readiness,
     hasApproval,
   });
+  const policyDecision = latestPolicyDecision.mode === "requires_approval"
+    ? latestPolicyDecision
+    : decideAutonomyMode({
+        userText: routingText,
+        readiness,
+        hasApproval: true,
+      });
   // Only deep_research persists generated files in deliverableArtifacts. Any
   // explicit report-file request must use that durable path, even when its
   // subject would otherwise classify as ordinary research.

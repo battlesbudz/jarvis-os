@@ -78,6 +78,45 @@ async function main(): Promise<void> {
     assert.equal(submitted[0].prompt, contextualPrompt);
   }
 
+  {
+    const submitted: Array<{ agentType: string; prompt: string }> = [];
+    let approvalCalls = 0;
+    const contextualPrompt = [
+      "Complete the latest user request as a self-contained background task.",
+      "Relevant conversation context (oldest to newest):",
+      "Assistant: I can send a summary when it is ready.",
+      "User: Research sunflower seed nutrition.",
+      "Latest user request:",
+      "Make it a PDF",
+      "End latest user request.",
+    ].join("\n");
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_stale_approval_context",
+        userText: "Make it a PDF",
+        backgroundPrompt: contextualPrompt,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        requestApproval: async () => {
+          approvalCalls += 1;
+          return { id: "unexpected_gate", status: "pending" };
+        },
+        submitJob: async (job) => {
+          submitted.push({ agentType: job.agentType, prompt: job.prompt });
+          return { id: "job_stale_approval_context", isDuplicate: false };
+        },
+      },
+    );
+
+    assert.equal(result.handled, true);
+    assert.equal(result.decision.mode, "queue_background_job");
+    assert.equal(result.decision.agentType, "deep_research");
+    assert.equal(approvalCalls, 0);
+    assert.deepEqual(submitted, [{ agentType: "deep_research", prompt: contextualPrompt }]);
+  }
+
   for (const workerCase of [
     { text: "Write a PDF memo for the board", expectedAgentType: "writing" },
     { text: "Create a PDF project plan", expectedAgentType: "planning" },

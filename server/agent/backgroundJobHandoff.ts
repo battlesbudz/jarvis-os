@@ -84,17 +84,34 @@ function artifactRequestText(prompt: string): string {
   const latestEnd = latestStart >= 0
     ? prompt.indexOf(LATEST_REQUEST_END_MARKER, latestStart + LATEST_REQUEST_MARKER.length)
     : -1;
-  return revisionStart >= 0
+  if (revisionStart >= 0) {
+    const revision = prompt.slice(
+      revisionStart + REVISION_REQUEST_MARKER.length,
+      revisionEnd >= 0 ? revisionEnd : undefined,
+    ).trim();
+    // An ordinary content revision inherits the prior artifact format. Only an
+    // explicit format instruction may replace or remove that intent.
+    const format = String.raw`(?:pdf|markdown|downloadable\\s+(?:report|document|file)|docx|word\\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)`;
+    const formatAction = new RegExp(
+      String.raw`\\b(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give|keep|preserve|change|switch|convert)\\b[^.!?\\n]{0,80}\\b${format}\\b`,
+      "i",
+    );
+    const formatAs = new RegExp(String.raw`\\b(?:as|in|to)\\s+(?:an?\\s+)?${format}\\b`, "i");
+    const formatNegation = new RegExp(
+      String.raw`\\b(?:not|without|no)\\b[^.!?\\n]{0,40}\\b(?:pdf|downloadable\\s+(?:report|document|file))\\b`,
+      "i",
+    );
+    if (formatAction.test(revision) || formatAs.test(revision) || formatNegation.test(revision)) {
+      return revision;
+    }
+    return artifactRequestText(prompt.slice(0, revisionStart));
+  }
+  return latestStart >= 0
     ? prompt.slice(
-        revisionStart + REVISION_REQUEST_MARKER.length,
-        revisionEnd >= 0 ? revisionEnd : undefined,
+        latestStart + LATEST_REQUEST_MARKER.length,
+        latestEnd >= 0 ? latestEnd : undefined,
       ).trim()
-    : latestStart >= 0
-      ? prompt.slice(
-          latestStart + LATEST_REQUEST_MARKER.length,
-          latestEnd >= 0 ? latestEnd : undefined,
-        ).trim()
-      : prompt.trim();
+    : prompt.trim();
 }
 
 const UNSUPPORTED_REPORT_FORMAT = /\b(docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)\b/i;
