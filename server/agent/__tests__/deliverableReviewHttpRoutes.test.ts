@@ -431,6 +431,30 @@ async function run(): Promise<void> {
       .limit(1);
     assert.equal(originalJobAfter.status, "delivered", "revision route closes the original complete job");
 
+    const unsupportedRevisionSource = await insertDeliverable(db, user.id, {
+      type: "report",
+      status: "pending_approval",
+      title: "PDF report needing another format",
+      body: "Existing report body",
+      meta: { hasDownloadableArtifact: true },
+    });
+    const jobsBeforeUnsupportedRevision = submittedJobs.length;
+    const unsupportedRevision = await requestJson(
+      port,
+      "POST",
+      `/api/deliverables/${unsupportedRevisionSource.id}/revise`,
+      { instructions: "Change the output to DOCX" },
+    );
+    assert.equal(unsupportedRevision.status, 400, "revision route rejects unsupported output formats");
+    assert.match(String(unsupportedRevision.body.error), /DOCX.*not supported/i);
+    assert.equal(submittedJobs.length, jobsBeforeUnsupportedRevision, "unsupported revisions do not queue a replacement job");
+    const [unsupportedRevisionAfter] = await db
+      .select()
+      .from(deliverables)
+      .where(eq(deliverables.id, unsupportedRevisionSource.id))
+      .limit(1);
+    assert.equal(unsupportedRevisionAfter.status, "pending_approval", "unsupported revisions keep the source reviewable");
+
     const revisionRoot = await insertDeliverable(db, user.id, {
       type: "document",
       status: "approved",

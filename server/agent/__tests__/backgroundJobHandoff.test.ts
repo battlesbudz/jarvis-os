@@ -70,6 +70,7 @@ assert.equal(unsupportedReportFileFormat("Research competitors and export the re
 assert.equal(unsupportedReportFileFormat("Give me a CSV file of the results"), "CSV");
 assert.equal(unsupportedReportFileFormat("Download a CSV file of the results"), "CSV");
 assert.equal(unsupportedReportFileFormat("I need a CSV file of the results"), "CSV");
+assert.equal(unsupportedReportFileFormat("Change the output to DOCX"), "DOCX");
 assert.equal(unsupportedReportFileFormat("Create a downloadable JSON file with the findings"), "JSON");
 assert.equal(unsupportedReportFileFormat("Write a report explaining how to export data as CSV"), null);
 assert.equal(unsupportedReportFileFormat("Prepare a guide on how best to convert JSON to XML"), null);
@@ -252,6 +253,9 @@ assert.match(
   /if \(activeSiblingDeliverables\.length > 1\)[\s\S]*?hasDownloadableArtifact: false[\s\S]*?delete\(schema\.deliverableArtifacts\)[\s\S]*?mergedDeliverableId = firstId/,
 );
 assert.match(jobQueueSource, /batchOriginChannel === "slack"/);
+assert.match(jobQueueSource, /researchBatchScope\(originChannel, originDestination\)/);
+assert.match(jobQueueSource, /batch\.scope !== scope/);
+assert.match(jobQueueSource, /researchBatchScope\(siblingOrigin, siblingDestination\) !== scope/);
 assert.match(jobQueueSource, /originNotificationDestination = originDiscordChannelId/);
 assert.doesNotMatch(jobQueueSource, /Jarvis inbox or Google Drive/);
 assert.match(jobQueueSource, /Jarvis inbox, then use Save to Drive/);
@@ -267,6 +271,9 @@ assert.match(reviewRoutesSource, /patch\.title !== existing\.title/);
 assert.match(reviewRoutesSource, /patch\.body !== existing\.body/);
 assert.match(reviewRoutesSource, /db\.transaction\(async \(tx\)[\s\S]*?\.for\("update"\)[\s\S]*?submitAgentJob/);
 assert.match(reviewRoutesSource, /submitAgentJob\([\s\S]*?\}, tx\)/);
+assert.match(reviewRoutesSource, /unsupportedReportFileFormat\(revisionPrompt\)/);
+assert.match(reviewRoutesSource, /Deliverable changed while approval was being prepared/);
+assert.match(reviewRoutesSource, /Deliverable changed while discard was being prepared/);
 assert.doesNotMatch(reviewRoutesSource, /revision_pending/);
 
 const slackWebhookSource = readFileSync(

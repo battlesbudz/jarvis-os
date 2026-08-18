@@ -8,6 +8,7 @@ import type { ApprovalGate } from "./agentApproval";
 import type { SubmitJobDeps, SubmitJobInput, SubmitJobResult } from "./jobClient";
 import type { ContinueTopLevelApprovalResult } from "./topLevelApprovalContinuation";
 import { markdownToPdfBuffer } from "./tools/exportPdf";
+import { unsupportedReportFileFormat } from "./backgroundJobHandoff";
 
 type Db = typeof dbType;
 
@@ -174,15 +175,43 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         const result = await createGmailDraft(token, to, meta.subject || d.title, meta.emailBody || d.body);
         resultExtra = { gmailDraftUrl: result.gmailUrl, gmailDraftId: result.draftId };
       } else {
-        await db.insert(userDocuments).values({
-          userId,
-          name: d.title.slice(0, 200),
-          mimeType: "text/markdown",
-          sizeBytes: Buffer.byteLength(d.body, "utf8"),
-          status: "ready",
-          extractedText: d.body,
-          summary: d.summary || null,
+        const approved = await db.transaction(async (tx) => {
+          const [locked] = await tx
+            .select()
+            .from(schema.deliverables)
+            .where(and(
+              eq(schema.deliverables.id, id),
+              eq(schema.deliverables.userId, userId),
+              eq(schema.deliverables.status, "pending_approval"),
+            ))
+            .limit(1)
+            .for("update");
+          if (!locked) return false;
+          await tx.insert(userDocuments).values({
+            userId,
+            name: locked.title.slice(0, 200),
+            mimeType: "text/markdown",
+            sizeBytes: Buffer.byteLength(locked.body, "utf8"),
+            status: "ready",
+            extractedText: locked.body,
+            summary: locked.summary || null,
+          });
+          await tx
+            .update(schema.deliverables)
+            .set({ status: "approved", actedAt: new Date() })
+            .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.status, "pending_approval")));
+          if (locked.jobId) {
+            await tx
+              .update(schema.agentJobs)
+              .set({ status: "delivered" })
+              .where(and(eq(schema.agentJobs.id, locked.jobId), eq(schema.agentJobs.status, "complete")));
+          }
+          return true;
         });
+        if (!approved) {
+          return res.status(409).json({ error: "Deliverable changed while approval was being prepared; reload and try again." });
+        }
+        return res.json({ ok: true, ...resultExtra });
       }
 
       await db
@@ -432,6 +461,12 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         "",
         "Return a complete replacement deliverable, not a patch note.",
       ].join("\n");
+      const unsupportedFormat = unsupportedReportFileFormat(revisionPrompt);
+      if (unsupportedFormat) {
+        return res.status(400).json({
+          error: `The requested ${unsupportedFormat} format is not supported. Request PDF or Markdown instead.`,
+        });
+      }
 
       const revision = await db.transaction(async (tx) => {
         const [locked] = await tx
@@ -565,16 +600,32 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       const id = paramValue(req.params.id);
       const reviewAction = await loadDeliverableForReviewAction(db, userId, id, "discard");
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
-      const d = reviewAction.deliverable;
-      await db
-        .update(schema.deliverables)
-        .set({ status: "discarded", actedAt: new Date() })
-        .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)));
-      if (d?.jobId) {
-        await db
-          .update(schema.agentJobs)
-          .set({ status: "delivered" })
-          .where(and(eq(schema.agentJobs.id, d.jobId), eq(schema.agentJobs.status, "complete")));
+      const discarded = await db.transaction(async (tx) => {
+        const [locked] = await tx
+          .select({ jobId: schema.deliverables.jobId })
+          .from(schema.deliverables)
+          .where(and(
+            eq(schema.deliverables.id, id),
+            eq(schema.deliverables.userId, userId),
+            eq(schema.deliverables.status, "pending_approval"),
+          ))
+          .limit(1)
+          .for("update");
+        if (!locked) return false;
+        await tx
+          .update(schema.deliverables)
+          .set({ status: "discarded", actedAt: new Date() })
+          .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.status, "pending_approval")));
+        if (locked.jobId) {
+          await tx
+            .update(schema.agentJobs)
+            .set({ status: "delivered" })
+            .where(and(eq(schema.agentJobs.id, locked.jobId), eq(schema.agentJobs.status, "complete")));
+        }
+        return true;
+      });
+      if (!discarded) {
+        return res.status(409).json({ error: "Deliverable changed while discard was being prepared; reload and try again." });
       }
       res.json({ ok: true });
     } catch (err) {

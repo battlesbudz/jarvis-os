@@ -315,6 +315,8 @@ interface BatchedResearchJob {
 
 interface BatchedResearchNotification {
   userId: string;
+  /** Origin plus direct destination; prevents cross-channel/thread batching. */
+  scope: string;
   /** createdAt of the first job in this batch (ms since epoch). Used for window matching. */
   anchorTime: number;
   /** Each job's content, origin info (for routing), and PDF metadata (for consolidation). */
@@ -331,7 +333,12 @@ const researchNotificationBatches = new Map<string, BatchedResearchNotification>
  * triggering a second notification.
  * Map: userId → [{anchorTime, flushedAt}]
  */
-const flushedResearchBatches = new Map<string, Array<{ anchorTime: number; flushedAt: number }>>();
+const flushedResearchBatches = new Map<string, Array<{ anchorTime: number; flushedAt: number; scope: string }>>();
+
+function researchBatchScope(originChannel?: string, originDestination?: string): string {
+  const channel = (originChannel ?? "in_app").trim().toLowerCase() || "in_app";
+  return `${channel}:${originDestination ?? ""}`;
+}
 
 /** True sibling window — must match the guard in queueBackgroundJob. */
 const SIBLING_WINDOW_MS = 60 * 1000;
@@ -351,7 +358,7 @@ async function flushResearchBatch(key: string): Promise<void> {
   if (!batch) return;
   researchNotificationBatches.delete(key);
 
-  const { userId, anchorTime, jobs } = batch;
+  const { userId, anchorTime, jobs, scope } = batch;
   if (jobs.length === 0) return;
 
   // Before sending, query the DB for sibling research jobs that completed in
@@ -367,7 +374,7 @@ async function flushResearchBatch(key: string): Promise<void> {
     const windowStart = new Date(anchorTime - SIBLING_WINDOW_MS);
     const windowEnd   = new Date(anchorTime + SIBLING_WINDOW_MS);
     const allSiblings = await db
-      .select({ id: schema.agentJobs.id, title: schema.agentJobs.title, prompt: schema.agentJobs.prompt })
+      .select({ id: schema.agentJobs.id, title: schema.agentJobs.title, prompt: schema.agentJobs.prompt, input: schema.agentJobs.input })
       .from(schema.agentJobs)
       .where(
         and(
@@ -380,11 +387,21 @@ async function flushResearchBatch(key: string): Promise<void> {
       );
     const knownIds = new Set(allSiblingJobIds);
     for (const row of allSiblings) {
+      const input = row.input && typeof row.input === "object" && !Array.isArray(row.input)
+        ? row.input as Record<string, unknown>
+        : {};
+      const siblingOrigin = typeof input.originChannel === "string" ? input.originChannel : undefined;
+      const siblingDestination = typeof input.originDiscordChannelId === "string"
+        ? input.originDiscordChannelId
+        : siblingOrigin?.toLowerCase() === "slack" && typeof input.originChannelId === "string"
+          ? input.originChannelId
+          : undefined;
+      if (researchBatchScope(siblingOrigin, siblingDestination) !== scope) continue;
       const t = row.title ?? "";
       const promptedPdf = requestsReportFile(row.prompt ?? "");
       pdfRequestedByJobId.set(row.id, promptedPdf);
       if (!knownIds.has(row.id)) {
-        jobs.push({ title: t, body: "", jobId: row.id, promptedPdf });
+        jobs.push({ title: t, body: "", originChannel: siblingOrigin, originDestination: siblingDestination, jobId: row.id, promptedPdf });
         allSiblingJobIds.push(row.id);
         knownIds.add(row.id);
       }
@@ -398,7 +415,7 @@ async function flushResearchBatch(key: string): Promise<void> {
   const userFlushed = flushedResearchBatches.get(userId) ?? [];
   // Evict stale entries before appending.
   const fresh = userFlushed.filter((f) => now - f.flushedAt < FLUSHED_BATCH_TTL_MS);
-  fresh.push({ anchorTime, flushedAt: now });
+  fresh.push({ anchorTime, flushedAt: now, scope });
   flushedResearchBatches.set(userId, fresh);
 
   // ── Resolve most-common originating channel for routing ──────────────────
@@ -679,12 +696,14 @@ function scheduleResearchNotification(
 ): void {
   const newTime = createdAt.getTime();
   const now = Date.now();
+  const scope = researchBatchScope(originChannel, originDestination);
 
   // Check whether a batch for this window was already flushed (notification sent).
   const userFlushed = flushedResearchBatches.get(userId) ?? [];
   const alreadyFlushed = userFlushed.some(
     (f) =>
       Math.abs(f.anchorTime - newTime) <= SIBLING_WINDOW_MS &&
+      f.scope === scope &&
       now - f.flushedAt < FLUSHED_BATCH_TTL_MS,
   );
   if (alreadyFlushed) {
@@ -697,6 +716,7 @@ function scheduleResearchNotification(
   // Find an existing pending batch for this user whose anchor is within 60 s.
   for (const [key, batch] of researchNotificationBatches.entries()) {
     if (batch.userId !== userId) continue;
+    if (batch.scope !== scope) continue;
     if (Math.abs(batch.anchorTime - newTime) <= SIBLING_WINDOW_MS) {
       batch.jobs.push({ title: deliverableTitle, body: notifyBody, originChannel, originDestination, jobId, promptedPdf });
       // Debounce: extend the flush timer so it fires after the last arrival.
@@ -710,12 +730,13 @@ function scheduleResearchNotification(
 
   // No matching batch — start a new one. Per-job origin is tracked so that
   // flushResearchBatch can compute the most-common origin across all siblings.
-  const key = `${userId}:research:${newTime}`;
+  const key = `${userId}:research:${scope}:${newTime}`;
   const timer = setTimeout(() => flushResearchBatch(key).catch((e) =>
     console.error("[JobQueue] flushResearchBatch failed:", e),
   ), NOTIFICATION_FLUSH_DELAY_MS);
   researchNotificationBatches.set(key, {
     userId,
+    scope,
     anchorTime: newTime,
     jobs: [{ title: deliverableTitle, body: notifyBody, originChannel, originDestination, jobId, promptedPdf }],
     timer,

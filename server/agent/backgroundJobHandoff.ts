@@ -172,7 +172,7 @@ export function unsupportedReportFileFormat(prompt: string): string | null {
     "i",
   );
   const downloadableArtifact = new RegExp(String.raw`\bdownloadable\s+(${namedArtifact})\b`, "i");
-  const explicitArtifactIntent = /\b(?:downloadable|file|document|report|results?|findings?)\b/i.test(request)
+  const explicitArtifactIntent = /\b(?:downloadable|file|document|report|results?|findings?|output|format|artifact)\b/i.test(request)
     || /\b(?:export|attach|save)\b/i.test(request);
   const outputMatch = request.match(outputSyntax);
   const describesFormatOperation = outputMatch?.index !== undefined
