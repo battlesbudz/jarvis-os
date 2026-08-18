@@ -24,6 +24,7 @@ import { processLivingContextUpdate } from "../workspace/livingContextRouter";
 import { classifyBuildIntent, classifyBuildFollowUp, classifyToolAwareRoute, isUnrelatedIntent, hasActiveBuildSession, classifyBuildResume, findBuildDescription, BUILD_ACK_MARKER, findSuspendedBuild, SUSPENDED_BUILD_REMINDED_MARKER, type StoredBuildSession } from "../agent/queryClassifier";
 import { routeBuildIntent } from "../agent/buildIntentRouter";
 import { routeAutonomyRequest } from "../agent/autonomyRuntime";
+import { buildBackgroundJobPrompt } from "../agent/backgroundJobHandoff";
 import { getCoachAppAgentId } from "../agent/coreAgentIds";
 import { createSystemApprovalOnBeforeTool } from "../agent/systemApprovalGate";
 import { getCoachAgentSessionAgentId } from "./coachAgentSession";
@@ -878,6 +879,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       const autonomyResult = await routeAutonomyRequest({
         userId,
         userText,
+        backgroundPrompt: buildBackgroundJobPrompt(recentMessages, userText),
         channelName,
         originChannelId: originChannelId ?? discordChannelId,
       });

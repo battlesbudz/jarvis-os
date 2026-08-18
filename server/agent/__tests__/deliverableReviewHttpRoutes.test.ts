@@ -245,6 +245,61 @@ async function run(): Promise<void> {
       .where(eq(deliverableArtifacts.deliverableId, normalDeliverable.id));
     assert.equal(artifactsAfterEdit.length, 0, "editing content invalidates persisted artifact bytes");
 
+    const unchangedDeliverable = await insertDeliverable(db, user.id, {
+      type: "document",
+      title: "Unchanged generated report",
+      body: "Keep these exact report contents.",
+      meta: {
+        pdfGenerated: true,
+        pdfFilename: "Unchanged generated report.pdf",
+        hasDownloadableArtifact: true,
+      },
+    });
+    await db
+      .update(deliverables)
+      .set({ driveLink: "https://drive.google.com/file/d/keep" })
+      .where(eq(deliverables.id, unchangedDeliverable.id));
+    await db.insert(deliverableArtifacts).values({
+      deliverableId: unchangedDeliverable.id,
+      userId: user.id,
+      filename: "Unchanged generated report.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 8,
+      data: Buffer.from("keep pdf"),
+    });
+
+    const noOpEdit = await requestJson(
+      port,
+      "PUT",
+      `/api/deliverables/${unchangedDeliverable.id}`,
+      token,
+      {
+        title: "Unchanged generated report",
+        body: "Keep these exact report contents.",
+      },
+    );
+    assert.equal(noOpEdit.status, 200, "HTTP route accepts a no-op edit save");
+    const [unchangedAfterEdit] = await db
+      .select({ driveLink: deliverables.driveLink, meta: deliverables.meta })
+      .from(deliverables)
+      .where(eq(deliverables.id, unchangedDeliverable.id))
+      .limit(1);
+    assert.equal(
+      unchangedAfterEdit.driveLink,
+      "https://drive.google.com/file/d/keep",
+      "a no-op edit preserves the existing Drive link",
+    );
+    assert.equal(
+      (unchangedAfterEdit.meta as Record<string, unknown>).hasDownloadableArtifact,
+      true,
+      "a no-op edit preserves downloadable artifact metadata",
+    );
+    const unchangedArtifacts = await db
+      .select({ id: deliverableArtifacts.id })
+      .from(deliverableArtifacts)
+      .where(eq(deliverableArtifacts.deliverableId, unchangedDeliverable.id));
+    assert.equal(unchangedArtifacts.length, 1, "a no-op edit preserves persisted artifact bytes");
+
     const discardNormal = await requestJson(
       port,
       "POST",

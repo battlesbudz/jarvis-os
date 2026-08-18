@@ -284,9 +284,13 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       // Generated artifacts are snapshots of the editable fields. Invalidate
       // them (and any stale Drive link) whenever that source content changes so
       // downloads and later Save to Drive actions cannot use pre-edit bytes.
-      const artifactSourceChanged = patch.title !== undefined
-        || patch.summary !== undefined
-        || patch.body !== undefined;
+      const artifactSourceChanged = (
+        patch.title !== undefined && patch.title !== existing.title
+      ) || (
+        patch.summary !== undefined && patch.summary !== existing.summary
+      ) || (
+        patch.body !== undefined && patch.body !== existing.body
+      );
       if (artifactSourceChanged) {
         const nextMeta = {
           ...deliverableMeta(existing),

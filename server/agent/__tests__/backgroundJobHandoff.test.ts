@@ -77,6 +77,14 @@ const reviewRoutesSource = readFileSync(
 assert.match(reviewRoutesSource, /const artifactSourceChanged =/);
 assert.match(reviewRoutesSource, /delete\(schema\.deliverableArtifacts\)/);
 assert.match(reviewRoutesSource, /hasDownloadableArtifact: false/);
+assert.match(reviewRoutesSource, /patch\.title !== existing\.title/);
+assert.match(reviewRoutesSource, /patch\.body !== existing\.body/);
+
+const coachAgentSource = readFileSync(
+  fileURLToPath(new URL("../../channels/coachAgent.ts", import.meta.url)),
+  "utf8",
+);
+assert.match(coachAgentSource, /backgroundPrompt: buildBackgroundJobPrompt\(recentMessages, userText\)/);
 
 const deliverableRoutesSource = readFileSync(
   fileURLToPath(new URL("../../routes/deliverableRoutes.ts", import.meta.url)),
