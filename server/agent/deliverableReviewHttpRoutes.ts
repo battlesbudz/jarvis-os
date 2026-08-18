@@ -351,8 +351,15 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         const [row] = await tx
           .update(schema.deliverables)
           .set(patch)
-          .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)))
+          .where(and(
+            eq(schema.deliverables.id, id),
+            eq(schema.deliverables.userId, userId),
+            eq(schema.deliverables.status, "pending_approval"),
+            eq(schema.deliverables.title, existing.title),
+            eq(schema.deliverables.body, existing.body),
+          ))
           .returning();
+        if (!row) return null;
         if (artifactSourceChanged) {
           await tx
             .delete(schema.deliverableArtifacts)
@@ -373,6 +380,9 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         }
         return row;
       });
+      if (!updated) {
+        return res.status(409).json({ error: "Deliverable changed while this edit was being prepared; reload and try again." });
+      }
       res.json({ ok: true, deliverable: updated });
     } catch (err) {
       console.error("Error editing deliverable:", err);
