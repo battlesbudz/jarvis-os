@@ -231,19 +231,27 @@ async function run(): Promise<void> {
     assert.equal(editedNormalRow.driveLink, null, "editing content clears a stale Drive link");
     assert.equal(
       (editedNormalRow.meta as Record<string, unknown>).hasDownloadableArtifact,
-      false,
-      "editing content marks the generated artifact unavailable",
+      true,
+      "editing content keeps the regenerated artifact downloadable",
     );
     assert.equal(
       (editedNormalRow.meta as Record<string, unknown>).pdfFilename,
-      undefined,
-      "editing content removes stale PDF metadata",
+      "Edited operating plan.pdf",
+      "editing content updates PDF metadata to the corrected title",
     );
     const artifactsAfterEdit = await db
-      .select({ id: deliverableArtifacts.id })
+      .select({
+        filename: deliverableArtifacts.filename,
+        mimeType: deliverableArtifacts.mimeType,
+        data: deliverableArtifacts.data,
+      })
       .from(deliverableArtifacts)
       .where(eq(deliverableArtifacts.deliverableId, normalDeliverable.id));
-    assert.equal(artifactsAfterEdit.length, 0, "editing content invalidates persisted artifact bytes");
+    assert.equal(artifactsAfterEdit.length, 1, "editing content replaces the persisted artifact");
+    assert.equal(artifactsAfterEdit[0].filename, "Edited operating plan.pdf");
+    assert.equal(artifactsAfterEdit[0].mimeType, "application/pdf");
+    assert.equal(Buffer.from(artifactsAfterEdit[0].data).subarray(0, 4).toString(), "%PDF");
+    assert.notEqual(Buffer.from(artifactsAfterEdit[0].data).toString(), "stale pdf");
 
     const unchangedDeliverable = await insertDeliverable(db, user.id, {
       type: "document",
