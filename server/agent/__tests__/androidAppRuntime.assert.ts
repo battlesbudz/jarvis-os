@@ -97,6 +97,7 @@ async function main() {
           { label: "Teams", packageName: "com.microsoft.teams" },
           { label: "The Weather Channel", packageName: "com.weather.Weather" },
           { label: "Keep Notes", packageName: "com.google.android.keep" },
+          { label: "Calendar Work", packageName: "com.google.android.calendar", activityName: "com.google.android.calendar.WorkActivity" },
           { label: "Acme", packageName: "com.example.acme.one" },
           { label: "Acme", packageName: "com.example.acme.two" },
         ],
@@ -127,6 +128,8 @@ async function main() {
   assert.equal(leadingArticleWithLiveInventory.app?.packageName, "com.weather.Weather");
   const notesWithLiveInventory = await resolveAndroidAppName("user-phone", "Notes");
   assert.equal(notesWithLiveInventory.app?.packageName, "com.google.android.keep");
+  const secondaryLauncher = await resolveAndroidAppName("user-phone", "Calendar Work");
+  assert.equal(secondaryLauncher.app?.activityName, "com.google.android.calendar.WorkActivity");
   const ambiguousLiveLabel = await resolveAndroidAppName("user-phone", "Acme");
   assert.equal(ambiguousLiveLabel.app, null);
   const missingTeamSpeak = await resolveAndroidAppName("user-phone", "TeamSpeak");

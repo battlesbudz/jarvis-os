@@ -45,7 +45,7 @@ export type DaemonOp =
   | { type: "file_read"; path: string }
   | { type: "file_write"; path: string; content: string }
   | { type: "file_list"; path: string }
-  | { type: "android_open_app"; packageName: string }
+  | { type: "android_open_app"; packageName: string; activityName?: string }
   | { type: "android_list_apps" }
   | { type: "android_browse"; url: string }
   | { type: "android_screenshot" }

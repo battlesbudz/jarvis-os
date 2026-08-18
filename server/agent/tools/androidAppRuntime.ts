@@ -136,6 +136,7 @@ async function recordAndroidOutcomeObservation(
 export type AndroidAppCatalogEntry = {
   label: string;
   packageName: string;
+  activityName?: string;
   aliases: string[];
 };
 
@@ -234,8 +235,9 @@ function dedupeApps(apps: AndroidAppCatalogEntry[]): AndroidAppCatalogEntry[] {
   const seen = new Set<string>();
   const result: AndroidAppCatalogEntry[] = [];
   for (const app of apps) {
-    if (seen.has(app.packageName)) continue;
-    seen.add(app.packageName);
+    const component = `${app.packageName}/${app.activityName ?? ""}`;
+    if (seen.has(component)) continue;
+    seen.add(component);
     result.push(app);
   }
   return result;
@@ -306,8 +308,9 @@ function appEntriesFromDaemonData(data: unknown): AndroidAppCatalogEntry[] {
       const app = raw as Record<string, unknown>;
       const label = String(app.label || "").trim();
       const packageName = String(app.packageName || app.package || "").trim();
+      const activityName = String(app.activityName || "").trim() || undefined;
       if (!label || !packageName) return null;
-      return { label, packageName, aliases: [label] };
+      return { label, packageName, activityName, aliases: [label] };
     })
     .filter((app): app is AndroidAppCatalogEntry => Boolean(app));
 }
@@ -772,6 +775,7 @@ export async function runAndroidOpenAppByName(args: ToolArgs, userId: string): P
   const openResult = await sendAndroidDaemonOp(userId, {
     type: "android_open_app",
     packageName: resolved.app.packageName,
+    activityName: resolved.app.activityName,
   }, 20000);
   if (!openResult.ok) {
     return {

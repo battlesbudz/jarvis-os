@@ -148,9 +148,16 @@ class JarvisAccessibilityService : AccessibilityService() {
     // Samsung OneUI issue: startActivity() doesn't throw even when OneUI silently
     // swallows the intent. We therefore verify the app actually came to foreground
     // by polling accessibility foreground signals after dispatch.
-    fun launchApp(packageName: String): Boolean {
+    fun launchApp(packageName: String, activityName: String? = null): Boolean {
         val pm = packageManager
-        val intent = pm.getLaunchIntentForPackage(packageName) ?: return false
+        val intent = if (activityName == null) {
+            pm.getLaunchIntentForPackage(packageName)
+        } else {
+            Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                setClassName(packageName, activityName)
+            }.takeIf { pm.resolveActivity(it, 0)?.activityInfo?.name == activityName }
+        } ?: return false
         intent.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or
             Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or
