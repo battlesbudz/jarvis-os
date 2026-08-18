@@ -271,7 +271,7 @@ assert.match(reviewRoutesSource, /hasDownloadableArtifact: false/);
 assert.match(reviewRoutesSource, /patch\.title !== existing\.title/);
 assert.match(reviewRoutesSource, /patch\.body !== existing\.body/);
 assert.match(reviewRoutesSource, /db\.transaction\(async \(tx\)[\s\S]*?\.for\("update"\)[\s\S]*?submitAgentJob/);
-assert.match(reviewRoutesSource, /submitAgentJob\([\s\S]*?\}, tx\)/);
+assert.match(reviewRoutesSource, /submitAgentJob\([\s\S]*?\}, tx, \{ skipDuplicateCheck: true \}\)/);
 assert.match(reviewRoutesSource, /skipDuplicateCheck: true/);
 assert.match(reviewRoutesSource, /unsupportedReportFileFormat\(revisionPrompt\)/);
 assert.match(reviewRoutesSource, /Deliverable changed while approval was being prepared/);
