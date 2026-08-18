@@ -240,6 +240,8 @@ assert.match(reviewRoutesSource, /delete\(schema\.deliverableArtifacts\)/);
 assert.match(reviewRoutesSource, /hasDownloadableArtifact: false/);
 assert.match(reviewRoutesSource, /patch\.title !== existing\.title/);
 assert.match(reviewRoutesSource, /patch\.body !== existing\.body/);
+assert.match(reviewRoutesSource, /db\.transaction\(async \(tx\)[\s\S]*?\.for\("update"\)[\s\S]*?submitAgentJob/);
+assert.doesNotMatch(reviewRoutesSource, /revision_pending/);
 
 const slackWebhookSource = readFileSync(
   fileURLToPath(new URL("../../channels/slackWebhook.ts", import.meta.url)),

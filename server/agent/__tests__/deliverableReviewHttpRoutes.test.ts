@@ -390,16 +390,7 @@ async function run(): Promise<void> {
         .from(deliverables)
         .where(eq(deliverables.id, revisionSource.id))
         .limit(1);
-      assert.equal(reserved.status, "revision_pending", "revision reserves its source before submitting the new job");
-      const competingUpdate = await db
-        .update(deliverables)
-        .set({ title: "Competing consolidation" })
-        .where(and(
-          eq(deliverables.id, revisionSource.id),
-          eq(deliverables.status, "pending_approval"),
-        ))
-        .returning({ id: deliverables.id });
-      assert.equal(competingUpdate.length, 0, "consolidation cannot claim a revision-reserved deliverable");
+      assert.equal(reserved.status, "pending_approval", "revision submission never hides its source in an unrecoverable status");
     };
     const reviseResponse = await requestJson(
       port,

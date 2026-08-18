@@ -218,6 +218,7 @@ async function main(): Promise<void> {
   for (const externalDeliveryText of [
     "Send it to Bob as a PDF",
     "Send me and Bob the report as a PDF",
+    "Send me a PDF and email it to Bob",
   ]) {
     let approvalCalls = 0;
     const result = await routeAutonomyRequest(

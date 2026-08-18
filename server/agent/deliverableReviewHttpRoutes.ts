@@ -433,24 +433,22 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         "Return a complete replacement deliverable, not a patch note.",
       ].join("\n");
 
-      const [reserved] = await db
-        .update(schema.deliverables)
-        .set({ status: "revision_pending" })
-        .where(and(
-          eq(schema.deliverables.id, id),
-          eq(schema.deliverables.userId, userId),
-          eq(schema.deliverables.status, "pending_approval"),
-          eq(schema.deliverables.title, d.title),
-          eq(schema.deliverables.body, d.body),
-        ))
-        .returning({ id: schema.deliverables.id });
-      if (!reserved) {
-        return res.status(409).json({ error: "Deliverable changed while the revision was being prepared; reload and try again." });
-      }
+      const revision = await db.transaction(async (tx) => {
+        const [locked] = await tx
+          .select({ id: schema.deliverables.id })
+          .from(schema.deliverables)
+          .where(and(
+            eq(schema.deliverables.id, id),
+            eq(schema.deliverables.userId, userId),
+            eq(schema.deliverables.status, "pending_approval"),
+            eq(schema.deliverables.title, d.title),
+            eq(schema.deliverables.body, d.body),
+          ))
+          .limit(1)
+          .for("update");
+        if (!locked) return null;
 
-      let revision: SubmitJobResult;
-      try {
-        revision = await submitAgentJob({
+        const submitted = await submitAgentJob({
           userId,
           agentType: d.agentType as any,
           title: `Revision: ${d.title}`.slice(0, 200),
@@ -462,30 +460,24 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
             revisionInstructions: instructions.slice(0, 2000),
           },
         });
-      } catch (err) {
-        await db
+
+        await tx
           .update(schema.deliverables)
-          .set({ status: "pending_approval" })
+          .set({
+            status: "discarded",
+            actedAt: new Date(),
+            triageNote: `Revision requested: ${instructions.slice(0, 500)}`,
+          })
           .where(and(
             eq(schema.deliverables.id, id),
             eq(schema.deliverables.userId, userId),
-            eq(schema.deliverables.status, "revision_pending"),
+            eq(schema.deliverables.status, "pending_approval"),
           ));
-        throw err;
+        return submitted;
+      });
+      if (!revision) {
+        return res.status(409).json({ error: "Deliverable changed while the revision was being prepared; reload and try again." });
       }
-
-      await db
-        .update(schema.deliverables)
-        .set({
-          status: "discarded",
-          actedAt: new Date(),
-          triageNote: `Revision requested: ${instructions.slice(0, 500)}`,
-        })
-        .where(and(
-          eq(schema.deliverables.id, id),
-          eq(schema.deliverables.userId, userId),
-          eq(schema.deliverables.status, "revision_pending"),
-        ));
 
       if (d.jobId) {
         await db
