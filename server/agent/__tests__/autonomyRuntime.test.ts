@@ -46,6 +46,39 @@ async function main(): Promise<void> {
   }
 
   {
+    const submitted: Array<{ agentType: string; prompt: string }> = [];
+    const contextualPrompt = [
+      "Complete the latest user request as a self-contained background task.",
+      "Relevant conversation context (oldest to newest):",
+      "User: Research sunflower seed nutrition.",
+      "Latest user request:",
+      "Make it a PDF",
+      "End latest user request.",
+    ].join("\n");
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_contextual_pdf",
+        userText: "Make it a PDF",
+        backgroundPrompt: contextualPrompt,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        submitJob: async (job) => {
+          submitted.push({ agentType: job.agentType, prompt: job.prompt });
+          return { id: "job_contextual_pdf", isDuplicate: false };
+        },
+      },
+    );
+
+    assert.equal(result.handled, true);
+    assert.equal(result.decision.agentType, "deep_research");
+    assert.equal(submitted.length, 1);
+    assert.equal(submitted[0].agentType, "deep_research");
+    assert.equal(submitted[0].prompt, contextualPrompt);
+  }
+
+  {
     let submitCalls = 0;
     const observations: AutonomyRuntimeObservation[] = [];
     const approvalRequests: Array<{

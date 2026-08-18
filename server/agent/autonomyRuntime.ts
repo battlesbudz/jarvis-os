@@ -345,7 +345,8 @@ export async function routeAutonomyRequest(
   // A short referential turn such as "Make it a PDF" may classify inline by
   // itself. Use the bounded handoff only for routing when it establishes an
   // explicit file request; keep the original turn for titles and approvals.
-  const routingText = backgroundPrompt && requestsReportFile(backgroundPrompt)
+  const durableReportRequested = requestsReportFile(backgroundPrompt || userText);
+  const routingText = backgroundPrompt && durableReportRequested
     ? backgroundPrompt
     : userText;
   const hasApproval = input.hasApproval ?? inferExplicitApproval(userText);
@@ -367,11 +368,19 @@ export async function routeAutonomyRequest(
   }
 
   const readiness = input.readiness ?? await (deps.getReadiness ?? defaultReadiness)(input.userId);
-  const decision = decideAutonomyMode({
+  const policyDecision = decideAutonomyMode({
     userText: routingText,
     readiness,
     hasApproval,
   });
+  // Only deep_research persists generated files in deliverableArtifacts. Any
+  // explicit report-file request must use that durable path, even when its
+  // subject would otherwise classify as ordinary research.
+  const decision: AutonomyPolicyDecision = (
+    policyDecision.mode === "queue_background_job" && durableReportRequested
+  )
+    ? { ...policyDecision, agentType: "deep_research" }
+    : policyDecision;
 
   if (decision.mode === "answer_inline") {
     await observeAutonomyDecision(deps, {
