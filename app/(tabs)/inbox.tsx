@@ -14,6 +14,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Linking,
+  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -388,8 +389,14 @@ export default function InboxScreen() {
         await FileSystem.writeAsStringAsync(uri, arrayBufferToBase64(buffer), {
           encoding: FileSystem.EncodingType.Base64,
         });
-        const openUri = Platform.OS === 'android' ? await FileSystem.getContentUriAsync(uri) : uri;
-        await Linking.openURL(openUri);
+        if (Platform.OS === 'ios') {
+          // The native share sheet includes Save to Files, which exports the
+          // temporary cache entry into user-controlled persistent storage.
+          await Share.share({ url: uri, title: filename });
+        } else {
+          const openUri = await FileSystem.getContentUriAsync(uri);
+          await Linking.openURL(openUri);
+        }
       }
     } catch (error) {
       Alert.alert('Download failed', error instanceof Error ? error.message : 'Could not download this file.');

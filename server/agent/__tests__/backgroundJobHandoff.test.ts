@@ -31,6 +31,8 @@ assert.equal(requestsReportFile("Convert it into a PDF"), true);
 assert.equal(requestsReportFile("Give me the report, but not as a PDF"), false);
 assert.equal(requestsReportFile("Give me the report without a PDF"), false);
 assert.equal(requestsReportFile("Prepare a PDF report on sunflower seeds"), true);
+assert.equal(requestsReportFile("Write a report in PDF"), true);
+assert.equal(requestsReportFile("Write the report to a PDF"), true);
 assert.equal(requestsReportFile("Create a DOCX report on sunflower seeds"), false);
 assert.equal(requestsReportFile("Create a Word document with the report"), false);
 assert.equal(requestsReportFile("Research competitors and export the results as a CSV file"), false);
@@ -235,5 +237,7 @@ assert.match(inboxSource, /recent-file-download-/);
 assert.match(inboxSource, /recent-file-save-to-drive-/);
 assert.match(inboxSource, /recent-file-drive-link-/);
 assert.match(inboxSource, /renderRecentFiles\(\)/);
+assert.match(inboxSource, /Platform\.OS === 'ios'/);
+assert.match(inboxSource, /Share\.share\(\{ url: uri, title: filename \}\)/);
 
 console.log("All background job handoff assertions passed.");
