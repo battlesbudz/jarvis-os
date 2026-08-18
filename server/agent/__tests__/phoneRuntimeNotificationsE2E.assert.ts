@@ -23,6 +23,7 @@ async function main() {
     hasUnsupportedPhoneDeviceControlRequest,
     isContextualPhoneRuntimeCoveredRequest,
     isPhoneRuntimeCoveredRequest,
+    unqualifiedPhoneAppTarget,
   } = await import("../phoneRuntimeRouting");
   const { resolveAndroidNotificationFollowUp } = await import("../androidNotificationFollowups");
   const {
@@ -520,6 +521,9 @@ async function main() {
     deterministicPhoneRuntimeToolCallFromRequest("I want to open a bank account", phoneTools, connectedPhoneRuntime),
     null,
   );
+  assert.equal(unqualifiedPhoneAppTarget("Open Obsidian, check the weather"), "Obsidian");
+  assert.equal(unqualifiedPhoneAppTarget("Open Obsidian and check the weather"), "Obsidian");
+  assert.equal(unqualifiedPhoneAppTarget("Open Obsidian and Logseq"), null);
   assert.equal(isPhoneRuntimeCoveredRequest("Play jazz on YouTube"), true);
   assert.equal(
     deterministicPhoneRuntimeToolCallFromRequest("Play jazz on YouTube", phoneTools, connectedPhoneRuntime),

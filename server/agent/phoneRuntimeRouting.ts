@@ -186,8 +186,16 @@ function extractExplicitPhoneAppTarget(
 }
 
 export function unqualifiedPhoneAppTarget(text: string): string | null {
-  return extractExplicitPhoneAppTarget(text) ? null :
-    extractExplicitPhoneAppTarget(text, { allowUnqualifiedGeneric: true });
+  const segments = phoneOpenClauses(text).flatMap((clause) => {
+    const parts = clause.split(new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i"));
+    return parts.length > 1 && parts.slice(1).some(hasRequestedAction) ? parts : [clause];
+  });
+  const targets = segments
+    .map((segment) => extractExplicitPhoneAppTarget(segment) ? null :
+      extractExplicitPhoneAppTarget(segment, { allowUnqualifiedGeneric: true }))
+    .filter((target): target is string => Boolean(target));
+  const uniqueTargets = [...new Set(targets.map((target) => target.toLowerCase()))];
+  return uniqueTargets.length === 1 ? targets[0] : null;
 }
 
 function hasAdditionalPhoneAction(text: string): boolean {

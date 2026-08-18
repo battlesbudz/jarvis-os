@@ -36,6 +36,12 @@ class JarvisAccessibilityService : AccessibilityService() {
         @Volatile var trainingModeActive: Boolean = false
         /** Human-readable label for the element being trained (used as fallback name). */
         @Volatile var trainingLabel: String = ""
+        @Volatile private var lastForegroundActivity: ForegroundActivityObservation? = null
+
+        private data class ForegroundActivityObservation(
+            val activityName: String,
+            val observedAtUptimeMs: Long,
+        )
     }
 
     override fun onServiceConnected() {
@@ -45,6 +51,14 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            event.className?.toString()?.takeIf { it.isNotBlank() }?.let { activityName ->
+                lastForegroundActivity = ForegroundActivityObservation(
+                    activityName = activityName,
+                    observedAtUptimeMs = event.eventTime.takeIf { it > 0L } ?: SystemClock.uptimeMillis(),
+                )
+            }
+        }
         // Intercept user taps when training mode is active
         if (trainingModeActive && event != null &&
             event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
@@ -152,11 +166,21 @@ class JarvisAccessibilityService : AccessibilityService() {
             Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or
             Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
         )
-        val dispatched = postAndWaitForDispatch { startActivity(intent) }
+        lastForegroundActivity = null
+        var launchAttemptStartedAtUptimeMs = SystemClock.uptimeMillis()
+        val dispatched = postAndWaitForDispatch {
+            launchAttemptStartedAtUptimeMs = SystemClock.uptimeMillis()
+            startActivity(intent)
+        }
         if (!dispatched) return false
         // Verify the target package actually came to foreground.
         // Samsung Galaxy Fold devices have longer animation transitions — use a generous timeout.
-        return waitForForeground(packageName, verificationActivity, timeoutMs = 6000)
+        return waitForForeground(
+            packageName,
+            verificationActivity,
+            timeoutMs = 6000,
+            launchAttemptStartedAtUptimeMs = launchAttemptStartedAtUptimeMs,
+        )
     }
 
     fun browseUrl(url: String): Boolean {
@@ -195,14 +219,21 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     // Poll rootInActiveWindow.packageName until it matches targetPackage or timeout.
     // Returns false (not launched) if the package never comes to foreground.
-    private fun waitForForeground(targetPackage: String, targetActivity: String? = null, timeoutMs: Long): Boolean {
+    private fun waitForForeground(
+        targetPackage: String,
+        targetActivity: String? = null,
+        timeoutMs: Long,
+        launchAttemptStartedAtUptimeMs: Long = 0L,
+    ): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             val root = rootInActiveWindow
             val matched = if (targetActivity == null) {
                 root?.packageName?.toString() == targetPackage
             } else {
-                root?.className?.toString() == targetActivity
+                lastForegroundActivity
+                    ?.takeIf { it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs }
+                    ?.activityName == targetActivity
             }
             if (matched) return true
             Thread.sleep(200)
