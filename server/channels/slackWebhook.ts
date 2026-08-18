@@ -107,7 +107,8 @@ export function registerSlackWebhook(app: Express): void {
       if (!botToken) return;
 
       try {
-        const slackDestination = `${String(ev.channel || "")}|${String(ev.thread_ts || "")}`;
+        const slackThreadTs = String(ev.thread_ts || (ev.type === "app_mention" ? ev.ts : ""));
+        const slackDestination = `${String(ev.channel || "")}|${slackThreadTs}`;
         const slackSessionChannel = `Slack:${teamId}:${slackDestination}`;
         const storedSessionId = await getSession(userId, slackSessionChannel);
         const { reply, sdkSessionId } = await runCoachAgent({
@@ -121,7 +122,7 @@ export function registerSlackWebhook(app: Express): void {
           setSession(userId, slackSessionChannel, sdkSessionId);
         }
         if (reply && reply.trim()) {
-          await postSlackMessage(botToken, ev.channel, reply, ev.thread_ts);
+          await postSlackMessage(botToken, ev.channel, reply, slackThreadTs || undefined);
         }
       } catch (err) {
         console.error("[slack] coach error:", err);

@@ -271,6 +271,7 @@ assert.match(reviewRoutesSource, /delete\(schema\.deliverableArtifacts\)/);
 assert.match(reviewRoutesSource, /hasDownloadableArtifact: false/);
 assert.match(reviewRoutesSource, /patch\.title !== existing\.title/);
 assert.match(reviewRoutesSource, /patch\.body !== existing\.body/);
+assert.match(reviewRoutesSource, /existing\.driveLink[\s\S]*?schema\.deliverables\.driveLink/);
 assert.match(reviewRoutesSource, /db\.transaction\(async \(tx\)[\s\S]*?\.for\("update"\)[\s\S]*?submitAgentJob/);
 assert.match(reviewRoutesSource, /submitAgentJob\([\s\S]*?\}, tx, \{ skipDuplicateCheck: true \}\)/);
 assert.match(reviewRoutesSource, /skipDuplicateCheck: true/);
@@ -288,6 +289,8 @@ const slackWebhookSource = readFileSync(
 );
 assert.match(slackWebhookSource, /originChannelId: slackDestination/);
 assert.match(slackWebhookSource, /ev\.thread_ts/);
+assert.match(slackWebhookSource, /ev\.type === "app_mention" \? ev\.ts/);
+assert.match(slackWebhookSource, /slackThreadTs \|\| undefined/);
 assert.match(slackWebhookSource, /Slack:\$\{teamId\}:\$\{slackDestination\}/);
 assert.match(slackWebhookSource, /getSession\(userId, slackSessionChannel\)/);
 assert.match(slackWebhookSource, /setSession\(userId, slackSessionChannel/);
@@ -326,6 +329,9 @@ const discordSlashSource = readFileSync(
   "utf8",
 );
 assert.match(discordSlashSource, /const deliveryChannelId = isPublic \? originChannelId : undefined/);
+assert.match(discordSlashSource, /Discord:slash:\$\{isPublic \? "public" : "private"\}/);
+assert.match(discordSlashSource, /getCoachSession\(userId, sessionChannel\)/);
+assert.match(discordSlashSource, /setCoachSession\(userId, sessionChannel/);
 
 const deliverableRoutesSource = readFileSync(
   fileURLToPath(new URL("../../routes/deliverableRoutes.ts", import.meta.url)),

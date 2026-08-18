@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { userDocuments } from "@shared/schema";
 import type { db as dbType } from "../db";
@@ -419,6 +419,9 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
             eq(schema.deliverables.status, "pending_approval"),
             eq(schema.deliverables.title, existing.title),
             eq(schema.deliverables.body, existing.body),
+            existing.driveLink
+              ? eq(schema.deliverables.driveLink, existing.driveLink)
+              : isNull(schema.deliverables.driveLink),
           ))
           .returning();
         if (!row) return null;

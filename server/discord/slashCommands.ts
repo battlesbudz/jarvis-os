@@ -14,10 +14,10 @@ import { eq, and, desc } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { channelLinks } from "@shared/schema";
 import { runCoachAgent } from "../channels/coachAgent";
+import { getSession as getCoachSession, setSession as setCoachSession } from "../channels/sessionStore";
 import { routeSlashCommand, getHelpText, SLASH_COMMANDS } from "../channels/slashCommandRouter";
 import { cancelAllForUser } from "../agent/jobClient";
 import { RESOURCE_PAUSED_STATUS } from "../agent/voiceRuntimeResourceCore";
-import { tryHandleDiscordChatWithPrime } from "./primeRuntimeChat";
 
 import { generateSlashCommandPairingCode } from "./manager";
 
@@ -528,35 +528,19 @@ async function handleChat(
   const guildId = interaction.guild_id as string | undefined;
   const originChannelId = interaction.channel_id as string | undefined;
   const deliveryChannelId = isPublic ? originChannelId : undefined;
+  const sessionChannel = `Discord:slash:${isPublic ? "public" : "private"}:${originChannelId || "dm"}`;
 
   try {
-    const primeReply = await tryHandleDiscordChatWithPrime({
-      userId,
-      message,
-      originChannelId: deliveryChannelId,
-      guildId,
-    });
-    if (primeReply) {
-      await editInteractionReply(
-        appId,
-        interaction.token,
-        primeReply,
-        isPublic ? undefined : EPHEMERAL,
-      );
-      return;
-    }
-  } catch (err) {
-    console.warn("[SlashCommands] PRIME runtime chat path failed; falling back to coach agent:", err);
-  }
-
-  try {
+    const storedSessionId = await getCoachSession(userId, sessionChannel);
     const result = await runCoachAgent({
       userId,
       userText: message,
       channelName: "Discord",
       originChannelId: deliveryChannelId,
       discordGuildId: guildId,
+      sdkSessionId: storedSessionId,
     });
+    if (result.sdkSessionId) setCoachSession(userId, sessionChannel, result.sdkSessionId);
     await editInteractionReply(
       appId,
       interaction.token,
