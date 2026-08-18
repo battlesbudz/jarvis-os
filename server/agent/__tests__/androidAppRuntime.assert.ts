@@ -8,6 +8,13 @@ async function main() {
   const runtimeSource = fs.readFileSync(path.resolve("server/agent/tools/androidAppRuntime.ts"), "utf8");
   const daemonToolSource = fs.readFileSync(path.resolve("server/agent/tools/daemon.ts"), "utf8");
   const daemonBridgeSource = fs.readFileSync(path.resolve("server/daemon/bridge.ts"), "utf8");
+  for (const opHandlerPath of [
+    "android/app/src/main/java/com/gameplan/daemon/OpHandler.kt",
+    "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OpHandler.kt",
+    "android-daemon/app/src/main/java/com/jarvis/daemon/OpHandler.kt",
+  ]) {
+    assert.doesNotMatch(fs.readFileSync(path.resolve(opHandlerPath), "utf8"), /"com\.ubercab"\s+to\s+listOf\("com\.ubercab\.driver"\)/);
+  }
   assert.match(runtimeSource, /checkAndIncrementScreenshotBudget/);
   assert.match(runtimeSource, /runAndroidCaptureScreen\(args,\s*ctx\.userId,\s*ctx\)/);
   assert.doesNotMatch(runtimeSource, /normalizedQuery\.includes\(normalizedCandidate\)/);

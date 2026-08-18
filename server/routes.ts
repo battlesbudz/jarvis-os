@@ -1834,7 +1834,10 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         ...(phoneRuntimeCoveredRequest ? phoneRuntimeRequiredToolNames : []),
         ...(keepDaemonActionFallback && !toolAwareRoute.shouldPreferTool ? ["daemon_action"] : []),
       ]);
-      const effectiveToolAwareRoute = priorityRuntimeToolNames.length > 0
+      const mixedPhoneRuntimeActionRequest = phoneRuntimeActionRequest && !phoneRuntimeCoveredRequest;
+      const effectiveToolAwareRoute = mixedPhoneRuntimeActionRequest
+        ? { ...toolAwareRoute, priorityToolNames: [] }
+        : priorityRuntimeToolNames.length > 0
         ? {
             ...toolAwareRoute,
             priorityToolNames: uniqueToolNames([

@@ -244,7 +244,6 @@ object OpHandler {
         "com.discord"                 to listOf("com.discord.development"),
         "com.linkedin.android"        to listOf("com.linkedin.android.lite"),
         "com.amazon.mShop.android.shopping" to listOf("com.amazon.windowshop"),
-        "com.ubercab"                 to listOf("com.ubercab.driver"),
         "com.pinterest"               to listOf("com.pinterest.twa"),
     )
 

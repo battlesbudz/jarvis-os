@@ -23,6 +23,7 @@ assert.match(routingSource, /return false;\s*\}\);/);
 assert.match(routesSource, /keepDaemonActionFallback[\s\S]*focusedToolNames\.add\(["']daemon_action["']\)/);
 assert.match(routesSource, /routeRequiredToolNames[\s\S]*keepDaemonActionFallback[\s\S]*\["daemon_action"\]/);
 assert.match(routesSource, /phoneRuntimeCoveredRequest \? phoneRuntimeRequiredToolNames : \[\]/);
+assert.match(routesSource, /mixedPhoneRuntimeActionRequest[\s\S]*priorityToolNames: \[\]/);
 assert.match(routesSource, /priorityToolNames:\s*uniqueToolNames\(\[[\s\S]*priorityRuntimeToolNames/);
 assert.doesNotMatch(routesSource, /priorityToolNames:\s*uniqueToolNames\(\[[\s\S]{0,200}routeRequiredToolNames/);
 assert.match(routesSource, /const youtubeServerResearchRequest = androidActive && isYoutubeServerResearchRequest\(lastUserContent\)/);

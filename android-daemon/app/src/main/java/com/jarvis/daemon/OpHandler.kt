@@ -170,7 +170,6 @@ object OpHandler {
         "com.oneplus.camera"          to listOf("com.android.camera2", "com.sec.android.app.camera", "com.google.android.GoogleCamera", "com.motorola.camera3"),
         "com.motorola.camera3"        to listOf("com.android.camera2", "com.sec.android.app.camera", "com.google.android.GoogleCamera", "com.oneplus.camera"),
         "com.amazon.mShop.android.shopping" to listOf("com.amazon.windowshop"),
-        "com.ubercab"                 to listOf("com.ubercab.driver"),
         "com.pinterest"               to listOf("com.pinterest.twa"),
     )
 
