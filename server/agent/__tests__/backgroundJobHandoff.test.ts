@@ -157,6 +157,8 @@ assert.match(jobQueueSource, /deliverable\.body !== mergedBody/);
 assert.match(jobQueueSource, /deliverable\.title !== mergedTitle/);
 assert.match(jobQueueSource, /deliverable\.status !== "pending_approval"/);
 assert.match(jobQueueSource, /activeSiblingDeliverables/);
+assert.match(jobQueueSource, /const siblingDeliverables = await tx[\\s\\S]*?\\.for\\("update"\\)/);
+assert.doesNotMatch(jobQueueSource, /const siblingDeliverables = await db/);
 assert.match(jobQueueSource, /batchOriginChannel === "slack"/);
 assert.match(jobQueueSource, /originNotificationDestination = originDiscordChannelId/);
 assert.doesNotMatch(jobQueueSource, /Jarvis inbox or Google Drive/);
