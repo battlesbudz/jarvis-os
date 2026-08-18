@@ -291,6 +291,8 @@ assert.match(slackWebhookSource, /originChannelId: slackDestination/);
 assert.match(slackWebhookSource, /ev\.thread_ts/);
 assert.match(slackWebhookSource, /ev\.type === "app_mention" \? ev\.ts/);
 assert.match(slackWebhookSource, /slackThreadTs \|\| undefined/);
+assert.match(slackWebhookSource, /rootThreadSessionChannel[\s\S]*?ev\.ts/);
+assert.match(slackWebhookSource, /setSession\(userId, rootThreadSessionChannel, sdkSessionId\)/);
 assert.match(slackWebhookSource, /Slack:\$\{teamId\}:\$\{slackDestination\}/);
 assert.match(slackWebhookSource, /getSession\(userId, slackSessionChannel\)/);
 assert.match(slackWebhookSource, /setSession\(userId, slackSessionChannel/);
@@ -332,6 +334,8 @@ assert.match(discordSlashSource, /const deliveryChannelId = isPublic \? originCh
 assert.match(discordSlashSource, /Discord:slash:\$\{isPublic \? "public" : "private"\}/);
 assert.match(discordSlashSource, /getCoachSession\(userId, sessionChannel\)/);
 assert.match(discordSlashSource, /setCoachSession\(userId, sessionChannel/);
+assert.match(discordSlashSource, /tryHandleDiscordChatWithPrime/);
+assert.match(discordSlashSource, /reply: primeReply,[\s\S]*?persistGlobalHistory: false/);
 
 const deliverableRoutesSource = readFileSync(
   fileURLToPath(new URL("../../routes/deliverableRoutes.ts", import.meta.url)),

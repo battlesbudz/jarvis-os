@@ -110,6 +110,9 @@ export function registerSlackWebhook(app: Express): void {
         const slackThreadTs = String(ev.thread_ts || (ev.type === "app_mention" ? ev.ts : ""));
         const slackDestination = `${String(ev.channel || "")}|${slackThreadTs}`;
         const slackSessionChannel = `Slack:${teamId}:${slackDestination}`;
+        const rootThreadSessionChannel = !ev.thread_ts && ev.ts
+          ? `Slack:${teamId}:${String(ev.channel || "")}|${String(ev.ts)}`
+          : null;
         const storedSessionId = await getSession(userId, slackSessionChannel);
         const { reply, sdkSessionId } = await runCoachAgent({
           userId,
@@ -120,6 +123,9 @@ export function registerSlackWebhook(app: Express): void {
         });
         if (sdkSessionId) {
           setSession(userId, slackSessionChannel, sdkSessionId);
+          if (rootThreadSessionChannel && rootThreadSessionChannel !== slackSessionChannel) {
+            setSession(userId, rootThreadSessionChannel, sdkSessionId);
+          }
         }
         if (reply && reply.trim()) {
           await postSlackMessage(botToken, ev.channel, reply, slackThreadTs || undefined);

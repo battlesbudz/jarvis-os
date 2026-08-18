@@ -419,7 +419,7 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
             eq(schema.deliverables.status, "pending_approval"),
             eq(schema.deliverables.title, existing.title),
             eq(schema.deliverables.body, existing.body),
-            existing.driveLink
+            existing.driveLink !== null
               ? eq(schema.deliverables.driveLink, existing.driveLink)
               : isNull(schema.deliverables.driveLink),
           ))
