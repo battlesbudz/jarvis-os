@@ -436,67 +436,73 @@ async function flushResearchBatch(key: string): Promise<void> {
 
   if (allSiblingJobIds.length > 0) {
     try {
-      const siblingDeliverables = await db
-        .select()
-        .from(schema.deliverables)
-        .where(
-          and(
-            eq(schema.deliverables.userId, userId),
-            sql`${schema.deliverables.jobId} = ANY(${allSiblingJobIds})`,
-          ),
-        )
-        .orderBy(asc(schema.deliverables.createdAt));
-      const activeSiblingDeliverables = siblingDeliverables.filter(
-        (deliverable) => deliverable.status === "pending_approval",
-      );
-      const activeJobIds = new Set(activeSiblingDeliverables.map((deliverable) => deliverable.jobId).filter(Boolean));
-      jobs.splice(0, jobs.length, ...jobs.filter((batchJob) => !batchJob.jobId || activeJobIds.has(batchJob.jobId)));
-      if (jobs.length === 0) return;
+      await db.transaction(async (tx) => {
+        // Lock every candidate through consolidation so review actions cannot
+        // edit, discard, or revise a sibling between this read and its update
+        // or deletion.
+        const siblingDeliverables = await tx
+          .select()
+          .from(schema.deliverables)
+          .where(
+            and(
+              eq(schema.deliverables.userId, userId),
+              sql`${schema.deliverables.jobId} = ANY(${allSiblingJobIds})`,
+            ),
+          )
+          .orderBy(asc(schema.deliverables.createdAt))
+          .for("update");
+        const activeSiblingDeliverables = siblingDeliverables.filter(
+          (deliverable) => deliverable.status === "pending_approval",
+        );
+        const activeJobIds = new Set(activeSiblingDeliverables.map((deliverable) => deliverable.jobId).filter(Boolean));
+        jobs.splice(0, jobs.length, ...jobs.filter((batchJob) => !batchJob.jobId || activeJobIds.has(batchJob.jobId)));
+        if (jobs.length === 0) return;
 
-      if (activeSiblingDeliverables.length > 1) {
-        // Merge all bodies into one consolidated report
-        const sections = activeSiblingDeliverables.map((d, i) => {
-          const heading = d.title && d.title !== activeSiblingDeliverables[0].title
-            ? `\n\n---\n\n## ${d.title}\n\n`
-            : i === 0 ? "" : "\n\n---\n\n";
-          return `${heading}${d.body || ""}`;
-        });
-        mergedBody = sections.join("").trim();
-        mergedTitle = `Research: ${activeSiblingDeliverables[0].title}`;
-        // Update the first deliverable with merged content
-        const firstId = activeSiblingDeliverables[0].id;
-        await db
-          .update(schema.deliverables)
-          .set({ title: mergedTitle, body: mergedBody, summary: `Consolidated from ${activeSiblingDeliverables.length} research threads.` })
-          .where(eq(schema.deliverables.id, firstId));
-        mergedDeliverableId = firstId;
-        // Point all sibling jobs' result.deliverableId to the merged deliverable
-        // so job-level views don't end up with stale / deleted IDs.
-        for (const d of activeSiblingDeliverables.slice(1)) {
-          try {
-            const [sibJob] = await db
-              .select()
-              .from(schema.agentJobs)
-              .where(eq(schema.agentJobs.id, d.jobId ?? ""))
-              .limit(1);
-            if (sibJob) {
-              const currentResult = (sibJob.result as Record<string, unknown>) ?? {};
-              await db
-                .update(schema.agentJobs)
-                .set({ result: { ...currentResult, deliverableId: firstId, mergedInto: firstId } })
-                .where(eq(schema.agentJobs.id, sibJob.id));
+        if (activeSiblingDeliverables.length > 1) {
+          // Merge all bodies into one consolidated report
+          const sections = activeSiblingDeliverables.map((d, i) => {
+            const heading = d.title && d.title !== activeSiblingDeliverables[0].title
+              ? `\n\n---\n\n## ${d.title}\n\n`
+              : i === 0 ? "" : "\n\n---\n\n";
+            return `${heading}${d.body || ""}`;
+          });
+          mergedBody = sections.join("").trim();
+          mergedTitle = `Research: ${activeSiblingDeliverables[0].title}`;
+          // Update the first deliverable with merged content
+          const firstId = activeSiblingDeliverables[0].id;
+          await tx
+            .update(schema.deliverables)
+            .set({ title: mergedTitle, body: mergedBody, summary: `Consolidated from ${activeSiblingDeliverables.length} research threads.` })
+            .where(eq(schema.deliverables.id, firstId));
+          mergedDeliverableId = firstId;
+          // Point all sibling jobs' result.deliverableId to the merged deliverable
+          // so job-level views don't end up with stale / deleted IDs.
+          for (const d of activeSiblingDeliverables.slice(1)) {
+            try {
+              const [sibJob] = await tx
+                .select()
+                .from(schema.agentJobs)
+                .where(eq(schema.agentJobs.id, d.jobId ?? ""))
+                .limit(1);
+              if (sibJob) {
+                const currentResult = (sibJob.result as Record<string, unknown>) ?? {};
+                await tx
+                  .update(schema.agentJobs)
+                  .set({ result: { ...currentResult, deliverableId: firstId, mergedInto: firstId } })
+                  .where(eq(schema.agentJobs.id, sibJob.id));
+              }
+            } catch {
+              // Non-fatal — stale pointer is cosmetic
             }
-          } catch {
-            // Non-fatal — stale pointer is cosmetic
+            await tx.delete(schema.deliverables).where(eq(schema.deliverables.id, d.id));
           }
-          await db.delete(schema.deliverables).where(eq(schema.deliverables.id, d.id));
+          console.log(`[JobQueue] consolidated ${activeSiblingDeliverables.length} research deliverables → ${firstId}`);
+        } else if (activeSiblingDeliverables.length === 1) {
+          mergedDeliverableId = activeSiblingDeliverables[0].id;
+          mergedBody = activeSiblingDeliverables[0].body || "";
+          mergedTitle = activeSiblingDeliverables[0].title || mergedTitle;
         }
-        console.log(`[JobQueue] consolidated ${activeSiblingDeliverables.length} research deliverables → ${firstId}`);
-      } else if (activeSiblingDeliverables.length === 1) {
-        mergedDeliverableId = activeSiblingDeliverables[0].id;
-        mergedBody = activeSiblingDeliverables[0].body || "";
-        mergedTitle = activeSiblingDeliverables[0].title || mergedTitle;
-      }
+      });
     } catch (mergeErr) {
       console.error("[JobQueue] deliverable merge failed (non-fatal):", mergeErr);
     }
