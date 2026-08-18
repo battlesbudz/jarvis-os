@@ -143,7 +143,7 @@ interface ExecutionAuthority {
   allowedActions: string[];
   allowedTargets: string[];
   riskTier: "low" | "medium" | "high";
-  maxAttempts: number;
+  maxAttemptsPerStep: number; // parent ceiling; every child maxAttempts must be <= this value
   idempotencyLineageId: string;
   workflowPlanRevision: number;
   workflowPlanStatus: "planning" | "closed";
@@ -164,19 +164,37 @@ interface AuthorityExecutionStep {
   idempotencyKey: string;
   maxAttempts: number;
   attemptCount: number; // durable number of attempts already started
+  currentAttemptId?: string;
   status: "pending" | "consuming" | "consumed" | "retryable_failed" | "failed" | "cancelled" | "reconciliation_required";
   startedAt?: string;
   consumedAt?: string;
+}
+
+interface AuthorityExecutionAttempt {
+  id: string;
+  authorityExecutionStepId: string;
+  attemptNumber: number;
+  leaseOwnerId: string;
+  leaseGeneration: number; // monotonically increasing fencing token
+  leaseExpiresAt: string;
+  boundaryState: "not_started" | "started" | "confirmed_no_effect" | "confirmed_effect" | "uncertain";
+  status: "leased" | "completed" | "abandoned" | "reconciliation_required";
+  boundaryStartedAt?: string;
+  finishedAt?: string;
 }
 ```
 
 The persisted representation may use different names, but it must preserve these semantics. Direct-command authority requires `sourceType: "direct_command"`, a real `sourceTurnId`, and a stable trusted `sourceActionKey`. Standing execution requires `sourceType: "standing_grant"`, no fabricated source turn, and the stable grant and logical-trigger lineage IDs, immutable grant version, category, effective limit snapshot, authenticated consent source turn, stable trusted trigger-occurrence key, and any required usage reservation. Every authority snapshots the current global and per-user execution epochs. The execution-authority `id` is a separately generated run ID. Exactly one provenance variant is valid.
 
-The parent authority is the scope, provenance, cancellation, workflow-plan, and idempotency-lineage envelope; it is not consumed once as a substitute for its external steps. Each external or irreversible step beneath it has a durable child execution record with a stable step key, resolved action and target fingerprint, its own idempotency key, attempts, consumption state, result/recovery reference, and audit timestamps. A single-side-effect authority has exactly one manifested step.
+The parent authority is the scope, provenance, cancellation, workflow-plan, and idempotency-lineage envelope; it is not consumed once as a substitute for its external steps. `maxAttemptsPerStep` is the authority-wide per-child ceiling, not an aggregate workflow retry pool. Each external or irreversible step beneath it has a durable child execution record with a stable step key, resolved action and target fingerprint, its own idempotency key, attempts, consumption state, result/recovery reference, and audit timestamps. Each child may choose a stricter `maxAttempts`, but manifest closure and every attempt-start transaction must reject `child.maxAttempts > parent.maxAttemptsPerStep`. A single-side-effect authority has exactly one manifested step.
 
 Before any external/irreversible step can enter `consuming`, one transaction must persist every required or selected conditional external step, the ordered/dependency-aware step manifest, a manifest hash and revision, and an immutable `closed` marker on the parent. Read-only planning may occur while the plan is `planning`, and discovered steps may be atomically registered then, but no external step can be consumed and the parent cannot complete until closure. Closing the plan verifies every manifest key has exactly one child record unique on `(authorityId, stepKey)`; retry/reconstruction returns those same records. A closed plan cannot be reopened or extended. If execution later discovers a materially new external action or target, it must stop and obtain newly classified authority rather than append to the closed parent.
 
-Final consumption locks the selected child step and rechecks the closed manifest membership/hash/revision, parent status, epochs, scope, dependency outcomes, and applicable grant head; consuming one step neither consumes nor authorizes another. `attemptCount` starts at zero and is atomically incremented in the same transaction that moves a child from `pending` or `retryable_failed` to `consuming`, before external work begins. Retry and reconstruction reuse the persisted count and must not start an attempt when `attemptCount >= maxAttempts`. A recoverable attempt failure becomes `retryable_failed` and may return to `pending` only while attempts remain and policy permits. A definitive failure or exhausted attempt budget atomically marks that step `failed`, transitions the parent to terminal `failed` with a sanitized reason/recovery reference, and marks every unstarted manifested step `cancelled` with `upstream_failure`; no new side effect may start. Any step already past an uncertain boundary becomes or remains `reconciliation_required`, and the failed parent records `reconciliationStatus: "required"` until audit-only reconciliation resolves it. Reconciliation may record the external outcome and compensate where supported, but it cannot reactivate the parent or start a remaining step.
+Final consumption locks the selected child step and rechecks the closed manifest membership/hash/revision, parent status, epochs, scope, dependency outcomes, applicable grant head, and `child.maxAttempts <= parent.maxAttemptsPerStep`; consuming one step neither consumes nor authorizes another. `attemptCount` starts at zero. One attempt-start transaction verifies both limits, increments the child count, creates an immutable attempt row with the same `attemptNumber`, a fresh monotonically increasing lease generation/fencing token, owner, expiry, and `boundaryState: "not_started"`, sets `currentAttemptId`, and moves the child from `pending` or `retryable_failed` to `consuming`. Retry and reconstruction reuse the persisted count and must not start when `attemptCount >= child.maxAttempts` or the child limit exceeds the parent ceiling.
+
+The worker may renew the lease only while it still owns the current generation and the attempt is `not_started`. Immediately before an external/irreversible call, it must use compare-and-set to verify the unexpired current lease and move the attempt to `started`; side-effect adapters accept only that current fencing token and the step's stable idempotency key. A stale or superseded worker therefore cannot cross the boundary. For a provider that cannot enforce fencing or idempotency atomically, the server persists `started` before the call and treats loss of the response as uncertain rather than replayable.
+
+An expired `consuming` lease is never replayed ad hoc. A recovery transaction fences the old generation and then chooses from durable evidence: when the attempt is still `not_started`, it records `confirmed_no_effect`/`abandoned` and moves the child to `retryable_failed` if attempts remain, otherwise it fails the step and parent; when the boundary is `started` or proof is incomplete, it moves the child to `reconciliation_required`, sets the parent reconciliation flag, and blocks dependent steps. Reconciliation queries the provider by the stable idempotency key where supported and records either `confirmed_effect`/`consumed` or `confirmed_no_effect`/`retryable_failed`; an irreconcilable or exhausted attempt fails the parent. Reconciliation cannot revive a terminal parent. A normal recoverable attempt failure follows the same evidence rules. A definitive failure or exhausted attempt budget atomically marks that step `failed`, transitions the parent to terminal `failed` with a sanitized reason/recovery reference, and marks every unstarted manifested step `cancelled` with `upstream_failure`; no new side effect may start. Any step already past an uncertain boundary becomes or remains `reconciliation_required`, and the failed parent records `reconciliationStatus: "required"` until audit-only reconciliation resolves it.
 
 Parent completion is derived only when the manifest is closed and every manifested required/selected external step is `consumed`, with no step failed, cancelled, consuming, or awaiting reconciliation. Parent failure is derived from any definitive manifested-step failure and is a separate terminal result from completion. Parent cancellation/disablement is likewise distinct from completion: it marks all unstarted manifested steps cancelled while preserving completed-step audit history.
 
@@ -241,7 +259,8 @@ A terminal refusal to execute the current formulation. Blocks apply when a reque
 - A change of recipient, account, repository, deployment target, deletion scope, or other material target requires a new classification from the current conversation.
 - Every purchase or financial transaction requires fresh direct authority from a current explicit authenticated user command for that exact transaction; standing, scheduled, proactive, or inherited authority cannot cover it.
 - Authority expires at the configured deadline, completes only from a successful closed manifest, fails terminally when a manifested step definitively fails/exhausts attempts, or is cancelled by the user, kill switch, or grant lifecycle invalidation; terminal parents never start another step and standing-parent terminal transitions atomically settle every allocation.
-- A retry may reuse the same idempotency lineage but must not repeat a successfully completed side effect.
+- The parent's `maxAttemptsPerStep` is a per-child ceiling. Manifest closure and attempt start reject a child above it; every attempt transaction enforces the child count and parent ceiling together.
+- A retry may reuse the same idempotency lineage but must not repeat a successfully completed side effect. Expired `consuming` leases are fenced and recovered from durable boundary evidence: proven pre-effect attempts may retry, while started or uncertain attempts quarantine for reconciliation.
 
 ### 6.3 Clarification requirements
 
@@ -339,7 +358,11 @@ Do not reuse `pending_approval` to mean “completed but not reviewed.”
 
 ### 9.1 Channel parity
 
-Equivalent authenticated commands must receive the same authority decision across app chat, app voice, Telegram, Discord, and supported daemon surfaces. Channel adapters may change presentation, never execution policy.
+Equivalent authenticated commands must receive the same authority decision across app chat, app voice, webchat, Telegram, Discord, Slack, WhatsApp, and supported daemon surfaces. Channel adapters may change presentation, never execution policy.
+
+Every enabled ingress adapter must pass a stable, server-trusted source identity into the central authority resolver. Slack uses the verified Events API `event_id` for events and the provider command/trigger identity for slash commands; WhatsApp uses Twilio's signature-verified `MessageSid`; Telegram and Discord use their verified provider update/message/interaction IDs; app chat, app voice, and authenticated webchat use a server-persisted turn/submission ID bound to the authenticated user/session. That identity is normalized with the authenticated user and action kind into `sourceActionKey` and remains stable across acknowledgement retries, webhook redelivery, reconnect, and process restart. Request timestamps, handler-generated UUIDs, SDK session IDs, and message text hashes are not acceptable substitutes.
+
+Trusted Execution remains disabled for an adapter until that adapter has both stable ingress identity and authenticated/linked-user binding. Public or invite webchat sessions are not direct-command authority merely because they target an owner's chat; they must be explicitly bound to an authenticated user authority model or remain outside Trusted Execution. An adapter without the required identity must use its existing disabled/legacy path and must not mint a new authority, silently retain a covered local approval rule, or enable its Trusted Execution flag.
 
 ### 9.2 Email and connected accounts
 
@@ -396,6 +419,8 @@ Equivalent authenticated commands must receive the same authority decision acros
 | TE-023 | Closed required-step manifest | Before the first external step consumes, one transaction persists every required/selected external step and closes an immutable hashed/revisioned manifest; parent completion requires every entry in that closed set to be consumed, and a later material step requires newly classified authority |
 | TE-024 | Terminal workflow failure | A retryable attempt failure remains bounded by attempts; a definitive/exhausted step atomically fails the parent, cancels all unstarted manifested steps, quarantines uncertain started steps for reconciliation, and can never reactivate or start remaining work |
 | TE-025 | Terminal reservation settlement | Every standing-parent transition to completed, failed, cancelled, expired, kill-switch-invalidated, or grant-revoked/replaced/expired/paused/limit-reduced atomically releases proven no-effect allocations, preserves committed effects, moves uncertain allocations to reconciliation-required with ownership/deadline, and leaves no plain reserved allocation orphaned |
+| TE-026 | Abandoned-attempt recovery | Every consuming attempt has a renewable pre-effect lease and monotonic fencing token; expiry fences the old worker, retries only with durable proof of no effect, and quarantines started or uncertain outcomes for reconciliation |
+| TE-027 | Parent retry ceiling | `maxAttemptsPerStep` is the authority-wide per-child ceiling; manifest closure and attempt start transactionally reject any child limit above it and enforce both limits on every attempt |
 
 ### 10.2 Background jobs and artifacts
 
@@ -418,6 +443,7 @@ Equivalent authenticated commands must receive the same authority decision acros
 | TE-203 | Device capability | Missing Android/OS permission is reported as setup, not approval |
 | TE-204 | Conversational clarification | Missing material details are requested in the originating conversation |
 | TE-205 | No channel-local gates | Voice, Android, email, and Agent SDK paths cannot independently create reconfirmation gates for covered commands |
+| TE-206 | Stable authenticated ingress | App chat/voice, authenticated webchat, Telegram, Discord, Slack, WhatsApp, and daemon adapters cannot enable Trusted Execution until verified provider/server event identity and linked authenticated ownership produce one stable source-action key across redelivery |
 
 ### 10.4 Recoverability and migration
 
@@ -446,7 +472,8 @@ PR 1 must decide whether to extend an existing runtime/audit table or add a focu
 - Transactional standing-grant usage reservations and authoritative lineage-wide counters/windows for action, frequency, rate, quantity, and other configured limits, including reservation lifecycle, reconciliation state, and cross-version carry-forward
 - Parent/child task and grant/occurrence/run audit lineage
 - A parent workflow-plan revision/status, immutable closure marker and manifest hash, plus the complete ordered/dependency-aware required/selected external-step set persisted before any step consumes
-- Durable child execution-step records unique by `(authorityId, stepKey)`, one for every closed-manifest entry, each with resolved action, target fingerprint, independent idempotency key, attempts, consumption/reconciliation state, result/recovery reference, and timestamps
+- Durable child execution-step records unique by `(authorityId, stepKey)`, one for every closed-manifest entry, each with resolved action, target fingerprint, independent idempotency key, child attempt limit bounded by the parent's `maxAttemptsPerStep`, durable attempt count/current attempt, consumption/reconciliation state, result/recovery reference, and timestamps
+- Immutable per-attempt rows with attempt number, lease owner/expiry, monotonic fencing generation, durable pre-effect/started/effect evidence, status, and timestamps; only the current unexpired generation may renew or cross the boundary
 - Allowed action and target scope
 - Risk and limit metadata
 - Parent idempotency lineage plus per-step idempotency and attempt tracking
@@ -470,6 +497,8 @@ PR 1 must decide whether to extend an existing runtime/audit table or add a focu
 - Expose cancel, status, activity, result, and recovery operations where supported.
 - During read-only planning, atomically register discovered external steps under an active `planning` parent. Before any external step consumes, atomically verify complete child coverage and close the ordered/dependency-aware manifest with its hash/revision; a closed plan cannot be reopened, and later material external work requires newly classified authority.
 - Use manifest membership plus uniqueness and versioning/compare-and-set semantics for each child step's consumption and side-effect completion; duplicate registration/consumption reconciles the original step. Parent completion requires a closed manifest with every required/selected external entry consumed and none failed, cancelled, consuming, or awaiting reconciliation.
+- At manifest closure and every attempt start, verify `child.maxAttempts <= parent.maxAttemptsPerStep`; in the same attempt-start transaction enforce the child's remaining count, increment it, create the leased/fenced attempt row, and select it as current.
+- Side-effect adapters require the current fencing generation and stable idempotency key. Lease renewal is allowed only for the current owner while `boundaryState` is `not_started`; boundary crossing compare-and-sets that state to `started` before the call. On lease expiry, atomically fence the old generation: durable proof of `not_started` may become `retryable_failed`, while `started` or incomplete evidence becomes `reconciliation_required` and blocks dependent work until provider/idempotency reconciliation resolves it.
 - When retry policy/attempts are exhausted or a step is definitively unrecoverable, one transaction marks the step and parent failed, stores sanitized failure/recovery references, cancels every unstarted manifested step as `upstream_failure`, and marks uncertain already-started steps for reconciliation. Reconciliation is audit/compensation-only and cannot revive the parent or resume remaining work.
 - The transaction for every standing-parent terminal transition—completion, failure, user cancellation, expiry, kill-switch invalidation, or grant revocation/replacement/expiry/pause/limit-reduction invalidation—also classifies every owned allocation: release proven no-effect, preserve committed, and move uncertain to `reconciliation_required` with owner/deadline/recovery metadata. It cannot leave plain `reserved` allowance behind.
 - Redact raw tool payloads, message bodies, filesystem paths, credentials, and device data from general diagnostics.
@@ -539,6 +568,8 @@ It must not become a new disguised approval queue.
 | Standing step outcome is uncertain | terminal parent → allocation reconciliation required | Allowance remains charged with owner/deadline across grant versions until outcome commits or safely releases |
 | Standing authority cancelled/expired/disabled/paused/limit-reduced before effect | terminal transition → no-effect allocations released | Same settlement transaction runs for every terminal cause; uncertain allocations quarantine rather than remain reserved |
 | Retry after network timeout | resume/reconcile | No duplicate email, post, job, artifact, or PR |
+| Worker crashes after leasing but before an external call | expire lease → fence old generation → confirmed no effect → bounded retry | Stale worker cannot cross the boundary; child and parent attempt ceilings remain enforced |
+| Worker disappears after external boundary starts | expire lease → reconciliation required | No blind replay; dependent steps wait while provider/idempotency evidence confirms effect or no effect |
 | App restart during job | reconstruct → running/completed | Same task ID and authoritative state |
 | Authenticated standing-grant creation | explicit user consent → immutable grant version | Real actor/source-turn/scope/limit/source-action consent provenance; redelivery returns the same version and agent proposals cannot self-authorize |
 | Crash during direct/consent record creation | retry transaction → one durable authority or grant version | Source claim and target/recovery record commit together; no orphan claim exists |
@@ -572,6 +603,8 @@ It must not become a new disguised approval queue.
 - Multi-step workflow tests proving commit, push, PR creation, review request, and deploy are all persisted in a hashed/revisioned closed manifest before the first external consumption, have independent durable step/idempotency state, and cannot cause premature parent completion
 - Planning/closure race and crash tests proving no external step consumes from an open/incomplete manifest, closure requires one child per manifest key, a closed plan cannot be extended/reopened, and a newly discovered material step requires new authority
 - Retryable-versus-definitive failure and attempt-exhaustion tests proving atomic parent failure, `upstream_failure` cancellation of every unstarted manifested step, preservation of completed-step history, quarantine of uncertain started steps, and no parent revival through reconciliation
+- Crash/lease tests before lease acquisition, after attempt commit, during renewal, immediately before boundary compare-and-set, and after boundary start proving monotonic fencing rejects stale workers, only proven no-effect attempts retry, uncertain outcomes quarantine, and restart cannot strand a child in `consuming`
+- Parent/child attempt-limit tests proving manifest closure and concurrent attempt starts reject `child.maxAttempts > parent.maxAttemptsPerStep`, enforce both limits transactionally, and cannot exceed the persisted child count after restart
 - Standing terminal-transition reservation tests for completion, definitive failure, user cancellation, expiry, kill-switch invalidation, and grant revocation/replacement/expiry/pause/limit-reduction invalidation, proving atomic safe release before the boundary, committed-effect preservation, uncertain transition to reconciliation-required with owner/deadline, and zero orphan plain-reserved allocations
 - Cross-version reconciliation-required tests proving uncertain usage remains lineage-charged through replacement/narrowing/reactivation and restores capacity only after a safe release
 - Retry tests proving execution resumes after completed steps only while the parent remains active, cancellation/disablement blocks unstarted manifested steps, and duplicate planning registration reconciles
@@ -582,7 +615,7 @@ It must not become a new disguised approval queue.
 - Idempotency tests for every external side-effect class
 - Concurrent retry and out-of-order event tests
 - Background job, deliverable, Documents, and notification integration tests
-- App chat, voice, Telegram, and Discord parity fixtures
+- App chat, app voice, authenticated webchat, Telegram, Discord, Slack, WhatsApp, and daemon parity/redelivery fixtures, including provider event-ID normalization, linked-user binding, process restart, and fail-closed flags when a stable source identity is unavailable
 - Email draft-versus-send tests
 - Android permission, disconnect, submit, timeout, and retry tests
 - Code branch, focused staging, failed-check, push, PR, and deployment rollback tests
@@ -615,7 +648,7 @@ It must not become a new disguised approval queue.
 
 - `execution_authority_issued`, `completed`, `failed`, `cancelled`, `expired`
 - `authority_workflow_plan_closed`, `authority_workflow_plan_incomplete_blocked`, `authority_workflow_plan_extension_blocked`
-- `authority_step_registered`, `authority_step_consuming`, `authority_step_consumed`, `authority_step_retryable_failed`, `authority_step_failed`, `authority_step_cancelled`, `authority_step_reconciliation_required`, `authority_reconciliation_resolved`
+- `authority_step_registered`, `authority_step_consuming`, `authority_step_consumed`, `authority_step_retryable_failed`, `authority_step_failed`, `authority_step_cancelled`, `authority_step_reconciliation_required`, `authority_attempt_leased`, `authority_attempt_fenced`, `authority_attempt_abandoned_no_effect`, `authority_attempt_uncertain`, `authority_reconciliation_resolved`
 - `trusted_source_action_claimed`, `trusted_source_action_deduplicated`
 - `standing_grant_created`, `standing_grant_replaced`, `standing_grant_narrowed`, `standing_grant_revoked`
 - `standing_grant_usage_reserved`, `standing_grant_usage_committed`, `standing_grant_usage_released`, `standing_grant_usage_reconciliation_required`
@@ -693,9 +726,11 @@ Implementation PRs are sequential. Each starts from the newly updated `main` aft
 - Voice approval/risk modules
 - Shared voice gate types
 - Android submit/action routing
-- Telegram, Discord, and app adapters
+- App chat, app voice, authenticated webchat, Telegram, Discord, Slack, WhatsApp, and daemon adapters
+- `server/channels/slackWebhook.ts` and `server/channels/whatsappWebhook.ts`, including verified provider event/message identity forwarded through `runCoachAgent`
+- Authenticated webchat submission/turn route and shared coach/runtime input contract
 
-**Required output:** Channel parity, exactly-once send/submit behavior, conversational clarification, and setup/capability blockers.
+**Required output:** Channel parity, stable authenticated source-action identity across redelivery, exactly-once send/submit behavior, conversational clarification, setup/capability blockers, and per-adapter fail-closed enablement until identity fixtures pass.
 
 **Must not include:** General code self-heal or deployment automation changes.
 
@@ -787,7 +822,9 @@ Each implementation PR closes exactly one child issue. Every child issue repeats
 | Parent completes before later workflow steps are registered | Push/PR cannot run or unsafe plan reopening is required | Persist complete required/selected step manifest and child records, atomically close before consumption, derive completion only from the closed set |
 | One parent consumption state covers several external steps | Completed commit blocks push/PR, or retry repeats an earlier step | Durable per-step records, unique stable step keys, independent idempotency/consumption, parent-derived completion |
 | Retry duplicates a side effect | Duplicate email, post, purchase, PR, or deployment | Per-step idempotency keys, completed-state reconciliation, atomic child-step consumption |
-| Channel bypasses central policy | Inconsistent or unsafe behavior | Shared authority service; channel parity fixtures; forbid local gates |
+| Worker crashes while a child remains consuming | Workflow strands forever or an ad hoc retry duplicates an effect | Per-attempt lease, monotonic fencing, durable boundary evidence, proven-no-effect retry, uncertain-outcome quarantine/reconciliation |
+| Child retry limit exceeds parent authority | External action exceeds the authority's declared attempt bound | Parent `maxAttemptsPerStep` ceiling, manifest validation, transactional enforcement with durable child count |
+| Channel bypasses central policy or loses ingress identity | Inconsistent policy or duplicate authority on webhook redelivery | Shared authority service; provider/server event IDs; authenticated linked-user binding; Slack/WhatsApp/webchat parity fixtures; fail-closed per-adapter flags; forbid local gates |
 | Legacy gate resumes stale work | Unexpected delayed action | Expire/cancel; never auto-execute migration records |
 | Approval removal weakens genuine permissions | Unauthorized account/device access | Preserve authentication, ownership, scopes, pairing, and OS grants |
 | Destructive command causes data loss | Irrecoverable loss | Trash/undo, backups, branches, rollback, and hard blocks |
@@ -803,7 +840,7 @@ Trusted Execution is complete when:
 - All TE requirements have passing automated coverage.
 - Covered direct commands create zero reconfirmation approval gates.
 - Background report requests return usable artifacts automatically.
-- App, voice, Telegram, Discord, connected-account, Android, code, and deployment paths use the same authority service where supported.
+- App chat, app voice, authenticated webchat, Telegram, Discord, Slack, WhatsApp, daemon, connected-account, Android, code, and deployment paths use the same authority service where supported; unsupported/unidentified adapters remain explicitly disabled.
 - Retries and reconnects cannot duplicate covered side effects.
 - Ambiguity is handled in the originating conversation.
 - Capability/setup failures and hard blocks are truthful and visible.
