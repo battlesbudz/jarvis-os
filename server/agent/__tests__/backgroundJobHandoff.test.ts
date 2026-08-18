@@ -38,6 +38,9 @@ assert.equal(requestsReportFile("Download a report file"), true);
 assert.equal(requestsReportFile("Create a report file about sunflower seeds"), true);
 assert.equal(requestsReportFile("Write a document about sunflower seeds"), true);
 assert.equal(requestsReportFile("Write a report about sunflower seeds"), false);
+assert.equal(requestsReportFile("I need a PDF report on sunflower seeds"), true);
+assert.equal(requestsReportFile("I want a PDF report"), true);
+assert.equal(requestsReportFile("I don't want a PDF report"), false);
 assert.equal(requestsReportFile("Do not download a PDF report"), false);
 assert.equal(requestsReportFile("Create a DOCX report on sunflower seeds"), false);
 assert.equal(requestsReportFile("Create a Word document with the report"), false);
@@ -47,6 +50,7 @@ assert.equal(requestsReportFile("Export the findings as an XLSX spreadsheet"), f
 assert.equal(unsupportedReportFileFormat("Research competitors and export the results as a CSV file"), "CSV");
 assert.equal(unsupportedReportFileFormat("Give me a CSV file of the results"), "CSV");
 assert.equal(unsupportedReportFileFormat("Download a CSV file of the results"), "CSV");
+assert.equal(unsupportedReportFileFormat("I need a CSV file of the results"), "CSV");
 assert.equal(unsupportedReportFileFormat("Create a downloadable JSON file with the findings"), "JSON");
 assert.equal(unsupportedReportFileFormat("Explain how JSON parsing works"), null);
 assert.equal(unsupportedReportFileFormat("Return this object as JSON"), null);
@@ -241,6 +245,7 @@ assert.match(reviewRoutesSource, /hasDownloadableArtifact: false/);
 assert.match(reviewRoutesSource, /patch\.title !== existing\.title/);
 assert.match(reviewRoutesSource, /patch\.body !== existing\.body/);
 assert.match(reviewRoutesSource, /db\.transaction\(async \(tx\)[\s\S]*?\.for\("update"\)[\s\S]*?submitAgentJob/);
+assert.match(reviewRoutesSource, /submitAgentJob\([\s\S]*?\}, tx\)/);
 assert.doesNotMatch(reviewRoutesSource, /revision_pending/);
 
 const slackWebhookSource = readFileSync(

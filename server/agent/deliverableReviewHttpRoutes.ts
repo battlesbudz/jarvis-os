@@ -5,7 +5,7 @@ import { userDocuments } from "@shared/schema";
 import type { db as dbType } from "../db";
 import { loadDeliverableForReviewAction } from "./deliverableReviewActions";
 import type { ApprovalGate } from "./agentApproval";
-import type { SubmitJobInput, SubmitJobResult } from "./jobClient";
+import type { SubmitJobDeps, SubmitJobInput, SubmitJobResult } from "./jobClient";
 import type { ContinueTopLevelApprovalResult } from "./topLevelApprovalContinuation";
 import { markdownToPdfBuffer } from "./tools/exportPdf";
 
@@ -20,7 +20,7 @@ export interface DeliverableReviewRoutesDeps {
   handleJarvisApprovalDecision?: (input: { gate: ApprovalGate; approved: boolean; originChannelId?: string }) => Promise<{ handled: boolean; continuation?: unknown }>;
   isAgentSdkApprovalGate?: (gate: ApprovalGate) => boolean | Promise<boolean>;
   resumeAgentSdkRunFromApprovalGate?: (input: { gate: ApprovalGate; approved: boolean; originChannelId?: string }) => Promise<unknown>;
-  submitAgentJob?: (input: SubmitJobInput) => Promise<SubmitJobResult>;
+  submitAgentJob?: (input: SubmitJobInput, transaction?: SubmitJobDeps["db"]) => Promise<SubmitJobResult>;
 }
 
 const paramValue = (value: string | string[]): string => Array.isArray(value) ? (value[0] ?? "") : value;
@@ -90,9 +90,9 @@ async function defaultResumeAgentSdkRunFromApprovalGate(input: { gate: ApprovalG
   return resumeAgentSdkRunFromApprovalGate(input);
 }
 
-async function defaultSubmitAgentJob(input: SubmitJobInput): Promise<SubmitJobResult> {
+async function defaultSubmitAgentJob(input: SubmitJobInput, transaction?: SubmitJobDeps["db"]): Promise<SubmitJobResult> {
   const { submitAgentJob } = await import("./jobQueue");
-  return submitAgentJob(input);
+  return submitAgentJob(input, transaction ? { db: transaction } : {});
 }
 
 async function resumeDirectEmailApprovalIfOwned(gate: ApprovalGate, approved: boolean): Promise<{ handled: boolean; continuation?: unknown }> {
@@ -459,7 +459,7 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
             revisionOfJobId: d.jobId,
             revisionInstructions: instructions.slice(0, 2000),
           },
-        });
+        }, tx);
 
         await tx
           .update(schema.deliverables)

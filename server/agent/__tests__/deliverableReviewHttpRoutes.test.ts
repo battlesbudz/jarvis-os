@@ -73,6 +73,7 @@ async function run(): Promise<void> {
   const rejectedGateIds: string[] = [];
   const submittedJobs: SubmitJobInput[] = [];
   let onSubmitAgentJob: (() => Promise<void>) | undefined;
+  let revisionTransactionPassed = false;
   const topLevelGate: ApprovalGate = {
     id: "http_gate_approve",
     agentId: "coach",
@@ -107,8 +108,9 @@ async function run(): Promise<void> {
       agentType: "email",
       isDuplicate: false,
     }),
-    submitAgentJob: async (input) => {
+    submitAgentJob: async (input, transaction) => {
       submittedJobs.push(input);
+      revisionTransactionPassed = transaction !== undefined;
       await onSubmitAgentJob?.();
       return { id: "revision_job_1", isDuplicate: false };
     },
@@ -403,6 +405,7 @@ async function run(): Promise<void> {
     assert.equal(reviseResponse.status, 200, "HTTP route queues revision jobs");
     assert.equal(reviseResponse.body.jobId, "revision_job_1");
     assert.equal(submittedJobs.length, 1, "revision route submits one new job");
+    assert.equal(revisionTransactionPassed, true, "revision route inserts the job through its locking transaction");
     assert.equal(submittedJobs[0].userId, user.id);
     assert.equal(submittedJobs[0].agentType, "coach");
     assert.match(submittedJobs[0].title, /^Revision: Plan that needs revision/);

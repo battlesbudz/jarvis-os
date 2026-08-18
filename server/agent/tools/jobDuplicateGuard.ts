@@ -45,14 +45,15 @@ export function titlesAreSimilar(a: string, b: string): boolean {
  * Returns the matching job `{ id, title }` if a duplicate exists, or `null`.
  * Throws on DB error — callers should catch and treat as non-fatal.
  */
-export async function findDuplicateJob(
+export async function findDuplicateJobWithDb(
+  dbClient: Pick<typeof db, "select">,
   userId: string,
   agentType: string,
   title: string,
   windowMs = 10 * 60 * 1000,
 ): Promise<{ id: string; title: string } | null> {
   const since = new Date(Date.now() - windowMs);
-  const activeJobs = await db
+  const activeJobs = await dbClient
     .select({ id: schema.agentJobs.id, title: schema.agentJobs.title })
     .from(schema.agentJobs)
     .where(
@@ -71,4 +72,13 @@ export async function findDuplicateJob(
 
   const normalizedNew = normalizeTitle(title);
   return activeJobs.find((j) => titlesAreSimilar(normalizeTitle(j.title), normalizedNew)) ?? null;
+}
+
+export async function findDuplicateJob(
+  userId: string,
+  agentType: string,
+  title: string,
+  windowMs = 10 * 60 * 1000,
+): Promise<{ id: string; title: string } | null> {
+  return findDuplicateJobWithDb(db, userId, agentType, title, windowMs);
 }
