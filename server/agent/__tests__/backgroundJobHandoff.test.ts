@@ -26,6 +26,7 @@ assert.equal(requestsReportFile("Create a downloadable file with the report"), t
 assert.equal(requestsReportFile("Deep dive into how PDF parsers work"), false);
 assert.equal(requestsReportFile("Do not create a PDF; just summarize it here"), false);
 assert.equal(requestsReportFile("Give me the report as a PDF"), true);
+assert.equal(requestsReportFile("Give me a PDF report on sunflower seeds"), true);
 assert.equal(requestsReportFile("Convert it into a PDF"), true);
 assert.equal(requestsReportFile("Give me the report, but not as a PDF"), false);
 assert.equal(requestsReportFile("Give me the report without a PDF"), false);
@@ -140,6 +141,8 @@ assert.match(jobQueueSource, /tx\.insert\(schema\.deliverableArtifacts\)/);
 assert.match(jobQueueSource, /\.for\("update"\)/);
 assert.match(jobQueueSource, /deliverable\.body !== mergedBody/);
 assert.match(jobQueueSource, /deliverable\.title !== mergedTitle/);
+assert.match(jobQueueSource, /batchOriginChannel === "slack"/);
+assert.match(jobQueueSource, /originNotificationDestination = originDiscordChannelId/);
 
 const reviewRoutesSource = readFileSync(
   fileURLToPath(new URL("../deliverableReviewHttpRoutes.ts", import.meta.url)),

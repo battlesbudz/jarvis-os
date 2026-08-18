@@ -230,6 +230,43 @@ async function main(): Promise<void> {
 
   {
     let submitCalls = 0;
+    let approvalCalls = 0;
+    const contextualPrompt = [
+      "Complete the latest user request as a self-contained background task.",
+      "Relevant conversation context (oldest to newest):",
+      "User: Email alice@example.com the report.",
+      "Latest user request:",
+      "Send it as a PDF",
+      "End latest user request.",
+    ].join("\n");
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_contextual_email_pdf",
+        userText: "Send it as a PDF",
+        backgroundPrompt: contextualPrompt,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        submitJob: async () => {
+          submitCalls += 1;
+          return { id: "unexpected_contextual_email_pdf_job", isDuplicate: false };
+        },
+        requestApproval: async () => {
+          approvalCalls += 1;
+          return { id: "unexpected_contextual_email_pdf_gate", status: "pending" };
+        },
+      },
+    );
+    assert.equal(result.handled, true);
+    assert.equal(result.decision.mode, "answer_inline");
+    assert.match(result.reply || "", /can’t attach.*generated PDF/i);
+    assert.equal(submitCalls, 0);
+    assert.equal(approvalCalls, 0);
+  }
+
+  {
+    let submitCalls = 0;
     const observations: AutonomyRuntimeObservation[] = [];
     const approvalRequests: Array<{
       agentId: string;

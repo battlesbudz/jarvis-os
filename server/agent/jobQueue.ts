@@ -309,8 +309,8 @@ interface BatchedResearchJob {
   promptedPdf?: boolean;
   /** Originating channel (e.g. "Discord #general") for most-common-origin routing. */
   originChannel?: string;
-  /** Discord channel ID for direct-channel routing when origin is Discord. */
-  originDiscordChannelId?: string;
+  /** Channel/thread destination used by origins that support direct routing. */
+  originDestination?: string;
 }
 
 interface BatchedResearchNotification {
@@ -411,17 +411,17 @@ async function flushResearchBatch(key: string): Promise<void> {
     }
   }
   let batchOriginChannel: string | undefined;
-  let batchOriginDiscordChannelId: string | undefined;
+  let batchOriginDestination: string | undefined;
   if (originCounts.size > 0) {
     let maxCount = 0;
     for (const [ch, count] of originCounts.entries()) {
       if (count > maxCount) { maxCount = count; batchOriginChannel = ch; }
     }
-    // When the winning origin is Discord, find the Discord channel ID from the
-    // first matching job (most common when there are multiple distinct IDs).
-    if (batchOriginChannel?.startsWith("discord")) {
-      const discordJobs = jobs.filter(j => j.originChannel?.toLowerCase().startsWith("discord") && j.originDiscordChannelId);
-      batchOriginDiscordChannelId = discordJobs[0]?.originDiscordChannelId;
+    // Preserve the direct destination for Discord channels and Slack threads.
+    if (batchOriginChannel?.startsWith("discord") || batchOriginChannel === "slack") {
+      batchOriginDestination = jobs.find(
+        (job) => job.originChannel?.toLowerCase() === batchOriginChannel && job.originDestination,
+      )?.originDestination;
     }
   }
 
@@ -608,11 +608,11 @@ async function flushResearchBatch(key: string): Promise<void> {
   );
 
   if (jobs.length === 1) {
-    await notifyJobComplete(userId, "research", mergedTitle, notifyBody, batchOriginChannel, batchOriginDiscordChannelId, notifyOpts);
+    await notifyJobComplete(userId, "research", mergedTitle, notifyBody, batchOriginChannel, batchOriginDestination, notifyOpts);
   } else {
     const combinedTitle = `Research complete (${jobs.length} results) — ${mergedTitle}`;
     console.log(`[JobQueue] flushing batched research notification: ${jobs.length} job(s) → userId=${userId} batchOriginChannel=${batchOriginChannel || "none"}`);
-    await notifyJobComplete(userId, "research", combinedTitle, notifyBody, batchOriginChannel, batchOriginDiscordChannelId, notifyOpts);
+    await notifyJobComplete(userId, "research", combinedTitle, notifyBody, batchOriginChannel, batchOriginDestination, notifyOpts);
   }
 }
 
@@ -631,7 +631,7 @@ function scheduleResearchNotification(
   deliverableTitle: string,
   notifyBody: string,
   originChannel?: string,
-  originDiscordChannelId?: string,
+  originDestination?: string,
   jobId?: string,
   promptedPdf?: boolean,
 ): void {
@@ -656,7 +656,7 @@ function scheduleResearchNotification(
   for (const [key, batch] of researchNotificationBatches.entries()) {
     if (batch.userId !== userId) continue;
     if (Math.abs(batch.anchorTime - newTime) <= SIBLING_WINDOW_MS) {
-      batch.jobs.push({ title: deliverableTitle, body: notifyBody, originChannel, originDiscordChannelId, jobId, promptedPdf });
+      batch.jobs.push({ title: deliverableTitle, body: notifyBody, originChannel, originDestination, jobId, promptedPdf });
       // Debounce: extend the flush timer so it fires after the last arrival.
       clearTimeout(batch.timer);
       batch.timer = setTimeout(() => flushResearchBatch(key).catch((e) =>
@@ -675,7 +675,7 @@ function scheduleResearchNotification(
   researchNotificationBatches.set(key, {
     userId,
     anchorTime: newTime,
-    jobs: [{ title: deliverableTitle, body: notifyBody, originChannel, originDiscordChannelId, jobId, promptedPdf }],
+    jobs: [{ title: deliverableTitle, body: notifyBody, originChannel, originDestination, jobId, promptedPdf }],
     timer,
   });
 }
@@ -1063,6 +1063,8 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
     const originChannel = typeof jobInput.originChannel === "string" ? jobInput.originChannel : undefined;
     const originChannelId = typeof jobInput.originChannelId === "string" ? jobInput.originChannelId : undefined;
     const originDiscordChannelId = typeof jobInput.originDiscordChannelId === "string" ? jobInput.originDiscordChannelId : undefined;
+    const originNotificationDestination = originDiscordChannelId
+      || (originChannel?.toLowerCase() === "slack" ? originChannelId : undefined);
     const approvalReceipt = normalizeApprovalReceipt(jobInput.approvalReceipt);
     if (typeof jobInput.approvalGateId === "string") {
       jobInput = await appendWorkerEventToJob({
@@ -2313,6 +2315,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           const childInput: Record<string, unknown> = {
             parentJobId: job.id,
             originChannel,
+            originChannelId,
             originDiscordChannelId,
             model: "gpt-4.1-mini",
           };
@@ -2340,7 +2343,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           job.title,
           "Planning research phases…",
           originChannel,
-          originDiscordChannelId,
+          originNotificationDestination,
         );
 
         let plan = await planResearch(job.prompt, job.userId);
@@ -2364,7 +2367,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             job.title,
             `Phase 1: researching ${plan.prerequisiteTopics.length} prerequisite topic(s)…`,
             originChannel,
-            originDiscordChannelId,
+            originNotificationDestination,
           );
 
           const phase1Ids = await submitResearchJobs(
@@ -2398,7 +2401,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           job.title,
           `Phase 2: researching ${plan.mainTopics.length} main topic(s)…`,
           originChannel,
-          originDiscordChannelId,
+          originNotificationDestination,
         );
 
         const phase2Ids = await submitResearchJobs(
@@ -2501,7 +2504,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             job.title,
             fallbackBody + fallbackNote,
             originChannel,
-            originDiscordChannelId,
+            originNotificationDestination,
             fallbackNotifyOpts,
           );
           return;
@@ -2527,7 +2530,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             job.title,
             "Synthesising findings into one report…",
             originChannel,
-            originDiscordChannelId,
+            originNotificationDestination,
           );
 
           const synthesisPrompt =
@@ -2647,7 +2650,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           finalTitle,
           finalBody + artifactNote,
           originChannel,
-          originDiscordChannelId,
+          originNotificationDestination,
           notifyOpts,
         );
 
@@ -2666,7 +2669,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           job.title,
           `Deep research failed: ${deepMsg}`,
           originChannel,
-          originDiscordChannelId,
+          originNotificationDestination,
         );
       }
       return;

@@ -422,9 +422,14 @@ export async function routeAutonomyRequest(
     readiness,
     hasApproval,
   });
+  // The relevant prior user turn can carry the recipient while a referential
+  // latest turn carries only the requested format ("Send it as a PDF").
+  const emailDeliveryText = backgroundPrompt && durableReportRequested
+    ? routingText
+    : userText;
   const emailFileDeliveryRequested = durableReportRequested && (
-    /\b(?:email|send)\b[^.!?\n]{0,80}\b[\w.+-]+@[\w.-]+\b/i.test(userText)
-    || /\b(?:send|email)\b[^.!?\n]{0,120}\b(?:via|by)\s+email\b/i.test(userText)
+    /\b(?:email|send)\b[^.!?\n]{0,80}\b[\w.+-]+@[\w.-]+\b/i.test(emailDeliveryText)
+    || /\b(?:send|email)\b[^.!?\n]{0,120}\b(?:via|by)\s+email\b/i.test(emailDeliveryText)
   );
   if (emailFileDeliveryRequested) {
     const decision: AutonomyPolicyDecision = {
