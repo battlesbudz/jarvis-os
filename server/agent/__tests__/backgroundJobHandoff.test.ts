@@ -37,6 +37,8 @@ assert.equal(requestsReportFile("Export the findings as an XLSX spreadsheet"), f
 assert.equal(unsupportedReportFileFormat("Research competitors and export the results as a CSV file"), "CSV");
 assert.equal(unsupportedReportFileFormat("Create a downloadable JSON file with the findings"), "JSON");
 assert.equal(unsupportedReportFileFormat("Explain how JSON parsing works"), null);
+assert.equal(unsupportedReportFileFormat("Write a JSON parser"), null);
+assert.equal(unsupportedReportFileFormat("Create a CSV importer"), null);
 
 const contextualRevisionPrompt = [
   "Revise this Jarvis deliverable according to the user's requested changes.",
@@ -125,6 +127,8 @@ assert.match(jobQueueSource, /schema\.deliverableArtifacts/);
 assert.match(jobQueueSource, /hasDownloadableArtifact = true/);
 assert.doesNotMatch(jobQueueSource, /getUserDriveSettings\(job\.userId\)/);
 assert.doesNotMatch(jobQueueSource, /deep_research PDF Drive upload/);
+assert.doesNotMatch(jobQueueSource, /research batch PDF.*Drive/);
+assert.doesNotMatch(jobQueueSource, /createDriveBinaryFile/);
 assert.match(jobQueueSource, /Use Save to Drive if you want an external copy/);
 assert.match(jobQueueSource, /job\.agentType === "writing" \|\| job\.agentType === "planning"/);
 assert.match(jobQueueSource, /Limited-results PDF generated and available in Inbox/);

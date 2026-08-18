@@ -31,7 +31,6 @@ import { readRecentErrorsTool, listSourceFilesTool, readSourceFileTool, proposeC
 import { fetchCalendarTool } from "./tools/calendar";
 import { researchHasSourceUrls } from "./researchUtils";
 import { markdownToPdfBuffer } from "./tools/exportPdf";
-import { createDriveBinaryFile } from "../integrations/googleDrive";
 import { normalizeApprovalReceipt } from "./approvalReceipt";
 import { decideJobFailureRecovery } from "./jobObservability";
 import { buildWorkerRuntimeEvent, resolveWorkerType, withWorkerRuntimeEvent } from "./workerRuntime";
@@ -479,34 +478,53 @@ async function flushResearchBatch(key: string): Promise<void> {
   // consolidated body and deliver it as a channel attachment.
   const notifyOpts: ChannelSendOpts = {};
   let pdfNote = "";
-  let batchDriveLink: string | undefined;
+
+  const persistBatchArtifact = async (
+    filename: string,
+    mimeType: string,
+    content: Buffer,
+  ): Promise<void> => {
+    if (!mergedDeliverableId) return;
+    const [deliverable] = await db
+      .select({ meta: schema.deliverables.meta })
+      .from(schema.deliverables)
+      .where(eq(schema.deliverables.id, mergedDeliverableId))
+      .limit(1);
+    const meta = (deliverable?.meta as Record<string, unknown> | null) ?? {};
+    await db.transaction(async (tx) => {
+      await tx
+        .delete(schema.deliverableArtifacts)
+        .where(eq(schema.deliverableArtifacts.deliverableId, mergedDeliverableId));
+      await tx.insert(schema.deliverableArtifacts).values({
+        deliverableId: mergedDeliverableId,
+        userId,
+        filename,
+        mimeType,
+        sizeBytes: content.length,
+        data: content,
+      });
+      await tx
+        .update(schema.deliverables)
+        .set({
+          meta: {
+            ...meta,
+            pdfGenerated: mimeType === "application/pdf",
+            pdfFilename: filename,
+            hasDownloadableArtifact: true,
+          },
+          driveLink: null,
+        })
+        .where(eq(schema.deliverables.id, mergedDeliverableId));
+    });
+  };
 
   if (wantsPdf && mergedBody) {
     try {
       const pdfBuffer = await markdownToPdfBuffer(mergedTitle, mergedBody);
       const filename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".pdf";
-      console.log(`[JobQueue] generated consolidated PDF for batch anchorTime=${anchorTime} size=${pdfBuffer.length}B`);
-
-      // Attempt Drive upload so the link is available for oversized-file fallbacks.
-      let driveLink: string | undefined;
-      try {
-        const tokens = await getValidGoogleTokens(userId).catch(() => []);
-        const googleAccessToken = tokens?.[0] || null;
-        if (googleAccessToken) {
-          const driveFile = await createDriveBinaryFile(googleAccessToken, filename, pdfBuffer, "application/pdf");
-          driveLink = driveFile.webViewLink || undefined;
-          batchDriveLink = driveLink;
-          pdfNote = `\n\n📄 PDF attached and saved to Google Drive: ${driveLink}`;
-          console.log(`[JobQueue] research batch PDF → Drive: ${driveLink}`);
-        } else {
-          pdfNote = `\n\n📄 PDF attached (${filename}).`;
-        }
-      } catch (driveErr) {
-        const driveMsg = driveErr instanceof Error ? driveErr.message : String(driveErr);
-        console.error(`[JobQueue] research batch PDF Drive upload failed:`, driveMsg);
-        pdfNote = `\n\n📄 PDF attached (Drive upload failed: ${driveMsg}).`;
-      }
-
+      await persistBatchArtifact(filename, "application/pdf", pdfBuffer);
+      console.log(`[JobQueue] generated durable consolidated PDF for batch anchorTime=${anchorTime} size=${pdfBuffer.length}B`);
+      pdfNote = `\n\n📄 PDF attached and available in Inbox. Use Save to Drive if you want an external copy.`;
       notifyOpts.attachments = [
         {
           kind: "document",
@@ -514,39 +532,27 @@ async function flushResearchBatch(key: string): Promise<void> {
           content: pdfBuffer,
           caption: mergedTitle,
           mimeType: "application/pdf",
-          driveLink,
         },
       ];
     } catch (pdfErr) {
       const pdfMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
       console.error("[JobQueue] batch PDF generation failed:", pdfMsg);
-      pdfNote = `\n\n⚠️ PDF generation failed — here is the markdown version instead.`;
-      // Attach the merged markdown as a .md file so the user still receives
-      // the full content in the channel even when PDF rendering fails.
-      if (mergedBody) {
-        const mdFilename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".md";
-        notifyOpts.attachments = [
-          {
-            kind: "document",
-            filename: mdFilename,
-            content: mergedBody,
-            caption: `${mergedTitle} (PDF failed — markdown fallback)`,
-            mimeType: "text/markdown",
-          },
-        ];
-      }
+      pdfNote = `\n\n⚠️ PDF generation failed — the Markdown fallback is available in Inbox.`;
+      const mdFilename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".md";
+      const markdown = Buffer.from(mergedBody, "utf8");
+      await persistBatchArtifact(mdFilename, "text/markdown", markdown);
+      notifyOpts.attachments = [
+        {
+          kind: "document",
+          filename: mdFilename,
+          content: mergedBody,
+          caption: `${mergedTitle} (PDF failed — Markdown fallback)`,
+          mimeType: "text/markdown",
+        },
+      ];
     }
   }
   // ─────────────────────────────────────────────────────────────────────────
-
-  // Persist the Drive link on the deliverable so the app can surface it.
-  if (batchDriveLink && mergedDeliverableId) {
-    await db
-      .update(schema.deliverables)
-      .set({ driveLink: batchDriveLink })
-      .where(eq(schema.deliverables.id, mergedDeliverableId))
-      .catch((e) => console.error("[JobQueue] failed to save driveLink on deliverable:", e));
-  }
 
   const bodiedJobs = jobs.filter((j) => j.body);
   const notifyBody = (bodiedJobs[0]?.body ?? jobs[0].body) + pdfNote;

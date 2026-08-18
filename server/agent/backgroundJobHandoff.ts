@@ -115,17 +115,25 @@ function artifactRequestText(prompt: string): string {
 }
 
 const UNSUPPORTED_REPORT_FORMAT = /\b(docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)\b/i;
-const EXPLICIT_FILE_ACTION = /\b(create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give|want|need)\b/i;
-
 /** Identify an explicit requested file format that this renderer cannot create. */
 export function unsupportedReportFileFormat(prompt: string): string | null {
   const request = artifactRequestText(prompt);
   const match = request.match(UNSUPPORTED_REPORT_FORMAT);
   if (!match) return null;
-  const hasFileIntent = EXPLICIT_FILE_ACTION.test(request)
-    || /\bdownloadable\b/i.test(request)
-    || /\b(?:as|in)\s+(?:an?\s+)?(?:docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)\b/i.test(request);
-  return hasFileIntent ? match[1].toUpperCase() : null;
+  const rawFormat = String.raw`(?:docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)`;
+  const namedArtifact = String.raw`(?:docx(?:\s+file)?|word\s+document|csv\s+file|json\s+file|xlsx?(?:\s+(?:file|spreadsheet))?|spreadsheet|pptx?(?:\s+(?:file|presentation))?|powerpoint(?:\s+presentation)?|html\s+file|xml\s+file|rtf(?:\s+(?:file|document))?|tsv\s+file)`;
+  const outputSyntax = new RegExp(
+    String.raw`\b(?:export|return|provide|deliver|attach|send|give|save)\b[^.!?\n]{0,80}\b(?:as|in|to)\s+(?:an?\s+)?${rawFormat}\b`,
+    "i",
+  );
+  const artifactCreation = new RegExp(
+    String.raw`\b(?:create|make|generate|produce|prepare|write|compile|format|export|return|provide|deliver|attach|send|give|save)\b[^.!?\n]{0,80}\b(?:downloadable\s+)?${namedArtifact}\b`,
+    "i",
+  );
+  const downloadableArtifact = new RegExp(String.raw`\bdownloadable\s+${namedArtifact}\b`, "i");
+  return outputSyntax.test(request) || artifactCreation.test(request) || downloadableArtifact.test(request)
+    ? match[1].toUpperCase()
+    : null;
 }
 
 /** Return true when the user explicitly requested a downloadable PDF report file. */

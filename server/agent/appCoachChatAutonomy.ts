@@ -102,8 +102,7 @@ export async function routeAppCoachChatAutonomy(
 
   const backgroundPrompt = buildBackgroundJobPrompt(input.messages, userText);
   const unsupportedFormat = unsupportedReportFileFormat(backgroundPrompt);
-  const contextualFileFollowUp = backgroundPrompt !== userText
-    && requestsReportFile(backgroundPrompt);
+  const explicitFileRequest = requestsReportFile(backgroundPrompt);
   const preliminary = decideAutonomyMode({
     userText,
     readiness: "ready",
@@ -111,7 +110,7 @@ export async function routeAppCoachChatAutonomy(
   });
   if (
     !unsupportedFormat &&
-    !contextualFileFollowUp &&
+    !explicitFileRequest &&
     (
       preliminary.mode !== "queue_background_job" ||
       (preliminary.agentType !== "research" && preliminary.agentType !== "deep_research")

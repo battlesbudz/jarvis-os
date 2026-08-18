@@ -117,6 +117,52 @@ async function main(): Promise<void> {
     assert.match(ellipticalJobs[0].prompt, /Latest user request:\nMake it a PDF/);
   }
 
+  for (const standaloneFileCase of [
+    { text: "Write a PDF memo for the board", agentType: "writing" },
+    { text: "Create a PDF project plan", agentType: "planning" },
+  ]) {
+    const standaloneJobs: string[] = [];
+    const standalone = await routeAppCoachChatAutonomy(
+      {
+        userId: "user_app_standalone_file",
+        messages: [{ role: "user", content: standaloneFileCase.text }],
+        originChannel: "voice",
+      },
+      {
+        getReadiness: async () => "ready",
+        submitJob: async (job) => {
+          standaloneJobs.push(job.agentType);
+          return { id: `job_${standaloneFileCase.agentType}_file`, isDuplicate: false };
+        },
+      },
+    );
+    assert.equal(standalone.handled, true);
+    assert.equal(standalone.decision.agentType, standaloneFileCase.agentType);
+    assert.deepEqual(standaloneJobs, [standaloneFileCase.agentType]);
+  }
+
+  {
+    let submitCalls = 0;
+    const parserTask = await routeAppCoachChatAutonomy(
+      {
+        userId: "user_app_json_parser",
+        messages: [{ role: "user", content: "Write a JSON parser for the import pipeline" }],
+        originChannel: "appchat",
+      },
+      {
+        getReadiness: async () => "ready",
+        submitJob: async (job) => {
+          submitCalls += 1;
+          return { id: "job_json_parser", isDuplicate: false };
+        },
+      },
+    );
+    assert.equal(parserTask.handled, true);
+    assert.equal(parserTask.decision.agentType, "writing");
+    assert.equal(submitCalls, 1);
+    assert.doesNotMatch(parserTask.reply || "", /can’t generate JSON/i);
+  }
+
   {
     let submitCalls = 0;
     const unsupported = await routeAppCoachChatAutonomy(
