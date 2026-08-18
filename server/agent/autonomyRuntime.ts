@@ -344,18 +344,17 @@ function contextualWorkerRoutingText(backgroundPrompt: string, userText: string)
   const priorUserTurns = Array.from(context.matchAll(/^User:\s*(.+)$/gim))
     .map((match) => match[1].trim())
     .filter(Boolean);
-  for (let index = priorUserTurns.length - 1; index >= 0; index -= 1) {
-    const candidate = priorUserTurns[index];
-    const decision = decideAutonomyMode({
-      userText: candidate,
+  const nearestUserTurn = priorUserTurns.at(-1);
+  if (nearestUserTurn) {
+    const nearestDecision = decideAutonomyMode({
+      userText: nearestUserTurn,
       readiness: "ready",
       hasApproval: true,
     });
-    if (decision.mode === "queue_background_job") {
-      return `${candidate}\n${userText}`;
+    if (nearestDecision.mode === "queue_background_job") {
+      return `${nearestUserTurn}\n${userText}`;
     }
   }
-  const nearestUserTurn = priorUserTurns.at(-1);
   return [
     "Write a document from the referenced conversation content.",
     ...(nearestUserTurn ? [nearestUserTurn] : []),

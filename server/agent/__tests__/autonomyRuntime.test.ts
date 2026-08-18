@@ -83,6 +83,8 @@ async function main(): Promise<void> {
     const contextualPrompt = [
       "Complete the latest user request as a self-contained background task.",
       "Relevant conversation context (oldest to newest):",
+      "User: Research an unrelated market.",
+      "Assistant: I can run that research in the background.",
       "User: Summarize these notes.",
       "Assistant: Here is the concise summary.",
       "Latest user request:",
