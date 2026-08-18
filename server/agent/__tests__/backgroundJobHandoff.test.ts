@@ -84,6 +84,15 @@ assert.equal(unsupportedReportFileFormat("Create a CSV importer"), null);
 assert.equal(unsupportedReportFileFormat("Create a PDF report comparing JSON file formats"), null);
 assert.equal(requestsReportFile("Create a PDF report comparing JSON file formats"), true);
 assert.equal(unsupportedReportFileFormat("Create a PDF report and export the results as CSV"), "CSV");
+
+const standaloneItRequest = "Research IT security trends";
+assert.equal(
+  buildBackgroundJobPrompt(
+    [{ role: "user", content: "Email the quarterly update to Bob" }],
+    standaloneItRequest,
+  ),
+  standaloneItRequest,
+);
 assert.equal(requestsReportFile("Create a PDF report and export the results as CSV"), false);
 assert.equal(requestsReportFile("Research how to write PDF files safely"), false);
 assert.equal(requestsReportFile("PDF please"), false);
@@ -373,7 +382,10 @@ assert.match(inboxSource, /recent-file-download-/);
 assert.match(inboxSource, /recent-file-save-to-drive-/);
 assert.match(inboxSource, /recent-file-drive-link-/);
 assert.match(inboxSource, /renderRecentFiles\(\)/);
-assert.match(inboxSource, /Platform\.OS === 'ios'/);
+assert.match(inboxSource, /Platform\.OS === 'android'/);
+assert.match(inboxSource, /StorageAccessFramework\.requestDirectoryPermissionsAsync/);
+assert.match(inboxSource, /StorageAccessFramework\.createFileAsync/);
+assert.doesNotMatch(inboxSource, /getContentUriAsync/);
 assert.match(inboxSource, /Share\.share\(\{ url: uri, title: filename \}\)/);
 
 console.log("All background job handoff assertions passed.");

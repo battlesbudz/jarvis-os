@@ -22,7 +22,8 @@ function isTersePdfFollowUp(text: string): boolean {
 }
 
 function isContextDependentFollowUp(text: string): boolean {
-  return /\b(?:this(?!\s+(?:year|quarter|month|week(?:end)?|day|morning|afternoon|evening|night|spring|summer|fall|autumn|winter|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:['’]s)?\b)|that|these|those|it|previous|earlier|above|whole point|as before)\b/i.test(text)
+  return /\b(?:this(?!\s+(?:year|quarter|month|week(?:end)?|day|morning|afternoon|evening|night|spring|summer|fall|autumn|winter|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:['’]s)?\b)|that|these|those|previous|earlier|above|whole point|as before)\b/i.test(text)
+    || /\b(?:it|It)\b/.test(text)
     || /\bthe\s+(?:report|document|file|research|results?|findings?|task|job)\b/i.test(text)
     || /\b(?:the\s+)?same\b/i.test(text)
     || /^(yes|no|correct|exactly)\b/i.test(text.trim())

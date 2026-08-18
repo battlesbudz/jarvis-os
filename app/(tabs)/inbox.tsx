@@ -384,18 +384,23 @@ export default function InboxScreen() {
         setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
       } else {
         const FileSystem = await import('expo-file-system/legacy');
-        if (!FileSystem.cacheDirectory) throw new Error('File cache is unavailable');
-        const uri = `${FileSystem.cacheDirectory}${Date.now()}-${filename}`;
-        await FileSystem.writeAsStringAsync(uri, arrayBufferToBase64(buffer), {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-        if (Platform.OS === 'ios') {
+        const base64 = arrayBufferToBase64(buffer);
+        if (Platform.OS === 'android') {
+          const permission = await FileSystem.StorageAccessFramework.requestDirectoryPermissionsAsync();
+          if (!permission.granted) throw new Error('Choose a folder to save this file.');
+          const uri = await FileSystem.StorageAccessFramework.createFileAsync(
+            permission.directoryUri,
+            filename,
+            response.headers.get('content-type') || 'application/octet-stream',
+          );
+          await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
+        } else {
+          if (!FileSystem.cacheDirectory) throw new Error('File cache is unavailable');
+          const uri = `${FileSystem.cacheDirectory}${Date.now()}-${filename}`;
+          await FileSystem.writeAsStringAsync(uri, base64, { encoding: FileSystem.EncodingType.Base64 });
           // The native share sheet includes Save to Files, which exports the
           // temporary cache entry into user-controlled persistent storage.
           await Share.share({ url: uri, title: filename });
-        } else {
-          const openUri = await FileSystem.getContentUriAsync(uri);
-          await Linking.openURL(openUri);
         }
       }
     } catch (error) {
