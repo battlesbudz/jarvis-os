@@ -177,7 +177,7 @@ export async function persistFastCoachExchange(input: {
 
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
   const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId, signal } = input;
-  const destinationScopedSlack = channelName === "Slack" && !!originChannelId;
+  const destinationScopedSlack = channelName === "Slack";
   const coachSessionAgentId = getCoachAgentSessionAgentId(userId);
   const channelLower = channelName.toLowerCase();
   const telegramE2eProbeId = channelName === "Telegram" ? getTelegramE2eProbeId(userText) : null;

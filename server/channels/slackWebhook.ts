@@ -179,12 +179,12 @@ export function registerSlackWebhook(app: Express): void {
         } else if (subcommand === "brain-dump" || subcommand === "braindump") {
           if (!arg) { await respond("Add the thought after the command, e.g. `/jarvis brain-dump finish Q3 deck`."); return; }
           const braindumpSession = await getSession(userId, slackSessionChannel);
-          const braindumpResult = await runCoachAgent({ userId, userText: `Brain dump: ${arg}`, channelName: "Slack", originChannelId: slackDestination, sdkSessionId: braindumpSession });
+          const braindumpResult = await runCoachAgent({ userId, userText: `Brain dump: ${arg}`, channelName: "Slack", sdkSessionId: braindumpSession });
           if (braindumpResult.sdkSessionId) setSession(userId, slackSessionChannel, braindumpResult.sdkSessionId);
           await respond(braindumpResult.reply);
         } else if (subcommand === "status") {
           const statusSession = await getSession(userId, slackSessionChannel);
-          const statusResult = await runCoachAgent({ userId, userText: arg || "What's the status of my day?", channelName: "Slack", originChannelId: slackDestination, sdkSessionId: statusSession });
+          const statusResult = await runCoachAgent({ userId, userText: arg || "What's the status of my day?", channelName: "Slack", sdkSessionId: statusSession });
           if (statusResult.sdkSessionId) setSession(userId, slackSessionChannel, statusResult.sdkSessionId);
           await respond(statusResult.reply);
         } else {

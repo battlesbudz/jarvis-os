@@ -289,6 +289,8 @@ assert.match(slackWebhookSource, /ev\.thread_ts/);
 assert.match(slackWebhookSource, /Slack:\$\{teamId\}:\$\{slackDestination\}/);
 assert.match(slackWebhookSource, /getSession\(userId, slackSessionChannel\)/);
 assert.match(slackWebhookSource, /setSession\(userId, slackSessionChannel/);
+assert.match(slackWebhookSource, /Brain dump:[^\n]+channelName: "Slack", sdkSessionId: braindumpSession/);
+assert.match(slackWebhookSource, /What's the status[^\n]+channelName: "Slack", sdkSessionId: statusSession/);
 
 const slackChannelSource = readFileSync(
   fileURLToPath(new URL("../../channels/slackChannel.ts", import.meta.url)),
@@ -302,6 +304,7 @@ const coachAgentSource = readFileSync(
   "utf8",
 );
 assert.match(coachAgentSource, /backgroundPrompt: buildBackgroundJobPrompt\(recentMessages, userText\)/);
+assert.match(coachAgentSource, /const destinationScopedSlack = channelName === "Slack"/);
 assert.match(coachAgentSource, /sessionResumed \|\| destinationScopedSlack/);
 assert.match(coachAgentSource, /if \(!destinationScopedSlack\) \{[\s\S]*?db\.insert\(schema\.chatHistory\)/);
 
