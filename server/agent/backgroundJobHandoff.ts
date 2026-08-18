@@ -130,6 +130,7 @@ function explicitlyRequestsPdfOutput(request: string): boolean {
 function explicitlyRequestsGenericDownload(request: string): boolean {
   return /\bdownloadable\s+(?:report|document|file)\b/i.test(request)
     || /\b(?:create|make|generate|produce|prepare|compile|attach|deliver|return|provide|save|give)\b(?:\s+\w+){0,6}\s+(?:an?\s+)?downloadable\s+(?:report|document|file)\b/i.test(request)
+    || /\b(?:give|return|provide|deliver|send)\b(?:\s+\w+){0,8}\s+as\s+(?:an?\s+)?(?:document|file)\b/i.test(request)
     || /\b(?:report|results?|findings?)\b(?:\s+\w+){0,5}\s+as\s+(?:an?\s+)?(?:document|file)\b/i.test(request);
 }
 
