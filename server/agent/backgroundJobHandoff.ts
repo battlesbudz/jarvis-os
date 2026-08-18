@@ -96,7 +96,7 @@ function artifactRequestText(prompt: string): string {
       String.raw`\b(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give|keep|preserve|change|switch|convert)\b[^.!?\n]{0,80}\b${format}\b`,
       "i",
     );
-    const formatAs = new RegExp(String.raw`\b(?:as|in|to)\s+(?:an?\s+)?${format}\b`, "i");
+    const formatAs = new RegExp(String.raw`\b(?:as|in|to|into)\s+(?:an?\s+)?${format}\b`, "i");
     const formatNegation = new RegExp(
       String.raw`\b(?:not|without|no)\b[^.!?\n]{0,40}\b(?:pdf|downloadable\s+(?:report|document|file))\b`,
       "i",
@@ -119,7 +119,7 @@ const UNSUPPORTED_REPORT_FORMAT = /\b(docx|word\s+document|csv|json|xlsx?|spread
 function explicitlyRequestsPdfOutput(request: string): boolean {
   const createPdf = /\b(?:create|make|generate|produce|prepare|compile)\b(?:\s+\w+){0,4}\s+(?:an?\s+)?pdf\b(?:\s+(?:report|memo|document|file|plan))?/i;
   const writePdf = /\bwrite\s+(?:me\s+)?(?:an?\s+)?pdf\s+(?:report|memo|document|plan)\b/i;
-  const transformToPdf = /\b(?:give|return|provide|deliver|export|save|format|attach|send|keep|preserve|change|switch|convert)\b(?:\s+\w+){0,8}\s+(?:as|in|to)\s+(?:an?\s+)?pdf\b/i;
+  const transformToPdf = /\b(?:give|return|provide|deliver|export|save|format|attach|send|keep|preserve|change|switch|convert)\b(?:\s+\w+){0,8}\s+(?:as|in|to|into)\s+(?:an?\s+)?pdf\b/i;
   const artifactAsPdf = /\b(?:report|results?|findings?|memo|document|plan|it|this)\b(?:\s+\w+){0,5}\s+as\s+(?:an?\s+)?pdf\b/i;
   return createPdf.test(request)
     || writePdf.test(request)
@@ -144,7 +144,7 @@ export function unsupportedReportFileFormat(prompt: string): string | null {
   const rawFormat = String.raw`(?:docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)`;
   const namedArtifact = String.raw`(?:docx(?:\s+file)?|word\s+document|csv\s+file|json\s+file|xlsx?(?:\s+(?:file|spreadsheet))?|spreadsheet|pptx?(?:\s+(?:file|presentation))?|powerpoint(?:\s+presentation)?|html\s+file|xml\s+file|rtf(?:\s+(?:file|document))?|tsv\s+file)`;
   const outputSyntax = new RegExp(
-    String.raw`\b(?:export|return|provide|deliver|attach|send|give|save|format|convert|switch|change)\b(?:\s+\w+){0,8}\s+(?:as|in|to)\s+(?:an?\s+)?(${rawFormat})\b`,
+    String.raw`\b(?:export|return|provide|deliver|attach|send|give|save|format|convert|switch|change)\b(?:\s+\w+){0,8}\s+(?:as|in|to|into)\s+(?:an?\s+)?(${rawFormat})\b`,
     "i",
   );
   const directArtifact = new RegExp(
