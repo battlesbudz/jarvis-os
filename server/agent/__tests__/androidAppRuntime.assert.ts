@@ -13,7 +13,9 @@ async function main() {
     "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OpHandler.kt",
     "android-daemon/app/src/main/java/com/jarvis/daemon/OpHandler.kt",
   ]) {
-    assert.doesNotMatch(fs.readFileSync(path.resolve(opHandlerPath), "utf8"), /"com\.ubercab"\s+to\s+listOf\("com\.ubercab\.driver"\)/);
+    const opHandlerSource = fs.readFileSync(path.resolve(opHandlerPath), "utf8");
+    assert.doesNotMatch(opHandlerSource, /"com\.ubercab"\s+to\s+listOf\("com\.ubercab\.driver"\)/);
+    assert.match(opHandlerSource, /svc\.launchApp\(packageName, requestedActivity\)/);
   }
   assert.match(runtimeSource, /checkAndIncrementScreenshotBudget/);
   assert.match(runtimeSource, /runAndroidCaptureScreen\(args,\s*ctx\.userId,\s*ctx\)/);
