@@ -240,6 +240,36 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
       const d = reviewAction.deliverable;
       let continuation: unknown = undefined;
+      if (d.type !== "approval_gate") {
+        const rejected = await db.transaction(async (tx) => {
+          const [locked] = await tx
+            .select({ jobId: schema.deliverables.jobId })
+            .from(schema.deliverables)
+            .where(and(
+              eq(schema.deliverables.id, id),
+              eq(schema.deliverables.userId, userId),
+              eq(schema.deliverables.status, "pending_approval"),
+            ))
+            .limit(1)
+            .for("update");
+          if (!locked) return false;
+          await tx
+            .update(schema.deliverables)
+            .set({ status: "rejected", actedAt: new Date() })
+            .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.status, "pending_approval")));
+          if (locked.jobId) {
+            await tx
+              .update(schema.agentJobs)
+              .set({ status: "delivered" })
+              .where(and(eq(schema.agentJobs.id, locked.jobId), eq(schema.agentJobs.status, "complete")));
+          }
+          return true;
+        });
+        if (!rejected) {
+          return res.status(409).json({ error: "Deliverable changed while rejection was being prepared; reload and try again." });
+        }
+        return res.json({ ok: true });
+      }
       if (d.type === "approval_gate") {
         const meta = (d.meta as { gateId?: string }) || {};
         const gate = meta.gateId ? await getGate(meta.gateId) : undefined;

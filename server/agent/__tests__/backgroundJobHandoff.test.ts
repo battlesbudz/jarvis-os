@@ -273,6 +273,7 @@ assert.match(reviewRoutesSource, /db\.transaction\(async \(tx\)[\s\S]*?\.for\("u
 assert.match(reviewRoutesSource, /submitAgentJob\([\s\S]*?\}, tx\)/);
 assert.match(reviewRoutesSource, /unsupportedReportFileFormat\(revisionPrompt\)/);
 assert.match(reviewRoutesSource, /Deliverable changed while approval was being prepared/);
+assert.match(reviewRoutesSource, /Deliverable changed while rejection was being prepared/);
 assert.match(reviewRoutesSource, /Deliverable changed while discard was being prepared/);
 assert.doesNotMatch(reviewRoutesSource, /revision_pending/);
 
