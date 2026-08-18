@@ -88,6 +88,7 @@ async function main() {
 
   _setAndroidAppRuntimeDepsForTesting({
     isAndroidDaemonActive: () => true,
+    isAndroidDaemonActionAllowed: async () => true,
     sendDaemonOp: async () => ({
       ok: true,
       data: {
@@ -148,6 +149,7 @@ async function main() {
 
   _setAndroidAppRuntimeDepsForTesting({
     isAndroidDaemonActive: () => true,
+    isAndroidDaemonActionAllowed: async () => true,
     sendDaemonOp: async () => ({
       ok: true,
       data: {
@@ -161,6 +163,19 @@ async function main() {
   const ambiguousNotes = await resolveAndroidAppName("user-phone", "Notes");
   assert.equal(ambiguousNotes.app, null);
   assert.equal(await confirmInstalledAndroidAppName("user-phone", "Notes"), null);
+  _setAndroidAppRuntimeDepsForTesting(null);
+
+  let deniedInventoryCalls = 0;
+  _setAndroidAppRuntimeDepsForTesting({
+    isAndroidDaemonActive: () => true,
+    isAndroidDaemonActionAllowed: async () => false,
+    sendDaemonOp: async () => {
+      deniedInventoryCalls += 1;
+      return { ok: true, data: { apps: [] } };
+    },
+  });
+  assert.equal(await confirmInstalledAndroidAppName("user-phone", "Obsidian"), null);
+  assert.equal(deniedInventoryCalls, 0);
   _setAndroidAppRuntimeDepsForTesting(null);
 
   _setAndroidAppRuntimeDepsForTesting({

@@ -419,6 +419,7 @@ export async function confirmInstalledAndroidAppName(
   userId: string,
   appName: string,
 ): Promise<ResolvedAndroidApp | null> {
+  if (!(await androidActionAllowed(userId, "android_open_app"))) return null;
   const resolved = await resolveAndroidAppName(userId, appName);
   if (!resolved.app || resolved.app.source !== "live_inventory") return null;
   const previous = confirmedAppResolutions.get(userId);
