@@ -355,7 +355,12 @@ function contextualWorkerRoutingText(backgroundPrompt: string, userText: string)
       return `${candidate}\n${userText}`;
     }
   }
-  return userText;
+  const nearestUserTurn = priorUserTurns.at(-1);
+  return [
+    "Write a document from the referenced conversation content.",
+    ...(nearestUserTurn ? [nearestUserTurn] : []),
+    userText,
+  ].join("\n");
 }
 
 export async function routeAutonomyRequest(
