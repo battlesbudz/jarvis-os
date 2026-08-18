@@ -678,7 +678,8 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       const { getUserDriveSettings } = await import("../driveRoutes");
       const { createDriveBinaryFile, createDriveTextFile } = await import("../integrations/googleDrive");
       const drive = await getUserDriveSettings(userId);
-      if (!drive.enabled || !drive.accessToken) {
+      const accessToken = drive.accessToken;
+      if (!drive.enabled || !accessToken) {
         return res.status(400).json({ error: "Google Drive is not connected. Enable it in Settings.", code: "DRIVE_NOT_CONNECTED" });
       }
 
@@ -686,14 +687,14 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         const [locked] = await tx
           .select()
           .from(schema.deliverables)
-          .where(and(
-            eq(schema.deliverables.id, id),
-            eq(schema.deliverables.userId, userId),
-            eq(schema.deliverables.status, "pending_approval"),
-          ))
+          .where(and(eq(schema.deliverables.id, id), eq(schema.deliverables.userId, userId)))
           .limit(1)
           .for("update");
-        if (!locked) return null;
+        if (
+          !locked
+          || locked.type === "approval_gate"
+          || (locked.status !== "pending_approval" && locked.status !== "approved")
+        ) return null;
         if (locked.driveLink) return { driveLink: locked.driveLink, deliverable: locked };
 
         const [artifact] = await tx
@@ -704,19 +705,19 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
             eq(schema.deliverableArtifacts.userId, userId),
           ))
           .limit(1);
-        // Keep the row lock through the external upload. Consolidation can
-        // therefore run wholly before this read or wholly after this save,
-        // never replace/delete the selected bytes while they are uploading.
+        // Keep the row locked through upload. Consolidation excludes rows once
+        // they have a Drive link, so whichever action wins cannot make the
+        // external copy stale. Use a durable upload outbox if latency grows.
         const created = artifact
           ? await createDriveBinaryFile(
-              drive.accessToken,
+              accessToken,
               artifact.filename,
               Buffer.from(artifact.data),
               artifact.mimeType,
               { folderId: drive.folderId || undefined },
             )
           : await createDriveTextFile(
-              drive.accessToken,
+              accessToken,
               `${(locked.title.slice(0, 95) || "Jarvis Document").replace(/\.md$/, "")}.md`,
               locked.body || locked.summary || locked.title,
               { folderId: drive.folderId || undefined },
@@ -725,11 +726,7 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         const [updated] = await tx
           .update(schema.deliverables)
           .set({ driveLink: created.webViewLink })
-          .where(and(
-            eq(schema.deliverables.id, id),
-            eq(schema.deliverables.userId, userId),
-            eq(schema.deliverables.status, "pending_approval"),
-          ))
+          .where(eq(schema.deliverables.id, locked.id))
           .returning();
         return { driveLink: created.webViewLink, deliverable: updated };
       });

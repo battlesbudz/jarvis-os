@@ -473,7 +473,7 @@ async function flushResearchBatch(key: string): Promise<void> {
           .orderBy(asc(schema.deliverables.createdAt))
           .for("update");
         const activeSiblingDeliverables = siblingDeliverables.filter(
-          (deliverable) => deliverable.status === "pending_approval",
+          (deliverable) => deliverable.status === "pending_approval" && !deliverable.driveLink,
         );
         let artifactBaseMeta = (activeSiblingDeliverables[0]?.meta as Record<string, unknown> | null) ?? {};
         const activeJobIds = new Set(

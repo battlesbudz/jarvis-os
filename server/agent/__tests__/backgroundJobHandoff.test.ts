@@ -242,6 +242,7 @@ assert.match(jobQueueSource, /\.for\("update"\)/);
 assert.match(jobQueueSource, /const hasActiveDeliverables = await db\.transaction[\s\S]*?markdownToPdfBuffer[\s\S]*?tx\.insert\(schema\.deliverableArtifacts\)/);
 assert.doesNotMatch(jobQueueSource, /persistBatchArtifact/);
 assert.match(jobQueueSource, /activeSiblingDeliverables/);
+assert.match(jobQueueSource, /deliverable\.status === "pending_approval" && !deliverable\.driveLink/);
 assert.match(jobQueueSource, /if \(!hasActiveDeliverables\) return/);
 assert.match(jobQueueSource, /prompt: schema\.agentJobs\.prompt/);
 assert.match(jobQueueSource, /pdfRequestedByJobId\.set\(row\.id, promptedPdf\)/);
