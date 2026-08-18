@@ -307,9 +307,23 @@ const coachAgentSource = readFileSync(
   "utf8",
 );
 assert.match(coachAgentSource, /backgroundPrompt: buildBackgroundJobPrompt\(recentMessages, userText\)/);
-assert.match(coachAgentSource, /const destinationScopedSlack = channelName === "Slack"/);
-assert.match(coachAgentSource, /sessionResumed \|\| destinationScopedSlack/);
-assert.match(coachAgentSource, /if \(!destinationScopedSlack\) \{[\s\S]*?db\.insert\(schema\.chatHistory\)/);
+assert.match(coachAgentSource, /channelName === "Slack" \|\| channelName\.startsWith\("Discord"\)/);
+assert.match(coachAgentSource, /sessionResumed \|\| destinationScopedConversation/);
+assert.match(coachAgentSource, /if \(!destinationScopedConversation\) \{[\s\S]*?db\.insert\(schema\.chatHistory\)/);
+
+const discordManagerSource = readFileSync(
+  fileURLToPath(new URL("../../discord/manager.ts", import.meta.url)),
+  "utf8",
+);
+assert.match(discordManagerSource, /Discord:\$\{discordChannelId\}/);
+assert.match(discordManagerSource, /getCoachSession\(userId, discordSessionChannel\)/);
+assert.match(discordManagerSource, /setCoachSession\(userId, discordSessionChannel/);
+
+const discordSlashSource = readFileSync(
+  fileURLToPath(new URL("../../discord/slashCommands.ts", import.meta.url)),
+  "utf8",
+);
+assert.match(discordSlashSource, /const deliveryChannelId = isPublic \? originChannelId : undefined/);
 
 const deliverableRoutesSource = readFileSync(
   fileURLToPath(new URL("../../routes/deliverableRoutes.ts", import.meta.url)),

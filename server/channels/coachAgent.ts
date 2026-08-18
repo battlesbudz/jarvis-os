@@ -177,7 +177,7 @@ export async function persistFastCoachExchange(input: {
 
 export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyResult> {
   const { userId, userText, channelName, imageUrl, onToken, onProgressMessage, originChannelId, discordGuildId, discordChannelId, signal } = input;
-  const destinationScopedSlack = channelName === "Slack";
+  const destinationScopedConversation = channelName === "Slack" || channelName.startsWith("Discord");
   const coachSessionAgentId = getCoachAgentSessionAgentId(userId);
   const channelLower = channelName.toLowerCase();
   const telegramE2eProbeId = channelName === "Telegram" ? getTelegramE2eProbeId(userText) : null;
@@ -327,7 +327,7 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
     db.select().from(schema.lifeContext).where(eq(schema.lifeContext.userId, userId)).limit(1),
     // Skip chat_history fetch when the session cache is warm — the cached
     // message list replaces the rolling 10-message DB window.
-    sessionResumed || destinationScopedSlack
+    sessionResumed || destinationScopedConversation
       ? Promise.resolve([] as any[])
       : db.select().from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId)).limit(1),
     listPendingPersonalCommitments(userId, 10),
@@ -807,7 +807,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
         const userMsgEntry = { id: ackTs.toString(), role: "user", content: userText };
         const asstMsgEntry = { id: (ackTs + 1).toString(), role: "assistant", content: ackReply };
         const updatedChatBuild = [asstMsgEntry, userMsgEntry, ...chatMessages].slice(0, 100);
-        if (!destinationScopedSlack) {
+        if (!destinationScopedConversation) {
           db.insert(schema.chatHistory)
             .values({ userId, data: updatedChatBuild })
             .onConflictDoUpdate({
@@ -860,7 +860,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     const userMsgEntry  = { id: Date.now().toString(),       role: "user",      content: userText    };
     const asstMsgEntry  = { id: (Date.now() + 1).toString(), role: "assistant", content: resumeReply };
     const updatedChatResume = [asstMsgEntry, userMsgEntry, ...chatMessages].slice(0, 100);
-    if (!destinationScopedSlack) {
+    if (!destinationScopedConversation) {
       db.insert(schema.chatHistory)
         .values({ userId, data: updatedChatResume })
         .onConflictDoUpdate({
@@ -895,7 +895,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
         const userMsgEntry = { id: autonomyTs.toString(), role: "user", content: userText };
         const asstMsgEntry = { id: (autonomyTs + 1).toString(), role: "assistant", content: autonomyReply };
         const updatedChatAutonomy = [asstMsgEntry, userMsgEntry, ...chatMessages].slice(0, 100);
-        if (!destinationScopedSlack) {
+        if (!destinationScopedConversation) {
           db.insert(schema.chatHistory)
             .values({ userId, data: updatedChatAutonomy })
             .onConflictDoUpdate({
@@ -1160,7 +1160,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   const updatedChat = [assistantMsg, userMsg, ...chatMessages].slice(0, 100);
 
   try {
-    if (!destinationScopedSlack) {
+    if (!destinationScopedConversation) {
       await db.insert(schema.chatHistory)
         .values({ userId, data: updatedChat })
         .onConflictDoUpdate({

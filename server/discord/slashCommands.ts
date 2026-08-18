@@ -527,12 +527,13 @@ async function handleChat(
 
   const guildId = interaction.guild_id as string | undefined;
   const originChannelId = interaction.channel_id as string | undefined;
+  const deliveryChannelId = isPublic ? originChannelId : undefined;
 
   try {
     const primeReply = await tryHandleDiscordChatWithPrime({
       userId,
       message,
-      originChannelId,
+      originChannelId: deliveryChannelId,
       guildId,
     });
     if (primeReply) {
@@ -553,7 +554,7 @@ async function handleChat(
       userId,
       userText: message,
       channelName: "Discord",
-      originChannelId,
+      originChannelId: deliveryChannelId,
       discordGuildId: guildId,
     });
     await editInteractionReply(
