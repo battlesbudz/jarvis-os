@@ -37,6 +37,7 @@ assert.equal(requestsReportFile("Research competitors and export the results as 
 assert.equal(requestsReportFile("Create a downloadable JSON file with the findings"), false);
 assert.equal(requestsReportFile("Export the findings as an XLSX spreadsheet"), false);
 assert.equal(unsupportedReportFileFormat("Research competitors and export the results as a CSV file"), "CSV");
+assert.equal(unsupportedReportFileFormat("Give me a CSV file of the results"), "CSV");
 assert.equal(unsupportedReportFileFormat("Create a downloadable JSON file with the findings"), "JSON");
 assert.equal(unsupportedReportFileFormat("Explain how JSON parsing works"), null);
 assert.equal(unsupportedReportFileFormat("Return this object as JSON"), null);
@@ -88,6 +89,17 @@ assert.equal(
   true,
   "ordinary content revisions inherit the prior PDF output",
 );
+
+const titleOnlyRevisionPrompt = contextualRevisionPrompt.replace(
+  "Do not make this a PDF; return Markdown only.",
+  "Change the title to CSV Adoption.",
+);
+assert.equal(
+  requestsReportFile(titleOnlyRevisionPrompt),
+  true,
+  "format words used in content edits do not replace the prior PDF output",
+);
+assert.equal(unsupportedReportFileFormat(titleOnlyRevisionPrompt), null);
 
 const markdownRevisionPrompt = contextualRevisionPrompt.replace(
   "Do not make this a PDF; return Markdown only.",
