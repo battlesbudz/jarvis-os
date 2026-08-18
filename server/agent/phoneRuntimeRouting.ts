@@ -70,13 +70,13 @@ function normalizePhoneRuntimeRequestText(text: string): string {
 const ANDROID_PACKAGE_NAME_PATTERN = /\b[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+\b/;
 const PHONE_OPEN_COMMAND_PATTERN = /^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:(?:please|don['’]?t\s+forget\s+to|do\s+not\s+hesitate\s+to)\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)(?:\s+you)?\s+to\s+|i(?:\s+would|['’]d)\s+like\s+to\s+)?(?:open|launch|start)\b/i;
 const PHONE_OPEN_FOLLOW_UP_PATTERN = /\b(?:open|launch|start)(?:\s+up)?\s+(?:it|that|the\s+app)(?:\s+directly)?(?:\s+(?:right\s+)?now)?\b/i;
-const NEGATED_PHONE_OPEN_PATTERN = /\b(?:do\s+not|don['’]?t|dont|never|stop)\b[\s\S]{0,48}\b(?:open|launch|start)\b/i;
+const NEGATED_PHONE_OPEN_PATTERN = /\b(?:do\s+not|don['’]?t|dont|never|stop)\b[^;.!?\n]{0,48}\b(?:open|launch|start)\b/i;
 const RETRACTED_PHONE_OPEN_PATTERN = /\b(?:open|launch|start)\b[\s\S]{0,80}\b(?:(?:actually\s+)?(?:do\s+not|don['’]?t|dont)(?:\s+(?:do\s+it|open|launch|start))?|never\s*mind|cancel(?:\s+(?:that|it))?|scratch\s+that|forget\s+it|stop)\s*[.!?]*$/i;
 const DEFERRED_PHONE_OPEN_PATTERN = /\b(?:not\s+(?:now|yet)|tomorrow|tonight|later|this\s+(?:morning|afternoon|evening|night|weekend|week|month|year)|next\s+(?:morning|afternoon|evening|night|day|week|month|year|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|january|february|march|april|may|june|july|august|september|october|november|december|\d{4}-\d{1,2}-\d{1,2})|at\s+(?:(?:[01]?\d|2[0-3])(?::[0-5]\d)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?:\s*(?:a\.?m\.?|p\.?m\.?))?|at\s+(?:noon|midnight)|in\s+(?:(?:(?:a|one)\s+)?(?:little\s+)?(?:while|bit|moment)|(?:\d+|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|few|couple(?:\s+of)?)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?))|(?:after|when|whenever|as\s+soon\s+as|as\s+long\s+as|provided\s+that|if|unless)\s+\S+|once\s+(?!(?:again|more)\b)\S+)\b/i;
 const ORDERED_PHONE_ACTION_PATTERN = /\b(?:after|before)\s+(?:(?:you|i|we)\s+)?(?:open(?:ing)?|launch(?:ing)?|start(?:ing)?|read(?:ing)?|check(?:ing)?|view(?:ing)?|captur(?:e|ing)|tak(?:e|ing)|tap(?:ping)?|click(?:ing)?|press(?:ing)?|swip(?:e|ing)|scroll(?:ing)?|typ(?:e|ing)|enter(?:ing)?|select(?:ing)?|play(?:ing)?|watch(?:ing)?|clos(?:e|ing)|return(?:ing)?|go(?:ing)?)\b/i;
 const PHONE_WEB_TARGET_QUALIFIER_PATTERN = /\b(?:website|web\s*site|site|webpage|web\s+page)\b/i;
 const PHONE_OPEN_CLAUSE_SEPARATOR_PATTERN = new RegExp(
-  String.raw`(?:;+|\r?\n+|[!?]+(?:\s+|$)|\.(?:\s+|$))|(?:,|:|[—–]|-(?=\s))(?=\s*(?:(?:now|next|then)[\s,:-]+)?(?:please\s+)?${PHONE_FOLLOW_UP_ACTION_PATTERN}\b)`,
+  String.raw`(?:;+|\r?\n+|[!?]+(?:\s+|$)|\.(?:\s+|$))|(?:,|:|[&—–]|-(?=\s))(?=\s*(?:(?:now|next|then)[\s,:-]+)?(?:please\s+)?${PHONE_FOLLOW_UP_ACTION_PATTERN}\b)`,
   "i",
 );
 
@@ -246,7 +246,16 @@ function contextualPhoneAppTarget(
       .some((clause) => hasRequestedAction(clause) || cancelsPhoneOpenTarget(clause, selected.target));
     return hasEarlierAction || hasLaterAction || hasAdditionalPhoneAction(selected.clause) ? null : selected.target;
   }
-  if (clauses.length > 1) return null;
+  if (clauses.length > 1) {
+    const affirmativeActionClauses = clauses.filter((clause) => (
+      hasRequestedAction(clause) &&
+      !/^\s*(?:do\s+not|don['’]?t|dont|never|stop)\b/i.test(stripPhoneDiscoursePreamble(clause))
+    ));
+    if (affirmativeActionClauses.length !== 1 || !PHONE_OPEN_FOLLOW_UP_PATTERN.test(affirmativeActionClauses[0])) {
+      return null;
+    }
+    requestText = affirmativeActionClauses[0];
+  }
   if (isNegatedPhoneOpenRequest(requestText) || isDeferredPhoneOpenRequest(requestText)) return null;
   const hasContextualReference = PHONE_OPEN_FOLLOW_UP_PATTERN.test(requestText) &&
     !hasCurrentTargetBeforePhoneOpenFollowUp(requestText);
@@ -365,6 +374,10 @@ function hasPhoneRuntimeContext(text: string): boolean {
     isPhoneOpenActionRequest(text);
 }
 
+function isNegatedActionClause(text: string): boolean {
+  return /^\s*(?:do\s+not|don['’]?t|dont|never|stop)\b/i.test(stripPhoneDiscoursePreamble(text));
+}
+
 function hasNonRuntimeActionAlongsidePhoneAction(text: string): boolean {
   const segments = phoneOpenClauses(text).flatMap((clause) => (
     clause.split(new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i"))
@@ -374,7 +387,10 @@ function hasNonRuntimeActionAlongsidePhoneAction(text: string): boolean {
     isPhoneRuntimeCoveredRequest(segment) || PHONE_OPEN_FOLLOW_UP_PATTERN.test(segment)
   ));
   const hasNonRuntimeAction = segments.some((segment) => (
-    hasRequestedAction(segment) && !isPhoneRuntimeCoveredRequest(segment)
+    hasRequestedAction(segment) &&
+    !isNegatedActionClause(segment) &&
+    !PHONE_OPEN_FOLLOW_UP_PATTERN.test(segment) &&
+    !isPhoneRuntimeCoveredRequest(segment)
   ));
   return hasPhoneAction && hasNonRuntimeAction;
 }

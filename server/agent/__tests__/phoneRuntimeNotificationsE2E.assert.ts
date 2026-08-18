@@ -364,6 +364,21 @@ async function main() {
     false,
     "a negated contextual follow-up must not reuse the prior Android package",
   );
+  const contextualOpenAfterNegatedAction = "Don't search for it; open it directly now";
+  assert.equal(
+    isContextualPhoneRuntimeCoveredRequest(contextualOpenAfterNegatedAction, priorAmazonConversation),
+    true,
+  );
+  assert.deepEqual(
+    JSON.parse(
+      deterministicPhoneRuntimeToolCallFromRequest(
+        contextualOpenAfterNegatedAction,
+        phoneTools,
+        { ...connectedPhoneRuntime, recentConversation: priorAmazonConversation },
+      )?.function.arguments ?? "{}",
+    ),
+    { appName: "com.amazon.mShop.android.shopping" },
+  );
   assert.equal(
     isContextualPhoneRuntimeCoveredRequest("Why did you open it?", priorAmazonConversation),
     false,
@@ -506,6 +521,7 @@ async function main() {
     "Open Spotify — launch it directly now",
     "Open Spotify, launch it directly now",
     "Open Spotify - launch it directly now",
+    "Open Spotify & launch it directly now",
     "Open it and check the weather",
   ]) {
     assert.equal(
