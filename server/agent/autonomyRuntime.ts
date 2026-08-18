@@ -476,6 +476,7 @@ export async function routeAutonomyRequest(
         toolArgs: {
           topLevelAutonomy: true,
           userText,
+          ...(backgroundPrompt ? { backgroundPrompt } : {}),
           channelName: input.channelName,
           ...(input.originChannelId ? { originChannelId: input.originChannelId } : {}),
         },

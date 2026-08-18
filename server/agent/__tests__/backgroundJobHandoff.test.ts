@@ -39,6 +39,9 @@ assert.equal(unsupportedReportFileFormat("Create a downloadable JSON file with t
 assert.equal(unsupportedReportFileFormat("Explain how JSON parsing works"), null);
 assert.equal(unsupportedReportFileFormat("Write a JSON parser"), null);
 assert.equal(unsupportedReportFileFormat("Create a CSV importer"), null);
+assert.equal(unsupportedReportFileFormat("Create a PDF report comparing JSON file formats"), null);
+assert.equal(requestsReportFile("Create a PDF report comparing JSON file formats"), true);
+assert.equal(requestsReportFile("Research how to write PDF files safely"), false);
 
 const contextualRevisionPrompt = [
   "Revise this Jarvis deliverable according to the user's requested changes.",

@@ -46,10 +46,16 @@ function deriveTitle(userText: string): string {
   return `Approved action: ${(normalized || "Jarvis action").slice(0, 70)}`;
 }
 
-function buildPrompt(gate: ApprovalGate, userText: string, channelName: string): string {
+function buildPrompt(
+  gate: ApprovalGate,
+  userText: string,
+  channelName: string,
+  backgroundPrompt?: string,
+): string {
   return [
     `The user approved this top-level Jarvis action in approval gate ${gate.id}.`,
     `Original request: ${userText}`,
+    ...(backgroundPrompt ? ["", "Resolved conversation context:", backgroundPrompt] : []),
     `Original channel: ${channelName || "unknown"}`,
     "",
     "Continue through the normal Jarvis tool/capability path.",
@@ -69,6 +75,9 @@ export async function continueTopLevelApproval(
   const args = getToolArgs(gate);
   const userText = String(args.userText || "").trim();
   const channelName = typeof args.channelName === "string" ? args.channelName : "unknown";
+  const backgroundPrompt = typeof args.backgroundPrompt === "string"
+    ? args.backgroundPrompt.trim()
+    : undefined;
   const originChannelId = typeof args.originChannelId === "string" ? args.originChannelId : undefined;
   if (!userText) {
     return { continued: false, reason: "Gate is missing original user text." };
@@ -80,7 +89,7 @@ export async function continueTopLevelApproval(
     userId: gate.userId,
     agentType,
     title: deriveTitle(userText),
-    prompt: buildPrompt(gate, userText, channelName),
+    prompt: buildPrompt(gate, userText, channelName, backgroundPrompt),
     input: {
       originApprovalGateId: gate.id,
       approvedTopLevelAction: true,

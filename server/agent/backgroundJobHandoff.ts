@@ -115,25 +115,46 @@ function artifactRequestText(prompt: string): string {
 }
 
 const UNSUPPORTED_REPORT_FORMAT = /\b(docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)\b/i;
+
+function explicitlyRequestsPdfOutput(request: string): boolean {
+  const createPdf = /\b(?:create|make|generate|produce|prepare|compile)\b(?:\s+\w+){0,4}\s+(?:an?\s+)?pdf\b(?:\s+(?:report|memo|document|file|plan))?/i;
+  const writePdf = /\bwrite\s+(?:me\s+)?(?:an?\s+)?pdf\s+(?:report|memo|document|plan)\b/i;
+  const transformToPdf = /\b(?:give|return|provide|deliver|export|save|format|attach|send|keep|preserve|change|switch|convert)\b(?:\s+\w+){0,8}\s+(?:as|in|to)\s+(?:an?\s+)?pdf\b/i;
+  const artifactAsPdf = /\b(?:report|results?|findings?|memo|document|plan|it|this)\b(?:\s+\w+){0,5}\s+as\s+(?:an?\s+)?pdf\b/i;
+  return createPdf.test(request)
+    || writePdf.test(request)
+    || transformToPdf.test(request)
+    || artifactAsPdf.test(request);
+}
+
+function explicitlyRequestsGenericDownload(request: string): boolean {
+  return /\bdownloadable\s+(?:report|document|file)\b/i.test(request)
+    || /\b(?:create|make|generate|produce|prepare|compile|attach|deliver|return|provide|save|give)\b(?:\s+\w+){0,6}\s+(?:an?\s+)?downloadable\s+(?:report|document|file)\b/i.test(request)
+    || /\b(?:report|results?|findings?)\b(?:\s+\w+){0,5}\s+as\s+(?:an?\s+)?(?:document|file)\b/i.test(request);
+}
+
 /** Identify an explicit requested file format that this renderer cannot create. */
 export function unsupportedReportFileFormat(prompt: string): string | null {
   const request = artifactRequestText(prompt);
-  const match = request.match(UNSUPPORTED_REPORT_FORMAT);
-  if (!match) return null;
+  // A supported output stated near the action wins over format names in the
+  // subject, e.g. "Create a PDF report comparing JSON file formats."
+  if (explicitlyRequestsPdfOutput(request)) return null;
+
   const rawFormat = String.raw`(?:docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)`;
   const namedArtifact = String.raw`(?:docx(?:\s+file)?|word\s+document|csv\s+file|json\s+file|xlsx?(?:\s+(?:file|spreadsheet))?|spreadsheet|pptx?(?:\s+(?:file|presentation))?|powerpoint(?:\s+presentation)?|html\s+file|xml\s+file|rtf(?:\s+(?:file|document))?|tsv\s+file)`;
   const outputSyntax = new RegExp(
-    String.raw`\b(?:export|return|provide|deliver|attach|send|give|save)\b[^.!?\n]{0,80}\b(?:as|in|to)\s+(?:an?\s+)?${rawFormat}\b`,
+    String.raw`\b(?:export|return|provide|deliver|attach|send|give|save|format|convert|switch|change)\b(?:\s+\w+){0,8}\s+(?:as|in|to)\s+(?:an?\s+)?(${rawFormat})\b`,
     "i",
   );
-  const artifactCreation = new RegExp(
-    String.raw`\b(?:create|make|generate|produce|prepare|write|compile|format|export|return|provide|deliver|attach|send|give|save)\b[^.!?\n]{0,80}\b(?:downloadable\s+)?${namedArtifact}\b`,
+  const directArtifact = new RegExp(
+    String.raw`\b(?:create|make|generate|produce|prepare|compile|write)\s+(?:me\s+)?(?:an?\s+)?(${namedArtifact})\b`,
     "i",
   );
-  const downloadableArtifact = new RegExp(String.raw`\bdownloadable\s+${namedArtifact}\b`, "i");
-  return outputSyntax.test(request) || artifactCreation.test(request) || downloadableArtifact.test(request)
-    ? match[1].toUpperCase()
-    : null;
+  const downloadableArtifact = new RegExp(String.raw`\bdownloadable\s+(${namedArtifact})\b`, "i");
+  const output = request.match(outputSyntax)?.[1]
+    || request.match(directArtifact)?.[1]
+    || request.match(downloadableArtifact)?.[1];
+  return output?.match(UNSUPPORTED_REPORT_FORMAT)?.[1]?.toUpperCase() ?? null;
 }
 
 /** Return true when the user explicitly requested a downloadable PDF report file. */
@@ -155,8 +176,5 @@ export function requestsReportFile(prompt: string): boolean {
   );
   if (negatedAction.test(request) || negatedArtifact.test(request)) return false;
 
-  return new RegExp(String.raw`\b${action}\b[^.!?\n]{0,80}\b${artifact}\b`, "i").test(request)
-    || new RegExp(String.raw`\b(?:want|need|would\s+like)\b[^.!?\n]{0,50}\b${artifact}\b`, "i").test(request)
-    || new RegExp(String.raw`\b(?:report|results?|findings?)\b[^.!?\n]{0,30}\bas\s+(?:a\s+)?${artifact}\b`, "i").test(request)
-    || /\bdownloadable\s+(?:report|document|file)\b/i.test(request);
+  return explicitlyRequestsPdfOutput(request) || explicitlyRequestsGenericDownload(request);
 }

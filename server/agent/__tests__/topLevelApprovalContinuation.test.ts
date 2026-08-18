@@ -14,6 +14,13 @@ function makeGate(overrides: Partial<ApprovalGate> = {}): ApprovalGate {
       userText: "Send this email to the regulator",
       channelName: "Gateway",
       originChannelId: "telegram-chat-2",
+      backgroundPrompt: [
+        "Complete the latest user request as a self-contained background task.",
+        "User: Research sunflower seed nutrition.",
+        "Latest user request:",
+        "Send it as a PDF",
+        "End latest user request.",
+      ].join("\n"),
     },
     description: "Approval needed",
     status: "approved",
@@ -49,6 +56,9 @@ async function main(): Promise<void> {
     assert.match(jobs[0].title, /Approved action/i);
     assert.match(jobs[0].prompt, /approved this top-level Jarvis action/i);
     assert.match(jobs[0].prompt, /Send this email to the regulator/i);
+    assert.match(jobs[0].prompt, /Resolved conversation context:/i);
+    assert.match(jobs[0].prompt, /Research sunflower seed nutrition/i);
+    assert.match(jobs[0].prompt, /Send it as a PDF/i);
     assert.equal(jobs[0].input?.originApprovalGateId, "gate_123");
     assert.equal(jobs[0].input?.approvedTopLevelAction, true);
     assert.equal(jobs[0].input?.originChannel, "Gateway");
