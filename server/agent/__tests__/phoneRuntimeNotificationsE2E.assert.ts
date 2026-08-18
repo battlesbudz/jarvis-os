@@ -18,6 +18,9 @@ async function main() {
   const {
     deterministicAndroidToolSummary,
     deterministicPhoneRuntimeToolCallFromRequest,
+    hasContextualPhoneRuntimeActionRequest,
+    hasPhoneRuntimeActionRequest,
+    isContextualPhoneRuntimeCoveredRequest,
     isPhoneRuntimeCoveredRequest,
   } = await import("../phoneRuntimeRouting");
   const { resolveAndroidNotificationFollowUp } = await import("../androidNotificationFollowups");
@@ -28,12 +31,510 @@ async function main() {
   } = await import("../androidNotificationSummary");
 
   const phoneTools = [
-    chatTool("android_open_app"),
+    chatTool("android_open_app_by_name"),
     chatTool("android_youtube_search"),
     chatTool("android_capture_screen"),
     chatTool("android_read_notifications"),
   ];
   const connectedPhoneRuntime = { androidActive: true, phoneRuntimeCoveredRequest: true };
+
+  assert.equal(isPhoneRuntimeCoveredRequest("Open Amazon"), true);
+  const amazonOpen = deterministicPhoneRuntimeToolCallFromRequest("Open Amazon", phoneTools, connectedPhoneRuntime);
+  assert.equal(amazonOpen?.function.name, "android_open_app_by_name");
+  assert.deepEqual(JSON.parse(amazonOpen?.function.arguments ?? "{}"), { appName: "Amazon" });
+  for (const preambledRequest of ["Okay, open Facebook", "Now open Facebook"]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(preambledRequest), true);
+    assert.deepEqual(
+      JSON.parse(
+        deterministicPhoneRuntimeToolCallFromRequest(
+          preambledRequest,
+          phoneTools,
+          connectedPhoneRuntime,
+        )?.function.arguments ?? "{}",
+      ),
+      { appName: "Facebook" },
+    );
+  }
+  for (const affirmativeIdiom of ["Don't forget to open Amazon", "Do not hesitate to open Amazon"]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(affirmativeIdiom), true);
+    assert.deepEqual(
+      JSON.parse(
+        deterministicPhoneRuntimeToolCallFromRequest(
+          affirmativeIdiom,
+          phoneTools,
+          connectedPhoneRuntime,
+        )?.function.arguments ?? "{}",
+      ),
+      { appName: "Amazon" },
+    );
+  }
+  for (const affirmativeCompound of [
+    "Open Amazon; don't forget to open it",
+    "Open Amazon—do not hesitate to open it",
+  ]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(affirmativeCompound), true);
+  }
+  for (const [requestText, appName] of [
+    ["Open Facebook Lite", "Facebook Lite"],
+    ["Open Facebook Messenger", "Facebook Messenger"],
+  ] as const) {
+    const appOpen = deterministicPhoneRuntimeToolCallFromRequest(requestText, phoneTools, connectedPhoneRuntime);
+    assert.equal(appOpen?.function.name, "android_open_app_by_name");
+    assert.deepEqual(JSON.parse(appOpen?.function.arguments ?? "{}"), { appName });
+  }
+  for (const appName of ["Uber", "Netflix", "Pokémon GO", "微信", "Cash App"]) {
+    const requestText = `Open ${appName}`;
+    assert.equal(isPhoneRuntimeCoveredRequest(requestText), true);
+    assert.deepEqual(
+      JSON.parse(
+        deterministicPhoneRuntimeToolCallFromRequest(requestText, phoneTools, connectedPhoneRuntime)?.function.arguments ?? "{}",
+      ),
+      { appName },
+    );
+  }
+  for (const excludedGenericAppRequest of [
+    "Open anything but Facebook",
+    "Open neither Amazon nor Facebook",
+    "Open Amazon or Facebook",
+  ]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(excludedGenericAppRequest), false);
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(
+        excludedGenericAppRequest,
+        phoneTools,
+        connectedPhoneRuntime,
+      ),
+      null,
+    );
+  }
+  for (const politeRequest of ["Could you please open Amazon", "Can you please launch Amazon", "Open Amazon, please"]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(politeRequest), true, `${politeRequest} must enter Phone Runtime`);
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(politeRequest, phoneTools, connectedPhoneRuntime)?.function.name,
+      "android_open_app_by_name",
+    );
+  }
+  for (const intentRequest of ["I want to open Facebook", "I'd like to open Facebook"]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(intentRequest), true);
+    assert.deepEqual(
+      JSON.parse(
+        deterministicPhoneRuntimeToolCallFromRequest(intentRequest, phoneTools, connectedPhoneRuntime)?.function.arguments ?? "{}",
+      ),
+      { appName: "Facebook" },
+    );
+  }
+  for (const deferredRequest of ["Open Amazon tomorrow", "Open Amazon at 5 PM"]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(deferredRequest), false, `${deferredRequest} must not launch immediately`);
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(deferredRequest, phoneTools, connectedPhoneRuntime),
+      null,
+      `${deferredRequest} must not dispatch a deterministic app-open call`,
+    );
+  }
+  for (const immediateRequest of ["Open Facebook if possible", "Open Facebook as soon as possible"]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(immediateRequest), true);
+    assert.deepEqual(
+      JSON.parse(
+        deterministicPhoneRuntimeToolCallFromRequest(immediateRequest, phoneTools, connectedPhoneRuntime)?.function.arguments ?? "{}",
+      ),
+      { appName: "Facebook" },
+    );
+  }
+  for (const deferredRequest of [
+    "Open Amazon after lunch",
+    "Open Amazon when I get home",
+    "Open Amazon at 17:00",
+    "Open Amazon this evening",
+    "Open Amazon in a while",
+  ]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(deferredRequest), false, `${deferredRequest} must not launch immediately`);
+  }
+  const repeatRequest = "Open Amazon once again";
+  assert.equal(isPhoneRuntimeCoveredRequest(repeatRequest), true);
+  assert.deepEqual(
+    JSON.parse(
+      deterministicPhoneRuntimeToolCallFromRequest(repeatRequest, phoneTools, connectedPhoneRuntime)?.function.arguments ?? "{}",
+    ),
+    { appName: "Amazon" },
+  );
+  for (const negatedRequest of [
+    "Don't open Amazon",
+    "Do not launch YouTube",
+    "Never start Spotify",
+    "Open Amazon — actually don't",
+    "Open Amazon — never mind",
+    "Open Amazon, cancel that",
+  ]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(negatedRequest), false, `${negatedRequest} must not enter Phone Runtime`);
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(negatedRequest, phoneTools, connectedPhoneRuntime),
+      null,
+      `${negatedRequest} must not dispatch a deterministic app-open call`,
+    );
+  }
+  const mixedNegatedOpenRequest = "Don't open Amazon; read my notifications";
+  assert.equal(isPhoneRuntimeCoveredRequest(mixedNegatedOpenRequest), true);
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest(mixedNegatedOpenRequest, phoneTools, connectedPhoneRuntime)?.function.name,
+    "android_read_notifications",
+    "a negated app-open clause must not suppress an independent notification request",
+  );
+  const coordinatedNegatedNotificationRequest = "Don't read, show, or list my notifications";
+  assert.equal(isPhoneRuntimeCoveredRequest(coordinatedNegatedNotificationRequest), false);
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest(
+      coordinatedNegatedNotificationRequest,
+      phoneTools,
+      connectedPhoneRuntime,
+    ),
+    null,
+    "coordinated notification verbs must remain under the leading negation",
+  );
+  for (const informationalRequest of ["Why did you open Amazon?", "Explain how to open Amazon", "Can Android open Amazon?"]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(informationalRequest), false, `${informationalRequest} is not an app-open command`);
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(informationalRequest, phoneTools, connectedPhoneRuntime),
+      null,
+      `${informationalRequest} must not dispatch a deterministic app-open call`,
+    );
+  }
+  for (const informationalYoutubeRequest of ["Can Android open YouTube?", "Why did you open YouTube?"]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(informationalYoutubeRequest), false);
+  }
+  const nestedOpenRequest = "Open a Google search for how to open Amazon";
+  assert.equal(isPhoneRuntimeCoveredRequest(nestedOpenRequest), false);
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest(nestedOpenRequest, phoneTools, connectedPhoneRuntime),
+    null,
+    "an app name nested in search text must not become the commanded target",
+  );
+  for (const documentRequest of ["Open the attached spreadsheet", "Open the quarterly PDF"]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(documentRequest), false);
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(documentRequest, phoneTools, connectedPhoneRuntime),
+      null,
+      `${documentRequest} must stay on the document tool surface`,
+    );
+  }
+  for (const webRequest of ["Open dev.example.com", "Open dev.example.com/setup", "Open amazon.com", "Open facebook.com/help", "Open Amazon website"]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(webRequest), false, `${webRequest} is a web target, not an app-open command`);
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(webRequest, phoneTools, connectedPhoneRuntime),
+      null,
+      `${webRequest} must not dispatch a deterministic app-open call`,
+    );
+  }
+  const excludedPackageRequest = "Open Facebook, not the Android app package com.facebook.lite";
+  assert.equal(isPhoneRuntimeCoveredRequest(excludedPackageRequest), true);
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest(excludedPackageRequest, phoneTools, connectedPhoneRuntime),
+    null,
+    "an excluded package must not override the requested app",
+  );
+  const unrelatedPackageRequest = "Open Facebook; OpenVPN's Android app package is de.blinkt.openvpn";
+  assert.deepEqual(
+    JSON.parse(
+      deterministicPhoneRuntimeToolCallFromRequest(
+        unrelatedPackageRequest,
+        phoneTools,
+        connectedPhoneRuntime,
+      )?.function.arguments ?? "{}",
+    ),
+    { appName: "Facebook" },
+    "an unrelated package statement must not override the commanded app",
+  );
+  const explicitPackageRequest = "Open the Android app package de.blinkt.openvpn";
+  assert.deepEqual(
+    JSON.parse(
+      deterministicPhoneRuntimeToolCallFromRequest(
+        explicitPackageRequest,
+        phoneTools,
+        connectedPhoneRuntime,
+      )?.function.arguments ?? "{}",
+    ),
+    { appName: "de.blinkt.openvpn" },
+  );
+  const appInsteadOfWebsiteRequest = "Open Amazon app, not the website";
+  assert.equal(isPhoneRuntimeCoveredRequest(appInsteadOfWebsiteRequest), true);
+  assert.deepEqual(
+    JSON.parse(
+      deterministicPhoneRuntimeToolCallFromRequest(
+        appInsteadOfWebsiteRequest,
+        phoneTools,
+        connectedPhoneRuntime,
+      )?.function.arguments ?? "{}",
+    ),
+    { appName: "Amazon" },
+  );
+
+  const priorAmazonConversation = [
+    "The correct Amazon Shopping package is com.amazon.mShop.android.shopping.",
+  ];
+  assert.equal(
+    isContextualPhoneRuntimeCoveredRequest("Can you launch it directly now?", priorAmazonConversation),
+    true,
+  );
+  const qualifiedPackageConversation = ["The Android app package is de.blinkt.openvpn."];
+  const qualifiedPackageOpen = deterministicPhoneRuntimeToolCallFromRequest(
+    "Launch it directly now",
+    phoneTools,
+    { ...connectedPhoneRuntime, recentConversation: qualifiedPackageConversation },
+  );
+  assert.deepEqual(JSON.parse(qualifiedPackageOpen?.function.arguments ?? "{}"), { appName: "de.blinkt.openvpn" });
+  assert.equal(
+    isContextualPhoneRuntimeCoveredRequest(
+      "Launch it directly now",
+      ["Package names: Facebook is com.facebook.katana and Amazon is com.amazon.mShop.android.shopping."],
+    ),
+    false,
+    "multiple contextual packages must require clarification",
+  );
+  assert.equal(
+    isContextualPhoneRuntimeCoveredRequest("Can you please launch it directly now?", priorAmazonConversation),
+    true,
+  );
+  for (const contextualDeferredRequest of [
+    "Launch it tomorrow",
+    "Open it this evening",
+    "Open it in a while",
+    "Open it on Friday",
+    "Open it on August 20",
+    "Open it in two hours",
+    "Open it whenever I get home",
+    "Open it provided that Wi-Fi is connected",
+    "Open it as long as Wi-Fi is connected",
+    "Open it at five",
+    "Open it next Friday",
+  ]) {
+    assert.equal(
+      isContextualPhoneRuntimeCoveredRequest(contextualDeferredRequest, priorAmazonConversation),
+      false,
+      `${contextualDeferredRequest} must not execute immediately`,
+    );
+  }
+  assert.equal(isPhoneRuntimeCoveredRequest("Open the When I Work app"), true);
+  assert.deepEqual(
+    JSON.parse(
+      deterministicPhoneRuntimeToolCallFromRequest(
+        "Open The Weather Channel",
+        phoneTools,
+        connectedPhoneRuntime,
+      )?.function.arguments ?? "{}",
+    ),
+    { appName: "Weather Channel" },
+  );
+  assert.equal(isPhoneRuntimeCoveredRequest("Open the When I Work app tomorrow"), false);
+  assert.equal(
+    isContextualPhoneRuntimeCoveredRequest("Can you launch it directly now?", ["Open https://docs.example.com/setup."]),
+    false,
+    "a contextual launch must not treat an unrelated domain as an Android package",
+  );
+  assert.equal(
+    isContextualPhoneRuntimeCoveredRequest(
+      "Launch it directly now",
+      ["The Android app support site is dev.example.com."],
+    ),
+    false,
+    "an Android app support domain is not a package declaration",
+  );
+  assert.equal(
+    isContextualPhoneRuntimeCoveredRequest(
+      "Can you launch it directly now?",
+      ["Use Facebook, not the Android app package com.facebook.lite."],
+    ),
+    false,
+    "a contextual launch must not reuse an excluded Android package",
+  );
+  assert.equal(
+    isContextualPhoneRuntimeCoveredRequest(
+      "Launch it directly now",
+      ["Don't use the Android app package com.facebook.lite."],
+    ),
+    false,
+    "a contextual launch must not reuse a negated Android package",
+  );
+  assert.equal(
+    isContextualPhoneRuntimeCoveredRequest("Don't launch it directly now.", priorAmazonConversation),
+    false,
+    "a negated contextual follow-up must not reuse the prior Android package",
+  );
+  assert.equal(
+    isContextualPhoneRuntimeCoveredRequest("Why did you open it?", priorAmazonConversation),
+    false,
+    "a contextual launch must be an app-open command",
+  );
+  assert.equal(
+    isContextualPhoneRuntimeCoveredRequest(
+      "Can you launch it directly now?",
+      [...priorAmazonConversation, "Let's discuss music instead.", "What would you like to know?"],
+    ),
+    false,
+    "a contextual launch must not reuse an app from an older exchange",
+  );
+  assert.equal(
+    isContextualPhoneRuntimeCoveredRequest("Open Spotify and launch it directly now", priorAmazonConversation),
+    false,
+    "a current explicit app target must prevent reuse of a prior package",
+  );
+  assert.equal(
+    isContextualPhoneRuntimeCoveredRequest("Open Uber and launch it directly now", priorAmazonConversation),
+    false,
+    "an uncatalogued current app target must prevent reuse of a prior package",
+  );
+  const positiveAppAfterNegation = "Don't open Amazon; open Facebook";
+  assert.equal(isPhoneRuntimeCoveredRequest(positiveAppAfterNegation), true);
+  assert.deepEqual(
+    JSON.parse(
+      deterministicPhoneRuntimeToolCallFromRequest(
+        positiveAppAfterNegation,
+        phoneTools,
+        connectedPhoneRuntime,
+      )?.function.arguments ?? "{}",
+    ),
+    { appName: "Facebook" },
+  );
+  for (const cancelledRequest of [
+    "Open Amazon; never mind",
+    "Open Amazon; actually don't",
+    "Open Amazon; wait, don't",
+    "Open Amazon! Wait!",
+    "Open Amazon? No.",
+    "Open Amazon; don't do that",
+    "Open Amazon; don't open Amazon",
+  ]) {
+    assert.equal(
+      isPhoneRuntimeCoveredRequest(cancelledRequest),
+      false,
+      `${cancelledRequest} must not force the Phone Runtime tool surface`,
+    );
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(cancelledRequest, phoneTools, connectedPhoneRuntime),
+      null,
+      `${cancelledRequest} must not dispatch an app launch`,
+    );
+  }
+  for (const orderedAppRequest of [
+    "Open Amazon after opening Facebook",
+    "Open Amazon before opening Facebook",
+    "Open Amazon. Open Facebook.",
+    "Open Amazon\nOpen Facebook",
+    "Open Amazon and Facebook",
+    "Open Amazon. Actually, open Facebook.",
+    "Open Amazon. No, open Facebook.",
+    "Open Amazon. Instead, open Facebook.",
+  ]) {
+    assert.equal(isPhoneRuntimeCoveredRequest(orderedAppRequest), true);
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(orderedAppRequest, phoneTools, connectedPhoneRuntime),
+      null,
+      `${orderedAppRequest} must stay in the ordered multi-tool loop`,
+    );
+  }
+  for (const mixedDomainRequest of [
+    "Take a photo; open Gmail",
+    "Check my calendar. Open Facebook.",
+    "Open Facebook. Check my calendar.",
+    "Open Facebook and check the weather",
+    "Open Facebook, check the weather",
+    "Open Facebook: check the weather",
+    "Open Facebook — check the weather",
+    "Open Facebook - check the weather",
+    "Open Settings and turn on Bluetooth",
+    "Email bob@example.com saying hi; open Facebook",
+    "What's the weather? Open Facebook.",
+    "Research quantum computing. Open Facebook.",
+    "Open Facebook. Get my calendar.",
+    "Open Facebook. Fetch my calendar.",
+    "Cancel my 3pm meeting. Open Uber.",
+    "Reschedule my 3pm meeting. Open Uber.",
+    "Could you check my calendar? Open Facebook.",
+    "Can you check my calendar? Open Facebook.",
+    "Set my calendar event's title to Planning. Open Facebook.",
+  ]) {
+    assert.equal(hasPhoneRuntimeActionRequest(mixedDomainRequest), true);
+    assert.equal(isPhoneRuntimeCoveredRequest(mixedDomainRequest), false);
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(mixedDomainRequest, phoneTools, connectedPhoneRuntime),
+      null,
+      `${mixedDomainRequest} must retain the full tool surface`,
+    );
+  }
+  assert.equal(isPhoneRuntimeCoveredRequest("Play jazz on YouTube"), true);
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest("Play jazz on YouTube", phoneTools, connectedPhoneRuntime),
+    null,
+    "play requests must retain the full Phone Runtime tool surface",
+  );
+  const contextualAmazonOpen = deterministicPhoneRuntimeToolCallFromRequest(
+    "Can you launch it directly now?",
+    phoneTools,
+    {
+      ...connectedPhoneRuntime,
+      recentConversation: priorAmazonConversation,
+    },
+  );
+  assert.equal(contextualAmazonOpen?.function.name, "android_open_app_by_name");
+  assert.deepEqual(
+    JSON.parse(contextualAmazonOpen?.function.arguments ?? "{}"),
+    { appName: "com.amazon.mShop.android.shopping" },
+  );
+  const contextualBareAppOpen = deterministicPhoneRuntimeToolCallFromRequest(
+    "Open the app",
+    phoneTools,
+    { ...connectedPhoneRuntime, recentConversation: priorAmazonConversation },
+  );
+  assert.deepEqual(
+    JSON.parse(contextualBareAppOpen?.function.arguments ?? "{}"),
+    { appName: "com.amazon.mShop.android.shopping" },
+  );
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest(
+      "Open it on the website",
+      phoneTools,
+      { ...connectedPhoneRuntime, recentConversation: priorAmazonConversation },
+    ),
+    null,
+    "web-qualified contextual requests must not launch the native app",
+  );
+  for (const contextualMixedRequest of [
+    "Open Spotify — launch it directly now",
+    "Open Spotify, launch it directly now",
+    "Open Spotify - launch it directly now",
+    "Open it and check the weather",
+  ]) {
+    assert.equal(
+      hasPhoneRuntimeActionRequest(contextualMixedRequest) ||
+        hasContextualPhoneRuntimeActionRequest(contextualMixedRequest, priorAmazonConversation),
+      true,
+    );
+    assert.equal(
+      deterministicPhoneRuntimeToolCallFromRequest(
+        contextualMixedRequest,
+        phoneTools,
+        { ...connectedPhoneRuntime, recentConversation: priorAmazonConversation },
+      ),
+      null,
+      `${contextualMixedRequest} must not reuse the prior app target`,
+    );
+  }
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest(
+      "Launch it, but not now",
+      phoneTools,
+      { ...connectedPhoneRuntime, recentConversation: priorAmazonConversation },
+    ),
+    null,
+    "contextual app launches qualified with not now must not run immediately",
+  );
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest(
+      "Open it if Wi-Fi is connected",
+      phoneTools,
+      { ...connectedPhoneRuntime, recentConversation: priorAmazonConversation },
+    ),
+    null,
+    "conditional contextual app launches must not run before their condition is checked",
+  );
 
   for (const [requestText, expectedQuery] of [
     ["Search YouTube for Jarvis Best Clips", "Jarvis Best Clips"],
@@ -44,11 +545,9 @@ async function main() {
     assert.equal(toolCall?.function.name, "android_youtube_search");
     assert.deepEqual(JSON.parse(toolCall?.function.arguments ?? "{}"), { query: expectedQuery });
   }
-  assert.equal(
-    deterministicPhoneRuntimeToolCallFromRequest("Open YouTube", phoneTools, connectedPhoneRuntime),
-    null,
-    "opening YouTube without a search should stay an app-open action",
-  );
+  const youtubeOpen = deterministicPhoneRuntimeToolCallFromRequest("Open YouTube", phoneTools, connectedPhoneRuntime);
+  assert.equal(youtubeOpen?.function.name, "android_open_app_by_name");
+  assert.deepEqual(JSON.parse(youtubeOpen?.function.arguments ?? "{}"), { appName: "YouTube" });
   assert.equal(
     deterministicPhoneRuntimeToolCallFromRequest("Research and summarize the best YouTube videos about Gemma", phoneTools, connectedPhoneRuntime),
     null,
@@ -141,8 +640,27 @@ async function main() {
     null,
     "plain-and compound phone requests must stay in the multi-tool loop",
   );
+  const appThenNotificationsRequest = "Open Gmail then read my notifications";
+  assert.equal(isPhoneRuntimeCoveredRequest(appThenNotificationsRequest), true);
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest(appThenNotificationsRequest, phoneTools, connectedPhoneRuntime),
+    null,
+    "an app launch followed by a notification read must stay in the multi-tool loop",
+  );
+  const notificationSummaryRequest = "Read my notifications and summarize them";
+  assert.equal(
+    isPhoneRuntimeCoveredRequest(notificationSummaryRequest),
+    true,
+    "result processing must retain the Phone Runtime tool surface",
+  );
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest(notificationSummaryRequest, phoneTools, connectedPhoneRuntime),
+    null,
+    "notification result processing must stay in the multi-tool loop",
+  );
   for (const request of [
     "Read my notifications. Turn the volume down.",
+    "Read my notifications; open Gmail.",
     "Read my notifications. Now turn the volume up.",
     "Read my notifications: Next, please open Gmail.",
     "Read my notifications. Go back.",

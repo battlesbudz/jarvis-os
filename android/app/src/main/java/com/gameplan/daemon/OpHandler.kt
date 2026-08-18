@@ -117,6 +117,7 @@ object OpHandler {
         return try {
             val result = when (type) {
                 "ping" -> handlePing()
+                "android_list_apps" -> handleListApps(context)
                 "android_open_app" -> handleOpenApp(context, op)
                 "android_browse" -> handleBrowse(context, op)
                 "android_return_to_jarvis" -> handleReturnToJarvis(context)
@@ -196,6 +197,32 @@ object OpHandler {
                 .put("notificationListenerActive", notificationListenerActive)
                 .put("foregroundPackage", foregroundPackage)
                 .put("uptimeMs", SystemClock.elapsedRealtime())
+        )
+    }
+
+    private fun handleListApps(context: Context): OpResult {
+        val pm = context.packageManager
+        val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        val apps = JSONArray()
+        val activities = pm.queryIntentActivities(launcherIntent, 0)
+            .sortedWith(compareBy({ it.loadLabel(pm).toString().lowercase() }, { it.activityInfo.packageName }))
+
+        for (info in activities) {
+            apps.put(
+                JSONObject()
+                    .put("label", info.loadLabel(pm).toString())
+                    .put("packageName", info.activityInfo.packageName)
+                    .put("activityName", info.activityInfo.name)
+            )
+        }
+
+        return OpResult(
+            true,
+            data = JSONObject()
+                .put("apps", apps)
+                .put("count", apps.length())
         )
     }
 

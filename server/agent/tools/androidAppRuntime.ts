@@ -140,7 +140,7 @@ export type AndroidAppCatalogEntry = {
 };
 
 export type ResolvedAndroidApp = AndroidAppCatalogEntry & {
-  source: "live_inventory" | "static_catalog";
+  source: "explicit_package" | "live_inventory" | "static_catalog";
   matchedAlias?: string;
 };
 
@@ -156,6 +156,7 @@ export const STATIC_ANDROID_APP_CATALOG: AndroidAppCatalogEntry[] = [
   { label: "Spotify", packageName: "com.spotify.music", aliases: ["spotify"] },
   { label: "Reddit", packageName: "com.reddit.frontpage", aliases: ["reddit"] },
   { label: "Discord", packageName: "com.discord", aliases: ["discord"] },
+  { label: "Amazon Shopping", packageName: "com.amazon.mShop.android.shopping", aliases: ["amazon", "amazon app", "amazon shopping", "amazon shopping app"] },
   { label: "Messenger", packageName: "com.facebook.orca", aliases: ["messenger", "facebook messenger"] },
   { label: "WhatsApp", packageName: "com.whatsapp", aliases: ["whatsapp", "whats app"] },
   { label: "Snapchat", packageName: "com.snapchat.android", aliases: ["snapchat", "snap"] },
@@ -224,7 +225,7 @@ function normalizeAppLookup(value: string): string {
   return value
     .toLowerCase()
     .replace(/&/g, " and ")
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -248,25 +249,48 @@ function containsNormalizedPhrase(value: string, phrase: string): boolean {
 }
 
 const GENERIC_APP_CONTEXT_WORDS = new Set(["android", "app", "application", "device", "phone"]);
+const APP_LOOKUP_CONTEXT_PREFIX_PATTERN = /^(?:(?:my|the|please|open|launch|start|android|phone|device)\s*)+$/;
+const APP_LOOKUP_CONTEXT_SUFFIX_PATTERN = /^(?:(?:app|application)|on\s+(?:(?:my|the)\s+)?(?:phone|device)|for\s+me|please|(?:right\s+)?now|directly)(?:\s+(?:(?:app|application)|on\s+(?:(?:my|the)\s+)?(?:phone|device)|for\s+me|please|(?:right\s+)?now|directly))*$/;
+const APP_LOOKUP_EXCLUSION_PATTERN = /\b(?:not|never|neither|nor|either|or|but|except|excluding|without|avoid)\b|\b(?:other|rather)\s+than\b|\binstead\s+of\b/;
+const STATIC_ANDROID_APP_ALIASES = new Set(
+  STATIC_ANDROID_APP_CATALOG.flatMap((app) => [app.label, ...app.aliases].map(normalizeAppLookup)),
+);
 
 function scoreAppMatch(query: string, app: AndroidAppCatalogEntry): { score: number; alias?: string } {
   const normalizedQuery = normalizeAppLookup(query);
-  if (!normalizedQuery) return { score: 0 };
+  if (!normalizedQuery || APP_LOOKUP_EXCLUSION_PATTERN.test(normalizedQuery)) return { score: 0 };
+  const isKnownAlias = STATIC_ANDROID_APP_ALIASES.has(normalizedQuery);
+  const queryWithoutArticle = normalizedQuery.replace(/^the\s+/, "");
   const candidates = [app.label, app.packageName, ...app.aliases];
   let best = { score: 0, alias: undefined as string | undefined };
 
   for (const candidate of candidates) {
     const normalizedCandidate = normalizeAppLookup(candidate);
     if (!normalizedCandidate) continue;
+    const candidateWithoutArticle = normalizedCandidate.replace(/^the\s+/, "");
     const isGenericContextWord = GENERIC_APP_CONTEXT_WORDS.has(normalizedCandidate);
     let score = 0;
-    if (normalizedCandidate === normalizedQuery) score = 100;
-    else if (normalizedQuery.endsWith(` ${normalizedCandidate}`)) score = isGenericContextWord ? 55 : 90;
-    else if (normalizedCandidate.startsWith(normalizedQuery)) score = 80;
-    else if (normalizedQuery.startsWith(`${normalizedCandidate} `)) score = isGenericContextWord || normalizedCandidate.length <= 3 ? 55 : 75;
-    else if (containsNormalizedPhrase(normalizedQuery, normalizedCandidate)) score = isGenericContextWord ? 55 : 70;
-    else if (normalizedQuery.length > 2 && normalizedCandidate.includes(normalizedQuery)) score = 60;
-    else if (normalizedQuery.includes(normalizedCandidate)) score = normalizedCandidate.length <= 2 ? 0 : (isGenericContextWord ? 45 : 50);
+    if (normalizedCandidate === normalizedQuery || candidateWithoutArticle === queryWithoutArticle) score = 100;
+    else if (normalizedQuery.endsWith(` ${normalizedCandidate}`)) {
+      const prefix = normalizedQuery.slice(0, -normalizedCandidate.length).trim();
+      score = APP_LOOKUP_CONTEXT_PREFIX_PATTERN.test(prefix) ? (isGenericContextWord ? 55 : 90) : 0;
+    }
+    else if (isKnownAlias && normalizedQuery.length > 2 && normalizedCandidate.startsWith(normalizedQuery)) score = 80;
+    else if (normalizedQuery.startsWith(`${normalizedCandidate} `)) {
+      const suffix = normalizedQuery.slice(normalizedCandidate.length + 1);
+      score = isGenericContextWord || normalizedCandidate.length <= 3
+        ? 55
+        : (APP_LOOKUP_CONTEXT_SUFFIX_PATTERN.test(suffix) ? 75 : 0);
+    }
+    else if (containsNormalizedPhrase(normalizedQuery, normalizedCandidate)) {
+      const candidateIndex = normalizedQuery.indexOf(normalizedCandidate);
+      const prefix = normalizedQuery.slice(0, candidateIndex).trim();
+      const suffix = normalizedQuery.slice(candidateIndex + normalizedCandidate.length).trim();
+      const hasOnlyLookupContext = (!prefix || APP_LOOKUP_CONTEXT_PREFIX_PATTERN.test(prefix)) &&
+        (!suffix || APP_LOOKUP_CONTEXT_SUFFIX_PATTERN.test(suffix));
+      score = hasOnlyLookupContext ? (isGenericContextWord ? 55 : 70) : 0;
+    }
+    else if (isKnownAlias && normalizedQuery.length > 2 && normalizedCandidate.includes(normalizedQuery)) score = 60;
     if (score > best.score) best = { score, alias: candidate };
   }
 
@@ -293,6 +317,19 @@ export async function resolveAndroidAppName(
   appName: string,
   options: { includeLiveInventory?: boolean } = {},
 ): Promise<{ app: ResolvedAndroidApp | null; liveInventoryAvailable: boolean; liveInventoryError?: string }> {
+  const explicitPackageName = appName.match(/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/)?.[0];
+  if (explicitPackageName) {
+    return {
+      app: {
+        label: explicitPackageName,
+        packageName: explicitPackageName,
+        aliases: [explicitPackageName],
+        source: "explicit_package",
+        matchedAlias: explicitPackageName,
+      },
+      liveInventoryAvailable: false,
+    };
+  }
   const includeLiveInventory = options.includeLiveInventory ?? true;
   let liveInventoryAvailable = false;
   let liveInventoryError: string | undefined;
@@ -312,25 +349,42 @@ export async function resolveAndroidAppName(
     }
   }
 
+  const installedApps = dedupeApps(liveApps);
   const sources: Array<{ source: ResolvedAndroidApp["source"]; apps: AndroidAppCatalogEntry[] }> = [
-    { source: "live_inventory", apps: dedupeApps(liveApps) },
+    { source: "live_inventory", apps: installedApps },
     { source: "static_catalog", apps: STATIC_ANDROID_APP_CATALOG },
   ];
 
-  for (const source of sources) {
-    let best: { app: AndroidAppCatalogEntry; score: number; alias?: string } | null = null;
+  const matches = sources.map((source) => {
+    let best: { app: AndroidAppCatalogEntry; source: ResolvedAndroidApp["source"]; score: number; alias?: string } | null = null;
     for (const app of source.apps) {
       const match = scoreAppMatch(appName, app);
       if (match.score <= 0) continue;
-      if (!best || match.score > best.score) best = { app, score: match.score, alias: match.alias };
+      if (!best || match.score > best.score) {
+        best = { app, source: source.source, score: match.score, alias: match.alias };
+      }
     }
-    if (best && best.score >= 50) {
-      return {
-        app: { ...best.app, source: source.source, matchedAlias: best.alias },
-        liveInventoryAvailable,
-        liveInventoryError,
-      };
-    }
+    return best;
+  });
+  const [liveMatch, staticMatch] = matches;
+  const exactLiveMatches = installedApps
+    .map((app) => ({ app, match: scoreAppMatch(appName, app) }))
+    .filter(({ match }) => match.score === 100);
+  const exactLiveMatch = exactLiveMatches.length === 1
+    ? exactLiveMatches[0]
+    : exactLiveMatches.find(({ app }) => staticMatch?.score === 100 && app.packageName === staticMatch.app.packageName);
+  if (exactLiveMatches.length > 1 && !exactLiveMatch) {
+    return { app: null, liveInventoryAvailable, liveInventoryError };
+  }
+  const best = exactLiveMatch
+    ? { app: exactLiveMatch.app, source: "live_inventory" as const, score: 100, alias: exactLiveMatch.match.alias }
+    : (staticMatch?.score === 100 ? staticMatch : (liveMatch && liveMatch.score >= 50 ? liveMatch : staticMatch));
+  if (best && best.score >= 50) {
+    return {
+      app: { ...best.app, source: best.source, matchedAlias: best.alias },
+      liveInventoryAvailable,
+      liveInventoryError,
+    };
   }
 
   return { app: null, liveInventoryAvailable, liveInventoryError };
