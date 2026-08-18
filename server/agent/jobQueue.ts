@@ -436,7 +436,7 @@ async function flushResearchBatch(key: string): Promise<void> {
 
   if (allSiblingJobIds.length > 0) {
     try {
-      await db.transaction(async (tx) => {
+      const hasActiveDeliverables = await db.transaction(async (tx) => {
         // Lock every candidate through consolidation so review actions cannot
         // edit, discard, or revise a sibling between this read and its update
         // or deletion.
@@ -456,7 +456,7 @@ async function flushResearchBatch(key: string): Promise<void> {
         );
         const activeJobIds = new Set(activeSiblingDeliverables.map((deliverable) => deliverable.jobId).filter(Boolean));
         jobs.splice(0, jobs.length, ...jobs.filter((batchJob) => !batchJob.jobId || activeJobIds.has(batchJob.jobId)));
-        if (jobs.length === 0) return;
+        if (jobs.length === 0) return false;
 
         if (activeSiblingDeliverables.length > 1) {
           // Merge all bodies into one consolidated report
@@ -502,7 +502,9 @@ async function flushResearchBatch(key: string): Promise<void> {
           mergedBody = activeSiblingDeliverables[0].body || "";
           mergedTitle = activeSiblingDeliverables[0].title || mergedTitle;
         }
+        return true;
       });
+      if (!hasActiveDeliverables) return;
     } catch (mergeErr) {
       console.error("[JobQueue] deliverable merge failed (non-fatal):", mergeErr);
     }
