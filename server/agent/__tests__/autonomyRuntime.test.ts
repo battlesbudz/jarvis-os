@@ -105,6 +105,29 @@ async function main(): Promise<void> {
 
   {
     let submitCalls = 0;
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_unsupported_csv",
+        userText: "Research competitors and export the results as CSV",
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        submitJob: async () => {
+          submitCalls += 1;
+          return { id: "not_queued", isDuplicate: false };
+        },
+      },
+    );
+    assert.equal(result.handled, true);
+    assert.equal(result.decision.mode, "answer_inline");
+    assert.match(result.reply || "", /can’t generate CSV/i);
+    assert.match(result.reply || "", /PDF or.*Markdown/i);
+    assert.equal(submitCalls, 0);
+  }
+
+  {
+    let submitCalls = 0;
     const observations: AutonomyRuntimeObservation[] = [];
     const approvalRequests: Array<{
       agentId: string;

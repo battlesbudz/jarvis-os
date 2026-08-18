@@ -11,7 +11,7 @@ import { decideContextPacks, type ContextPackDecision, type ContextTaskType } fr
 import { getCoachAppAgentId } from "./coreAgentIds";
 import type { AgentJobType, SubmitJobInput, SubmitJobResult } from "./jobClient";
 import { buildMindTrace, type JarvisMindTrace, type MindTraceToolInput } from "./mindTrace";
-import { requestsReportFile } from "./backgroundJobHandoff";
+import { requestsReportFile, unsupportedReportFileFormat } from "./backgroundJobHandoff";
 
 export interface AutonomyRuntimeInput {
   userId: string;
@@ -342,6 +342,18 @@ export async function routeAutonomyRequest(
 ): Promise<AutonomyRuntimeResult> {
   const userText = input.userText.trim();
   const backgroundPrompt = input.backgroundPrompt?.trim();
+  const unsupportedFormat = unsupportedReportFileFormat(backgroundPrompt || userText);
+  if (unsupportedFormat) {
+    const decision: AutonomyPolicyDecision = {
+      mode: "answer_inline",
+      reason: `The requested ${unsupportedFormat} format is not supported by the background report renderer.`,
+    };
+    return {
+      handled: true,
+      decision,
+      reply: `I can’t generate ${unsupportedFormat} from this background report flow yet. I can create a downloadable PDF or keep the result as Markdown instead.`,
+    };
+  }
   // A short referential turn such as "Make it a PDF" may classify inline by
   // itself. Use the bounded handoff only for routing when it establishes an
   // explicit file request; keep the original turn for titles and approvals.

@@ -8,7 +8,7 @@ import {
   buildCodexGatewayRecoveryReply,
   classifyCodexGatewayRecoveryRequest,
 } from "./codexGatewayRecovery";
-import { buildBackgroundJobPrompt, requestsReportFile } from "./backgroundJobHandoff";
+import { buildBackgroundJobPrompt, requestsReportFile, unsupportedReportFileFormat } from "./backgroundJobHandoff";
 
 export interface AppCoachChatMessage {
   role?: string;
@@ -101,6 +101,7 @@ export async function routeAppCoachChatAutonomy(
   }
 
   const backgroundPrompt = buildBackgroundJobPrompt(input.messages, userText);
+  const unsupportedFormat = unsupportedReportFileFormat(backgroundPrompt);
   const contextualFileFollowUp = backgroundPrompt !== userText
     && requestsReportFile(backgroundPrompt);
   const preliminary = decideAutonomyMode({
@@ -109,6 +110,7 @@ export async function routeAppCoachChatAutonomy(
     hasApproval: false,
   });
   if (
+    !unsupportedFormat &&
     !contextualFileFollowUp &&
     (
       preliminary.mode !== "queue_background_job" ||

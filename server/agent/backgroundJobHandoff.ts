@@ -75,11 +75,7 @@ export function buildBackgroundJobPrompt(
   ].join("\n");
 }
 
-/** Return true when the user explicitly requested a downloadable report file. */
-export function requestsReportFile(prompt: string): boolean {
-  // A contextual handoff contains earlier turns that may merely mention PDFs.
-  // Creation intent belongs to the latest request, so evaluate that section
-  // when present instead of treating format discussion in context as intent.
+function artifactRequestText(prompt: string): string {
   const revisionStart = prompt.lastIndexOf(REVISION_REQUEST_MARKER);
   const revisionEnd = revisionStart >= 0
     ? prompt.indexOf(REVISION_REQUEST_END_MARKER, revisionStart + REVISION_REQUEST_MARKER.length)
@@ -88,7 +84,7 @@ export function requestsReportFile(prompt: string): boolean {
   const latestEnd = latestStart >= 0
     ? prompt.indexOf(LATEST_REQUEST_END_MARKER, latestStart + LATEST_REQUEST_MARKER.length)
     : -1;
-  const request = revisionStart >= 0
+  return revisionStart >= 0
     ? prompt.slice(
         revisionStart + REVISION_REQUEST_MARKER.length,
         revisionEnd >= 0 ? revisionEnd : undefined,
@@ -99,16 +95,28 @@ export function requestsReportFile(prompt: string): boolean {
           latestEnd >= 0 ? latestEnd : undefined,
         ).trim()
       : prompt.trim();
+}
 
-  // DOCX generation is not currently supported. Reject those explicit formats
-  // before the generic "document" matcher so Jarvis does not promise a PDF as
-  // though it were the requested Word file.
-  if (/\b(?:docx|word\s+document)\b/i.test(request)) return false;
-  // The deep-research renderer currently produces PDF (or Markdown fallback).
-  // Do not reinterpret a specifically requested structured/media format as PDF.
-  if (/\b(?:csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)\b/i.test(request)) {
-    return false;
-  }
+const UNSUPPORTED_REPORT_FORMAT = /\b(docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)\b/i;
+const EXPLICIT_FILE_ACTION = /\b(create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give|want|need)\b/i;
+
+/** Identify an explicit requested file format that this renderer cannot create. */
+export function unsupportedReportFileFormat(prompt: string): string | null {
+  const request = artifactRequestText(prompt);
+  const match = request.match(UNSUPPORTED_REPORT_FORMAT);
+  if (!match) return null;
+  const hasFileIntent = EXPLICIT_FILE_ACTION.test(request)
+    || /\bdownloadable\b/i.test(request)
+    || /\b(?:as|in)\s+(?:an?\s+)?(?:docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)\b/i.test(request);
+  return hasFileIntent ? match[1].toUpperCase() : null;
+}
+
+/** Return true when the user explicitly requested a downloadable PDF report file. */
+export function requestsReportFile(prompt: string): boolean {
+  // A contextual handoff contains earlier turns that may merely mention PDFs.
+  // Creation intent belongs to the latest request (or outer revision request).
+  const request = artifactRequestText(prompt);
+  if (unsupportedReportFileFormat(prompt)) return false;
 
   const artifact = String.raw`(?:pdf|downloadable\s+file|document|file)`;
   const action = String.raw`(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give)`;

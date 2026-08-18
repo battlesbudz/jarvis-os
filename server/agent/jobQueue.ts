@@ -2370,18 +2370,71 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         }
 
         if (allBodies.length === 0) {
-          // Absolute fallback: deliver whatever phase 1 produced, or a fail message
+          // Absolute fallback: preserve the limited result in the requested file
+          // format so partial failure does not remove the Inbox download.
           const fallbackBody = priorContext || "Deep research could not complete — all phases timed out or failed.";
-          await db.insert(schema.deliverables).values({
-            userId: job.userId,
-            jobId: job.id,
-            agentType: "deep_research",
-            type: "research",
-            title: job.title,
-            summary: "Deep research completed with limited results.",
-            body: fallbackBody,
-            meta: { deepResearch: true, fallback: true },
-            driveLink: null,
+          const fallbackMeta: Record<string, unknown> = { deepResearch: true, fallback: true };
+          const fallbackNotifyOpts: ChannelSendOpts = {};
+          let fallbackArtifact: { filename: string; mimeType: string; content: Buffer } | null = null;
+          let fallbackNote = "";
+          if (requestsReportFile(job.prompt)) {
+            const filenameBase = job.title.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() || "Jarvis research report";
+            try {
+              const content = await markdownToPdfBuffer(job.title, fallbackBody);
+              const filename = `${filenameBase}.pdf`;
+              fallbackArtifact = { filename, mimeType: "application/pdf", content };
+              fallbackMeta.pdfGenerated = true;
+              fallbackMeta.pdfFilename = filename;
+              fallbackMeta.hasDownloadableArtifact = true;
+              fallbackNotifyOpts.attachments = [{
+                kind: "document",
+                filename,
+                content,
+                caption: `${job.title} (limited results)`,
+                mimeType: "application/pdf",
+              }];
+              fallbackNote = `\n\n📄 Limited-results PDF generated and available in Inbox.`;
+            } catch (pdfErr) {
+              const message = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
+              const filename = `${filenameBase}.md`;
+              const content = Buffer.from(fallbackBody, "utf8");
+              fallbackArtifact = { filename, mimeType: "text/markdown", content };
+              fallbackMeta.pdfGenerated = false;
+              fallbackMeta.pdfError = message;
+              fallbackMeta.fallbackFilename = filename;
+              fallbackMeta.hasDownloadableArtifact = true;
+              fallbackNotifyOpts.attachments = [{
+                kind: "document",
+                filename,
+                content,
+                caption: `${job.title} (limited Markdown fallback)`,
+                mimeType: "text/markdown",
+              }];
+              fallbackNote = `\n\n⚠️ PDF generation failed; a limited-results Markdown file is available in Inbox.`;
+            }
+          }
+          await db.transaction(async (tx) => {
+            const [created] = await tx.insert(schema.deliverables).values({
+              userId: job.userId,
+              jobId: job.id,
+              agentType: "deep_research",
+              type: "research",
+              title: job.title,
+              summary: "Deep research completed with limited results.",
+              body: fallbackBody,
+              meta: fallbackMeta,
+              driveLink: null,
+            }).returning({ id: schema.deliverables.id });
+            if (fallbackArtifact && created) {
+              await tx.insert(schema.deliverableArtifacts).values({
+                deliverableId: created.id,
+                userId: job.userId,
+                filename: fallbackArtifact.filename,
+                mimeType: fallbackArtifact.mimeType,
+                sizeBytes: fallbackArtifact.content.length,
+                data: fallbackArtifact.content,
+              });
+            }
           });
           await completeJob(job.id, {
             result: { type: "research", title: job.title },
@@ -2392,9 +2445,10 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
             job.userId,
             "deep_research",
             job.title,
-            fallbackBody,
+            fallbackBody + fallbackNote,
             originChannel,
             originDiscordChannelId,
+            fallbackNotifyOpts,
           );
           return;
         }
@@ -2846,85 +2900,81 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     }
 
     // ── Format request detection ──────────────────────────────────────────────
-    // Detect whether the user explicitly asked for a PDF or Word document.
-    // "word"/"docx" requests are also mapped to PDF (best available format).
-    // For research jobs: the batch coordinator (flushResearchBatch) generates
-    // ONE consolidated PDF from all sibling results — no per-job PDF here.
-    // For writing jobs: generate immediately since they are not batched.
-    const promptLower = (job.prompt || "").toLowerCase();
-    const wantsPdf = /\b(pdf|word|docx|as pdf|in pdf|export pdf|save pdf|generate pdf|as word|in word)\b/.test(promptLower);
-
+    // Research jobs are consolidated by the batch coordinator. Writing and
+    // planning retain their specialized workers, but requested PDFs are stored
+    // as durable Inbox artifacts and are never uploaded before Save to Drive.
+    const wantsPdf = requestsReportFile(job.prompt || "");
     let pdfNote = "";
+    let durableArtifact: { filename: string; mimeType: string; content: Buffer } | null = null;
 
-    if (wantsPdf && job.agentType === "writing") {
-      // Writing jobs are individual — generate PDF right here.
+    if (wantsPdf && (job.agentType === "writing" || job.agentType === "planning")) {
+      const filenameBase = sub.title.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() || "Jarvis document";
       try {
         const pdfBuffer = await markdownToPdfBuffer(sub.title, sub.body);
-        const filename = sub.title.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".pdf";
+        const filename = `${filenameBase}.pdf`;
         sub.meta.pdfGenerated = true;
         sub.meta.pdfFilename = filename;
-
-        let driveLink: string | null = null;
-        if (googleAccessToken) {
-          try {
-            const driveFile = await createDriveBinaryFile(
-              googleAccessToken,
-              filename,
-              pdfBuffer,
-              "application/pdf",
-            );
-            driveLink = driveFile.webViewLink || null;
-            sub.meta.pdfDriveLink = driveLink;
-            pdfNote = `\n\n📄 PDF attached and saved to Google Drive: ${driveLink}`;
-            console.log(`[JobQueue] writing job ${job.id} PDF → Drive: ${driveLink}`);
-          } catch (driveErr) {
-            const driveMsg = driveErr instanceof Error ? driveErr.message : String(driveErr);
-            console.error(`[JobQueue] writing PDF Drive upload failed for job ${job.id}:`, driveMsg);
-            pdfNote = `\n\n📄 PDF attached (Drive upload failed: ${driveMsg}).`;
-          }
-        } else {
-          pdfNote = `\n\n📄 PDF attached.`;
-        }
-
-        // Attach PDF for channel delivery (driveLink included so oversized-file
-        // fallback in Discord/other channels can reference the stored copy).
-        ctx.state.pendingAttachments!.push({
+        sub.meta.hasDownloadableArtifact = true;
+        durableArtifact = { filename, mimeType: "application/pdf", content: pdfBuffer };
+        pdfNote = `\n\n📄 PDF attached and available in Inbox. Use Save to Drive if you want an external copy.`;
+        (ctx.state.pendingAttachments ||= []).push({
           kind: "document",
           filename,
           content: pdfBuffer,
           caption: sub.title,
           mimeType: "application/pdf",
-          driveLink: (sub.meta?.pdfDriveLink as string | undefined) ?? undefined,
         });
       } catch (pdfErr) {
         const pdfMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
-        console.error(`[JobQueue] writing PDF generation failed for job ${job.id}:`, pdfMsg);
-        pdfNote = `\n\n⚠️ PDF generation failed — here is the markdown version instead. (${pdfMsg})`;
+        const filename = `${filenameBase}.md`;
+        console.error(`[JobQueue] ${job.agentType} PDF generation failed for job ${job.id}:`, pdfMsg);
+        sub.meta.pdfGenerated = false;
         sub.meta.pdfError = pdfMsg;
+        sub.meta.fallbackFilename = filename;
+        sub.meta.hasDownloadableArtifact = true;
+        durableArtifact = { filename, mimeType: "text/markdown", content: Buffer.from(sub.body, "utf8") };
+        pdfNote = `\n\n⚠️ PDF generation failed; the Markdown fallback is attached and available in Inbox.`;
+        (ctx.state.pendingAttachments ||= []).push({
+          kind: "document",
+          filename,
+          content: sub.body,
+          caption: `${sub.title} (Markdown fallback)`,
+          mimeType: "text/markdown",
+        });
       }
     }
-    // Research jobs: wantsPdf is passed to the batch coordinator, which
-    // generates ONE consolidated PDF from all sibling deliverables.
     // ─────────────────────────────────────────────────────────────────────────
 
     const deliverableMeta = { ...sub.meta, ...getRevisionDeliverableMeta(jobInput) };
 
-    const inserted = await db
-      .insert(schema.deliverables)
-      .values({
-        userId: job.userId,
-        jobId: job.id,
-        agentType: job.agentType,
-        type: sub.type,
-        title: sub.title,
-        summary: sub.summary,
-        body: sub.body,
-        meta: deliverableMeta,
-        driveLink: (sub.meta?.pdfDriveLink as string | undefined) ?? null,
-      })
-      .returning({ id: schema.deliverables.id });
+    const deliverableId = await db.transaction(async (tx) => {
+      const [inserted] = await tx
+        .insert(schema.deliverables)
+        .values({
+          userId: job.userId,
+          jobId: job.id,
+          agentType: job.agentType,
+          type: sub.type,
+          title: sub.title,
+          summary: sub.summary,
+          body: sub.body,
+          meta: deliverableMeta,
+          driveLink: null,
+        })
+        .returning({ id: schema.deliverables.id });
 
-    const deliverableId = inserted[0]?.id || "";
+      if (durableArtifact && inserted) {
+        await tx.insert(schema.deliverableArtifacts).values({
+          deliverableId: inserted.id,
+          userId: job.userId,
+          filename: durableArtifact.filename,
+          mimeType: durableArtifact.mimeType,
+          sizeBytes: durableArtifact.content.length,
+          data: durableArtifact.content,
+        });
+      }
+      return inserted?.id || "";
+    });
     await completeJob(job.id, {
       result: { deliverableId, type: sub.type, title: sub.title },
       turns: sub.turns,

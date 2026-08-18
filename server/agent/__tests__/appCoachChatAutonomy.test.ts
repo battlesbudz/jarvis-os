@@ -117,6 +117,26 @@ async function main(): Promise<void> {
     assert.match(ellipticalJobs[0].prompt, /Latest user request:\nMake it a PDF/);
   }
 
+  {
+    let submitCalls = 0;
+    const unsupported = await routeAppCoachChatAutonomy(
+      {
+        userId: "user_app_csv",
+        messages: [{ role: "user", content: "Create a downloadable JSON file with the findings" }],
+        originChannel: "appchat",
+      },
+      {
+        submitJob: async () => {
+          submitCalls += 1;
+          return { id: "not_queued", isDuplicate: false };
+        },
+      },
+    );
+    assert.equal(unsupported.handled, true);
+    assert.match(unsupported.reply || "", /can’t generate JSON/i);
+    assert.equal(submitCalls, 0);
+  }
+
   assert.equal(savedHistory.length, 1);
   assert.equal(savedHistory[0].userId, "user_app_1");
   assert.deepEqual(savedHistory[0].data.slice(0, 2), [
