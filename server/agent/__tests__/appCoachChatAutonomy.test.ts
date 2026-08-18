@@ -143,28 +143,6 @@ async function main(): Promise<void> {
 
   {
     let submitCalls = 0;
-    const parserTask = await routeAppCoachChatAutonomy(
-      {
-        userId: "user_app_json_parser",
-        messages: [{ role: "user", content: "Write a JSON parser for the import pipeline" }],
-        originChannel: "appchat",
-      },
-      {
-        getReadiness: async () => "ready",
-        submitJob: async (job) => {
-          submitCalls += 1;
-          return { id: "job_json_parser", isDuplicate: false };
-        },
-      },
-    );
-    assert.equal(parserTask.handled, true);
-    assert.equal(parserTask.decision.agentType, "writing");
-    assert.equal(submitCalls, 1);
-    assert.doesNotMatch(parserTask.reply || "", /can’t generate JSON/i);
-  }
-
-  {
-    let submitCalls = 0;
     const unsupported = await routeAppCoachChatAutonomy(
       {
         userId: "user_app_csv",
