@@ -33,6 +33,9 @@ assert.equal(requestsReportFile("Give me the report without a PDF"), false);
 assert.equal(requestsReportFile("Prepare a PDF report on sunflower seeds"), true);
 assert.equal(requestsReportFile("Write a report in PDF"), true);
 assert.equal(requestsReportFile("Write the report to a PDF"), true);
+assert.equal(requestsReportFile("Download a PDF report on sunflower seeds"), true);
+assert.equal(requestsReportFile("Download a report file"), true);
+assert.equal(requestsReportFile("Do not download a PDF report"), false);
 assert.equal(requestsReportFile("Create a DOCX report on sunflower seeds"), false);
 assert.equal(requestsReportFile("Create a Word document with the report"), false);
 assert.equal(requestsReportFile("Research competitors and export the results as a CSV file"), false);
@@ -40,6 +43,7 @@ assert.equal(requestsReportFile("Create a downloadable JSON file with the findin
 assert.equal(requestsReportFile("Export the findings as an XLSX spreadsheet"), false);
 assert.equal(unsupportedReportFileFormat("Research competitors and export the results as a CSV file"), "CSV");
 assert.equal(unsupportedReportFileFormat("Give me a CSV file of the results"), "CSV");
+assert.equal(unsupportedReportFileFormat("Download a CSV file of the results"), "CSV");
 assert.equal(unsupportedReportFileFormat("Create a downloadable JSON file with the findings"), "JSON");
 assert.equal(unsupportedReportFileFormat("Explain how JSON parsing works"), null);
 assert.equal(unsupportedReportFileFormat("Return this object as JSON"), null);
@@ -186,6 +190,8 @@ assert.match(jobQueueSource, /deliverable\.title !== mergedTitle/);
 assert.match(jobQueueSource, /deliverable\.status !== "pending_approval"/);
 assert.match(jobQueueSource, /activeSiblingDeliverables/);
 assert.match(jobQueueSource, /if \(!hasActiveDeliverables\) return/);
+assert.match(jobQueueSource, /prompt: schema\.agentJobs\.prompt/);
+assert.match(jobQueueSource, /recoveredPdfRequested \|\| jobs\.some\(\(j\) => j\.promptedPdf\)/);
 assert.match(jobQueueSource, /const siblingDeliverables = await tx[\s\S]*?\.for\("update"\)/);
 assert.doesNotMatch(jobQueueSource, /const siblingDeliverables = await db/);
 assert.match(

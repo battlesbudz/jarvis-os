@@ -106,7 +106,7 @@ function artifactRequestText(prompt: string): string {
     // explicit format instruction may replace or remove that intent.
     const format = String.raw`(?:pdf|markdown|downloadable\s+(?:report|document|file)|docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)`;
     const formatAction = new RegExp(
-      String.raw`\b(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give|keep|preserve)\b[^.!?\n]{0,80}\b${format}\b`,
+      String.raw`\b(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give|download|keep|preserve)\b[^.!?\n]{0,80}\b${format}\b`,
       "i",
     );
     const formatTarget = new RegExp(
@@ -133,7 +133,7 @@ function artifactRequestText(prompt: string): string {
 const UNSUPPORTED_REPORT_FORMAT = /\b(docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)\b/i;
 
 function explicitlyRequestsPdfOutput(request: string): boolean {
-  const createPdf = /\b(?:create|make|generate|produce|prepare|compile)\b(?:\s+\w+){0,4}\s+(?:an?\s+)?pdf\b(?:\s+(?:report|memo|document|file|plan))?/i;
+  const createPdf = /\b(?:create|make|generate|produce|prepare|compile|download)\b(?:\s+\w+){0,4}\s+(?:an?\s+)?pdf\b(?:\s+(?:report|memo|document|file|plan))?/i;
   const writePdf = /\bwrite\s+(?:me\s+)?(?:an?\s+)?pdf\s+(?:report|memo|document|plan)\b/i;
   const deliverPdf = /\b(?:give\s+me|return|provide(?:\s+me)?|deliver(?:\s+me)?|send(?:\s+me)?)\s+(?:an?\s+)?pdf\b(?:\s+(?:report|memo|document|file|plan))?/i;
   const transformToPdf = /\b(?:give|return|provide|deliver|export|save|format|attach|send|keep|preserve|change|switch|convert)\b(?:\s+\w+){0,8}\s+(?:as|in|to|into)\s+(?:an?\s+)?pdf\b/i;
@@ -147,7 +147,8 @@ function explicitlyRequestsPdfOutput(request: string): boolean {
 
 function explicitlyRequestsGenericDownload(request: string): boolean {
   return /\bdownloadable\s+(?:report|document|file)\b/i.test(request)
-    || /\b(?:create|make|generate|produce|prepare|compile|attach|deliver|return|provide|save|give)\b(?:\s+\w+){0,6}\s+(?:an?\s+)?downloadable\s+(?:report|document|file)\b/i.test(request)
+    || /\bdownload\s+(?:me\s+)?(?:an?\s+)?(?:report|document|file)\b/i.test(request)
+    || /\b(?:create|make|generate|produce|prepare|compile|attach|deliver|return|provide|save|give|download)\b(?:\s+\w+){0,6}\s+(?:an?\s+)?downloadable\s+(?:report|document|file)\b/i.test(request)
     || /\b(?:give|return|provide|deliver|send)\b(?:\s+\w+){0,8}\s+as\s+(?:an?\s+)?(?:document|file)\b/i.test(request)
     || /\b(?:report|results?|findings?)\b(?:\s+\w+){0,5}\s+as\s+(?:an?\s+)?(?:document|file)\b/i.test(request);
 }
@@ -162,7 +163,7 @@ export function unsupportedReportFileFormat(prompt: string): string | null {
     "i",
   );
   const directArtifact = new RegExp(
-    String.raw`\b(?:create|make|generate|produce|prepare|compile|write)\s+(?:me\s+)?(?:an?\s+)?(${namedArtifact})\b`,
+    String.raw`\b(?:create|make|generate|produce|prepare|compile|write|download)\s+(?:me\s+)?(?:an?\s+)?(${namedArtifact})\b`,
     "i",
   );
   const deliveryArtifact = new RegExp(
@@ -187,7 +188,7 @@ export function requestsReportFile(prompt: string): boolean {
   if (unsupportedReportFileFormat(prompt)) return false;
 
   const artifact = String.raw`(?:pdf|downloadable\s+file|document|file)`;
-  const action = String.raw`(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give)`;
+  const action = String.raw`(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give|download)`;
   const negatedAction = new RegExp(
     String.raw`\b(?:do\s+not|don't|dont|never|without|no\s+need\s+to)\s+(?:\w+\s+){0,3}${action}\b[^.!?\n]{0,80}\b${artifact}\b`,
     "i",

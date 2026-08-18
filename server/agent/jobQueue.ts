@@ -360,11 +360,12 @@ async function flushResearchBatch(key: string): Promise<void> {
   // Merge any extras into the total count so the combined notification is
   // accurate. This is best-effort — failures fall through safely.
   let allSiblingJobIds: string[] = jobs.filter((j) => j.jobId).map((j) => j.jobId!);
+  let recoveredPdfRequested = false;
   try {
     const windowStart = new Date(anchorTime - SIBLING_WINDOW_MS);
     const windowEnd   = new Date(anchorTime + SIBLING_WINDOW_MS);
     const allSiblings = await db
-      .select({ id: schema.agentJobs.id, title: schema.agentJobs.title })
+      .select({ id: schema.agentJobs.id, title: schema.agentJobs.title, prompt: schema.agentJobs.prompt })
       .from(schema.agentJobs)
       .where(
         and(
@@ -379,8 +380,10 @@ async function flushResearchBatch(key: string): Promise<void> {
     const knownTitles = new Set(jobs.map((j) => j.title));
     for (const row of allSiblings) {
       const t = row.title ?? "";
+      const promptedPdf = requestsReportFile(row.prompt ?? "");
+      recoveredPdfRequested ||= promptedPdf;
       if (!knownTitles.has(t)) {
-        jobs.push({ title: t, body: "", jobId: row.id });
+        jobs.push({ title: t, body: "", jobId: row.id, promptedPdf });
         knownTitles.add(t);
       }
       if (row.id && !knownIds.has(row.id)) {
@@ -432,7 +435,7 @@ async function flushResearchBatch(key: string): Promise<void> {
   let mergedDeliverableId: string | null = null;
   let mergedTitle = jobs[0].title;
   let mergedBody = "";
-  const wantsPdf = jobs.some((j) => j.promptedPdf);
+  const wantsPdf = recoveredPdfRequested || jobs.some((j) => j.promptedPdf);
 
   if (allSiblingJobIds.length > 0) {
     try {
