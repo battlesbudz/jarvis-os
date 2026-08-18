@@ -2451,6 +2451,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         const artifactMeta: Record<string, unknown> = {};
         let driveLink: string | null = null;
         let artifactNote = "";
+        let durableArtifact: { filename: string; mimeType: string; content: Buffer } | null = null;
 
         if (requestsReportFile(job.prompt)) {
           const filenameBase = finalTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() || "Jarvis research report";
@@ -2482,8 +2483,10 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
               mimeType: "application/pdf",
               driveLink: driveLink || undefined,
             }];
+            durableArtifact = { filename, mimeType: "application/pdf", content: pdfBuffer };
             artifactMeta.pdfGenerated = true;
             artifactMeta.pdfFilename = filename;
+            artifactMeta.hasDownloadableArtifact = true;
             if (driveLink) artifactMeta.pdfDriveLink = driveLink;
             artifactNote = driveLink
               ? `\n\n📄 PDF generated and saved to Google Drive: ${driveLink}`
@@ -2499,30 +2502,45 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
               caption: `${finalTitle} (PDF unavailable — markdown fallback)`,
               mimeType: "text/markdown",
             }];
+            durableArtifact = { filename, mimeType: "text/markdown", content: Buffer.from(finalBody, "utf8") };
             artifactMeta.pdfGenerated = false;
             artifactMeta.pdfError = message;
             artifactMeta.fallbackFilename = filename;
+            artifactMeta.hasDownloadableArtifact = true;
             artifactNote = `\n\n⚠️ PDF generation failed; the complete report remains available in Inbox and is attached as ${filename} on supported channels.`;
           }
         }
 
         const summarySentence = finalBody.slice(0, 200).replace(/\n+/g, " ").trim();
-        await db.insert(schema.deliverables).values({
-          userId: job.userId,
-          jobId: job.id,
-          agentType: "deep_research",
-          type: "research",
-          title: finalTitle,
-          summary: summarySentence,
-          body: finalBody,
-          meta: {
-            deepResearch: true,
-            prerequisiteTopics: plan.prerequisiteTopics,
-            mainTopics: plan.mainTopics,
-            synthesisGoal: plan.synthesisGoal,
-            ...artifactMeta,
-          },
-          driveLink,
+        await db.transaction(async (tx) => {
+          const [createdDeliverable] = await tx.insert(schema.deliverables).values({
+            userId: job.userId,
+            jobId: job.id,
+            agentType: "deep_research",
+            type: "research",
+            title: finalTitle,
+            summary: summarySentence,
+            body: finalBody,
+            meta: {
+              deepResearch: true,
+              prerequisiteTopics: plan.prerequisiteTopics,
+              mainTopics: plan.mainTopics,
+              synthesisGoal: plan.synthesisGoal,
+              ...artifactMeta,
+            },
+            driveLink,
+          }).returning({ id: schema.deliverables.id });
+
+          if (durableArtifact && createdDeliverable) {
+            await tx.insert(schema.deliverableArtifacts).values({
+              deliverableId: createdDeliverable.id,
+              userId: job.userId,
+              filename: durableArtifact.filename,
+              mimeType: durableArtifact.mimeType,
+              sizeBytes: durableArtifact.content.length,
+              data: durableArtifact.content,
+            });
+          }
         });
 
         await completeJob(job.id, {

@@ -468,21 +468,34 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       if (d.driveLink) return res.json({ ok: true, driveLink: d.driveLink });
 
       const { getUserDriveSettings } = await import("../driveRoutes");
-      const { createDriveTextFile } = await import("../integrations/googleDrive");
+      const { createDriveBinaryFile, createDriveTextFile } = await import("../integrations/googleDrive");
       const drive = await getUserDriveSettings(userId);
       if (!drive.enabled || !drive.accessToken) {
         return res.status(400).json({ error: "Google Drive is not connected. Enable it in Settings.", code: "DRIVE_NOT_CONNECTED" });
       }
 
-      const content = d.body || d.summary || d.title;
-      const baseName = (d.title.slice(0, 95) || "Jarvis Document").replace(/\.md$/, "");
-      const fileName = `${baseName}.md`;
-      const created = await createDriveTextFile(
-        drive.accessToken,
-        fileName,
-        content,
-        { folderId: drive.folderId || undefined },
-      );
+      const [artifact] = await db
+        .select()
+        .from(schema.deliverableArtifacts)
+        .where(and(
+          eq(schema.deliverableArtifacts.deliverableId, d.id),
+          eq(schema.deliverableArtifacts.userId, userId),
+        ))
+        .limit(1);
+      const created = artifact
+        ? await createDriveBinaryFile(
+            drive.accessToken,
+            artifact.filename,
+            Buffer.from(artifact.data),
+            artifact.mimeType,
+            { folderId: drive.folderId || undefined },
+          )
+        : await createDriveTextFile(
+            drive.accessToken,
+            `${(d.title.slice(0, 95) || "Jarvis Document").replace(/\.md$/, "")}.md`,
+            d.body || d.summary || d.title,
+            { folderId: drive.folderId || undefined },
+          );
 
       const [updated] = await db
         .update(schema.deliverables)

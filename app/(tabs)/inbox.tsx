@@ -36,6 +36,23 @@ class DriveApiError extends Error {
   }
 }
 
+const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let result = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i];
+    const b1 = i + 1 < bytes.length ? bytes[i + 1] : 0;
+    const b2 = i + 2 < bytes.length ? bytes[i + 2] : 0;
+    result += BASE64_CHARS[b0 >> 2];
+    result += BASE64_CHARS[((b0 & 3) << 4) | (b1 >> 4)];
+    result += i + 1 < bytes.length ? BASE64_CHARS[((b1 & 15) << 2) | (b2 >> 6)] : '=';
+    result += i + 2 < bytes.length ? BASE64_CHARS[b2 & 63] : '=';
+  }
+  return result;
+}
+
 interface InboxItem {
   id: string;
   sourceType: string;
@@ -341,6 +358,40 @@ export default function InboxScreen() {
 
   const [gutModalSignal, setGutModalSignal] = useState<GutSignal | null>(null);
   const [dailyPlanEditorOpen, setDailyPlanEditorOpen] = useState(false);
+  const [downloadingArtifactId, setDownloadingArtifactId] = useState<string | null>(null);
+
+  const downloadDeliverableArtifact = useCallback(async (deliverable: Deliverable) => {
+    setDownloadingArtifactId(deliverable.id);
+    try {
+      const response = await apiRequest('GET', `/api/deliverables/${deliverable.id}/artifact`);
+      const meta = (deliverable.meta || {}) as { pdfFilename?: string; fallbackFilename?: string };
+      const filename = (meta.pdfFilename || meta.fallbackFilename || `${deliverable.title}.pdf`)
+        .replace(/[^A-Za-z0-9._\- ]+/g, '_')
+        .slice(0, 120);
+      const buffer = await response.arrayBuffer();
+
+      if (Platform.OS === 'web') {
+        const objectUrl = URL.createObjectURL(new Blob([buffer], {
+          type: response.headers.get('content-type') || 'application/octet-stream',
+        }));
+        await Linking.openURL(objectUrl);
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+      } else {
+        const FileSystem = await import('expo-file-system/legacy');
+        if (!FileSystem.cacheDirectory) throw new Error('File cache is unavailable');
+        const uri = `${FileSystem.cacheDirectory}${Date.now()}-${filename}`;
+        await FileSystem.writeAsStringAsync(uri, arrayBufferToBase64(buffer), {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        const openUri = Platform.OS === 'android' ? await FileSystem.getContentUriAsync(uri) : uri;
+        await Linking.openURL(openUri);
+      }
+    } catch (error) {
+      Alert.alert('Download failed', error instanceof Error ? error.message : 'Could not download this file.');
+    } finally {
+      setDownloadingArtifactId(null);
+    }
+  }, []);
 
   const respondGutMutation = useMutation({
     mutationFn: async ({ id, response }: { id: string; response: string }) => {
@@ -1050,6 +1101,9 @@ export default function InboxScreen() {
             noSourceUrls?: boolean;
             verificationPassed?: boolean | null;
             verificationRetries?: number;
+            hasDownloadableArtifact?: boolean;
+            pdfFilename?: string;
+            fallbackFilename?: string;
           } | null;
           const verificationPassed = meta?.verificationPassed;
           const verificationRetries = meta?.verificationRetries ?? 0;
@@ -1164,6 +1218,24 @@ export default function InboxScreen() {
                     </View>
                   </View>
                 </Pressable>
+
+                {meta?.hasDownloadableArtifact ? (
+                  <Pressable
+                    style={styles.downloadArtifactRow}
+                    onPress={() => downloadDeliverableArtifact(d)}
+                    disabled={busy || downloadingArtifactId === d.id}
+                    testID={`deliverable-download-${d.id}`}
+                  >
+                    {downloadingArtifactId === d.id ? (
+                      <ActivityIndicator size="small" color={Colors.primary} />
+                    ) : (
+                      <Ionicons name="download-outline" size={14} color={Colors.primary} />
+                    )}
+                    <Text style={styles.driveLinkText}>
+                      Download {meta.pdfFilename?.endsWith('.pdf') ? 'PDF' : 'file'}
+                    </Text>
+                  </Pressable>
+                ) : null}
 
                 {canSaveToDrive && d.driveLink ? (
                   <Pressable
@@ -2512,6 +2584,17 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary + '08',
     borderWidth: 1,
     borderColor: Colors.primary + '30',
+    borderRadius: 8,
+    marginBottom: 10,
+    alignSelf: 'flex-start' as const,
+  },
+  downloadArtifactRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    backgroundColor: Colors.primary + '12',
     borderRadius: 8,
     marginBottom: 10,
     alignSelf: 'flex-start' as const,

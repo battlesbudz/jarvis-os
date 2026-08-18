@@ -23,6 +23,22 @@ assert.match(prompt, /speech-to-text artifacts/i);
 assert.equal(requestsReportFile(prompt), true);
 assert.equal(requestsReportFile("Research sunflower seeds and summarize the findings"), false);
 assert.equal(requestsReportFile("Create a downloadable file with the report"), true);
+assert.equal(requestsReportFile("Deep dive into how PDF parsers work"), false);
+assert.equal(requestsReportFile("Do not create a PDF; just summarize it here"), false);
+assert.equal(requestsReportFile("Give me the report as a PDF"), true);
+
+const definiteFollowUp = "Give me the report as a PDF";
+const definitePrompt = buildBackgroundJobPrompt(
+  [
+    { role: "user", content: "Research sunflower seeds" },
+    { role: "assistant", content: "I can prepare that research." },
+    { role: "user", content: definiteFollowUp },
+  ],
+  definiteFollowUp,
+);
+assert.match(definitePrompt, /Research sunflower seeds/);
+assert.match(definitePrompt, /Latest user request:\nGive me the report as a PDF/);
+assert.equal(requestsReportFile(definitePrompt), true);
 
 const jobQueueSource = readFileSync(
   fileURLToPath(new URL("../jobQueue.ts", import.meta.url)),
@@ -32,5 +48,15 @@ assert.match(jobQueueSource, /if \(requestsReportFile\(job\.prompt\)\)/);
 assert.match(jobQueueSource, /mimeType: "application\/pdf"/);
 assert.match(jobQueueSource, /PDF generation failed; the complete report remains available in Inbox/);
 assert.match(jobQueueSource, /driveLink,/);
+assert.match(jobQueueSource, /schema\.deliverableArtifacts/);
+assert.match(jobQueueSource, /hasDownloadableArtifact = true/);
+
+const deliverableRoutesSource = readFileSync(
+  fileURLToPath(new URL("../../routes/deliverableRoutes.ts", import.meta.url)),
+  "utf8",
+);
+assert.match(deliverableRoutesSource, /\/api\/deliverables\/:id\/artifact/);
+assert.match(deliverableRoutesSource, /Content-Disposition/);
+assert.match(deliverableRoutesSource, /deliverableArtifacts\.userId, userId/);
 
 console.log("All background job handoff assertions passed.");

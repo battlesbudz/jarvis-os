@@ -4,6 +4,33 @@ import * as schema from "@shared/schema";
 import { db } from "../db";
 
 export function registerDeliverableRoutes(app: Express): void {
+  app.get("/api/deliverables/:id/artifact", async (req: Request, res: Response) => {
+    try {
+      const userId = req.userId;
+      if (!userId) return res.status(401).json({ error: "Not authenticated" });
+      const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const [artifact] = await db
+        .select()
+        .from(schema.deliverableArtifacts)
+        .where(and(
+          eq(schema.deliverableArtifacts.deliverableId, id),
+          eq(schema.deliverableArtifacts.userId, userId),
+        ))
+        .limit(1);
+      if (!artifact) return res.status(404).json({ error: "Deliverable file not found" });
+
+      const safeFilename = artifact.filename.replace(/[\r\n"\\]/g, "_");
+      res.setHeader("Content-Type", artifact.mimeType);
+      res.setHeader("Content-Length", String(artifact.sizeBytes));
+      res.setHeader("Content-Disposition", `attachment; filename="${safeFilename}"`);
+      res.setHeader("Cache-Control", "private, no-store");
+      return res.send(Buffer.from(artifact.data));
+    } catch (err) {
+      console.error("Error downloading deliverable artifact:", err);
+      return res.status(500).json({ error: "Failed to download deliverable file" });
+    }
+  });
+
   app.get("/api/deliverables", async (req: Request, res: Response) => {
     try {
       const userId = req.userId;

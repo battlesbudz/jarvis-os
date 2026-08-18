@@ -13,6 +13,12 @@ const vector1536 = customType<{ data: number[] | null }>({
   },
 });
 
+const bytea = customType<{ data: Uint8Array; driverData: Uint8Array }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
 export const users = pgTable("users", {
   id: varchar("id")
     .primaryKey()
@@ -788,6 +794,18 @@ export const deliverables = pgTable("deliverables", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   actedAt: timestamp("acted_at"),
 });
+
+/** Durable generated files attached to reviewable in-app deliverables. */
+export const deliverableArtifacts = pgTable("deliverable_artifacts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  deliverableId: varchar("deliverable_id").notNull().references(() => deliverables.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  filename: text("filename").notNull(),
+  mimeType: varchar("mime_type").notNull(),
+  sizeBytes: integer("size_bytes").notNull(),
+  data: bytea("data").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [uniqueIndex("deliverable_artifacts_deliverable_uidx").on(t.deliverableId)]);
 
 // ── Behaviour Pack structured config types ────────────────────────────────────
 
