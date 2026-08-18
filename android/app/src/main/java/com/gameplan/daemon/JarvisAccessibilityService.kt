@@ -42,6 +42,7 @@ class JarvisAccessibilityService : AccessibilityService() {
 
         private data class ForegroundPackageObservation(
             val packageName: String,
+            val activityName: String?,
             val observedAtUptimeMs: Long,
         )
     }
@@ -60,6 +61,7 @@ class JarvisAccessibilityService : AccessibilityService() {
             event.packageName?.toString()?.takeIf { it.isNotBlank() }?.let { packageName ->
                 lastForegroundPackage = ForegroundPackageObservation(
                     packageName = packageName,
+                    activityName = event.className?.toString(),
                     observedAtUptimeMs = event.eventTime.takeIf { it > 0L } ?: SystemClock.uptimeMillis(),
                 )
             }
@@ -173,7 +175,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         // Verify the target package actually came to foreground.
         // Emulator system apps and Samsung Galaxy Fold devices can publish accessibility roots late,
         // so wait long enough and consult multiple accessibility foreground signals.
-        return waitForForeground(packageName, timeoutMs = 12_000, launchAttemptStartedAtUptimeMs)
+        return waitForForeground(packageName, activityName, timeoutMs = 12_000, launchAttemptStartedAtUptimeMs)
     }
 
     fun browseUrl(url: String): Boolean {
@@ -214,6 +216,7 @@ class JarvisAccessibilityService : AccessibilityService() {
     // Returns false (not launched) if the package never comes to foreground.
     private fun waitForForeground(
         targetPackage: String,
+        targetActivity: String? = null,
         timeoutMs: Long,
         launchAttemptStartedAtUptimeMs: Long,
     ): Boolean {
@@ -221,20 +224,32 @@ class JarvisAccessibilityService : AccessibilityService() {
         var lastSeen: String? = null
         while (System.currentTimeMillis() < deadline) {
             val rootPackage = try { rootInActiveWindow?.packageName?.toString() } catch (_: Exception) { null }
+            val rootActivity = try { rootInActiveWindow?.className?.toString() } catch (_: Exception) { null }
             val focusedWindowPackage = try {
                 windows?.firstOrNull { it.isFocused }?.root?.packageName?.toString()
+            } catch (_: Exception) { null }
+            val focusedWindowActivity = try {
+                windows?.firstOrNull { it.isFocused }?.root?.className?.toString()
             } catch (_: Exception) { null }
             val eventPackage = lastForegroundPackage
                 ?.takeIf { it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs }
                 ?.packageName
+            val eventActivity = lastForegroundPackage
+                ?.takeIf { it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs }
+                ?.activityName
 
             lastSeen = rootPackage ?: focusedWindowPackage ?: eventPackage ?: lastSeen
-            if (rootPackage == targetPackage || focusedWindowPackage == targetPackage || eventPackage == targetPackage) {
+            val matched = if (targetActivity == null) {
+                rootPackage == targetPackage || focusedWindowPackage == targetPackage || eventPackage == targetPackage
+            } else {
+                rootActivity == targetActivity || focusedWindowActivity == targetActivity || eventActivity == targetActivity
+            }
+            if (matched) {
                 return true
             }
             Thread.sleep(200)
         }
-        Log.w(TAG, "launchApp: $targetPackage never came to foreground; lastSeen=$lastSeen")
+        Log.w(TAG, "launchApp: ${targetActivity ?: targetPackage} never came to foreground; lastSeen=$lastSeen")
         return false
     }
 

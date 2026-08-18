@@ -84,6 +84,7 @@ import { filterToolsByGroups, getTool, type ToolGroup } from "./agent/tools/inde
 import {
   ANDROID_PHONE_RUNTIME_TOOL_NAMES,
   explainUnsupportedPhoneRuntimeAction,
+  resolveAndroidAppName,
 } from "./agent/tools/androidAppRuntime";
 import {
   buildPhoneRuntimeRequiredToolNames,
@@ -101,6 +102,7 @@ import {
   isYoutubePhoneActionRequest,
   isYoutubePhoneRequest,
   isYoutubeServerResearchRequest,
+  unqualifiedPhoneAppTarget,
 } from "./agent/phoneRuntimeRouting";
 import { resolveAndroidNotificationFollowUp } from "./agent/androidNotificationFollowups";
 import { parseNaturalTime, parseRecurringExpr } from "./agent/tools/cronTools";
@@ -1751,19 +1753,29 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       // Detect if the user's current message is a device-control request so we can
       // force tool use rather than letting the model respond with plain text.
       const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user');
-      const lastUserContent = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content.toLowerCase() : '';
+      const lastUserOrigText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+      const lastUserContent = lastUserOrigText.toLowerCase();
       const recentPhoneRuntimeConversation = messages
         .slice(-12)
         .map((message: { content?: unknown }) => typeof message.content === "string" ? message.content : "")
         .filter(Boolean);
       const memoryPhoneBypassRequest = isMemoryPhoneBypassRequest(lastUserContent);
+      const unqualifiedAppTarget = androidActive && !memoryPhoneBypassRequest
+        ? unqualifiedPhoneAppTarget(lastUserOrigText)
+        : null;
+      const confirmedAppTarget = unqualifiedAppTarget &&
+        (await resolveAndroidAppName(userId, unqualifiedAppTarget)).app?.source === "live_inventory"
+        ? unqualifiedAppTarget
+        : null;
       const phoneRuntimeActionRequest = androidActive && !memoryPhoneBypassRequest && (
         hasPhoneRuntimeActionRequest(lastUserContent) ||
-        hasContextualPhoneRuntimeActionRequest(lastUserContent, recentPhoneRuntimeConversation.slice(0, -1))
+        hasContextualPhoneRuntimeActionRequest(lastUserContent, recentPhoneRuntimeConversation.slice(0, -1)) ||
+        Boolean(confirmedAppTarget)
       );
       const phoneRuntimeCoveredRequest = androidActive && !memoryPhoneBypassRequest && (
         isPhoneRuntimeCoveredRequest(lastUserContent) ||
-        isContextualPhoneRuntimeCoveredRequest(lastUserContent, recentPhoneRuntimeConversation.slice(0, -1))
+        isContextualPhoneRuntimeCoveredRequest(lastUserContent, recentPhoneRuntimeConversation.slice(0, -1)) ||
+        Boolean(confirmedAppTarget)
       );
       const isDeviceControlRequest = androidActive && !memoryPhoneBypassRequest && (
         phoneRuntimeActionRequest ||
@@ -1800,7 +1812,6 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             )
         : daemonAbsoluteRuleBase;
 
-      const lastUserOrigText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
       const youtubeCtxBlock = lastUserOrigText
         ? await buildYouTubeContextBlock(lastUserOrigText).catch(() => "")
         : "";
@@ -2147,6 +2158,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             ? deterministicPhoneRuntimeToolCallFromRequest(lastUserOrigText, modelRequestTools, {
                 androidActive,
                 phoneRuntimeCoveredRequest,
+                confirmedAppTarget,
                 recentConversation: recentPhoneRuntimeConversation.slice(0, -1),
               })
             : null;

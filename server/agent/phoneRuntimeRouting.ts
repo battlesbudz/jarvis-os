@@ -29,9 +29,9 @@ const PHONE_DEVICE_CONTROL_KEYWORDS = [
   "search youtube", "find a youtube", "look up on youtube",
 ];
 const PHONE_COMPOUND_CONNECTOR_PATTERN = String.raw`(?:and\s+then|then|after(?:wards|\s+that)?|before|while|also|and)`;
-const PHONE_FOLLOW_UP_ACTION_PATTERN = String.raw`(?:open|launch|start|check|get|fetch|read|show|list|view|take|make|create|write|draft|schedule|add|update|delete|remove|archive|summari[sz]e|wait|notify|alert|let\s+me\s+know|play|watch|tap|click|press|swipe|scroll|type|enter|select|share|send|close|pause|subscribe|like|save|download|call|text|message|search|find|look\s+up|look\s+for|navigate\s+to|browse\s+to|back|home|recents|screenshot|screen\s+shot|screen\s+capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+(?:back|home)|go\s+to|turn\s+(?:on|off)|enable|disable|change|adjust|set|turn\s+(?:the\s+)?volume|raise\s+(?:the\s+)?volume|lower\s+(?:the\s+)?volume|volume\s+(?:up|down))`;
+const PHONE_FOLLOW_UP_ACTION_PATTERN = String.raw`(?:open|launch|start|check|get|fetch|read|show|list|view|take|make|create|write|draft|schedule|add|update|mark|delete|remove|archive|summari[sz]e|wait|notify|alert|let\s+me\s+know|play|watch|tap|click|press|swipe|scroll|type|enter|select|share|send|close|pause|subscribe|like|save|download|call|text|message|search|find|look\s+up|look\s+for|navigate\s+to|browse\s+to|back|home|recents|screenshot|screen\s+shot|screen\s+capture|capture|read\s+screen|inspect\s+screen|look\s+at(?:\s+my)?\s+screen|return\s+to|go\s+(?:back|home)|go\s+to|turn\s+(?:on|off)|enable|disable|change|adjust|set|turn\s+(?:the\s+)?volume|raise\s+(?:the\s+)?volume|lower\s+(?:the\s+)?volume|volume\s+(?:up|down))`;
 const PHONE_PUNCTUATED_FOLLOW_UP_PATTERN = String.raw`[,;:.!?]\s*(?:(?:now|next|then)[\s,:-]+)?(?:please\s+)?${PHONE_FOLLOW_UP_ACTION_PATTERN}\b`;
-const REQUEST_ACTION_CLAUSE_PATTERN = /^\s*(?:(?:please|then|next|now)[\s,:-]+)*(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:check(?:ing)?|get|fetch|read|show|list|research|investigate|analy[sz]e|explain|compare|review|evaluate|calculate|translate|proofread|open|launch|start|take|make|create|send|email|reply|forward|invite|book|buy|order|pay|upload|download|share|post|publish|remind|write|draft|schedule|reschedule|cancel|add|update|change|set|delete|remove|archive|find|search|look\s+up|tell|summari[sz]e|call|text|message|navigate|browse|tap|press|swipe|scroll|type|enter|enable|disable|turn)\b/i;
+const REQUEST_ACTION_CLAUSE_PATTERN = /^\s*(?:(?:please|then|next|now)[\s,:-]+)*(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:check(?:ing)?|get|fetch|read|show|list|research|investigate|analy[sz]e|explain|compare|review|evaluate|calculate|translate|proofread|open|launch|start|take|make|create|send|email|reply|forward|invite|book|buy|order|pay|upload|download|share|post|publish|remind|write|draft|schedule|reschedule|cancel|add|update|change|set|mark|delete|remove|archive|find|search|look\s+up|tell|summari[sz]e|call|text|message|navigate|browse|tap|press|swipe|scroll|type|enter|enable|disable|turn)\b/i;
 const REQUEST_QUESTION_CLAUSE_PATTERN = /^\s*(?:what(?:['’]s|\s+is|\s+are)?|who(?:['’]s|\s+is|\s+are)?|where(?:['’]s|\s+is|\s+are)?|when|how|why|which|am|is|are|was|were|do|does|did|have|has|had|can|could|would|will|should|may|might|must)\b/i;
 
 function hasPunctuatedPhoneFollowUpAction(text: string): boolean {
@@ -68,7 +68,7 @@ function normalizePhoneRuntimeRequestText(text: string): string {
 }
 
 const ANDROID_PACKAGE_NAME_PATTERN = /\b[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+\b/;
-const PHONE_OPEN_COMMAND_PATTERN = /^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:(?:please|don['’]?t\s+forget\s+to|do\s+not\s+hesitate\s+to)\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)(?:\s+you)?\s+to\s+|i(?:\s+would|['’]d)\s+like\s+to\s+)?(?:open|launch|start)\b/i;
+const PHONE_OPEN_COMMAND_PATTERN = /^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:(?:please|don['’]?t\s+forget\s+to|do\s+not\s+hesitate\s+to)\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)(?:\s+you)?\s+to\s+|i(?:\s+would|['’]d)\s+like\s+to\s+)?(?:open(?:ing)?|launch(?:ing)?|start(?:ing)?)\b/i;
 const PHONE_OPEN_FOLLOW_UP_PATTERN = /\b(?:open|launch|start)(?:\s+up)?\s+(?:it|that|the\s+app)(?:\s+directly)?(?:\s+(?:right\s+)?now)?\b/i;
 const NEGATED_PHONE_OPEN_PATTERN = /\b(?:do\s+not|don['’]?t|dont|never|stop)\b[^;.!?\n]{0,48}\b(?:open|launch|start)\b/i;
 const RETRACTED_PHONE_OPEN_PATTERN = /\b(?:open|launch|start)\b[\s\S]{0,80}\b(?:(?:actually\s+)?(?:do\s+not|don['’]?t|dont)(?:\s+(?:do\s+it|open|launch|start))?|never\s*mind|cancel(?:\s+(?:that|it))?|scratch\s+that|forget\s+it|stop)\s*[.!?]*$/i;
@@ -156,7 +156,10 @@ function extractCommandedAndroidPackageTarget(text: string): string | null {
   return packageName || null;
 }
 
-function extractExplicitPhoneAppTarget(text: string): string | null {
+function extractExplicitPhoneAppTarget(
+  text: string,
+  options: { allowUnqualifiedGeneric?: boolean } = {},
+): string | null {
   if (isNegatedPhoneOpenRequest(text) || isDeferredPhoneOpenRequest(text)) return null;
   const immediateText = stripImmediatePhoneOpenQualifier(text);
   const command = immediateText.match(PHONE_OPEN_COMMAND_PATTERN)?.[0];
@@ -166,19 +169,25 @@ function extractExplicitPhoneAppTarget(text: string): string | null {
   if (packageName) return packageName;
 
   const appMatch = immediateText.slice(command.length).trim().match(
-    /^(?:up\s+)?(?:the\s+)?(amazon(?:\s+shopping)?|you\s*tube|youtube|yt|facebook\s+(?:lite|messenger)|facebook|fb|linkedin|linked\s+in|instagram|ig|insta|spotify|google\s+chrome|chrome|browser|camera|settings|messages|texts|gmail|google\s+mail|google\s+maps|maps|messenger|whatsapp|whats\s+app|snapchat|snap|tiktok|tik\s+tok|x|twitter|reddit|discord|telegram|slack|zoom|teams|phone|dialer|calculator|calendar|clock|contacts|notes)(?:\s+app(?:lication)?)?\b(?![./?#:@])(?:(?:\s*,\s*|\s+)(?:please|for\s+me|on\s+(?:my|the)\s+(?:phone|device)|(?:right\s+)?now|once\s+(?:again|more)|again))*(?:\s*[,;]?\s*(?:not|instead\s+of)\s+(?:the\s+)?(?:website|web\s*site|site|webpage|web\s+page))?\s*[.!?]*$/i,
+    /^(?:up\s+)?(?:the\s+)?(amazon(?:\s+shopping)?|you\s*tube|youtube|yt|facebook\s+(?:lite|messenger)|facebook|fb|linkedin|linked\s+in|instagram|ig|insta|spotify|google\s+chrome|chrome|browser|camera|settings|messages|texts|gmail|google\s+mail|google\s+maps|maps|messenger|whatsapp|whats\s+app|snapchat|snap|tiktok|tik\s+tok|x|twitter|reddit|discord|telegram|slack|zoom|teams|uber|phone|dialer|calculator|calendar|clock|contacts|notes)(?:\s+app(?:lication)?)?\b(?![/?#:@]|\.(?=\S))(?:(?:\s*,\s*|\s+)(?:please|for\s+me|on\s+(?:my|the)\s+(?:phone|device)|(?:right\s+)?now|once\s+(?:again|more)|again))*(?:\s*[,;]?\s*(?:not|instead\s+of)\s+(?:the\s+)?(?:website|web\s*site|site|webpage|web\s+page))?\s*[.!?]*$/i,
   )?.[1];
   if (appMatch) return appMatch.trim();
 
   const genericTarget = immediateText.slice(command.length).trim().match(
     /^(?:up\s+)?(?:the\s+)?([\p{L}\p{N}][\p{L}\p{N} .&'’+-]{0,79}?)(?:(?:\s*,\s*|\s+)(?:please|for\s+me|on\s+(?:my|the)\s+(?:phone|device)|directly|(?:right\s+)?now|once\s+(?:again|more)|again))*\s*[.!?]*$/iu,
   )?.[1]?.trim();
+  const hasAppQualifier = /\bapp(?:lication)?\b/i.test(immediateText.slice(command.length));
   const isNonAppObjectTarget = !/\b(?:app|application)\b/i.test(genericTarget ?? "") &&
     /\b(?:attachment|pdf|presentation|slides?|slide\s+deck|spreadsheet|workbook)\b/i.test(genericTarget ?? "");
-  if (!genericTarget || isNonAppObjectTarget || /\.(?!\s)/.test(genericTarget) || /^(?:it|that|(?:the\s+)?app)(?:\s|$)/i.test(genericTarget) || /\b(?:search|website|web\s*site|site|webpage|web\s+page|url|link|file|folder|document|project|open|launch|start|not|never|neither|nor|either|or|and|but|except|excluding|without|avoid)\b|\b(?:other|rather)\s+than\b|\binstead\s+of\b/i.test(genericTarget)) {
+  if (!genericTarget || (!hasAppQualifier && !options.allowUnqualifiedGeneric) || isNonAppObjectTarget || /\.(?!\s)/.test(genericTarget) || /^(?:it|that|(?:the\s+)?app)(?:\s|$)/i.test(genericTarget) || /\b(?:search|website|web\s*site|site|webpage|web\s+page|url|link|file|folder|document|project|open|launch|start|not|never|neither|nor|either|or|and|but|except|excluding|without|avoid)\b|\b(?:other|rather)\s+than\b|\binstead\s+of\b/i.test(genericTarget)) {
     return null;
   }
   return genericTarget;
+}
+
+export function unqualifiedPhoneAppTarget(text: string): string | null {
+  return extractExplicitPhoneAppTarget(text) ? null :
+    extractExplicitPhoneAppTarget(text, { allowUnqualifiedGeneric: true });
 }
 
 function hasAdditionalPhoneAction(text: string): boolean {
@@ -368,7 +377,10 @@ function isPhoneOpenActionRequest(text: string): boolean {
   if (hasAffirmativeWebTargetQualifier(text)) return false;
   if (/\b(?:project|build|create|make|generate|scaffold|code|web\s+app)\b/i.test(text)) return false;
   if (extractExplicitPhoneAppTarget(text)) return true;
-  const initialActionClause = text.split(/\s*(?:[;—]|\b(?:and|then)\b)/i, 1)[0];
+  const initialActionClause = text.split(
+    new RegExp(String.raw`\s*(?:[;—]|\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b)`, "i"),
+    1,
+  )[0];
   if (initialActionClause !== text && extractExplicitPhoneAppTarget(initialActionClause)) return true;
   return /\b(?:app|application|phone|device)\b/i.test(text);
 }
@@ -505,6 +517,7 @@ export function deterministicPhoneRuntimeToolCallFromRequest(
   options: {
     androidActive: boolean;
     phoneRuntimeCoveredRequest: boolean;
+    confirmedAppTarget?: string | null;
     recentConversation?: string[];
   },
 ): OpenAI.Chat.Completions.ChatCompletionMessageFunctionToolCall | null {
@@ -522,7 +535,8 @@ export function deterministicPhoneRuntimeToolCallFromRequest(
       },
     };
   }
-  const openAppTarget = contextualPhoneAppTarget(requestText, options.recentConversation ?? []);
+  const openAppTarget = options.confirmedAppTarget ??
+    contextualPhoneAppTarget(requestText, options.recentConversation ?? []);
   if (openAppTarget) {
     const hasOpenAppTool = tools.some((tool) => phoneRuntimeChatToolName(tool) === "android_open_app_by_name");
     if (!hasOpenAppTool) return null;

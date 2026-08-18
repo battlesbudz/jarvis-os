@@ -158,6 +158,7 @@ export const STATIC_ANDROID_APP_CATALOG: AndroidAppCatalogEntry[] = [
   { label: "Reddit", packageName: "com.reddit.frontpage", aliases: ["reddit"] },
   { label: "Discord", packageName: "com.discord", aliases: ["discord"] },
   { label: "Amazon Shopping", packageName: "com.amazon.mShop.android.shopping", aliases: ["amazon", "amazon app", "amazon shopping", "amazon shopping app"] },
+  { label: "Uber", packageName: "com.ubercab", aliases: ["uber"] },
   { label: "Messenger", packageName: "com.facebook.orca", aliases: ["messenger", "facebook messenger"] },
   { label: "WhatsApp", packageName: "com.whatsapp", aliases: ["whatsapp", "whats app"] },
   { label: "Snapchat", packageName: "com.snapchat.android", aliases: ["snapchat", "snap"] },

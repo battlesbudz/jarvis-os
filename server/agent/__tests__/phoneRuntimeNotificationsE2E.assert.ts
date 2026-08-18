@@ -90,20 +90,26 @@ async function main() {
   }
   for (const appName of ["Uber", "Netflix", "Pokémon GO", "微信", "Cash App"]) {
     const requestText = `Open ${appName}`;
-    assert.equal(isPhoneRuntimeCoveredRequest(requestText), true);
+    assert.equal(isPhoneRuntimeCoveredRequest(requestText), appName === "Uber" || appName === "Cash App");
     assert.deepEqual(
       JSON.parse(
-        deterministicPhoneRuntimeToolCallFromRequest(requestText, phoneTools, connectedPhoneRuntime)?.function.arguments ?? "{}",
+        deterministicPhoneRuntimeToolCallFromRequest(requestText, phoneTools, {
+          ...connectedPhoneRuntime,
+          confirmedAppTarget: appName,
+        })?.function.arguments ?? "{}",
       ),
       { appName },
     );
   }
   for (const appName of ["Dr. Driving", "St. John Ambulance"]) {
     const requestText = `Open ${appName}`;
-    assert.equal(isPhoneRuntimeCoveredRequest(requestText), true);
+    assert.equal(isPhoneRuntimeCoveredRequest(requestText), false);
     assert.deepEqual(
       JSON.parse(
-        deterministicPhoneRuntimeToolCallFromRequest(requestText, phoneTools, connectedPhoneRuntime)?.function.arguments ?? "{}",
+        deterministicPhoneRuntimeToolCallFromRequest(requestText, phoneTools, {
+          ...connectedPhoneRuntime,
+          confirmedAppTarget: appName,
+        })?.function.arguments ?? "{}",
       ),
       { appName },
     );
@@ -329,10 +335,13 @@ async function main() {
     );
   }
   assert.equal(isPhoneRuntimeCoveredRequest("Open the When I Work app"), true);
-  assert.equal(isPhoneRuntimeCoveredRequest("Open When I Work"), true);
+  assert.equal(isPhoneRuntimeCoveredRequest("Open When I Work"), false);
   assert.deepEqual(
     JSON.parse(
-      deterministicPhoneRuntimeToolCallFromRequest("Open When I Work", phoneTools, connectedPhoneRuntime)
+      deterministicPhoneRuntimeToolCallFromRequest("Open When I Work", phoneTools, {
+        ...connectedPhoneRuntime,
+        confirmedAppTarget: "When I Work",
+      })
         ?.function.arguments ?? "{}",
     ),
     { appName: "When I Work" },
@@ -342,7 +351,7 @@ async function main() {
       deterministicPhoneRuntimeToolCallFromRequest(
         "Open The Weather Channel",
         phoneTools,
-        connectedPhoneRuntime,
+        { ...connectedPhoneRuntime, confirmedAppTarget: "Weather Channel" },
       )?.function.arguments ?? "{}",
     ),
     { appName: "Weather Channel" },
@@ -496,6 +505,7 @@ async function main() {
     "Open Amazon while checking the weather",
     "Are there meetings today? Open Uber.",
     "Do I have new emails? Open Facebook.",
+    "Mark the current email as read. Open Facebook.",
   ]) {
     assert.equal(hasPhoneRuntimeActionRequest(mixedDomainRequest), true);
     assert.equal(isPhoneRuntimeCoveredRequest(mixedDomainRequest), false);
@@ -505,6 +515,11 @@ async function main() {
       `${mixedDomainRequest} must retain the full tool surface`,
     );
   }
+  assert.equal(isPhoneRuntimeCoveredRequest("I want to open a bank account"), false);
+  assert.equal(
+    deterministicPhoneRuntimeToolCallFromRequest("I want to open a bank account", phoneTools, connectedPhoneRuntime),
+    null,
+  );
   assert.equal(isPhoneRuntimeCoveredRequest("Play jazz on YouTube"), true);
   assert.equal(
     deterministicPhoneRuntimeToolCallFromRequest("Play jazz on YouTube", phoneTools, connectedPhoneRuntime),
