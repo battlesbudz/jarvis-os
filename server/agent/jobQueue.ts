@@ -2449,7 +2449,6 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
         // so it must create requested files here instead of merely promising one.
         const notifyOpts: ChannelSendOpts = {};
         const artifactMeta: Record<string, unknown> = {};
-        let driveLink: string | null = null;
         let artifactNote = "";
         let durableArtifact: { filename: string; mimeType: string; content: Buffer } | null = null;
 
@@ -2458,43 +2457,22 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           try {
             const pdfBuffer = await markdownToPdfBuffer(finalTitle, finalBody);
             const filename = `${filenameBase}.pdf`;
-            // A Google token can remain valid for Calendar/Gmail after Drive is
-            // disabled, so only auto-upload when the user's Drive preference and
-            // scope are both active. Otherwise the artifact stays available in Inbox.
-            const { getUserDriveSettings } = await import("../driveRoutes");
-            const drive = await getUserDriveSettings(job.userId).catch(() => null);
 
-            if (drive?.enabled && drive.accessToken) {
-              try {
-                const driveFile = await createDriveBinaryFile(
-                  drive.accessToken,
-                  filename,
-                  pdfBuffer,
-                  "application/pdf",
-                  { folderId: drive.folderId || undefined },
-                );
-                driveLink = driveFile.webViewLink || null;
-              } catch (driveErr) {
-                console.error(`[JobQueue] deep_research PDF Drive upload failed for ${job.id}:`, driveErr);
-              }
-            }
-
+            // Keep reviewable output inside Jarvis until the user explicitly
+            // chooses Save to Drive. The save route handles Drive preferences,
+            // scope validation, folder selection, and the external write.
             notifyOpts.attachments = [{
               kind: "document",
               filename,
               content: pdfBuffer,
               caption: finalTitle,
               mimeType: "application/pdf",
-              driveLink: driveLink || undefined,
             }];
             durableArtifact = { filename, mimeType: "application/pdf", content: pdfBuffer };
             artifactMeta.pdfGenerated = true;
             artifactMeta.pdfFilename = filename;
             artifactMeta.hasDownloadableArtifact = true;
-            if (driveLink) artifactMeta.pdfDriveLink = driveLink;
-            artifactNote = driveLink
-              ? `\n\n📄 PDF generated and saved to Google Drive: ${driveLink}`
-              : `\n\n📄 PDF generated (${filename}). It is attached on channels that support job files; the report is also available in Inbox.`;
+            artifactNote = `\n\n📄 PDF generated (${filename}). It is attached on channels that support job files; the report is also available in Inbox. Use Save to Drive if you want an external copy.`;
           } catch (pdfErr) {
             const filename = `${filenameBase}.md`;
             const message = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
@@ -2532,7 +2510,7 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
               synthesisGoal: plan.synthesisGoal,
               ...artifactMeta,
             },
-            driveLink,
+            driveLink: null,
           }).returning({ id: schema.deliverables.id });
 
           if (durableArtifact && createdDeliverable) {

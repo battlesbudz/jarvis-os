@@ -29,6 +29,8 @@ assert.equal(requestsReportFile("Give me the report as a PDF"), true);
 assert.equal(requestsReportFile("Give me the report, but not as a PDF"), false);
 assert.equal(requestsReportFile("Give me the report without a PDF"), false);
 assert.equal(requestsReportFile("Prepare a PDF report on sunflower seeds"), true);
+assert.equal(requestsReportFile("Create a DOCX report on sunflower seeds"), false);
+assert.equal(requestsReportFile("Create a Word document with the report"), false);
 
 const multilineFollowUp = "Research sunflower seeds thoroughly.\n\nGive me the report as a PDF";
 const multilinePrompt = buildBackgroundJobPrompt(
@@ -66,9 +68,9 @@ assert.match(jobQueueSource, /PDF generation failed; the complete report remains
 assert.match(jobQueueSource, /driveLink,/);
 assert.match(jobQueueSource, /schema\.deliverableArtifacts/);
 assert.match(jobQueueSource, /hasDownloadableArtifact = true/);
-assert.match(jobQueueSource, /getUserDriveSettings\(job\.userId\)/);
-assert.match(jobQueueSource, /drive\?\.enabled && drive\.accessToken/);
-assert.match(jobQueueSource, /folderId: drive\.folderId \|\| undefined/);
+assert.doesNotMatch(jobQueueSource, /getUserDriveSettings\(job\.userId\)/);
+assert.doesNotMatch(jobQueueSource, /deep_research PDF Drive upload/);
+assert.match(jobQueueSource, /Use Save to Drive if you want an external copy/);
 
 const reviewRoutesSource = readFileSync(
   fileURLToPath(new URL("../deliverableReviewHttpRoutes.ts", import.meta.url)),

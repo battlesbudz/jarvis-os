@@ -89,7 +89,7 @@ export function requestsReportFile(prompt: string): boolean {
       ).trim()
     : prompt.trim();
 
-  const artifact = String.raw`(?:pdf|docx|word\s+document|downloadable\s+file|document|file)`;
+  const artifact = String.raw`(?:pdf|downloadable\s+file|document|file)`;
   const action = String.raw`(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give)`;
   const negatedAction = new RegExp(
     String.raw`\b(?:do\s+not|don't|dont|never|without|no\s+need\s+to)\s+(?:\w+\s+){0,3}${action}\b[^.!?\n]{0,80}\b${artifact}\b`,
