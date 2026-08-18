@@ -107,6 +107,16 @@ assert.equal(
 );
 assert.equal(unsupportedReportFileFormat(titleOnlyRevisionPrompt), null);
 
+const contentNegationRevisionPrompt = contextualRevisionPrompt.replace(
+  "Do not make this a PDF; return Markdown only.",
+  "Do not mention PDF in the conclusion.",
+);
+assert.equal(
+  requestsReportFile(contentNegationRevisionPrompt),
+  true,
+  "content-only negations inherit the prior PDF output",
+);
+
 const markdownRevisionPrompt = contextualRevisionPrompt.replace(
   "Do not make this a PDF; return Markdown only.",
   "Change the revised report to Markdown instead.",

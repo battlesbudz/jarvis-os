@@ -215,12 +215,15 @@ async function main(): Promise<void> {
     assert.equal(submitted.length, 1);
   }
 
-  {
+  for (const externalDeliveryText of [
+    "Send it to Bob as a PDF",
+    "Send me and Bob the report as a PDF",
+  ]) {
     let approvalCalls = 0;
     const result = await routeAutonomyRequest(
       {
         userId: "user_external_delivery_pdf",
-        userText: "Send it to Bob as a PDF",
+        userText: externalDeliveryText,
         channelName: "App Chat",
         readiness: "ready",
       },

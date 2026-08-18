@@ -72,6 +72,7 @@ async function run(): Promise<void> {
   const approvedGateIds: string[] = [];
   const rejectedGateIds: string[] = [];
   const submittedJobs: SubmitJobInput[] = [];
+  let onSubmitAgentJob: (() => Promise<void>) | undefined;
   const topLevelGate: ApprovalGate = {
     id: "http_gate_approve",
     agentId: "coach",
@@ -108,6 +109,7 @@ async function run(): Promise<void> {
     }),
     submitAgentJob: async (input) => {
       submittedJobs.push(input);
+      await onSubmitAgentJob?.();
       return { id: "revision_job_1", isDuplicate: false };
     },
   });
@@ -381,6 +383,23 @@ async function run(): Promise<void> {
       body: "This plan needs more concrete operational actions.",
       jobId: originalJob.id,
     });
+    onSubmitAgentJob = async () => {
+      const [reserved] = await db
+        .select({ status: deliverables.status })
+        .from(deliverables)
+        .where(eq(deliverables.id, revisionSource.id))
+        .limit(1);
+      assert.equal(reserved.status, "revision_pending", "revision reserves its source before submitting the new job");
+      const competingUpdate = await db
+        .update(deliverables)
+        .set({ title: "Competing consolidation" })
+        .where(and(
+          eq(deliverables.id, revisionSource.id),
+          eq(deliverables.status, "pending_approval"),
+        ))
+        .returning({ id: deliverables.id });
+      assert.equal(competingUpdate.length, 0, "consolidation cannot claim a revision-reserved deliverable");
+    };
     const reviseResponse = await requestJson(
       port,
       "POST",
@@ -388,6 +407,7 @@ async function run(): Promise<void> {
       token,
       { instructions: "Add exact owners and next operational actions." },
     );
+    onSubmitAgentJob = undefined;
     assert.equal(reviseResponse.status, 200, "HTTP route queues revision jobs");
     assert.equal(reviseResponse.body.jobId, "revision_job_1");
     assert.equal(submittedJobs.length, 1, "revision route submits one new job");

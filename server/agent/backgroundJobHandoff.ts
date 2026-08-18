@@ -114,7 +114,7 @@ function artifactRequestText(prompt: string): string {
       "i",
     );
     const formatNegation = new RegExp(
-      String.raw`\b(?:not|without|no)\b[^.!?\n]{0,40}\b(?:pdf|downloadable\s+(?:report|document|file))\b`,
+      String.raw`(?:\bnot\s+(?:as|in)\s+(?:an?\s+)?pdf\b|\bwithout\s+(?:an?\s+)?(?:pdf|downloadable\s+(?:report|document|file))\b|\bno\s+(?:pdf\s+)?(?:output|file|document|report)\b|\b(?:do\s+not|don't|dont|never)\s+(?:make|create|generate|produce|prepare|write|format|export|attach|send|deliver|return|provide|save|give|download|keep|preserve)\b[^.!?\n]{0,40}\bpdf\b)`,
       "i",
     );
     if (formatAction.test(revision) || formatTarget.test(revision) || formatNegation.test(revision)) {

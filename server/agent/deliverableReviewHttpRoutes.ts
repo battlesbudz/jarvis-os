@@ -429,18 +429,46 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         "Return a complete replacement deliverable, not a patch note.",
       ].join("\n");
 
-      const revision = await submitAgentJob({
-        userId,
-        agentType: d.agentType as any,
-        title: `Revision: ${d.title}`.slice(0, 200),
-        prompt: revisionPrompt,
-        input: {
-          ...baseInput,
-          revisionOfDeliverableId: d.id,
-          revisionOfJobId: d.jobId,
-          revisionInstructions: instructions.slice(0, 2000),
-        },
-      });
+      const [reserved] = await db
+        .update(schema.deliverables)
+        .set({ status: "revision_pending" })
+        .where(and(
+          eq(schema.deliverables.id, id),
+          eq(schema.deliverables.userId, userId),
+          eq(schema.deliverables.status, "pending_approval"),
+          eq(schema.deliverables.title, d.title),
+          eq(schema.deliverables.body, d.body),
+        ))
+        .returning({ id: schema.deliverables.id });
+      if (!reserved) {
+        return res.status(409).json({ error: "Deliverable changed while the revision was being prepared; reload and try again." });
+      }
+
+      let revision: SubmitJobResult;
+      try {
+        revision = await submitAgentJob({
+          userId,
+          agentType: d.agentType as any,
+          title: `Revision: ${d.title}`.slice(0, 200),
+          prompt: revisionPrompt,
+          input: {
+            ...baseInput,
+            revisionOfDeliverableId: d.id,
+            revisionOfJobId: d.jobId,
+            revisionInstructions: instructions.slice(0, 2000),
+          },
+        });
+      } catch (err) {
+        await db
+          .update(schema.deliverables)
+          .set({ status: "pending_approval" })
+          .where(and(
+            eq(schema.deliverables.id, id),
+            eq(schema.deliverables.userId, userId),
+            eq(schema.deliverables.status, "revision_pending"),
+          ));
+        throw err;
+      }
 
       await db
         .update(schema.deliverables)
@@ -449,7 +477,11 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
           actedAt: new Date(),
           triageNote: `Revision requested: ${instructions.slice(0, 500)}`,
         })
-        .where(eq(schema.deliverables.id, id));
+        .where(and(
+          eq(schema.deliverables.id, id),
+          eq(schema.deliverables.userId, userId),
+          eq(schema.deliverables.status, "revision_pending"),
+        ));
 
       if (d.jobId) {
         await db

@@ -369,8 +369,10 @@ function isSelfDirectedFileDelivery(userText: string, routingText: string): bool
 
   return !(
     /\b[\w.+-]+@[\w.-]+\b/i.test(routingText)
+    || /\bsend\s+me\s+(?:,?\s*and|&)\s+\S+/i.test(routingText)
     || /\b(?:send|deliver)\b[^.!?\n]{0,100}\bto\s+(?!me\b|my\b|an?\s+pdf\b|pdf\b)\S+/i.test(routingText)
     || /\b(?:via|through)\s+(?:email|slack|discord|telegram|whatsapp|sms|text)\b/i.test(routingText)
+    || /\b(?:post|schedule|delete|purchase|commit|contact|deploy|submit)\b/i.test(routingText)
   );
 }
 
