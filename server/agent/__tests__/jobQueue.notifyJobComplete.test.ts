@@ -73,6 +73,8 @@ function makeDeps(opts: {
   const channels = new Map<ChannelName, ReturnType<typeof makeChannelMock>>();
   channels.set("telegram", makeChannelMock("telegram", telegramSendOk));
   channels.set("in_app", makeChannelMock("in_app", inAppSendOk));
+  channels.set("slack", makeChannelMock("slack"));
+  channels.set("whatsapp", makeChannelMock("whatsapp"));
 
   const calls: SpyDeps["_calls"] = {
     getChannel: [],
@@ -503,6 +505,28 @@ async function run() {
     assert(
       deps._channels.get("in_app")!.calls.length === 0,
       "T16-c: in_app channel NOT called for heartbeat/crew origin",
+    );
+  }
+
+  for (const externalOrigin of ["slack", "whatsapp"] as const) {
+    console.log(`\nExternal origin=${externalOrigin}`);
+    const deps = makeDeps();
+    await _notifyJobCompleteCore(USER, JOB_TYPE, TITLE, BODY, externalOrigin, undefined, deps);
+    assert(
+      deps._calls.notifyUser.length === 0,
+      `${externalOrigin}: notifyUser is not called`,
+    );
+    assert(
+      deps._channels.get(externalOrigin)!.calls.length === 1,
+      `${externalOrigin}: result returns to origin`,
+    );
+    assert(
+      deps._channels.get("telegram")!.calls.length === 0,
+      `${externalOrigin}: result does not leak to Telegram`,
+    );
+    assert(
+      deps._channels.get("in_app")!.calls.length === 1,
+      `${externalOrigin}: result is also available in app`,
     );
   }
 

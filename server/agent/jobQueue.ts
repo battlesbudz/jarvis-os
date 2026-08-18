@@ -239,6 +239,24 @@ async function notifyJobComplete(
       return;
     }
 
+    if (origin === "slack" || origin === "whatsapp") {
+      const notified: string[] = [];
+      const originCh = getChannel(origin);
+      if (originCh) {
+        const result = await originCh
+          .sendMessage(userId, text, { notificationType: "approval_request", ...opts })
+          .catch(() => ({ ok: false as const }));
+        if (result.ok) notified.push(origin);
+      }
+      const inAppCh = getChannel("in_app");
+      if (inAppCh) {
+        await inAppCh.sendMessage(userId, text, { notificationType: "approval_request", ...opts }).catch(() => {});
+        notified.push("in_app");
+      }
+      console.log(`[JobQueue] notifyJobComplete originChannel=${originChannel} → [${notified.join(", ") || "none"}]`);
+      return;
+    }
+
     if (origin === "app" || origin === "coach" || origin === "appchat" || origin === "voice") {
       // In-app (or voice) only — no external channel notification.
       const inAppCh = getChannel("in_app");
@@ -483,15 +501,19 @@ async function flushResearchBatch(key: string): Promise<void> {
     filename: string,
     mimeType: string,
     content: Buffer,
-  ): Promise<void> => {
-    if (!mergedDeliverableId) return;
-    const [deliverable] = await db
-      .select({ meta: schema.deliverables.meta })
-      .from(schema.deliverables)
-      .where(eq(schema.deliverables.id, mergedDeliverableId))
-      .limit(1);
-    const meta = (deliverable?.meta as Record<string, unknown> | null) ?? {};
-    await db.transaction(async (tx) => {
+  ): Promise<boolean> => {
+    if (!mergedDeliverableId) return false;
+    return db.transaction(async (tx) => {
+      const [deliverable] = await tx
+        .select({ meta: schema.deliverables.meta, body: schema.deliverables.body })
+        .from(schema.deliverables)
+        .where(eq(schema.deliverables.id, mergedDeliverableId))
+        .limit(1)
+        .for("update");
+      // The debounce runs after the deliverable becomes editable. Never
+      // resurrect an artifact generated from bytes the user has since changed.
+      if (!deliverable || deliverable.body !== mergedBody) return false;
+      const meta = (deliverable.meta as Record<string, unknown> | null) ?? {};
       await tx
         .delete(schema.deliverableArtifacts)
         .where(eq(schema.deliverableArtifacts.deliverableId, mergedDeliverableId));
@@ -515,6 +537,7 @@ async function flushResearchBatch(key: string): Promise<void> {
           driveLink: null,
         })
         .where(eq(schema.deliverables.id, mergedDeliverableId));
+      return true;
     });
   };
 
@@ -522,10 +545,13 @@ async function flushResearchBatch(key: string): Promise<void> {
     try {
       const pdfBuffer = await markdownToPdfBuffer(mergedTitle, mergedBody);
       const filename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".pdf";
-      await persistBatchArtifact(filename, "application/pdf", pdfBuffer);
-      console.log(`[JobQueue] generated durable consolidated PDF for batch anchorTime=${anchorTime} size=${pdfBuffer.length}B`);
-      pdfNote = `\n\n📄 PDF attached and available in Inbox. Use Save to Drive if you want an external copy.`;
-      notifyOpts.attachments = [
+      const persisted = await persistBatchArtifact(filename, "application/pdf", pdfBuffer);
+      if (!persisted) {
+        pdfNote = "\n\n⚠️ The report changed while its PDF was being prepared, so no stale file was attached. Request a new PDF from the current deliverable.";
+      } else {
+        console.log(`[JobQueue] generated durable consolidated PDF for batch anchorTime=${anchorTime} size=${pdfBuffer.length}B`);
+        pdfNote = `\n\n📄 PDF attached and available in Inbox. Use Save to Drive if you want an external copy.`;
+        notifyOpts.attachments = [
         {
           kind: "document",
           filename,
@@ -533,23 +559,28 @@ async function flushResearchBatch(key: string): Promise<void> {
           caption: mergedTitle,
           mimeType: "application/pdf",
         },
-      ];
+        ];
+      }
     } catch (pdfErr) {
       const pdfMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
       console.error("[JobQueue] batch PDF generation failed:", pdfMsg);
       pdfNote = `\n\n⚠️ PDF generation failed — the Markdown fallback is available in Inbox.`;
       const mdFilename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".md";
       const markdown = Buffer.from(mergedBody, "utf8");
-      await persistBatchArtifact(mdFilename, "text/markdown", markdown);
-      notifyOpts.attachments = [
-        {
-          kind: "document",
-          filename: mdFilename,
-          content: mergedBody,
-          caption: `${mergedTitle} (PDF failed — Markdown fallback)`,
-          mimeType: "text/markdown",
-        },
-      ];
+      const persisted = await persistBatchArtifact(mdFilename, "text/markdown", markdown);
+      if (persisted) {
+        notifyOpts.attachments = [
+          {
+            kind: "document",
+            filename: mdFilename,
+            content: mergedBody,
+            caption: `${mergedTitle} (PDF failed — Markdown fallback)`,
+            mimeType: "text/markdown",
+          },
+        ];
+      } else {
+        pdfNote = "\n\n⚠️ The report changed while its file was being prepared, so no stale fallback was attached. Request a new file from the current deliverable.";
+      }
     }
   }
   // ─────────────────────────────────────────────────────────────────────────

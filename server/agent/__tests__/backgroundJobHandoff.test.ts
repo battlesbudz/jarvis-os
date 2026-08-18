@@ -137,6 +137,8 @@ assert.match(jobQueueSource, /Use Save to Drive if you want an external copy/);
 assert.match(jobQueueSource, /job\.agentType === "writing" \|\| job\.agentType === "planning"/);
 assert.match(jobQueueSource, /Limited-results PDF generated and available in Inbox/);
 assert.match(jobQueueSource, /tx\.insert\(schema\.deliverableArtifacts\)/);
+assert.match(jobQueueSource, /\.for\("update"\)/);
+assert.match(jobQueueSource, /deliverable\.body !== mergedBody/);
 
 const reviewRoutesSource = readFileSync(
   fileURLToPath(new URL("../deliverableReviewHttpRoutes.ts", import.meta.url)),

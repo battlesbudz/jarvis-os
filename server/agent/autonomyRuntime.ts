@@ -417,6 +417,21 @@ export async function routeAutonomyRequest(
     readiness,
     hasApproval,
   });
+  if (
+    durableReportRequested
+    && latestPolicyDecision.mode === "requires_approval"
+    && inferApprovalToolName(userText) === "send_email"
+  ) {
+    const decision: AutonomyPolicyDecision = {
+      mode: "answer_inline",
+      reason: "The email approval workflow cannot attach generated report files safely.",
+    };
+    return {
+      handled: true,
+      decision,
+      reply: "I can create the PDF for download, or draft the email text, but I can’t attach and send a generated PDF through this approval flow yet. Please choose one of those options.",
+    };
+  }
   const policyDecision = latestPolicyDecision.mode === "requires_approval"
     ? latestPolicyDecision
     : decideAutonomyMode({

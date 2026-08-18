@@ -168,6 +168,34 @@ async function main(): Promise<void> {
 
   {
     let submitCalls = 0;
+    let approvalCalls = 0;
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_email_pdf",
+        userText: "Email alice@example.com the report as a PDF",
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        submitJob: async () => {
+          submitCalls += 1;
+          return { id: "unexpected_email_pdf_job", isDuplicate: false };
+        },
+        requestApproval: async () => {
+          approvalCalls += 1;
+          return { id: "unexpected_email_pdf_gate", status: "pending" };
+        },
+      },
+    );
+    assert.equal(result.handled, true);
+    assert.equal(result.decision.mode, "answer_inline");
+    assert.match(result.reply || "", /can’t attach.*generated PDF/i);
+    assert.equal(submitCalls, 0);
+    assert.equal(approvalCalls, 0);
+  }
+
+  {
+    let submitCalls = 0;
     const observations: AutonomyRuntimeObservation[] = [];
     const approvalRequests: Array<{
       agentId: string;
