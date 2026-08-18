@@ -122,7 +122,7 @@ const jobQueueSource = readFileSync(
 assert.match(jobQueueSource, /if \(requestsReportFile\(job\.prompt\)\)/);
 assert.match(jobQueueSource, /mimeType: "application\/pdf"/);
 assert.match(jobQueueSource, /PDF generation failed; the complete report remains available in Inbox/);
-assert.match(jobQueueSource, /driveLink,/);
+assert.match(jobQueueSource, /driveLink: null/);
 assert.match(jobQueueSource, /schema\.deliverableArtifacts/);
 assert.match(jobQueueSource, /hasDownloadableArtifact = true/);
 assert.doesNotMatch(jobQueueSource, /getUserDriveSettings\(job\.userId\)/);
