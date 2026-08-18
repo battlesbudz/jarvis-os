@@ -11,6 +11,7 @@ import { markdownToPdfBuffer } from "./tools/exportPdf";
 import { unsupportedReportFileFormat } from "./backgroundJobHandoff";
 
 type Db = typeof dbType;
+type SubmitAgentJobOptions = { skipDuplicateCheck?: boolean };
 
 export interface DeliverableReviewRoutesDeps {
   db: Db;
@@ -21,7 +22,7 @@ export interface DeliverableReviewRoutesDeps {
   handleJarvisApprovalDecision?: (input: { gate: ApprovalGate; approved: boolean; originChannelId?: string }) => Promise<{ handled: boolean; continuation?: unknown }>;
   isAgentSdkApprovalGate?: (gate: ApprovalGate) => boolean | Promise<boolean>;
   resumeAgentSdkRunFromApprovalGate?: (input: { gate: ApprovalGate; approved: boolean; originChannelId?: string }) => Promise<unknown>;
-  submitAgentJob?: (input: SubmitJobInput, transaction?: SubmitJobDeps["db"]) => Promise<SubmitJobResult>;
+  submitAgentJob?: (input: SubmitJobInput, transaction?: SubmitJobDeps["db"], options?: SubmitAgentJobOptions) => Promise<SubmitJobResult>;
 }
 
 const paramValue = (value: string | string[]): string => Array.isArray(value) ? (value[0] ?? "") : value;
@@ -91,9 +92,11 @@ async function defaultResumeAgentSdkRunFromApprovalGate(input: { gate: ApprovalG
   return resumeAgentSdkRunFromApprovalGate(input);
 }
 
-async function defaultSubmitAgentJob(input: SubmitJobInput, transaction?: SubmitJobDeps["db"]): Promise<SubmitJobResult> {
+async function defaultSubmitAgentJob(input: SubmitJobInput, transaction?: SubmitJobDeps["db"], options?: SubmitAgentJobOptions): Promise<SubmitJobResult> {
   const { submitAgentJob } = await import("./jobQueue");
-  return submitAgentJob(input, transaction ? { db: transaction } : {});
+  const submitDeps: SubmitJobDeps = transaction ? { db: transaction } : {};
+  if (options?.skipDuplicateCheck) submitDeps.findDuplicate = async () => null;
+  return submitAgentJob(input, submitDeps);
 }
 
 async function resumeDirectEmailApprovalIfOwned(gate: ApprovalGate, approved: boolean): Promise<{ handled: boolean; continuation?: unknown }> {
@@ -524,7 +527,7 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
             revisionOfJobId: d.jobId,
             revisionInstructions: instructions.slice(0, 2000),
           },
-        }, tx);
+        }, tx, { skipDuplicateCheck: true });
 
         await tx
           .update(schema.deliverables)
@@ -671,8 +674,6 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
       const id = paramValue(req.params.id);
       const reviewAction = await loadDeliverableForReviewAction(db, userId, id, "save_to_drive");
       if (!reviewAction.ok) return res.status(reviewAction.status).json({ error: reviewAction.error });
-      const d = reviewAction.deliverable;
-      if (d.driveLink) return res.json({ ok: true, driveLink: d.driveLink });
 
       const { getUserDriveSettings } = await import("../driveRoutes");
       const { createDriveBinaryFile, createDriveTextFile } = await import("../integrations/googleDrive");
@@ -681,36 +682,61 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         return res.status(400).json({ error: "Google Drive is not connected. Enable it in Settings.", code: "DRIVE_NOT_CONNECTED" });
       }
 
-      const [artifact] = await db
-        .select()
-        .from(schema.deliverableArtifacts)
-        .where(and(
-          eq(schema.deliverableArtifacts.deliverableId, d.id),
-          eq(schema.deliverableArtifacts.userId, userId),
-        ))
-        .limit(1);
-      const created = artifact
-        ? await createDriveBinaryFile(
-            drive.accessToken,
-            artifact.filename,
-            Buffer.from(artifact.data),
-            artifact.mimeType,
-            { folderId: drive.folderId || undefined },
-          )
-        : await createDriveTextFile(
-            drive.accessToken,
-            `${(d.title.slice(0, 95) || "Jarvis Document").replace(/\.md$/, "")}.md`,
-            d.body || d.summary || d.title,
-            { folderId: drive.folderId || undefined },
-          );
+      const saved = await db.transaction(async (tx) => {
+        const [locked] = await tx
+          .select()
+          .from(schema.deliverables)
+          .where(and(
+            eq(schema.deliverables.id, id),
+            eq(schema.deliverables.userId, userId),
+            eq(schema.deliverables.status, "pending_approval"),
+          ))
+          .limit(1)
+          .for("update");
+        if (!locked) return null;
+        if (locked.driveLink) return { driveLink: locked.driveLink, deliverable: locked };
 
-      const [updated] = await db
-        .update(schema.deliverables)
-        .set({ driveLink: created.webViewLink })
-        .where(eq(schema.deliverables.id, id))
-        .returning();
+        const [artifact] = await tx
+          .select()
+          .from(schema.deliverableArtifacts)
+          .where(and(
+            eq(schema.deliverableArtifacts.deliverableId, locked.id),
+            eq(schema.deliverableArtifacts.userId, userId),
+          ))
+          .limit(1);
+        // Keep the row lock through the external upload. Consolidation can
+        // therefore run wholly before this read or wholly after this save,
+        // never replace/delete the selected bytes while they are uploading.
+        const created = artifact
+          ? await createDriveBinaryFile(
+              drive.accessToken,
+              artifact.filename,
+              Buffer.from(artifact.data),
+              artifact.mimeType,
+              { folderId: drive.folderId || undefined },
+            )
+          : await createDriveTextFile(
+              drive.accessToken,
+              `${(locked.title.slice(0, 95) || "Jarvis Document").replace(/\.md$/, "")}.md`,
+              locked.body || locked.summary || locked.title,
+              { folderId: drive.folderId || undefined },
+            );
 
-      res.json({ ok: true, driveLink: created.webViewLink, deliverable: updated });
+        const [updated] = await tx
+          .update(schema.deliverables)
+          .set({ driveLink: created.webViewLink })
+          .where(and(
+            eq(schema.deliverables.id, id),
+            eq(schema.deliverables.userId, userId),
+            eq(schema.deliverables.status, "pending_approval"),
+          ))
+          .returning();
+        return { driveLink: created.webViewLink, deliverable: updated };
+      });
+      if (!saved) {
+        return res.status(409).json({ error: "Deliverable changed while Save to Drive was being prepared; reload and try again." });
+      }
+      res.json({ ok: true, driveLink: saved.driveLink, deliverable: saved.deliverable });
     } catch (err) {
       console.error("Error saving deliverable to Drive:", err);
       res.status(500).json({ error: "Failed to save to Drive" });

@@ -137,11 +137,13 @@ function explicitlyRequestsPdfOutput(request: string): boolean {
   const writePdf = /\bwrite\s+(?:me\s+)?(?:an?\s+)?pdf\s+(?:report|memo|document|plan)\b/i;
   const deliverPdf = /\b(?:give\s+me|return|provide(?:\s+me)?|deliver(?:\s+me)?|send(?:\s+me)?)\s+(?:an?\s+)?pdf\b(?:\s+(?:report|memo|document|file|plan))?/i;
   const transformToPdf = /\b(?:give|return|provide|deliver|export|save|format|attach|send|keep|preserve|change|switch|convert)\b(?:\s+\w+){0,8}\s+(?:as|in|to|into)\s+(?:an?\s+)?pdf\b/i;
+  const createAsPdf = /\b(?:create|make|generate|produce|prepare|compile|write)\b[^.!?\n]*?\b(?:as|in|to|into)\s+(?:an?\s+)?pdf\b/i;
   const artifactAsPdf = /\b(?:report|results?|findings?|memo|document|plan|it|this)\b[^.!?\n]*?\b(?:as|in|to|into)\s+(?:an?\s+)?pdf\b/i;
   return createPdf.test(request)
     || writePdf.test(request)
     || deliverPdf.test(request)
     || transformToPdf.test(request)
+    || createAsPdf.test(request)
     || artifactAsPdf.test(request);
 }
 

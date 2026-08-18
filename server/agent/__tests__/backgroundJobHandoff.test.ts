@@ -52,6 +52,7 @@ assert.equal(requestsReportFile("Prepare a PDF report on sunflower seeds"), true
 assert.equal(requestsReportFile("Write a report in PDF"), true);
 assert.equal(requestsReportFile("Write the report to a PDF"), true);
 assert.equal(requestsReportFile("Create a report about how economic conditions influence small coastal communities worldwide as a PDF"), true);
+assert.equal(requestsReportFile("Create a detailed comparison of CRM vendors for a small nonprofit as a PDF"), true);
 assert.equal(requestsReportFile("Download a PDF report on sunflower seeds"), true);
 assert.equal(requestsReportFile("Download a report file"), true);
 assert.equal(requestsReportFile("Create a report file about sunflower seeds"), true);
@@ -270,10 +271,12 @@ assert.match(reviewRoutesSource, /patch\.title !== existing\.title/);
 assert.match(reviewRoutesSource, /patch\.body !== existing\.body/);
 assert.match(reviewRoutesSource, /db\.transaction\(async \(tx\)[\s\S]*?\.for\("update"\)[\s\S]*?submitAgentJob/);
 assert.match(reviewRoutesSource, /submitAgentJob\([\s\S]*?\}, tx\)/);
+assert.match(reviewRoutesSource, /skipDuplicateCheck: true/);
 assert.match(reviewRoutesSource, /unsupportedReportFileFormat\(revisionPrompt\)/);
 assert.match(reviewRoutesSource, /Deliverable changed while approval was being prepared/);
 assert.match(reviewRoutesSource, /Deliverable changed while rejection was being prepared/);
 assert.match(reviewRoutesSource, /Deliverable changed while discard was being prepared/);
+assert.match(reviewRoutesSource, /save-to-drive[\s\S]*?db\.transaction\(async \(tx\)[\s\S]*?\.for\("update"\)[\s\S]*?createDriveBinaryFile/);
 assert.doesNotMatch(reviewRoutesSource, /revision_pending/);
 
 const slackWebhookSource = readFileSync(
