@@ -451,6 +451,9 @@ async function flushResearchBatch(key: string): Promise<void> {
   let mergedTitle = jobs[0].title;
   let mergedBody = "";
   let wantsPdf = jobs.some((job) => job.promptedPdf);
+  const notifyOpts: ChannelSendOpts = {};
+  let pdfNote = "";
+  let batchAttachment: NonNullable<ChannelSendOpts["attachments"]>[number] | null = null;
 
   if (allSiblingJobIds.length > 0) {
     try {
@@ -472,6 +475,7 @@ async function flushResearchBatch(key: string): Promise<void> {
         const activeSiblingDeliverables = siblingDeliverables.filter(
           (deliverable) => deliverable.status === "pending_approval",
         );
+        let artifactBaseMeta = (activeSiblingDeliverables[0]?.meta as Record<string, unknown> | null) ?? {};
         const activeJobIds = new Set(
           activeSiblingDeliverables
             .map((deliverable) => deliverable.jobId)
@@ -504,6 +508,7 @@ async function flushResearchBatch(key: string): Promise<void> {
           delete mergedMeta.pdfDriveLink;
           delete mergedMeta.pdfError;
           delete mergedMeta.fallbackFilename;
+          artifactBaseMeta = mergedMeta;
           await tx
             .update(schema.deliverables)
             .set({
@@ -514,9 +519,11 @@ async function flushResearchBatch(key: string): Promise<void> {
               driveLink: null,
             })
             .where(eq(schema.deliverables.id, firstId));
-          await tx
-            .delete(schema.deliverableArtifacts)
-            .where(eq(schema.deliverableArtifacts.deliverableId, firstId));
+          if (!wantsPdf) {
+            await tx
+              .delete(schema.deliverableArtifacts)
+              .where(eq(schema.deliverableArtifacts.deliverableId, firstId));
+          }
           mergedDeliverableId = firstId;
           // Point all sibling jobs' result.deliverableId to the merged deliverable
           // so job-level views don't end up with stale / deleted IDs.
@@ -545,117 +552,74 @@ async function flushResearchBatch(key: string): Promise<void> {
           mergedBody = activeSiblingDeliverables[0].body || "";
           mergedTitle = activeSiblingDeliverables[0].title || mergedTitle;
         }
+
+        if (wantsPdf && mergedBody && mergedDeliverableId) {
+          let filename: string;
+          let mimeType: string;
+          let content: Buffer;
+          let caption = mergedTitle;
+          try {
+            content = await markdownToPdfBuffer(mergedTitle, mergedBody);
+            filename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".pdf";
+            mimeType = "application/pdf";
+            pdfNote = `\n\n📄 PDF attached and available in Inbox. Use Save to Drive if you want an external copy.`;
+            console.log(`[JobQueue] generated durable consolidated PDF for batch anchorTime=${anchorTime} size=${content.length}B`);
+          } catch (pdfErr) {
+            const message = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
+            console.error("[JobQueue] batch PDF generation failed:", message);
+            filename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".md";
+            mimeType = "text/markdown";
+            content = Buffer.from(mergedBody, "utf8");
+            caption = `${mergedTitle} (PDF failed — Markdown fallback)`;
+            pdfNote = `\n\n⚠️ PDF generation failed — the Markdown fallback is available in Inbox.`;
+          }
+
+          // Keep rendering inside the row-lock transaction so approval cannot
+          // observe a merged report without its requested artifact. Move this
+          // to a durable outbox only if render throughput becomes a bottleneck.
+          await tx
+            .delete(schema.deliverableArtifacts)
+            .where(eq(schema.deliverableArtifacts.deliverableId, mergedDeliverableId));
+          await tx.insert(schema.deliverableArtifacts).values({
+            deliverableId: mergedDeliverableId,
+            userId,
+            filename,
+            mimeType,
+            sizeBytes: content.length,
+            data: content,
+          });
+          await tx
+            .update(schema.deliverables)
+            .set({
+              meta: {
+                ...artifactBaseMeta,
+                pdfGenerated: mimeType === "application/pdf",
+                pdfFilename: filename,
+                hasDownloadableArtifact: true,
+              },
+              driveLink: null,
+            })
+            .where(eq(schema.deliverables.id, mergedDeliverableId));
+          batchAttachment = {
+            kind: "document",
+            filename,
+            content,
+            caption,
+            mimeType,
+          };
+        }
         return true;
       });
       if (!hasActiveDeliverables) return;
     } catch (mergeErr) {
+      batchAttachment = null;
+      pdfNote = "";
       console.error("[JobQueue] deliverable merge failed (non-fatal):", mergeErr);
     }
   }
   // ─────────────────────────────────────────────────────────────────────────
 
-  // ── Optional PDF generation from merged body ──────────────────────────────
-  // If any sibling job's prompt requested a PDF, generate ONE PDF from the
-  // consolidated body and deliver it as a channel attachment.
-  const notifyOpts: ChannelSendOpts = {};
-  let pdfNote = "";
-
-  const persistBatchArtifact = async (
-    filename: string,
-    mimeType: string,
-    content: Buffer,
-  ): Promise<boolean> => {
-    if (!mergedDeliverableId) return false;
-    return db.transaction(async (tx) => {
-      const [deliverable] = await tx
-        .select({
-          meta: schema.deliverables.meta,
-          body: schema.deliverables.body,
-          title: schema.deliverables.title,
-          status: schema.deliverables.status,
-        })
-        .from(schema.deliverables)
-        .where(eq(schema.deliverables.id, mergedDeliverableId))
-        .limit(1)
-        .for("update");
-      // The debounce runs after the deliverable becomes editable. Never
-      // resurrect an artifact generated from bytes the user has since changed.
-      if (
-        !deliverable
-        || deliverable.status !== "pending_approval"
-        || deliverable.body !== mergedBody
-        || deliverable.title !== mergedTitle
-      ) return false;
-      const meta = (deliverable.meta as Record<string, unknown> | null) ?? {};
-      await tx
-        .delete(schema.deliverableArtifacts)
-        .where(eq(schema.deliverableArtifacts.deliverableId, mergedDeliverableId));
-      await tx.insert(schema.deliverableArtifacts).values({
-        deliverableId: mergedDeliverableId,
-        userId,
-        filename,
-        mimeType,
-        sizeBytes: content.length,
-        data: content,
-      });
-      await tx
-        .update(schema.deliverables)
-        .set({
-          meta: {
-            ...meta,
-            pdfGenerated: mimeType === "application/pdf",
-            pdfFilename: filename,
-            hasDownloadableArtifact: true,
-          },
-          driveLink: null,
-        })
-        .where(eq(schema.deliverables.id, mergedDeliverableId));
-      return true;
-    });
-  };
-
-  if (wantsPdf && mergedBody) {
-    try {
-      const pdfBuffer = await markdownToPdfBuffer(mergedTitle, mergedBody);
-      const filename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".pdf";
-      const persisted = await persistBatchArtifact(filename, "application/pdf", pdfBuffer);
-      if (!persisted) {
-        pdfNote = "\n\n⚠️ The report changed while its PDF was being prepared, so no stale file was attached. Request a new PDF from the current deliverable.";
-      } else {
-        console.log(`[JobQueue] generated durable consolidated PDF for batch anchorTime=${anchorTime} size=${pdfBuffer.length}B`);
-        pdfNote = `\n\n📄 PDF attached and available in Inbox. Use Save to Drive if you want an external copy.`;
-        notifyOpts.attachments = [
-        {
-          kind: "document",
-          filename,
-          content: pdfBuffer,
-          caption: mergedTitle,
-          mimeType: "application/pdf",
-        },
-        ];
-      }
-    } catch (pdfErr) {
-      const pdfMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
-      console.error("[JobQueue] batch PDF generation failed:", pdfMsg);
-      pdfNote = `\n\n⚠️ PDF generation failed — the Markdown fallback is available in Inbox.`;
-      const mdFilename = mergedTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() + ".md";
-      const markdown = Buffer.from(mergedBody, "utf8");
-      const persisted = await persistBatchArtifact(mdFilename, "text/markdown", markdown);
-      if (persisted) {
-        notifyOpts.attachments = [
-          {
-            kind: "document",
-            filename: mdFilename,
-            content: mergedBody,
-            caption: `${mergedTitle} (PDF failed — Markdown fallback)`,
-            mimeType: "text/markdown",
-          },
-        ];
-      } else {
-        pdfNote = "\n\n⚠️ The report changed while its file was being prepared, so no stale fallback was attached. Request a new file from the current deliverable.";
-      }
-    }
-  }
+  if (batchAttachment) notifyOpts.attachments = [batchAttachment];
   // ─────────────────────────────────────────────────────────────────────────
 
   const bodiedJobs = jobs.filter((j) => j.body);

@@ -238,9 +238,8 @@ assert.match(jobQueueSource, /job\.agentType === "writing" \|\| job\.agentType =
 assert.match(jobQueueSource, /Limited-results PDF generated and available in Inbox/);
 assert.match(jobQueueSource, /tx\.insert\(schema\.deliverableArtifacts\)/);
 assert.match(jobQueueSource, /\.for\("update"\)/);
-assert.match(jobQueueSource, /deliverable\.body !== mergedBody/);
-assert.match(jobQueueSource, /deliverable\.title !== mergedTitle/);
-assert.match(jobQueueSource, /deliverable\.status !== "pending_approval"/);
+assert.match(jobQueueSource, /const hasActiveDeliverables = await db\.transaction[\s\S]*?markdownToPdfBuffer[\s\S]*?tx\.insert\(schema\.deliverableArtifacts\)/);
+assert.doesNotMatch(jobQueueSource, /persistBatchArtifact/);
 assert.match(jobQueueSource, /activeSiblingDeliverables/);
 assert.match(jobQueueSource, /if \(!hasActiveDeliverables\) return/);
 assert.match(jobQueueSource, /prompt: schema\.agentJobs\.prompt/);
