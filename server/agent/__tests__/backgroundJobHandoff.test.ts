@@ -43,7 +43,10 @@ assert.equal(unsupportedReportFileFormat("Write a JSON parser"), null);
 assert.equal(unsupportedReportFileFormat("Create a CSV importer"), null);
 assert.equal(unsupportedReportFileFormat("Create a PDF report comparing JSON file formats"), null);
 assert.equal(requestsReportFile("Create a PDF report comparing JSON file formats"), true);
+assert.equal(unsupportedReportFileFormat("Create a PDF report and export the results as CSV"), "CSV");
+assert.equal(requestsReportFile("Create a PDF report and export the results as CSV"), false);
 assert.equal(requestsReportFile("Research how to write PDF files safely"), false);
+assert.equal(requestsReportFile("PDF please"), false);
 
 const contextualRevisionPrompt = [
   "Revise this Jarvis deliverable according to the user's requested changes.",
@@ -119,6 +122,17 @@ const definitePrompt = buildBackgroundJobPrompt(
 assert.match(definitePrompt, /Research sunflower seeds/);
 assert.match(definitePrompt, /Latest user request:\nGive me the report as a PDF/);
 assert.equal(requestsReportFile(definitePrompt), true);
+
+const tersePrompt = buildBackgroundJobPrompt(
+  [
+    { role: "user", content: "Summarize these notes" },
+    { role: "assistant", content: "Here is the summary." },
+    { role: "user", content: "PDF please" },
+  ],
+  "PDF please",
+);
+assert.match(tersePrompt, /Latest user request:\nPDF please/);
+assert.equal(requestsReportFile(tersePrompt), true);
 
 const jobQueueSource = readFileSync(
   fileURLToPath(new URL("../jobQueue.ts", import.meta.url)),

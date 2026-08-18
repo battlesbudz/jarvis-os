@@ -17,11 +17,16 @@ function textContent(message: BackgroundJobChatMessage): string {
     : "";
 }
 
+function isTersePdfFollowUp(text: string): boolean {
+  return /^(?:an?\s+)?pdf(?:\s*,?\s*(?:please|version|copy))?[.!?]*$/i.test(text.trim());
+}
+
 function isContextDependentFollowUp(text: string): boolean {
   return /\b(this|that|these|those|it|previous|earlier|above|whole point|as before)\b/i.test(text)
     || /\bthe\s+(?:report|document|file|research|results?|findings?|task|job)\b/i.test(text)
     || /\b(?:the\s+)?same\b/i.test(text)
-    || /^(yes|no|correct|exactly)\b/i.test(text.trim());
+    || /^(yes|no|correct|exactly)\b/i.test(text.trim())
+    || isTersePdfFollowUp(text);
 }
 
 /**
@@ -139,10 +144,6 @@ function explicitlyRequestsGenericDownload(request: string): boolean {
 /** Identify an explicit requested file format that this renderer cannot create. */
 export function unsupportedReportFileFormat(prompt: string): string | null {
   const request = artifactRequestText(prompt);
-  // A supported output stated near the action wins over format names in the
-  // subject, e.g. "Create a PDF report comparing JSON file formats."
-  if (explicitlyRequestsPdfOutput(request)) return null;
-
   const rawFormat = String.raw`(?:docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)`;
   const namedArtifact = String.raw`(?:docx(?:\s+file)?|word\s+document|csv\s+file|json\s+file|xlsx?(?:\s+(?:file|spreadsheet))?|spreadsheet|pptx?(?:\s+(?:file|presentation))?|powerpoint(?:\s+presentation)?|html\s+file|xml\s+file|rtf(?:\s+(?:file|document))?|tsv\s+file)`;
   const outputSyntax = new RegExp(
@@ -179,5 +180,7 @@ export function requestsReportFile(prompt: string): boolean {
   );
   if (negatedAction.test(request) || negatedArtifact.test(request)) return false;
 
-  return explicitlyRequestsPdfOutput(request) || explicitlyRequestsGenericDownload(request);
+  return explicitlyRequestsPdfOutput(request)
+    || explicitlyRequestsGenericDownload(request)
+    || (prompt.includes(LATEST_REQUEST_MARKER) && isTersePdfFollowUp(request));
 }

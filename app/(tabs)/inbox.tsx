@@ -374,8 +374,13 @@ export default function InboxScreen() {
         const objectUrl = URL.createObjectURL(new Blob([buffer], {
           type: response.headers.get('content-type') || 'application/octet-stream',
         }));
-        await Linking.openURL(objectUrl);
-        setTimeout(() => URL.revokeObjectURL(objectUrl), 30_000);
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
       } else {
         const FileSystem = await import('expo-file-system/legacy');
         if (!FileSystem.cacheDirectory) throw new Error('File cache is unavailable');
