@@ -443,6 +443,7 @@ async function run(): Promise<void> {
       port,
       "POST",
       `/api/deliverables/${unsupportedRevisionSource.id}/revise`,
+      token,
       { instructions: "Change the output to DOCX" },
     );
     assert.equal(unsupportedRevision.status, 400, "revision route rejects unsupported output formats");
