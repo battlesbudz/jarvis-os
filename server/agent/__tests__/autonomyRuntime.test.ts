@@ -153,6 +153,8 @@ async function main(): Promise<void> {
 
   for (const workerCase of [
     { text: "Write a PDF memo for the board", expectedAgentType: "writing" },
+    { text: "Create a PDF memo for the board", expectedAgentType: "writing" },
+    { text: "Prepare a PDF memo for the board", expectedAgentType: "writing" },
     { text: "Create a PDF project plan", expectedAgentType: "planning" },
   ]) {
     const submitted: string[] = [];
