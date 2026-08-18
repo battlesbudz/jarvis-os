@@ -22,6 +22,9 @@ assert.match(routingSource, /SERVER_YOUTUBE_TOOL_NAMES\.has\(name\)\) return opt
 assert.match(routingSource, /return false;\s*\}\);/);
 assert.match(routesSource, /keepDaemonActionFallback[\s\S]*focusedToolNames\.add\(["']daemon_action["']\)/);
 assert.match(routesSource, /routeRequiredToolNames[\s\S]*keepDaemonActionFallback[\s\S]*\["daemon_action"\]/);
+assert.match(routesSource, /phoneRuntimeCoveredRequest \? phoneRuntimeRequiredToolNames : \[\]/);
+assert.match(routesSource, /priorityToolNames:\s*uniqueToolNames\(\[[\s\S]*priorityRuntimeToolNames/);
+assert.doesNotMatch(routesSource, /priorityToolNames:\s*uniqueToolNames\(\[[\s\S]{0,200}routeRequiredToolNames/);
 assert.match(routesSource, /const youtubeServerResearchRequest = androidActive && isYoutubeServerResearchRequest\(lastUserContent\)/);
 assert.match(routesSource, /keepDaemonActionFallback[\s\S]*hasUnsupportedPhoneDeviceControlRequest\(lastUserContent\)[\s\S]*!youtubeServerResearchRequest/);
 assert.match(routesSource, /const useFocusedRequestTools = toolAwareRoute\.shouldPreferTool \|\|[\s\S]*phoneRuntimeCoveredRequest \|\|[\s\S]*keepDaemonActionFallback \|\|[\s\S]*youtubeServerResearchRequest/);
@@ -34,6 +37,8 @@ assert.doesNotMatch(routesSource, /isAndroidLocalGemmaModelName/);
 assert.match(routesSource, /\.\.\.ANDROID_PHONE_RUNTIME_TOOL_NAMES/);
 assert.match(routingSource, /function buildPhoneRuntimeRequiredToolNames/);
 assert.match(routingSource, /function deterministicPhoneRuntimeToolCallFromRequest/);
+assert.match(runtimeSource, /confirmInstalledAndroidAppName/);
+assert.match(runtimeSource, /takeConfirmedAndroidAppResolution/);
 assert.match(routingSource, /android_read_notifications/);
 assert.match(routingSource, /!options\.androidActive \|\| !options\.phoneRuntimeCoveredRequest/);
 assert.match(routesSource, /Routing notification request to Android Device Control/);

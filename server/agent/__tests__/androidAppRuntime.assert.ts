@@ -28,6 +28,7 @@ async function main() {
     ANDROID_PHONE_RUNTIME_TOOL_NAMES,
     androidPhoneRuntimeTools,
     buildAndroidYoutubeSearchUrl,
+    confirmInstalledAndroidAppName,
     _setAndroidAppRuntimeDepsForTesting,
     explainUnsupportedPhoneRuntimeAction,
     runAndroidOpenAppByName,
@@ -134,6 +135,23 @@ async function main() {
   assert.equal(ambiguousLiveLabel.app, null);
   const missingTeamSpeak = await resolveAndroidAppName("user-phone", "TeamSpeak");
   assert.equal(missingTeamSpeak.app, null);
+  _setAndroidAppRuntimeDepsForTesting(null);
+
+  _setAndroidAppRuntimeDepsForTesting({
+    isAndroidDaemonActive: () => true,
+    sendDaemonOp: async () => ({
+      ok: true,
+      data: {
+        apps: [
+          { label: "Keep Notes", packageName: "com.google.android.keep" },
+          { label: "Meeting Notes", packageName: "com.example.meetingnotes" },
+        ],
+      },
+    }),
+  });
+  const ambiguousNotes = await resolveAndroidAppName("user-phone", "Notes");
+  assert.equal(ambiguousNotes.app, null);
+  assert.equal(await confirmInstalledAndroidAppName("user-phone", "Notes"), null);
   _setAndroidAppRuntimeDepsForTesting(null);
 
   _setAndroidAppRuntimeDepsForTesting({

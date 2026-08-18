@@ -83,8 +83,8 @@ import { connectChannelTool } from "./agent/tools/connectChannel";
 import { filterToolsByGroups, getTool, type ToolGroup } from "./agent/tools/index";
 import {
   ANDROID_PHONE_RUNTIME_TOOL_NAMES,
+  confirmInstalledAndroidAppName,
   explainUnsupportedPhoneRuntimeAction,
-  resolveAndroidAppName,
 } from "./agent/tools/androidAppRuntime";
 import {
   buildPhoneRuntimeRequiredToolNames,
@@ -1764,7 +1764,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         ? unqualifiedPhoneAppTarget(lastUserOrigText)
         : null;
       const confirmedAppTarget = unqualifiedAppTarget &&
-        (await resolveAndroidAppName(userId, unqualifiedAppTarget)).app?.source === "live_inventory"
+        await confirmInstalledAndroidAppName(userId, unqualifiedAppTarget)
         ? unqualifiedAppTarget
         : null;
       const phoneRuntimeActionRequest = androidActive && !memoryPhoneBypassRequest && (
@@ -1830,12 +1830,16 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         ...phoneRuntimeRequiredToolNames,
         ...(keepDaemonActionFallback ? ["daemon_action"] : []),
       ]);
-      const effectiveToolAwareRoute = routeRequiredToolNames.length > 0
+      const priorityRuntimeToolNames = uniqueToolNames([
+        ...(phoneRuntimeCoveredRequest ? phoneRuntimeRequiredToolNames : []),
+        ...(keepDaemonActionFallback && !toolAwareRoute.shouldPreferTool ? ["daemon_action"] : []),
+      ]);
+      const effectiveToolAwareRoute = priorityRuntimeToolNames.length > 0
         ? {
             ...toolAwareRoute,
             priorityToolNames: uniqueToolNames([
               ...toolAwareRoute.priorityToolNames,
-              ...routeRequiredToolNames,
+              ...priorityRuntimeToolNames,
             ]),
           }
         : toolAwareRoute;

@@ -145,6 +145,12 @@ export type ResolvedAndroidApp = AndroidAppCatalogEntry & {
   matchedAlias?: string;
 };
 
+const confirmedAppResolutions = new Map<string, {
+  app: ResolvedAndroidApp;
+  query: string;
+  timer: ReturnType<typeof setTimeout>;
+}>();
+
 export const STATIC_ANDROID_APP_CATALOG: AndroidAppCatalogEntry[] = [
   { label: "YouTube", packageName: "com.google.android.youtube", aliases: ["youtube", "yt", "you tube"] },
   { label: "Facebook", packageName: "com.facebook.katana", aliases: ["facebook", "fb"] },
@@ -371,8 +377,10 @@ export async function resolveAndroidAppName(
     return best;
   });
   const [liveMatch, staticMatch] = matches;
-  const exactLiveMatches = installedApps
+  const liveMatches = installedApps
     .map((app) => ({ app, match: scoreAppMatch(appName, app) }))
+    .filter(({ match }) => match.score > 0);
+  const exactLiveMatches = liveMatches
     .filter(({ match }) => match.score === 100);
   const exactLiveMatch = exactLiveMatches.length === 1
     ? exactLiveMatches[0]
@@ -383,6 +391,11 @@ export async function resolveAndroidAppName(
   const staticPackageInstalled = staticMatch
     ? installedApps.some((app) => app.packageName === staticMatch.app.packageName)
     : false;
+  const hasAmbiguousBestLiveMatch = liveMatch && liveMatch.score < 100 &&
+    liveMatches.filter(({ match }) => match.score === liveMatch.score).length > 1;
+  if (hasAmbiguousBestLiveMatch && !(staticMatch?.score === 100 && staticPackageInstalled)) {
+    return { app: null, liveInventoryAvailable, liveInventoryError };
+  }
   const normalizedQuery = normalizeAppLookup(appName).replace(/^the\s+/, "");
   const compatibleLiveVariant = liveMatch && liveMatch.score >= 50 &&
     normalizeAppLookup(liveMatch.app.label).replace(/^the\s+/, "").endsWith(` ${normalizedQuery}`);
@@ -400,6 +413,32 @@ export async function resolveAndroidAppName(
   }
 
   return { app: null, liveInventoryAvailable, liveInventoryError };
+}
+
+export async function confirmInstalledAndroidAppName(
+  userId: string,
+  appName: string,
+): Promise<ResolvedAndroidApp | null> {
+  const resolved = await resolveAndroidAppName(userId, appName);
+  if (!resolved.app || resolved.app.source !== "live_inventory") return null;
+  const previous = confirmedAppResolutions.get(userId);
+  if (previous) clearTimeout(previous.timer);
+  const entry = {
+    app: resolved.app,
+    query: normalizeAppLookup(appName),
+    timer: setTimeout(() => confirmedAppResolutions.delete(userId), 30_000),
+  };
+  entry.timer.unref?.();
+  confirmedAppResolutions.set(userId, entry);
+  return entry.app;
+}
+
+function takeConfirmedAndroidAppResolution(userId: string, appName: string): ResolvedAndroidApp | null {
+  const entry = confirmedAppResolutions.get(userId);
+  if (!entry || entry.query !== normalizeAppLookup(appName)) return null;
+  clearTimeout(entry.timer);
+  confirmedAppResolutions.delete(userId);
+  return entry.app;
 }
 
 function jsonToolResult(outcome: RuntimeOutcome): ToolResult {
@@ -759,7 +798,10 @@ export async function runAndroidOpenAppByName(args: ToolArgs, userId: string): P
     return { ok: false, label: "Permission denied", detail: { error: "android_open_app permission is not enabled." } };
   }
 
-  const resolved = await resolveAndroidAppName(userId, appName);
+  const confirmedApp = takeConfirmedAndroidAppResolution(userId, appName);
+  const resolved = confirmedApp
+    ? { app: confirmedApp, liveInventoryAvailable: true }
+    : await resolveAndroidAppName(userId, appName);
   if (!resolved.app) {
     return {
       ok: false,
