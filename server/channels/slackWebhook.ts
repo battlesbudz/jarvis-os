@@ -143,8 +143,7 @@ export function registerSlackWebhook(app: Express): void {
       const slackUserId = String(req.body.user_id || "");
       const text = String(req.body.text || "").trim();
       const responseUrl = String(req.body.response_url || "");
-      const slackDestination = `${String(req.body.channel_id || "")}|`;
-      const slackSessionChannel = `Slack:${teamId}:${slackDestination}`;
+      const slackSessionChannel = `Slack:${teamId}:slash:${String(req.body.channel_id || "")}`;
 
       const userId = await findUserBySlackId(teamId, slackUserId);
       if (!userId) {

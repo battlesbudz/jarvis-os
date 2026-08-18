@@ -178,7 +178,8 @@ export function unsupportedReportFileFormat(prompt: string): string | null {
     || /\b(?:export|attach|save)\b/i.test(request);
   const outputMatch = request.match(outputSyntax);
   const describesFormatOperation = outputMatch?.index !== undefined
-    && /\b(?:how(?:\s+\w+){0,3}|ways?)\s+to\s*$/i.test(request.slice(0, outputMatch.index));
+    && /\b(?:(?:about|explaining|explain)\b[^.!?\n]{0,120}\b(?:how|why|ways?)|(?:how(?:\s+\w+){0,3}|ways?)\s+to)\b[^.!?\n]*$/i
+      .test(request.slice(0, outputMatch.index));
   const output = (explicitArtifactIntent && !describesFormatOperation ? outputMatch?.[1] : undefined)
     || request.match(directArtifact)?.[1]
     || request.match(deliveryArtifact)?.[1]

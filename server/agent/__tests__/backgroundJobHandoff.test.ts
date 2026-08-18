@@ -74,6 +74,7 @@ assert.equal(unsupportedReportFileFormat("I need a CSV file of the results"), "C
 assert.equal(unsupportedReportFileFormat("Change the output to DOCX"), "DOCX");
 assert.equal(unsupportedReportFileFormat("Create a downloadable JSON file with the findings"), "JSON");
 assert.equal(unsupportedReportFileFormat("Write a report explaining how to export data as CSV"), null);
+assert.equal(unsupportedReportFileFormat("Write a report about why companies export data as CSV"), null);
 assert.equal(unsupportedReportFileFormat("Prepare a guide on how best to convert JSON to XML"), null);
 assert.equal(unsupportedReportFileFormat("Explain how JSON parsing works"), null);
 assert.equal(unsupportedReportFileFormat("Return this object as JSON"), null);
@@ -290,6 +291,7 @@ assert.match(slackWebhookSource, /ev\.thread_ts/);
 assert.match(slackWebhookSource, /Slack:\$\{teamId\}:\$\{slackDestination\}/);
 assert.match(slackWebhookSource, /getSession\(userId, slackSessionChannel\)/);
 assert.match(slackWebhookSource, /setSession\(userId, slackSessionChannel/);
+assert.match(slackWebhookSource, /Slack:\$\{teamId\}:slash:\$\{String\(req\.body\.channel_id \|\| ""\)\}/);
 assert.match(slackWebhookSource, /Brain dump:[^\n]+channelName: "Slack", sdkSessionId: braindumpSession/);
 assert.match(slackWebhookSource, /What's the status[^\n]+channelName: "Slack", sdkSessionId: statusSession/);
 
