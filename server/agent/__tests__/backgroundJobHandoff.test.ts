@@ -31,6 +31,9 @@ assert.equal(requestsReportFile("Give me the report without a PDF"), false);
 assert.equal(requestsReportFile("Prepare a PDF report on sunflower seeds"), true);
 assert.equal(requestsReportFile("Create a DOCX report on sunflower seeds"), false);
 assert.equal(requestsReportFile("Create a Word document with the report"), false);
+assert.equal(requestsReportFile("Research competitors and export the results as a CSV file"), false);
+assert.equal(requestsReportFile("Create a downloadable JSON file with the findings"), false);
+assert.equal(requestsReportFile("Export the findings as an XLSX spreadsheet"), false);
 
 const contextualRevisionPrompt = [
   "Revise this Jarvis deliverable according to the user's requested changes.",

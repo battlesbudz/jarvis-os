@@ -78,6 +78,31 @@ async function main(): Promise<void> {
     assert.equal(submitted[0].prompt, contextualPrompt);
   }
 
+  for (const workerCase of [
+    { text: "Write a PDF memo for the board", expectedAgentType: "writing" },
+    { text: "Create a PDF project plan", expectedAgentType: "planning" },
+  ]) {
+    const submitted: string[] = [];
+    const result = await routeAutonomyRequest(
+      {
+        userId: "user_worker_pdf",
+        userText: workerCase.text,
+        channelName: "App Chat",
+        readiness: "ready",
+      },
+      {
+        submitJob: async (job) => {
+          submitted.push(job.agentType);
+          return { id: `job_${workerCase.expectedAgentType}_pdf`, isDuplicate: false };
+        },
+      },
+    );
+
+    assert.equal(result.handled, true);
+    assert.equal(result.decision.agentType, workerCase.expectedAgentType);
+    assert.deepEqual(submitted, [workerCase.expectedAgentType]);
+  }
+
   {
     let submitCalls = 0;
     const observations: AutonomyRuntimeObservation[] = [];

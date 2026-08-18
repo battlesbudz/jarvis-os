@@ -377,7 +377,9 @@ export async function routeAutonomyRequest(
   // explicit report-file request must use that durable path, even when its
   // subject would otherwise classify as ordinary research.
   const decision: AutonomyPolicyDecision = (
-    policyDecision.mode === "queue_background_job" && durableReportRequested
+    policyDecision.mode === "queue_background_job"
+    && durableReportRequested
+    && (policyDecision.agentType === "research" || policyDecision.agentType === "deep_research")
   )
     ? { ...policyDecision, agentType: "deep_research" }
     : policyDecision;

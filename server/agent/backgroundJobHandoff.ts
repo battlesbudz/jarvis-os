@@ -104,6 +104,11 @@ export function requestsReportFile(prompt: string): boolean {
   // before the generic "document" matcher so Jarvis does not promise a PDF as
   // though it were the requested Word file.
   if (/\b(?:docx|word\s+document)\b/i.test(request)) return false;
+  // The deep-research renderer currently produces PDF (or Markdown fallback).
+  // Do not reinterpret a specifically requested structured/media format as PDF.
+  if (/\b(?:csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)\b/i.test(request)) {
+    return false;
+  }
 
   const artifact = String.raw`(?:pdf|downloadable\s+file|document|file)`;
   const action = String.raw`(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give)`;
