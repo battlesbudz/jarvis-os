@@ -173,6 +173,8 @@ const inboxSource = readFileSync(
 );
 assert.match(inboxSource, /triageSection=recent_files/);
 assert.match(inboxSource, /recent-file-download-/);
+assert.match(inboxSource, /recent-file-save-to-drive-/);
+assert.match(inboxSource, /recent-file-drive-link-/);
 assert.match(inboxSource, /renderRecentFiles\(\)/);
 
 console.log("All background job handoff assertions passed.");

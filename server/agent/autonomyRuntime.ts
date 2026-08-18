@@ -336,6 +336,28 @@ function queuedReply(agentType: AgentJobType, job: SubmitJobResult): string {
   return `I've queued that as a ${agentType} background job. Job ID: ${job.id}. Open Inbox to watch it under Running Jobs; when it finishes, the result appears under Needs your review as a Jarvis deliverable. Approving it saves it to Documents, and Save to Drive creates a Drive file when available.`;
 }
 
+function contextualWorkerRoutingText(backgroundPrompt: string, userText: string): string {
+  const latestMarker = backgroundPrompt.lastIndexOf("Latest user request:");
+  const context = latestMarker >= 0
+    ? backgroundPrompt.slice(0, latestMarker)
+    : backgroundPrompt;
+  const priorUserTurns = Array.from(context.matchAll(/^User:\s*(.+)$/gim))
+    .map((match) => match[1].trim())
+    .filter(Boolean);
+  for (let index = priorUserTurns.length - 1; index >= 0; index -= 1) {
+    const candidate = priorUserTurns[index];
+    const decision = decideAutonomyMode({
+      userText: candidate,
+      readiness: "ready",
+      hasApproval: true,
+    });
+    if (decision.mode === "queue_background_job") {
+      return `${candidate}\n${userText}`;
+    }
+  }
+  return userText;
+}
+
 export async function routeAutonomyRequest(
   input: AutonomyRuntimeInput,
   deps: AutonomyRuntimeDeps = {},
@@ -359,7 +381,7 @@ export async function routeAutonomyRequest(
   // explicit file request; keep the original turn for titles and approvals.
   const durableReportRequested = requestsReportFile(backgroundPrompt || userText);
   const routingText = backgroundPrompt && durableReportRequested
-    ? backgroundPrompt
+    ? contextualWorkerRoutingText(backgroundPrompt, userText)
     : userText;
   const hasApproval = input.hasApproval ?? inferExplicitApproval(userText);
   // Approval risk belongs exclusively to the current user turn. Bounded

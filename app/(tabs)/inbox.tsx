@@ -592,6 +592,7 @@ export default function InboxScreen() {
     },
     onSuccess: (data, id) => {
       queryClient.invalidateQueries({ queryKey: ['/api/deliverables'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/deliverables?triageSection=recent_files'] });
       queryClient.invalidateQueries({ queryKey: ['/api/daily-command/today'] });
       if (data.driveLink) {
         Alert.alert('Saved to Drive', 'Your document has been saved to Google Drive.', [
@@ -1352,6 +1353,7 @@ export default function InboxScreen() {
         {recentFileDeliverables.map((d, index) => {
           const meta = d.meta as { pdfFilename?: string; fallbackFilename?: string } | null;
           const isDownloading = downloadingArtifactId === d.id;
+          const canSaveToDrive = d.review?.canSaveToDrive !== false;
           return (
             <Animated.View key={d.id} entering={FadeInDown.duration(300).delay(index * 50)}>
               <View style={styles.draftCard}>
@@ -1387,6 +1389,31 @@ export default function InboxScreen() {
                     Download {meta?.pdfFilename?.toLowerCase().endsWith('.pdf') ? 'PDF' : 'file'}
                   </Text>
                 </Pressable>
+                {canSaveToDrive && d.driveLink ? (
+                  <Pressable
+                    style={styles.driveLinkRow}
+                    onPress={() => Linking.openURL(d.driveLink!)}
+                    testID={`recent-file-drive-link-${d.id}`}
+                  >
+                    <Ionicons name="logo-google" size={14} color={Colors.primary} />
+                    <Text style={styles.driveLinkText}>Open in Drive</Text>
+                    <Ionicons name="open-outline" size={13} color={Colors.primary} />
+                  </Pressable>
+                ) : canSaveToDrive ? (
+                  <Pressable
+                    style={styles.saveToDriveRow}
+                    onPress={() => saveToDriveMutation.mutate(d.id)}
+                    disabled={busy}
+                    testID={`recent-file-save-to-drive-${d.id}`}
+                  >
+                    {saveToDriveMutation.isPending && saveToDriveMutation.variables === d.id ? (
+                      <ActivityIndicator size="small" color={Colors.primary} />
+                    ) : (
+                      <Ionicons name="logo-google" size={14} color={Colors.primary} />
+                    )}
+                    <Text style={styles.driveLinkText}>Save to Drive</Text>
+                  </Pressable>
+                ) : null}
               </View>
             </Animated.View>
           );
