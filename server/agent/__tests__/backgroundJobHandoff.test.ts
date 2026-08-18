@@ -274,6 +274,7 @@ assert.match(reviewRoutesSource, /db\.transaction\(async \(tx\)[\s\S]*?\.for\("u
 assert.match(reviewRoutesSource, /submitAgentJob\([\s\S]*?\}, tx, \{ skipDuplicateCheck: true \}\)/);
 assert.match(reviewRoutesSource, /skipDuplicateCheck: true/);
 assert.match(reviewRoutesSource, /unsupportedReportFileFormat\(revisionPrompt\)/);
+assert.doesNotMatch(reviewRoutesSource, /d\.body\.slice/);
 assert.match(reviewRoutesSource, /Deliverable changed while approval was being prepared/);
 assert.match(reviewRoutesSource, /Deliverable changed while rejection was being prepared/);
 assert.match(reviewRoutesSource, /Deliverable changed while discard was being prepared/);

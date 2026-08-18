@@ -487,7 +487,7 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
           : []),
         "",
         "Current deliverable:",
-        d.body.slice(0, 30000),
+        d.body,
         "",
         "Requested changes:",
         instructions,
