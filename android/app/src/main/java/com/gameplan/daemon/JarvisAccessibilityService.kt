@@ -39,9 +39,15 @@ class JarvisAccessibilityService : AccessibilityService() {
 
         /** Last app package observed from accessibility events, used when rootInActiveWindow lags. */
         @Volatile private var lastForegroundPackage: ForegroundPackageObservation? = null
+        @Volatile private var lastForegroundActivity: ForegroundActivityObservation? = null
 
         private data class ForegroundPackageObservation(
             val packageName: String,
+            val observedAtUptimeMs: Long,
+        )
+
+        private data class ForegroundActivityObservation(
+            val activityName: String,
             val observedAtUptimeMs: Long,
         )
     }
@@ -62,6 +68,14 @@ class JarvisAccessibilityService : AccessibilityService() {
                     packageName = packageName,
                     observedAtUptimeMs = event.eventTime.takeIf { it > 0L } ?: SystemClock.uptimeMillis(),
                 )
+                if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                    event.className?.toString()?.takeIf { it.isNotBlank() }?.let { activityName ->
+                        lastForegroundActivity = ForegroundActivityObservation(
+                            activityName = activityName,
+                            observedAtUptimeMs = event.eventTime.takeIf { it > 0L } ?: SystemClock.uptimeMillis(),
+                        )
+                    }
+                }
             }
         }
 
@@ -148,15 +162,32 @@ class JarvisAccessibilityService : AccessibilityService() {
     // Samsung OneUI issue: startActivity() doesn't throw even when OneUI silently
     // swallows the intent. We therefore verify the app actually came to foreground
     // by polling accessibility foreground signals after dispatch.
-    fun launchApp(packageName: String): Boolean {
+    fun launchApp(packageName: String, activityName: String? = null): Boolean {
         val pm = packageManager
-        val intent = pm.getLaunchIntentForPackage(packageName) ?: return false
+        var verificationActivity = activityName
+        val intent = if (activityName == null) {
+            pm.getLaunchIntentForPackage(packageName)
+        } else {
+            Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                setClassName(packageName, activityName)
+            }.takeIf {
+                val activityInfo = pm.resolveActivity(it, 0)?.activityInfo
+                if (activityInfo?.name == activityName) {
+                    verificationActivity = activityInfo.targetActivity ?: activityInfo.name
+                    true
+                } else {
+                    false
+                }
+            }
+        } ?: return false
         intent.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or
             Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or
             Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
         )
         lastForegroundPackage = null
+        lastForegroundActivity = null
         var launchAttemptStartedAtUptimeMs = SystemClock.uptimeMillis()
         val dispatched = postAndWaitForDispatch {
             launchAttemptStartedAtUptimeMs = SystemClock.uptimeMillis()
@@ -166,7 +197,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         // Verify the target package actually came to foreground.
         // Emulator system apps and Samsung Galaxy Fold devices can publish accessibility roots late,
         // so wait long enough and consult multiple accessibility foreground signals.
-        return waitForForeground(packageName, timeoutMs = 12_000, launchAttemptStartedAtUptimeMs)
+        return waitForForeground(packageName, verificationActivity, timeoutMs = 12_000, launchAttemptStartedAtUptimeMs)
     }
 
     fun browseUrl(url: String): Boolean {
@@ -207,6 +238,7 @@ class JarvisAccessibilityService : AccessibilityService() {
     // Returns false (not launched) if the package never comes to foreground.
     private fun waitForForeground(
         targetPackage: String,
+        targetActivity: String? = null,
         timeoutMs: Long,
         launchAttemptStartedAtUptimeMs: Long,
     ): Boolean {
@@ -214,20 +246,32 @@ class JarvisAccessibilityService : AccessibilityService() {
         var lastSeen: String? = null
         while (System.currentTimeMillis() < deadline) {
             val rootPackage = try { rootInActiveWindow?.packageName?.toString() } catch (_: Exception) { null }
+            val rootActivity = try { rootInActiveWindow?.className?.toString() } catch (_: Exception) { null }
             val focusedWindowPackage = try {
                 windows?.firstOrNull { it.isFocused }?.root?.packageName?.toString()
+            } catch (_: Exception) { null }
+            val focusedWindowActivity = try {
+                windows?.firstOrNull { it.isFocused }?.root?.className?.toString()
             } catch (_: Exception) { null }
             val eventPackage = lastForegroundPackage
                 ?.takeIf { it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs }
                 ?.packageName
+            val eventActivity = lastForegroundActivity
+                ?.takeIf { it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs }
+                ?.activityName
 
             lastSeen = rootPackage ?: focusedWindowPackage ?: eventPackage ?: lastSeen
-            if (rootPackage == targetPackage || focusedWindowPackage == targetPackage || eventPackage == targetPackage) {
+            val matched = if (targetActivity == null) {
+                rootPackage == targetPackage || focusedWindowPackage == targetPackage || eventPackage == targetPackage
+            } else {
+                rootActivity == targetActivity || focusedWindowActivity == targetActivity || eventActivity == targetActivity
+            }
+            if (matched) {
                 return true
             }
             Thread.sleep(200)
         }
-        Log.w(TAG, "launchApp: $targetPackage never came to foreground; lastSeen=$lastSeen")
+        Log.w(TAG, "launchApp: ${targetActivity ?: targetPackage} never came to foreground; lastSeen=$lastSeen")
         return false
     }
 

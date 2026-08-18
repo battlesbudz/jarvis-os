@@ -36,6 +36,12 @@ class JarvisAccessibilityService : AccessibilityService() {
         @Volatile var trainingModeActive: Boolean = false
         /** Human-readable label for the element being trained (used as fallback name). */
         @Volatile var trainingLabel: String = ""
+        @Volatile private var lastForegroundActivity: ForegroundActivityObservation? = null
+
+        private data class ForegroundActivityObservation(
+            val activityName: String,
+            val observedAtUptimeMs: Long,
+        )
     }
 
     override fun onServiceConnected() {
@@ -45,6 +51,14 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            event.className?.toString()?.takeIf { it.isNotBlank() }?.let { activityName ->
+                lastForegroundActivity = ForegroundActivityObservation(
+                    activityName = activityName,
+                    observedAtUptimeMs = event.eventTime.takeIf { it > 0L } ?: SystemClock.uptimeMillis(),
+                )
+            }
+        }
         // Intercept user taps when training mode is active
         if (trainingModeActive && event != null &&
             event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED) {
@@ -128,19 +142,45 @@ class JarvisAccessibilityService : AccessibilityService() {
     // Samsung OneUI issue: startActivity() doesn't throw even when OneUI silently
     // swallows the intent. We therefore verify the app actually came to foreground
     // by polling rootInActiveWindow.packageName for up to 3 seconds after dispatch.
-    fun launchApp(packageName: String): Boolean {
+    fun launchApp(packageName: String, activityName: String? = null): Boolean {
         val pm = packageManager
-        val intent = pm.getLaunchIntentForPackage(packageName) ?: return false
+        var verificationActivity = activityName
+        val intent = if (activityName == null) {
+            pm.getLaunchIntentForPackage(packageName)
+        } else {
+            Intent(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_LAUNCHER)
+                setClassName(packageName, activityName)
+            }.takeIf {
+                val activityInfo = pm.resolveActivity(it, 0)?.activityInfo
+                if (activityInfo?.name == activityName) {
+                    verificationActivity = activityInfo.targetActivity ?: activityInfo.name
+                    true
+                } else {
+                    false
+                }
+            }
+        } ?: return false
         intent.addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or
             Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED or
             Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
         )
-        val dispatched = postAndWaitForDispatch { startActivity(intent) }
+        lastForegroundActivity = null
+        var launchAttemptStartedAtUptimeMs = SystemClock.uptimeMillis()
+        val dispatched = postAndWaitForDispatch {
+            launchAttemptStartedAtUptimeMs = SystemClock.uptimeMillis()
+            startActivity(intent)
+        }
         if (!dispatched) return false
         // Verify the target package actually came to foreground.
         // Samsung Galaxy Fold devices have longer animation transitions — use a generous timeout.
-        return waitForForeground(packageName, timeoutMs = 6000)
+        return waitForForeground(
+            packageName,
+            verificationActivity,
+            timeoutMs = 6000,
+            launchAttemptStartedAtUptimeMs = launchAttemptStartedAtUptimeMs,
+        )
     }
 
     fun browseUrl(url: String): Boolean {
@@ -179,14 +219,26 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     // Poll rootInActiveWindow.packageName until it matches targetPackage or timeout.
     // Returns false (not launched) if the package never comes to foreground.
-    private fun waitForForeground(targetPackage: String, timeoutMs: Long): Boolean {
+    private fun waitForForeground(
+        targetPackage: String,
+        targetActivity: String? = null,
+        timeoutMs: Long,
+        launchAttemptStartedAtUptimeMs: Long = 0L,
+    ): Boolean {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
-            val fg = rootInActiveWindow?.packageName?.toString()
-            if (fg == targetPackage) return true
+            val root = rootInActiveWindow
+            val matched = if (targetActivity == null) {
+                root?.packageName?.toString() == targetPackage
+            } else {
+                lastForegroundActivity
+                    ?.takeIf { it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs }
+                    ?.activityName == targetActivity
+            }
+            if (matched) return true
             Thread.sleep(200)
         }
-        Log.w(TAG, "launchApp: $targetPackage never came to foreground (Samsung block?)")
+        Log.w(TAG, "launchApp: ${targetActivity ?: targetPackage} never came to foreground (Samsung block?)")
         return false
     }
 

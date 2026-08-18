@@ -8,9 +8,18 @@ async function main() {
   const runtimeSource = fs.readFileSync(path.resolve("server/agent/tools/androidAppRuntime.ts"), "utf8");
   const daemonToolSource = fs.readFileSync(path.resolve("server/agent/tools/daemon.ts"), "utf8");
   const daemonBridgeSource = fs.readFileSync(path.resolve("server/daemon/bridge.ts"), "utf8");
+  for (const opHandlerPath of [
+    "android/app/src/main/java/com/gameplan/daemon/OpHandler.kt",
+    "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OpHandler.kt",
+    "android-daemon/app/src/main/java/com/jarvis/daemon/OpHandler.kt",
+  ]) {
+    const opHandlerSource = fs.readFileSync(path.resolve(opHandlerPath), "utf8");
+    assert.doesNotMatch(opHandlerSource, /"com\.ubercab"\s+to\s+listOf\("com\.ubercab\.driver"\)/);
+    assert.match(opHandlerSource, /svc\.launchApp\(packageName, requestedActivity\)/);
+  }
   assert.match(runtimeSource, /checkAndIncrementScreenshotBudget/);
   assert.match(runtimeSource, /runAndroidCaptureScreen\(args,\s*ctx\.userId,\s*ctx\)/);
-  assert.match(runtimeSource, /normalizedQuery\.length > 2 && normalizedCandidate\.includes\(normalizedQuery\)/);
+  assert.doesNotMatch(runtimeSource, /normalizedQuery\.includes\(normalizedCandidate\)/);
   assert.match(daemonToolSource, /clearVoiceNotificationObservation/);
   assert.match(daemonBridgeSource, /persistDaemonVoiceExchange/);
   assert.match(daemonBridgeSource, /persistFastCoachExchange/);
@@ -28,6 +37,7 @@ async function main() {
     ANDROID_PHONE_RUNTIME_TOOL_NAMES,
     androidPhoneRuntimeTools,
     buildAndroidYoutubeSearchUrl,
+    confirmInstalledAndroidAppName,
     _setAndroidAppRuntimeDepsForTesting,
     explainUnsupportedPhoneRuntimeAction,
     runAndroidOpenAppByName,
@@ -55,6 +65,146 @@ async function main() {
 
   const facebook = await resolveAndroidAppName("user-phone", "FB", { includeLiveInventory: false });
   assert.equal(facebook.app?.packageName, "com.facebook.katana");
+
+  const amazon = await resolveAndroidAppName("user-phone", "Amazon Shopping", { includeLiveInventory: false });
+  assert.equal(amazon.app?.packageName, "com.amazon.mShop.android.shopping");
+  assert.equal(amazon.app?.source, "static_catalog");
+
+  const genericAmazon = await resolveAndroidAppName("user-phone", "Amazon", { includeLiveInventory: false });
+  assert.equal(genericAmazon.app?.packageName, "com.amazon.mShop.android.shopping");
+  for (const ambiguousBrandApp of [
+    "Amazon Music",
+    "Amazon Prime Video",
+    "Facebook Dating",
+    "my Amazon Music",
+    "please open Facebook Dating",
+    "anything but Facebook",
+    "neither Amazon nor Facebook",
+    "Amazon or Facebook",
+  ]) {
+    const ambiguous = await resolveAndroidAppName("user-phone", ambiguousBrandApp, { includeLiveInventory: false });
+    assert.equal(ambiguous.app, null, `${ambiguousBrandApp} must not resolve by a shorter brand alias`);
+  }
+
+  _setAndroidAppRuntimeDepsForTesting({
+    isAndroidDaemonActive: () => true,
+    isAndroidDaemonActionAllowed: async () => true,
+    sendDaemonOp: async () => ({
+      ok: true,
+      data: {
+        apps: [
+          { label: "Amazon Music", packageName: "com.amazon.mp3" },
+          { label: "Amazon Shopping", packageName: "com.amazon.mShop.android.shopping" },
+          { label: "Chrome Beta", packageName: "com.chrome.beta" },
+          { label: "DoorDash", packageName: "com.doordash" },
+          { label: "Facebook", packageName: "com.example.facebook" },
+          { label: "Facebook", packageName: "com.facebook.katana" },
+          { label: "FBReader", packageName: "org.geometerplus.zlibrary.ui.android" },
+          { label: "Spotify Plus", packageName: "com.example.spotify.plus" },
+          { label: "Pokémon GO", packageName: "com.nianticlabs.pokemongo" },
+          { label: "微信", packageName: "com.tencent.mm" },
+          { label: "Cash App", packageName: "com.squareup.cash" },
+          { label: "Calendar", packageName: "com.google.android.calendar" },
+          { label: "Teams", packageName: "com.microsoft.teams" },
+          { label: "The Weather Channel", packageName: "com.weather.Weather" },
+          { label: "Keep Notes", packageName: "com.google.android.keep" },
+          { label: "Calendar Work", packageName: "com.google.android.calendar", activityName: "com.google.android.calendar.WorkActivity" },
+          { label: "Acme", packageName: "com.example.acme.one" },
+          { label: "Acme", packageName: "com.example.acme.two" },
+        ],
+      },
+    }),
+  });
+  const amazonWithLiveInventory = await resolveAndroidAppName("user-phone", "Amazon");
+  assert.equal(amazonWithLiveInventory.app?.packageName, "com.amazon.mShop.android.shopping");
+  const chromeWithLiveInventory = await resolveAndroidAppName("user-phone", "Chrome");
+  assert.equal(chromeWithLiveInventory.app?.packageName, "com.android.chrome");
+  const doorWithLiveInventory = await resolveAndroidAppName("user-phone", "door");
+  assert.equal(doorWithLiveInventory.app, null);
+  const doorDashWithLiveInventory = await resolveAndroidAppName("user-phone", "DoorDash");
+  assert.equal(doorDashWithLiveInventory.app?.packageName, "com.doordash");
+  const facebookAliasWithLiveInventory = await resolveAndroidAppName("user-phone", "FB");
+  assert.equal(facebookAliasWithLiveInventory.app?.packageName, "com.facebook.katana");
+  const spotifyWithLivePrefix = await resolveAndroidAppName("user-phone", "Spotify");
+  assert.equal(spotifyWithLivePrefix.app?.packageName, "com.spotify.music");
+  const unicodeAppWithLiveInventory = await resolveAndroidAppName("user-phone", "Pokémon GO");
+  assert.equal(unicodeAppWithLiveInventory.app?.packageName, "com.nianticlabs.pokemongo");
+  const nonLatinAppWithLiveInventory = await resolveAndroidAppName("user-phone", "微信");
+  assert.equal(nonLatinAppWithLiveInventory.app?.packageName, "com.tencent.mm");
+  const cashAppWithLiveInventory = await resolveAndroidAppName("user-phone", "Cash App");
+  assert.equal(cashAppWithLiveInventory.app?.packageName, "com.squareup.cash");
+  const calendarWithLiveInventory = await resolveAndroidAppName("user-phone", "Calendar");
+  assert.equal(calendarWithLiveInventory.app?.packageName, "com.google.android.calendar");
+  const leadingArticleWithLiveInventory = await resolveAndroidAppName("user-phone", "Weather Channel");
+  assert.equal(leadingArticleWithLiveInventory.app?.packageName, "com.weather.Weather");
+  const notesWithLiveInventory = await resolveAndroidAppName("user-phone", "Notes");
+  assert.equal(notesWithLiveInventory.app?.packageName, "com.google.android.keep");
+  const secondaryLauncher = await resolveAndroidAppName("user-phone", "Calendar Work");
+  assert.equal(secondaryLauncher.app?.activityName, "com.google.android.calendar.WorkActivity");
+  const ambiguousLiveLabel = await resolveAndroidAppName("user-phone", "Acme");
+  assert.equal(ambiguousLiveLabel.app, null);
+  const missingTeamSpeak = await resolveAndroidAppName("user-phone", "TeamSpeak");
+  assert.equal(missingTeamSpeak.app, null);
+  _setAndroidAppRuntimeDepsForTesting(null);
+
+  _setAndroidAppRuntimeDepsForTesting({
+    isAndroidDaemonActive: () => true,
+    isAndroidDaemonActionAllowed: async () => true,
+    sendDaemonOp: async () => ({
+      ok: true,
+      data: {
+        apps: [
+          { label: "Keep Notes", packageName: "com.google.android.keep" },
+          { label: "Meeting Notes", packageName: "com.example.meetingnotes" },
+        ],
+      },
+    }),
+  });
+  const ambiguousNotes = await resolveAndroidAppName("user-phone", "Notes");
+  assert.equal(ambiguousNotes.app, null);
+  assert.equal(await confirmInstalledAndroidAppName("user-phone", "Notes"), null);
+  _setAndroidAppRuntimeDepsForTesting(null);
+
+  let deniedInventoryCalls = 0;
+  _setAndroidAppRuntimeDepsForTesting({
+    isAndroidDaemonActive: () => true,
+    isAndroidDaemonActionAllowed: async () => false,
+    sendDaemonOp: async () => {
+      deniedInventoryCalls += 1;
+      return { ok: true, data: { apps: [] } };
+    },
+  });
+  assert.equal(await confirmInstalledAndroidAppName("user-phone", "Obsidian"), null);
+  assert.equal(deniedInventoryCalls, 0);
+  _setAndroidAppRuntimeDepsForTesting(null);
+
+  _setAndroidAppRuntimeDepsForTesting({
+    isAndroidDaemonActive: () => true,
+    sendDaemonOp: async () => ({
+      ok: true,
+      data: { apps: [{ label: "Amazon Music", packageName: "com.amazon.mp3" }] },
+    }),
+  });
+  const amazonWithoutShopping = await resolveAndroidAppName("user-phone", "Amazon");
+  assert.equal(amazonWithoutShopping.app?.packageName, "com.amazon.mShop.android.shopping");
+  _setAndroidAppRuntimeDepsForTesting(null);
+
+  let explicitPackageInventoryCalls = 0;
+  _setAndroidAppRuntimeDepsForTesting({
+    isAndroidDaemonActive: () => true,
+    sendDaemonOp: async () => {
+      explicitPackageInventoryCalls += 1;
+      return { ok: false, error: "android_list_apps unsupported" };
+    },
+  });
+  const explicitPackage = await resolveAndroidAppName("user-phone", "de.blinkt.openvpn");
+  assert.equal(explicitPackage.app?.packageName, "de.blinkt.openvpn");
+  assert.equal(explicitPackage.app?.source, "explicit_package");
+  assert.equal(explicitPackageInventoryCalls, 0);
+  _setAndroidAppRuntimeDepsForTesting(null);
+
+  const amazonPackage = await resolveAndroidAppName("user-phone", "com.amazon.mShop.android.shopping", { includeLiveInventory: false });
+  assert.equal(amazonPackage.app?.packageName, "com.amazon.mShop.android.shopping");
 
   const camera = await resolveAndroidAppName("user-phone", "Camera", { includeLiveInventory: false });
   assert.equal(camera.app?.packageName, "com.android.camera2");

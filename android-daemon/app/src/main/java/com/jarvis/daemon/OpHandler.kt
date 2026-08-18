@@ -170,7 +170,6 @@ object OpHandler {
         "com.oneplus.camera"          to listOf("com.android.camera2", "com.sec.android.app.camera", "com.google.android.GoogleCamera", "com.motorola.camera3"),
         "com.motorola.camera3"        to listOf("com.android.camera2", "com.sec.android.app.camera", "com.google.android.GoogleCamera", "com.oneplus.camera"),
         "com.amazon.mShop.android.shopping" to listOf("com.amazon.windowshop"),
-        "com.ubercab"                 to listOf("com.ubercab.driver"),
         "com.pinterest"               to listOf("com.pinterest.twa"),
     )
 
@@ -178,15 +177,27 @@ object OpHandler {
         val requestedPackage = op.optString("packageName").ifEmpty {
             return OpResult(false, error = "packageName required")
         }
+        val requestedActivity = op.optString("activityName").takeIf { it.isNotEmpty() }
         val pm = context.packageManager
 
         // Build candidate list: requested package + any known fallbacks
-        val candidates = (listOf(requestedPackage) + (packageFallbacks[requestedPackage] ?: emptyList()))
+        val candidates = if (requestedActivity == null) {
+            listOf(requestedPackage) + (packageFallbacks[requestedPackage] ?: emptyList())
+        } else {
+            listOf(requestedPackage)
+        }
 
         var resolvedPackage: String? = null
         var launchIntent: Intent? = null
         for (pkg in candidates) {
-            val intent = pm.getLaunchIntentForPackage(pkg)
+            val intent = if (requestedActivity == null) {
+                pm.getLaunchIntentForPackage(pkg)
+            } else {
+                Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                    setClassName(pkg, requestedActivity)
+                }.takeIf { pm.resolveActivity(it, 0)?.activityInfo?.name == requestedActivity }
+            }
             if (intent != null) {
                 resolvedPackage = pkg
                 launchIntent = intent
@@ -230,7 +241,7 @@ object OpHandler {
 
         var launched = false
         try {
-            launched = svc.launchApp(packageName)
+            launched = svc.launchApp(packageName, requestedActivity)
         } catch (e: Exception) {
             Log.w(TAG, "Direct accessibility launch failed: ${e.message}")
         }

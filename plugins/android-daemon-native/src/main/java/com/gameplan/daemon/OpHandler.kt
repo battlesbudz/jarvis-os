@@ -117,6 +117,7 @@ object OpHandler {
         return try {
             val result = when (type) {
                 "ping" -> handlePing()
+                "android_list_apps" -> handleListApps(context)
                 "android_open_app" -> handleOpenApp(context, op)
                 "android_browse" -> handleBrowse(context, op)
                 "android_return_to_jarvis" -> handleReturnToJarvis(context)
@@ -199,6 +200,32 @@ object OpHandler {
         )
     }
 
+    private fun handleListApps(context: Context): OpResult {
+        val pm = context.packageManager
+        val launcherIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        }
+        val apps = JSONArray()
+        val activities = pm.queryIntentActivities(launcherIntent, 0)
+            .sortedWith(compareBy({ it.loadLabel(pm).toString().lowercase() }, { it.activityInfo.packageName }))
+
+        for (info in activities) {
+            apps.put(
+                JSONObject()
+                    .put("label", info.loadLabel(pm).toString())
+                    .put("packageName", info.activityInfo.packageName)
+                    .put("activityName", info.activityInfo.name)
+            )
+        }
+
+        return OpResult(
+            true,
+            data = JSONObject()
+                .put("apps", apps)
+                .put("count", apps.length())
+        )
+    }
+
     // Many apps ship under multiple package names (lite vs full, different stores, beta).
     // When the requested package has no launch intent, try these alternatives before
     // declaring the app not installed.
@@ -217,7 +244,6 @@ object OpHandler {
         "com.discord"                 to listOf("com.discord.development"),
         "com.linkedin.android"        to listOf("com.linkedin.android.lite"),
         "com.amazon.mShop.android.shopping" to listOf("com.amazon.windowshop"),
-        "com.ubercab"                 to listOf("com.ubercab.driver"),
         "com.pinterest"               to listOf("com.pinterest.twa"),
     )
 
@@ -225,15 +251,27 @@ object OpHandler {
         val requestedPackage = op.optString("packageName").ifEmpty {
             return OpResult(false, error = "packageName required")
         }
+        val requestedActivity = op.optString("activityName").takeIf { it.isNotEmpty() }
         val pm = context.packageManager
 
         // Build candidate list: requested package + any known fallbacks
-        val candidates = (listOf(requestedPackage) + (packageFallbacks[requestedPackage] ?: emptyList()))
+        val candidates = if (requestedActivity == null) {
+            listOf(requestedPackage) + (packageFallbacks[requestedPackage] ?: emptyList())
+        } else {
+            listOf(requestedPackage)
+        }
 
         var resolvedPackage: String? = null
         var launchIntent: Intent? = null
         for (pkg in candidates) {
-            val intent = pm.getLaunchIntentForPackage(pkg)
+            val intent = if (requestedActivity == null) {
+                pm.getLaunchIntentForPackage(pkg)
+            } else {
+                Intent(Intent.ACTION_MAIN).apply {
+                    addCategory(Intent.CATEGORY_LAUNCHER)
+                    setClassName(pkg, requestedActivity)
+                }.takeIf { pm.resolveActivity(it, 0)?.activityInfo?.name == requestedActivity }
+            }
             if (intent != null) {
                 resolvedPackage = pkg
                 launchIntent = intent
@@ -277,7 +315,7 @@ object OpHandler {
 
         var launched = false
         try {
-            launched = svc.launchApp(packageName)
+            launched = svc.launchApp(packageName, requestedActivity)
         } catch (e: Exception) {
             Log.w(TAG, "Direct accessibility launch failed: ${e.message}")
         }

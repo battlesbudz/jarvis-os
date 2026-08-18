@@ -497,6 +497,9 @@ for (const [contents, source] of [
   assertIncludes(contents, '"voice_set_outside_app_state" -> handleSetOutsideAppState(context, op)', source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.setStateIntent(context, state)", source);
   assertIncludes(contents, "private fun handleSetOutsideAppState", source);
+  assertIncludes(contents, '\"android_list_apps\" -> handleListApps(context)', source);
+  assertIncludes(contents, "private fun handleListApps(context: Context)", source);
+  assertIncludes(contents, "pm.queryIntentActivities(launcherIntent, 0)", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.completePlayback(mp, playbackFile, rearmTalkMode = shouldRearm)", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()", source);

@@ -83,6 +83,7 @@ import { connectChannelTool } from "./agent/tools/connectChannel";
 import { filterToolsByGroups, getTool, type ToolGroup } from "./agent/tools/index";
 import {
   ANDROID_PHONE_RUNTIME_TOOL_NAMES,
+  confirmInstalledAndroidAppName,
   explainUnsupportedPhoneRuntimeAction,
 } from "./agent/tools/androidAppRuntime";
 import {
@@ -90,12 +91,19 @@ import {
   deterministicAndroidToolSummary,
   deterministicPhoneRuntimeToolCallFromRequest,
   filterPhoneRuntimeModelTools,
+  hasContextualPhoneRuntimeActionRequest,
+  hasPhoneRuntimeActionRequest,
+  hasUnsupportedPhoneDeviceControlRequest,
   isAndroidPhoneRuntimeToolName,
+  isContextualPhoneRuntimeCoveredRequest,
   isMemoryPhoneBypassRequest,
+  isPhoneDeviceControlKeywordRequest,
   isPhoneRuntimeCoveredRequest,
   isYoutubePhoneActionRequest,
   isYoutubePhoneRequest,
   isYoutubeServerResearchRequest,
+  isUnqualifiedPhoneAppOnlyRequest,
+  unqualifiedPhoneAppTarget,
 } from "./agent/phoneRuntimeRouting";
 import { resolveAndroidNotificationFollowUp } from "./agent/androidNotificationFollowups";
 import { parseNaturalTime, parseRecurringExpr } from "./agent/tools/cronTools";
@@ -1746,37 +1754,39 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       // Detect if the user's current message is a device-control request so we can
       // force tool use rather than letting the model respond with plain text.
       const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user');
-      const lastUserContent = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content.toLowerCase() : '';
-      const deviceControlKeywords = [
-        'screenshot', 'screen shot', 'screen capture',
-        'open youtube', 'open instagram', 'open spotify', 'open chrome', 'open camera',
-        'open settings', 'open messages', 'open gmail', 'open maps', 'open the app',
-        'take a photo', 'tap on', 'tap the', 'swipe', 'read the screen',
-        "what's on the screen", 'what is on the screen', 'what does the screen', 'browse to',
-        'android_', 'navigate to', 'type into', 'open app',
-        // notification keywords
-        'notification', 'notifications', 'my notifications', 'read my notification',
-        'check notification', 'show notification', 'what notification', 'any notification',
-        'new notification', 'recent notification', 'latest notification',
-        'sms', 'send text', 'text message', 'send a text', 'send message',
-        'location', 'where am i', 'take photo', 'take a photo', 'snap a photo',
-        'record screen', 'screen record', 'record video', 'camera clip',
-        // general phone/device read actions
-        'read my phone', 'check my phone', 'what is on my phone', "what's on my phone",
-        'phone screen', 'my screen', 'my phone',
-        // youtube / video intelligence
-        'transcript', 'summarize the video', 'summarize that video', 'what is the video about',
-        "what's the video about", 'give me a summary', 'summarize what', 'tell me what the video',
-        'search youtube', 'find a youtube', 'look up on youtube',
-      ];
+      const lastUserOrigText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
+      const lastUserContent = lastUserOrigText.toLowerCase();
+      const recentPhoneRuntimeConversation = messages
+        .slice(-12)
+        .map((message: { content?: unknown }) => typeof message.content === "string" ? message.content : "")
+        .filter(Boolean);
       const memoryPhoneBypassRequest = isMemoryPhoneBypassRequest(lastUserContent);
-      const phoneRuntimeCoveredRequest = androidActive && !memoryPhoneBypassRequest && isPhoneRuntimeCoveredRequest(lastUserContent);
+      const unqualifiedAppTarget = androidActive && !memoryPhoneBypassRequest
+        ? unqualifiedPhoneAppTarget(lastUserOrigText)
+        : null;
+      const confirmedAppTarget = unqualifiedAppTarget &&
+        await confirmInstalledAndroidAppName(userId, unqualifiedAppTarget)
+        ? unqualifiedAppTarget
+        : null;
+      const confirmedAppCoversRequest = Boolean(confirmedAppTarget) &&
+        isUnqualifiedPhoneAppOnlyRequest(lastUserOrigText);
+      const phoneRuntimeActionRequest = androidActive && !memoryPhoneBypassRequest && (
+        hasPhoneRuntimeActionRequest(lastUserContent) ||
+        hasContextualPhoneRuntimeActionRequest(lastUserContent, recentPhoneRuntimeConversation.slice(0, -1)) ||
+        Boolean(confirmedAppTarget)
+      );
+      const phoneRuntimeCoveredRequest = androidActive && !memoryPhoneBypassRequest && (
+        isPhoneRuntimeCoveredRequest(lastUserContent) ||
+        isContextualPhoneRuntimeCoveredRequest(lastUserContent, recentPhoneRuntimeConversation.slice(0, -1)) ||
+        confirmedAppCoversRequest
+      );
       const isDeviceControlRequest = androidActive && !memoryPhoneBypassRequest && (
-        phoneRuntimeCoveredRequest ||
-        deviceControlKeywords.some(k => lastUserContent.includes(k))
+        phoneRuntimeActionRequest ||
+        isPhoneDeviceControlKeywordRequest(lastUserContent)
       );
       const youtubeServerResearchRequest = androidActive && isYoutubeServerResearchRequest(lastUserContent);
-      const keepDaemonActionFallback = androidActive && isDeviceControlRequest && !phoneRuntimeCoveredRequest && !youtubeServerResearchRequest;
+      const keepDaemonActionFallback = androidActive && !memoryPhoneBypassRequest &&
+        hasUnsupportedPhoneDeviceControlRequest(lastUserContent) && !youtubeServerResearchRequest;
 
       // Absolute prohibition injected at the TOP of the system message so the model
       // reads it before any other context. Without this, the model pattern-matches
@@ -1805,7 +1815,6 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             )
         : daemonAbsoluteRuleBase;
 
-      const lastUserOrigText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
       const youtubeCtxBlock = lastUserOrigText
         ? await buildYouTubeContextBlock(lastUserOrigText).catch(() => "")
         : "";
@@ -1818,18 +1827,25 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const phoneRuntimeRequiredToolNames = buildPhoneRuntimeRequiredToolNames(
         lastUserContent,
         isDeviceControlRequest,
-        phoneRuntimeCoveredRequest,
+        phoneRuntimeActionRequest,
       );
       const routeRequiredToolNames = uniqueToolNames([
         ...phoneRuntimeRequiredToolNames,
         ...(keepDaemonActionFallback ? ["daemon_action"] : []),
       ]);
-      const effectiveToolAwareRoute = routeRequiredToolNames.length > 0
+      const priorityRuntimeToolNames = uniqueToolNames([
+        ...(phoneRuntimeCoveredRequest ? phoneRuntimeRequiredToolNames : []),
+        ...(keepDaemonActionFallback && !toolAwareRoute.shouldPreferTool ? ["daemon_action"] : []),
+      ]);
+      const mixedPhoneRuntimeActionRequest = phoneRuntimeActionRequest && !phoneRuntimeCoveredRequest;
+      const effectiveToolAwareRoute = mixedPhoneRuntimeActionRequest
+        ? { ...toolAwareRoute, priorityToolNames: [] }
+        : priorityRuntimeToolNames.length > 0
         ? {
             ...toolAwareRoute,
             priorityToolNames: uniqueToolNames([
               ...toolAwareRoute.priorityToolNames,
-              ...routeRequiredToolNames,
+              ...priorityRuntimeToolNames,
             ]),
           }
         : toolAwareRoute;
@@ -2073,7 +2089,10 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           focusedToolNames.add("jarvis_self_diagnose");
         }
         toolAwareRoute.blockedToolNames.forEach((name) => focusedToolNames.delete(name));
-        const useFocusedRequestTools = toolAwareRoute.shouldPreferTool || routeRequiredToolNames.length > 0;
+        const useFocusedRequestTools = toolAwareRoute.shouldPreferTool ||
+          phoneRuntimeCoveredRequest ||
+          keepDaemonActionFallback ||
+          youtubeServerResearchRequest;
         const focusedRequestTools =
           useFocusedRequestTools
             ? requestTools.filter((tool) => {
@@ -2149,6 +2168,8 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             ? deterministicPhoneRuntimeToolCallFromRequest(lastUserOrigText, modelRequestTools, {
                 androidActive,
                 phoneRuntimeCoveredRequest,
+                confirmedAppTarget,
+                recentConversation: recentPhoneRuntimeConversation.slice(0, -1),
               })
             : null;
           if (deterministicToolCall) {
@@ -2157,7 +2178,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               stage: "tool_selection",
               message: deterministicToolCall.function.name === "android_youtube_search"
                 ? "Routing YouTube search to Android Device Control"
-                : "Routing notification request to Android Device Control",
+                : deterministicToolCall.function.name === "android_open_app_by_name"
+                  ? "Routing app launch to Android Device Control"
+                  : "Routing notification request to Android Device Control",
               detail: deterministicToolCall.function.name,
             });
           }
