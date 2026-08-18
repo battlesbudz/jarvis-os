@@ -379,10 +379,13 @@ export async function resolveAndroidAppName(
   const staticPackageInstalled = staticMatch
     ? installedApps.some((app) => app.packageName === staticMatch.app.packageName)
     : false;
+  const normalizedQuery = normalizeAppLookup(appName).replace(/^the\s+/, "");
+  const compatibleLiveVariant = liveMatch && liveMatch.score >= 50 &&
+    normalizeAppLookup(liveMatch.app.label).replace(/^the\s+/, "").endsWith(` ${normalizedQuery}`);
   const best = exactLiveMatch
     ? { app: exactLiveMatch.app, source: "live_inventory" as const, score: 100, alias: exactLiveMatch.match.alias }
-    : (staticMatch?.score === 100 && (!liveMatch || staticPackageInstalled)
-        ? staticMatch
+    : (staticMatch?.score === 100
+        ? (staticPackageInstalled || !compatibleLiveVariant ? staticMatch : liveMatch)
         : (liveMatch && liveMatch.score >= 50 ? liveMatch : staticMatch));
   if (best && best.score >= 50) {
     return {

@@ -106,7 +106,7 @@ async function main() {
   const amazonWithLiveInventory = await resolveAndroidAppName("user-phone", "Amazon");
   assert.equal(amazonWithLiveInventory.app?.packageName, "com.amazon.mShop.android.shopping");
   const chromeWithLiveInventory = await resolveAndroidAppName("user-phone", "Chrome");
-  assert.equal(chromeWithLiveInventory.app?.packageName, "com.chrome.beta");
+  assert.equal(chromeWithLiveInventory.app?.packageName, "com.android.chrome");
   const doorWithLiveInventory = await resolveAndroidAppName("user-phone", "door");
   assert.equal(doorWithLiveInventory.app, null);
   const doorDashWithLiveInventory = await resolveAndroidAppName("user-phone", "DoorDash");
@@ -114,7 +114,7 @@ async function main() {
   const facebookAliasWithLiveInventory = await resolveAndroidAppName("user-phone", "FB");
   assert.equal(facebookAliasWithLiveInventory.app?.packageName, "com.facebook.katana");
   const spotifyWithLivePrefix = await resolveAndroidAppName("user-phone", "Spotify");
-  assert.equal(spotifyWithLivePrefix.app?.packageName, "com.example.spotify.plus");
+  assert.equal(spotifyWithLivePrefix.app?.packageName, "com.spotify.music");
   const unicodeAppWithLiveInventory = await resolveAndroidAppName("user-phone", "Pokémon GO");
   assert.equal(unicodeAppWithLiveInventory.app?.packageName, "com.nianticlabs.pokemongo");
   const nonLatinAppWithLiveInventory = await resolveAndroidAppName("user-phone", "微信");
@@ -131,6 +131,17 @@ async function main() {
   assert.equal(ambiguousLiveLabel.app, null);
   const missingTeamSpeak = await resolveAndroidAppName("user-phone", "TeamSpeak");
   assert.equal(missingTeamSpeak.app, null);
+  _setAndroidAppRuntimeDepsForTesting(null);
+
+  _setAndroidAppRuntimeDepsForTesting({
+    isAndroidDaemonActive: () => true,
+    sendDaemonOp: async () => ({
+      ok: true,
+      data: { apps: [{ label: "Amazon Music", packageName: "com.amazon.mp3" }] },
+    }),
+  });
+  const amazonWithoutShopping = await resolveAndroidAppName("user-phone", "Amazon");
+  assert.equal(amazonWithoutShopping.app?.packageName, "com.amazon.mShop.android.shopping");
   _setAndroidAppRuntimeDepsForTesting(null);
 
   let explicitPackageInventoryCalls = 0;
