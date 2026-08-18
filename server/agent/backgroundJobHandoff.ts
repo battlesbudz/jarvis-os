@@ -91,14 +91,14 @@ function artifactRequestText(prompt: string): string {
     ).trim();
     // An ordinary content revision inherits the prior artifact format. Only an
     // explicit format instruction may replace or remove that intent.
-    const format = String.raw`(?:pdf|markdown|downloadable\\s+(?:report|document|file)|docx|word\\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)`;
+    const format = String.raw`(?:pdf|markdown|downloadable\s+(?:report|document|file)|docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)`;
     const formatAction = new RegExp(
-      String.raw`\\b(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give|keep|preserve|change|switch|convert)\\b[^.!?\\n]{0,80}\\b${format}\\b`,
+      String.raw`\b(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give|keep|preserve|change|switch|convert)\b[^.!?\n]{0,80}\b${format}\b`,
       "i",
     );
-    const formatAs = new RegExp(String.raw`\\b(?:as|in|to)\\s+(?:an?\\s+)?${format}\\b`, "i");
+    const formatAs = new RegExp(String.raw`\b(?:as|in|to)\s+(?:an?\s+)?${format}\b`, "i");
     const formatNegation = new RegExp(
-      String.raw`\\b(?:not|without|no)\\b[^.!?\\n]{0,40}\\b(?:pdf|downloadable\\s+(?:report|document|file))\\b`,
+      String.raw`\b(?:not|without|no)\b[^.!?\n]{0,40}\b(?:pdf|downloadable\s+(?:report|document|file))\b`,
       "i",
     );
     if (formatAction.test(revision) || formatAs.test(revision) || formatNegation.test(revision)) {
