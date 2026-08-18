@@ -7,6 +7,7 @@ import { loadDeliverableForReviewAction } from "./deliverableReviewActions";
 import type { ApprovalGate } from "./agentApproval";
 import type { SubmitJobInput, SubmitJobResult } from "./jobClient";
 import type { ContinueTopLevelApprovalResult } from "./topLevelApprovalContinuation";
+import { markdownToPdfBuffer } from "./tools/exportPdf";
 
 type Db = typeof dbType;
 
@@ -281,26 +282,67 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         return res.status(400).json({ error: "No editable fields provided" });
       }
 
-      // Generated artifacts are snapshots of the editable fields. Invalidate
-      // them (and any stale Drive link) whenever that source content changes so
-      // downloads and later Save to Drive actions cannot use pre-edit bytes.
+      // Generated report artifacts are snapshots of the editable title and
+      // body. Re-render them before committing the edit so approval, download,
+      // and Save to Drive all use the corrected bytes.
       const artifactSourceChanged = (
         patch.title !== undefined && patch.title !== existing.title
       ) || (
-        patch.summary !== undefined && patch.summary !== existing.summary
-      ) || (
         patch.body !== undefined && patch.body !== existing.body
       );
+      const existingMeta = deliverableMeta(existing);
+      const shouldRegenerateArtifact = artifactSourceChanged
+        && existingMeta.hasDownloadableArtifact === true
+        && (
+          existingMeta.pdfGenerated === true
+          || typeof existingMeta.pdfFilename === "string"
+          || typeof existingMeta.fallbackFilename === "string"
+        );
+      let replacementArtifact: {
+        filename: string;
+        mimeType: string;
+        content: Buffer;
+      } | null = null;
+
       if (artifactSourceChanged) {
         const nextMeta = {
-          ...deliverableMeta(existing),
+          ...existingMeta,
           ...(patch.meta && typeof patch.meta === "object" ? patch.meta as Record<string, unknown> : {}),
           hasDownloadableArtifact: false,
         };
         delete nextMeta.pdfGenerated;
         delete nextMeta.pdfFilename;
         delete nextMeta.pdfDriveLink;
+        delete nextMeta.pdfError;
         delete nextMeta.fallbackFilename;
+
+        if (shouldRegenerateArtifact) {
+          const nextTitle = typeof patch.title === "string" ? patch.title : existing.title;
+          const nextBody = typeof patch.body === "string" ? patch.body : existing.body;
+          const filenameBase = nextTitle.replace(/[^A-Za-z0-9._\- ]+/g, "_").slice(0, 80).trim() || "Jarvis document";
+          try {
+            const content = await markdownToPdfBuffer(nextTitle, nextBody);
+            const filename = `${filenameBase}.pdf`;
+            replacementArtifact = { filename, mimeType: "application/pdf", content };
+            nextMeta.pdfGenerated = true;
+            nextMeta.pdfFilename = filename;
+            nextMeta.hasDownloadableArtifact = true;
+          } catch (pdfErr) {
+            const filename = `${filenameBase}.md`;
+            const message = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
+            replacementArtifact = {
+              filename,
+              mimeType: "text/markdown",
+              content: Buffer.from(nextBody, "utf8"),
+            };
+            nextMeta.pdfGenerated = false;
+            nextMeta.pdfError = message;
+            nextMeta.fallbackFilename = filename;
+            nextMeta.hasDownloadableArtifact = true;
+            console.error(`[deliverables] PDF regeneration failed for ${id}; stored Markdown fallback:`, message);
+          }
+        }
+
         patch.meta = nextMeta;
         patch.driveLink = null;
       }
@@ -318,6 +360,16 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
               eq(schema.deliverableArtifacts.deliverableId, id),
               eq(schema.deliverableArtifacts.userId, userId),
             ));
+          if (replacementArtifact) {
+            await tx.insert(schema.deliverableArtifacts).values({
+              deliverableId: id,
+              userId,
+              filename: replacementArtifact.filename,
+              mimeType: replacementArtifact.mimeType,
+              sizeBytes: replacementArtifact.content.length,
+              data: replacementArtifact.content,
+            });
+          }
         }
         return row;
       });
