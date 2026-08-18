@@ -51,6 +51,7 @@ assert.equal(requestsReportFile("Give me the report without a PDF"), false);
 assert.equal(requestsReportFile("Prepare a PDF report on sunflower seeds"), true);
 assert.equal(requestsReportFile("Write a report in PDF"), true);
 assert.equal(requestsReportFile("Write the report to a PDF"), true);
+assert.equal(requestsReportFile("Create a report about how economic conditions influence small coastal communities worldwide as a PDF"), true);
 assert.equal(requestsReportFile("Download a PDF report on sunflower seeds"), true);
 assert.equal(requestsReportFile("Download a report file"), true);
 assert.equal(requestsReportFile("Create a report file about sunflower seeds"), true);

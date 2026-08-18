@@ -219,6 +219,8 @@ async function main(): Promise<void> {
     "Send it to Bob as a PDF",
     "Send me and Bob the report as a PDF",
     "Send me a PDF and email it to Bob",
+    "Send me a PDF and text Bob a copy",
+    "Send me a PDF and message Bob a copy",
   ]) {
     let approvalCalls = 0;
     const result = await routeAutonomyRequest(
