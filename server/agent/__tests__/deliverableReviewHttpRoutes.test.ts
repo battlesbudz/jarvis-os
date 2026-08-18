@@ -382,6 +382,7 @@ async function run(): Promise<void> {
       title: "Plan that needs revision",
       body: "This plan needs more concrete operational actions.",
       jobId: originalJob.id,
+      meta: { hasDownloadableArtifact: true, pdfGenerated: true, pdfFilename: "operating-plan.pdf" },
     });
     onSubmitAgentJob = async () => {
       const [reserved] = await db
@@ -415,6 +416,7 @@ async function run(): Promise<void> {
     assert.equal(submittedJobs[0].agentType, "coach");
     assert.match(submittedJobs[0].title, /^Revision: Plan that needs revision/);
     assert.match(submittedJobs[0].prompt, /Return a complete replacement deliverable/);
+    assert.match(submittedJobs[0].prompt, /Preserve the replacement as a PDF file/);
     assert.match(submittedJobs[0].prompt, /Add exact owners and next operational actions/);
     assert.equal(submittedJobs[0].input?.revisionOfDeliverableId, revisionSource.id);
     assert.equal(submittedJobs[0].input?.revisionOfJobId, originalJob.id);

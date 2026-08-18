@@ -99,6 +99,20 @@ assert.equal(
   "ordinary content revisions inherit the prior PDF output",
 );
 
+const carriedArtifactRevisionPrompt = [
+  "Revise this Jarvis deliverable according to the user's requested changes.",
+  "Original task: Research sunflower seeds.",
+  "Original output requirement: Preserve the replacement as a PDF file unless the requested changes explicitly change the format.",
+  "Requested changes:",
+  "Add another source and strengthen the conclusion.",
+  "Return a complete replacement deliverable, not a patch note.",
+].join("\n");
+assert.equal(
+  requestsReportFile(carriedArtifactRevisionPrompt),
+  true,
+  "persisted artifact intent survives revisions of consolidated deliverables",
+);
+
 const titleOnlyRevisionPrompt = contextualRevisionPrompt.replace(
   "Do not make this a PDF; return Markdown only.",
   "Change the title to CSV Adoption.",

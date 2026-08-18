@@ -414,11 +414,15 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         ? { ...(job.input as Record<string, unknown>) }
         : {};
       delete baseInput.retryCount;
+      const preserveDownloadableArtifact = deliverableMeta(d).hasDownloadableArtifact === true;
 
       const revisionPrompt = [
         "Revise this Jarvis deliverable according to the user's requested changes.",
         "",
         `Original task: ${job?.prompt || d.title}`,
+        ...(preserveDownloadableArtifact
+          ? ["Original output requirement: Preserve the replacement as a PDF file unless the requested changes explicitly change the format."]
+          : []),
         "",
         "Current deliverable:",
         d.body.slice(0, 30000),
