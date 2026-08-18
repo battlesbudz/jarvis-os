@@ -39,10 +39,15 @@ class JarvisAccessibilityService : AccessibilityService() {
 
         /** Last app package observed from accessibility events, used when rootInActiveWindow lags. */
         @Volatile private var lastForegroundPackage: ForegroundPackageObservation? = null
+        @Volatile private var lastForegroundActivity: ForegroundActivityObservation? = null
 
         private data class ForegroundPackageObservation(
             val packageName: String,
-            val activityName: String?,
+            val observedAtUptimeMs: Long,
+        )
+
+        private data class ForegroundActivityObservation(
+            val activityName: String,
             val observedAtUptimeMs: Long,
         )
     }
@@ -61,9 +66,16 @@ class JarvisAccessibilityService : AccessibilityService() {
             event.packageName?.toString()?.takeIf { it.isNotBlank() }?.let { packageName ->
                 lastForegroundPackage = ForegroundPackageObservation(
                     packageName = packageName,
-                    activityName = event.className?.toString(),
                     observedAtUptimeMs = event.eventTime.takeIf { it > 0L } ?: SystemClock.uptimeMillis(),
                 )
+                if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+                    event.className?.toString()?.takeIf { it.isNotBlank() }?.let { activityName ->
+                        lastForegroundActivity = ForegroundActivityObservation(
+                            activityName = activityName,
+                            observedAtUptimeMs = event.eventTime.takeIf { it > 0L } ?: SystemClock.uptimeMillis(),
+                        )
+                    }
+                }
             }
         }
 
@@ -175,6 +187,7 @@ class JarvisAccessibilityService : AccessibilityService() {
             Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
         )
         lastForegroundPackage = null
+        lastForegroundActivity = null
         var launchAttemptStartedAtUptimeMs = SystemClock.uptimeMillis()
         val dispatched = postAndWaitForDispatch {
             launchAttemptStartedAtUptimeMs = SystemClock.uptimeMillis()
@@ -243,7 +256,7 @@ class JarvisAccessibilityService : AccessibilityService() {
             val eventPackage = lastForegroundPackage
                 ?.takeIf { it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs }
                 ?.packageName
-            val eventActivity = lastForegroundPackage
+            val eventActivity = lastForegroundActivity
                 ?.takeIf { it.observedAtUptimeMs >= launchAttemptStartedAtUptimeMs }
                 ?.activityName
 
