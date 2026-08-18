@@ -310,6 +310,8 @@ assert.match(coachAgentSource, /backgroundPrompt: buildBackgroundJobPrompt\(rece
 assert.match(coachAgentSource, /channelName === "Slack" \|\| channelName\.startsWith\("Discord"\)/);
 assert.match(coachAgentSource, /sessionResumed \|\| destinationScopedConversation/);
 assert.match(coachAgentSource, /if \(!destinationScopedConversation\) \{[\s\S]*?db\.insert\(schema\.chatHistory\)/);
+assert.match(coachAgentSource, /reply: autonomyReply,[\s\S]*?persistGlobalHistory: false/);
+assert.match(coachAgentSource, /sdkSessionId: autonomySessionId/);
 
 const discordManagerSource = readFileSync(
   fileURLToPath(new URL("../../discord/manager.ts", import.meta.url)),

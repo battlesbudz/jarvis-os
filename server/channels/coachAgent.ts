@@ -132,25 +132,28 @@ export async function persistFastCoachExchange(input: {
   reply: string;
   coachSessionAgentId: string;
   sdkSessionId?: string;
+  persistGlobalHistory?: boolean;
 }): Promise<string | undefined> {
-  const { userId, channelName, channelLower, userText, reply, coachSessionAgentId, sdkSessionId } = input;
+  const { userId, channelName, channelLower, userText, reply, coachSessionAgentId, sdkSessionId, persistGlobalHistory = true } = input;
   const userMsg = { id: Date.now().toString(), role: "user", content: userText };
   const assistantMsg = { id: (Date.now() + 1).toString(), role: "assistant", content: reply };
 
   await logInteraction(userId, channelLower as any, "outbound", reply).catch(() => {});
 
-  try {
-    const rows = await db.select().from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId)).limit(1);
-    const existing = (rows[0]?.data as Array<{ id?: string; role: string; content: string }> | undefined) || [];
-    const updatedChat = [assistantMsg, userMsg, ...existing].slice(0, 100);
-    await db.insert(schema.chatHistory)
-      .values({ userId, data: updatedChat })
-      .onConflictDoUpdate({
-        target: schema.chatHistory.userId,
-        set: { data: updatedChat, updatedAt: new Date() },
-      });
-  } catch (err) {
-    console.error("[coach] fast-lane chat history persist failed:", err);
+  if (persistGlobalHistory) {
+    try {
+      const rows = await db.select().from(schema.chatHistory).where(eq(schema.chatHistory.userId, userId)).limit(1);
+      const existing = (rows[0]?.data as Array<{ id?: string; role: string; content: string }> | undefined) || [];
+      const updatedChat = [assistantMsg, userMsg, ...existing].slice(0, 100);
+      await db.insert(schema.chatHistory)
+        .values({ userId, data: updatedChat })
+        .onConflictDoUpdate({
+          target: schema.chatHistory.userId,
+          set: { data: updatedChat, updatedAt: new Date() },
+        });
+    } catch (err) {
+      console.error("[coach] fast-lane chat history persist failed:", err);
+    }
   }
 
   try {
@@ -828,11 +831,14 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
             reminded: false,
           })
           .catch((err: unknown) => console.error("[coach] build-session persist failed:", err));
-        logInteraction(userId, channelLower as any, "outbound", ackReply).catch(() => {});
-        // Return the existing session ID (if any) so clients can resume on the next turn.
-        // A new session is not initialised here because the build job runs asynchronously;
-        // the next user message (checking on progress etc.) will start a fresh session then.
-        return { reply: ackReply, rawReply: ackReply, attachments: [], sdkSessionId: activeSessionId };
+        const buildSessionId = destinationScopedConversation
+          ? await persistFastCoachExchange({
+              userId, channelName, channelLower, userText, reply: ackReply,
+              coachSessionAgentId, sdkSessionId: activeSessionId, persistGlobalHistory: false,
+            })
+          : activeSessionId;
+        if (!destinationScopedConversation) logInteraction(userId, channelLower as any, "outbound", ackReply).catch(() => {});
+        return { reply: ackReply, rawReply: ackReply, attachments: [], sdkSessionId: buildSessionId };
       }
     } catch (buildErr) {
       console.error(`[${channelName}] build intent job submission failed (falling through to orchestrator):`, buildErr);
@@ -869,9 +875,15 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
         })
         .catch((err: unknown) => console.error("[coach] build-resume chat history persist failed:", err));
     }
-    logInteraction(userId, channelLower as any, "outbound", resumeReply).catch(() => {});
+    const resumeSessionId = destinationScopedConversation
+      ? await persistFastCoachExchange({
+          userId, channelName, channelLower, userText, reply: resumeReply,
+          coachSessionAgentId, sdkSessionId: activeSessionId, persistGlobalHistory: false,
+        })
+      : activeSessionId;
+    if (!destinationScopedConversation) logInteraction(userId, channelLower as any, "outbound", resumeReply).catch(() => {});
     console.log(`[${channelName}] build-session resume detected — sending ack with BUILD_ACK_MARKER`);
-    return { reply: resumeReply, rawReply: resumeReply, attachments: [], sdkSessionId: activeSessionId };
+    return { reply: resumeReply, rawReply: resumeReply, attachments: [], sdkSessionId: resumeSessionId };
   }
 
   // ── Autonomy-policy short-circuit ─────────────────────────────────────────
@@ -904,12 +916,18 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
             })
             .catch((err: unknown) => console.error("[coach] autonomy-policy chat history persist failed:", err));
         }
-        logInteraction(userId, channelLower as any, "outbound", autonomyReply).catch(() => {});
+        const autonomySessionId = destinationScopedConversation
+          ? await persistFastCoachExchange({
+              userId, channelName, channelLower, userText, reply: autonomyReply,
+              coachSessionAgentId, sdkSessionId: activeSessionId, persistGlobalHistory: false,
+            })
+          : activeSessionId;
+        if (!destinationScopedConversation) logInteraction(userId, channelLower as any, "outbound", autonomyReply).catch(() => {});
         console.log(
           `[${channelName}] autonomy-policy handled mode=${autonomyResult.decision.mode}` +
           (autonomyResult.jobId ? ` job=${autonomyResult.jobId}` : ""),
         );
-        return { reply: autonomyReply, rawReply: autonomyReply, attachments: [], sdkSessionId: activeSessionId };
+        return { reply: autonomyReply, rawReply: autonomyReply, attachments: [], sdkSessionId: autonomySessionId };
       }
     } catch (autonomyErr) {
       console.error(`[${channelName}] autonomy-policy handling failed (falling through to orchestrator):`, autonomyErr);
