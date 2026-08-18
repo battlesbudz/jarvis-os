@@ -98,15 +98,18 @@ function artifactRequestText(prompt: string): string {
     // explicit format instruction may replace or remove that intent.
     const format = String.raw`(?:pdf|markdown|downloadable\s+(?:report|document|file)|docx|word\s+document|csv|json|xlsx?|spreadsheet|pptx?|powerpoint|html|xml|rtf|tsv)`;
     const formatAction = new RegExp(
-      String.raw`\b(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give|keep|preserve|change|switch|convert)\b[^.!?\n]{0,80}\b${format}\b`,
+      String.raw`\b(?:create|make|generate|produce|prepare|write|compile|format|export|attach|send|deliver|return|provide|save|give|keep|preserve)\b[^.!?\n]{0,80}\b${format}\b`,
       "i",
     );
-    const formatAs = new RegExp(String.raw`\b(?:as|in|to|into)\s+(?:an?\s+)?${format}\b`, "i");
+    const formatTarget = new RegExp(
+      String.raw`\b(?:format|output|artifact|file|document|report|results?|findings?|it|this)\b[^.!?\n]{0,40}\b(?:as|in|to|into)\s+(?:an?\s+)?${format}\b`,
+      "i",
+    );
     const formatNegation = new RegExp(
       String.raw`\b(?:not|without|no)\b[^.!?\n]{0,40}\b(?:pdf|downloadable\s+(?:report|document|file))\b`,
       "i",
     );
-    if (formatAction.test(revision) || formatAs.test(revision) || formatNegation.test(revision)) {
+    if (formatAction.test(revision) || formatTarget.test(revision) || formatNegation.test(revision)) {
       return revision;
     }
     return artifactRequestText(prompt.slice(0, revisionStart));
@@ -154,11 +157,16 @@ export function unsupportedReportFileFormat(prompt: string): string | null {
     String.raw`\b(?:create|make|generate|produce|prepare|compile|write)\s+(?:me\s+)?(?:an?\s+)?(${namedArtifact})\b`,
     "i",
   );
+  const deliveryArtifact = new RegExp(
+    String.raw`\b(?:give|return|provide|deliver|send)\s+(?:me\s+)?(?:an?\s+)?(${namedArtifact})\b`,
+    "i",
+  );
   const downloadableArtifact = new RegExp(String.raw`\bdownloadable\s+(${namedArtifact})\b`, "i");
   const explicitArtifactIntent = /\b(?:downloadable|file|document|report|results?|findings?)\b/i.test(request)
     || /\b(?:export|attach|save)\b/i.test(request);
   const output = (explicitArtifactIntent ? request.match(outputSyntax)?.[1] : undefined)
     || request.match(directArtifact)?.[1]
+    || request.match(deliveryArtifact)?.[1]
     || request.match(downloadableArtifact)?.[1];
   return output?.match(UNSUPPORTED_REPORT_FORMAT)?.[1]?.toUpperCase() ?? null;
 }
