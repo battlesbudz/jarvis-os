@@ -360,7 +360,9 @@ async function flushResearchBatch(key: string): Promise<void> {
   // Merge any extras into the total count so the combined notification is
   // accurate. This is best-effort — failures fall through safely.
   let allSiblingJobIds: string[] = jobs.filter((j) => j.jobId).map((j) => j.jobId!);
-  let recoveredPdfRequested = false;
+  const pdfRequestedByJobId = new Map(
+    jobs.flatMap((job) => job.jobId ? [[job.jobId, job.promptedPdf === true] as const] : []),
+  );
   try {
     const windowStart = new Date(anchorTime - SIBLING_WINDOW_MS);
     const windowEnd   = new Date(anchorTime + SIBLING_WINDOW_MS);
@@ -377,16 +379,12 @@ async function flushResearchBatch(key: string): Promise<void> {
         ),
       );
     const knownIds = new Set(allSiblingJobIds);
-    const knownTitles = new Set(jobs.map((j) => j.title));
     for (const row of allSiblings) {
       const t = row.title ?? "";
       const promptedPdf = requestsReportFile(row.prompt ?? "");
-      recoveredPdfRequested ||= promptedPdf;
-      if (!knownTitles.has(t)) {
+      pdfRequestedByJobId.set(row.id, promptedPdf);
+      if (!knownIds.has(row.id)) {
         jobs.push({ title: t, body: "", jobId: row.id, promptedPdf });
-        knownTitles.add(t);
-      }
-      if (row.id && !knownIds.has(row.id)) {
         allSiblingJobIds.push(row.id);
         knownIds.add(row.id);
       }
@@ -435,7 +433,7 @@ async function flushResearchBatch(key: string): Promise<void> {
   let mergedDeliverableId: string | null = null;
   let mergedTitle = jobs[0].title;
   let mergedBody = "";
-  const wantsPdf = recoveredPdfRequested || jobs.some((j) => j.promptedPdf);
+  let wantsPdf = jobs.some((job) => job.promptedPdf);
 
   if (allSiblingJobIds.length > 0) {
     try {
@@ -457,8 +455,14 @@ async function flushResearchBatch(key: string): Promise<void> {
         const activeSiblingDeliverables = siblingDeliverables.filter(
           (deliverable) => deliverable.status === "pending_approval",
         );
-        const activeJobIds = new Set(activeSiblingDeliverables.map((deliverable) => deliverable.jobId).filter(Boolean));
+        const activeJobIds = new Set(
+          activeSiblingDeliverables
+            .map((deliverable) => deliverable.jobId)
+            .filter((jobId): jobId is string => typeof jobId === "string"),
+        );
         jobs.splice(0, jobs.length, ...jobs.filter((batchJob) => !batchJob.jobId || activeJobIds.has(batchJob.jobId)));
+        wantsPdf = jobs.some((job) => job.promptedPdf)
+          || Array.from(activeJobIds).some((jobId) => pdfRequestedByJobId.get(jobId) === true);
         if (jobs.length === 0) return false;
 
         if (activeSiblingDeliverables.length > 1) {
