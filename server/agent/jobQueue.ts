@@ -109,7 +109,7 @@ async function notifyJobComplete(
           // Include the Drive link when available so the user can access the file.
           const driveClause = att.driveLink
             ? ` You can also open it directly on Google Drive: ${att.driveLink}`
-            : " You can download the full report from your Jarvis inbox or Google Drive.";
+            : " You can download the full report from your Jarvis inbox, then use Save to Drive if you want an external copy.";
           const sizeNote =
             `⚠️ The generated PDF (${sizeMb} MB) exceeds Discord's 25 MB file size limit and could not be attached directly.${driveClause}`;
           if (channelId) {

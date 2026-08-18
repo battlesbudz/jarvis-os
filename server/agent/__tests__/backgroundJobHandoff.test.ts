@@ -143,6 +143,8 @@ assert.match(jobQueueSource, /deliverable\.body !== mergedBody/);
 assert.match(jobQueueSource, /deliverable\.title !== mergedTitle/);
 assert.match(jobQueueSource, /batchOriginChannel === "slack"/);
 assert.match(jobQueueSource, /originNotificationDestination = originDiscordChannelId/);
+assert.doesNotMatch(jobQueueSource, /Jarvis inbox or Google Drive/);
+assert.match(jobQueueSource, /Jarvis inbox, then use Save to Drive/);
 
 const reviewRoutesSource = readFileSync(
   fileURLToPath(new URL("../deliverableReviewHttpRoutes.ts", import.meta.url)),
