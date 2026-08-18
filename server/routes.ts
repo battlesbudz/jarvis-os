@@ -102,6 +102,7 @@ import {
   isYoutubePhoneActionRequest,
   isYoutubePhoneRequest,
   isYoutubeServerResearchRequest,
+  isUnqualifiedPhoneAppOnlyRequest,
   unqualifiedPhoneAppTarget,
 } from "./agent/phoneRuntimeRouting";
 import { resolveAndroidNotificationFollowUp } from "./agent/androidNotificationFollowups";
@@ -1767,6 +1768,8 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         await confirmInstalledAndroidAppName(userId, unqualifiedAppTarget)
         ? unqualifiedAppTarget
         : null;
+      const confirmedAppCoversRequest = Boolean(confirmedAppTarget) &&
+        isUnqualifiedPhoneAppOnlyRequest(lastUserOrigText);
       const phoneRuntimeActionRequest = androidActive && !memoryPhoneBypassRequest && (
         hasPhoneRuntimeActionRequest(lastUserContent) ||
         hasContextualPhoneRuntimeActionRequest(lastUserContent, recentPhoneRuntimeConversation.slice(0, -1)) ||
@@ -1775,7 +1778,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const phoneRuntimeCoveredRequest = androidActive && !memoryPhoneBypassRequest && (
         isPhoneRuntimeCoveredRequest(lastUserContent) ||
         isContextualPhoneRuntimeCoveredRequest(lastUserContent, recentPhoneRuntimeConversation.slice(0, -1)) ||
-        Boolean(confirmedAppTarget)
+        confirmedAppCoversRequest
       );
       const isDeviceControlRequest = androidActive && !memoryPhoneBypassRequest && (
         phoneRuntimeActionRequest ||

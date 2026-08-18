@@ -198,6 +198,11 @@ export function unqualifiedPhoneAppTarget(text: string): string | null {
   return uniqueTargets.length === 1 ? targets[0] : null;
 }
 
+export function isUnqualifiedPhoneAppOnlyRequest(text: string): boolean {
+  const target = extractExplicitPhoneAppTarget(text, { allowUnqualifiedGeneric: true });
+  return target !== null && extractExplicitPhoneAppTarget(text) === null;
+}
+
 function hasAdditionalPhoneAction(text: string): boolean {
   const command = text.match(PHONE_OPEN_COMMAND_PATTERN)?.[0];
   const targetText = command ? text.slice(command.length) : text;
