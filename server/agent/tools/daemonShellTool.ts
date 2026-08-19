@@ -1213,10 +1213,11 @@ export const androidSearchInAppTool: AgentTool = {
         const ranked = nodes.map((node) => {
           const serialized = JSON.stringify(node).toLowerCase();
           const className = String(node.className || node.class_name || node.class || node.type || "").toLowerCase();
+          const label = String(node.text || node.label || node.contentDesc || node.contentdesc || node.content_desc || node.contentDescription || "").trim();
           if (/edittext|textfield|textinput/.test(className)) return { node, score: -1 };
           let score = 0;
           if (/search_button|searchbutton|submit_search|search_icon|action_search/.test(serialized)) score += 12;
-          if (/"(?:text|label|contentdesc|content_desc|contentdescription)"\s*:\s*"(?:search|go)"/.test(serialized)) score += 10;
+          if (/^(?:search|go|submit)\b/i.test(label)) score += 10;
           if (/search|submit|\bgo\b/.test(serialized)) score += 3;
           if (/"(?:clickable|isclickable)"\s*:\s*true/.test(serialized)) score += 3;
           if (/"(?:focused|isfocused)"\s*:\s*true/.test(serialized)) score -= 5;
