@@ -97,6 +97,7 @@ assert.equal(
 );
 
 const routesSource = fs.readFileSync(path.resolve("server/routes.ts"), "utf8");
+const channelCoachSource = fs.readFileSync(path.resolve("server/channels/coachAgent.ts"), "utf8");
 const insightsSource = fs.readFileSync(path.resolve("app/(tabs)/insights.tsx"), "utf8");
 const deviceControlCardSource = fs.readFileSync(path.resolve("components/androidDaemon/AndroidDeviceControlCard.tsx"), "utf8");
 const routingSource = fs.readFileSync(path.resolve("server/agent/phoneRuntimeRouting.ts"), "utf8");
@@ -196,6 +197,10 @@ assert.match(deviceControlCardSource, /detail: !healthy[\s\S]{0,100}Connect Devi
 assert.match(deviceControlCardSource, /notificationPermissionGranted === true && status\?\.notificationServiceConnected === true[\s\S]{0,180}Permission granted and listener connected/);
 assert.doesNotMatch(routesSource, /isAndroidVoiceOrigin|rawOriginPlatform/);
 assert.match(routesSource, /const phoneRuntimeAvailable = androidActive;/);
+assert.match(channelCoachSource, /classifiedToolAwareRoute\.actionType === ["']jarvis_device_action["'] && !androidActive/);
+assert.match(channelCoachSource, /phoneRuntimeUnavailable[\s\S]*toolGroups: \[\][\s\S]*priorityToolNames: \[\][\s\S]*shouldPreferTool: false/);
+assert.match(channelCoachSource, /queryText: phoneRuntimeUnavailable \? undefined : userText/);
+assert.match(channelCoachSource, /The Android daemon is not active\. Do not request a phone tool or approval\./);
 assert.match(routesSource, /phoneRuntimeAvailable && !memoryPhoneBypassRequest && \([\s\S]*isPhoneRuntimeCoveredRequest\(phoneRuntimeRequestText\)/);
 assert.match(
   routesSource,
