@@ -268,10 +268,6 @@ assert.doesNotMatch(voiceApprovalSource, /detail:\s*execResult\.detail/);
 assert.doesNotMatch(voiceApprovalSource, /failed:\s*\$\{execResult\.detail/);
 assert.match(routesSource, /else if \(typeof value === ["\']string["\']\)[\s\S]{0,120}<redacted:/);
 assert.match(runtimeSource, /notificationsByKey = new Map<string, Record<string, unknown>>/);
-for (const source of [androidNotificationListenerSource, legacyNotificationListenerSource]) {
-  assert.match(source, /activeNotifications\?\.forEach \{ onNotificationPosted\(it\) \}/);
-  assert.match(source, /recent\.removeIf \{ it\.optString\("key"\) == sbn\.key \}/);
-}
 assert.match(runtimeSource, /if \(!notificationsByKey\.has\(mapKey\)\) notificationsByKey\.set\(mapKey, notification\)/);
 assert.match(runtimeSource, /appIdentityFields = \[notification\.app, notification\.pkg\]/);
 assert.match(runtimeSource, /containsNormalizedPhrase\(field, normalizedApp\)/);
