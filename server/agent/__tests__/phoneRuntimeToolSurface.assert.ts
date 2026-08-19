@@ -187,6 +187,8 @@ assert.match(runtimeSource, /containsNormalizedPhrase\(field, normalizedApp\)/);
 assert.doesNotMatch(runtimeSource, /appMatches = !normalizedApp \|\| haystack\.includes\(normalizedApp\)/);
 assert.match(daemonShellSource, /node\.className \|\| node\.class_name \|\| node\.class/);
 assert.match(androidAccessibilitySource, /fun notificationRowHasAppLabel\(candidate: AccessibilityNodeInfo, app: String\)/);
+assert.match(androidAccessibilitySource, /AccessibilityNodeInfo\.AccessibilityAction::class\.java[\s\S]*getField\("ACTION_IME_ENTER"\)/);
+assert.doesNotMatch(androidAccessibilitySource, /0x00002000/);
 assert.match(androidAccessibilitySource, /\.any \{ value -> value == app \}/);
 assert.match(androidAccessibilitySource, /clickCandidate != null && notificationRowHasAppLabel\(clickCandidate, normalizedApp\)/);
 assert.match(androidAccessibilitySource, /meaningfulPartialMatch = queryTokens\.size >= 2[\s\S]*matchedTokens >= 2[\s\S]*>= 0\.6/);
@@ -224,6 +226,7 @@ for (const opHandlerSource of [generatedAndroidOpHandlerSource, pluginAndroidOpH
   assert.match(opHandlerSource, /allowShadeFallback = op\.optBoolean\("allowShadeFallback", false\)/);
   assert.match(opHandlerSource, /!allowShadeFallback[\s\S]*android_read_screen permission is required for the notification-shade fallback/);
   assert.doesNotMatch(opHandlerSource, /"enter"\s*->\s*Pair\("KEYCODE_ENTER"/);
+  assert.match(opHandlerSource, /query\.isEmpty\(\) && appName == null/);
 }
 assert.match(runtimeSource, /allowShadeFallback,\s*\n/);
 assert.match(runtimeSource, /const allowShadeFallback = screenReadAllowed;/);
