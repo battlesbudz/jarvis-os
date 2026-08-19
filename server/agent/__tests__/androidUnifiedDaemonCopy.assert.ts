@@ -48,6 +48,10 @@ for (const source of [androidNotificationListenerSource, legacyNotificationListe
   assert.match(source, /NotificationListenerService\.requestRebind/);
   assert.match(source, /fun openNotification\(context: Context, key: String\)/);
   assert.match(source, /contentIntent\.send/);
+  assert.match(source, /activeNotifications\?\.forEach \{ cacheNotification\(it, forward = false\) \}/);
+  assert.match(source, /\.put\("ts", sbn\.postTime\)/);
+  assert.match(source, /if \(forward\) \{/);
+  assert.match(source, /recent\.removeIf \{ it\.optString\("key"\) == sbn\.key \}/);
 }
 for (const source of [androidOpHandlerSource, legacyOpHandlerSource]) {
   assert.match(source, /"android_notification_open" -> handleNotificationOpen/);
