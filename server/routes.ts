@@ -1958,7 +1958,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             output[key] = `<sha256:${createHash('sha256').update(value).digest('hex').slice(0, 12)}>`;
           } else if (/^(?:text|content|body|replyText|message|query|search_query)$/i.test(key) && typeof value === "string") {
             output[key] = `<redacted:${value.length} chars>`;
-          } else if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) {
+          } else if (typeof value === "string") {
+            output[key] = `<redacted:${value.length} chars>`;
+          } else if (typeof value === "number" || typeof value === "boolean" || value === null) {
             output[key] = value;
           }
         }
