@@ -30,6 +30,7 @@ async function main() {
   const {
     extractAndroidNotificationsFromScreenContext,
     normalizeAndroidNotifications,
+    resolveAndroidNotificationReference,
     summarizeAndroidNotifications,
   } = await import("../androidNotificationSummary");
 
@@ -858,6 +859,11 @@ async function main() {
   const referencedOpen = resolveAndroidNotificationFollowUp("Open the Reddit one", followUpNotifications);
   assert.equal(referencedOpen?.kind, "open");
   assert.equal(referencedOpen?.notification.app, "Reddit");
+
+  const boundedTitleReference = resolveAndroidNotificationReference([
+    { key: "annual-concert", app: "Gmail", title: "Annual concert", text: "Tonight", ts: Date.now() },
+  ], "Open the Ann notification");
+  assert.equal(boundedTitleReference, null, "partial title tokens must not select and bypass the opener with a stable key");
 
   const tiedBudgetNotifications = [
     { key: "gmail-budget-1", app: "Gmail", pkg: "com.google.android.gm", title: "Budget", text: "First update", ts: Date.now() },
