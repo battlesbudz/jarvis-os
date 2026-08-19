@@ -85,6 +85,7 @@ import {
   ANDROID_PHONE_RUNTIME_TOOL_NAMES,
   confirmInstalledAndroidAppName,
   explainUnsupportedPhoneRuntimeAction,
+  runAndroidOpenNotification,
 } from "./agent/tools/androidAppRuntime";
 import {
   buildPhoneRuntimeRequiredToolNames,
@@ -699,18 +700,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
               if (!args.text) return { result: 'error', label: 'text required', detail: 'Provide text for android_type.' };
               op = { type: 'android_type', text: String(args.text), submit: !!args.submit };
             } else if (action === 'android_notification_open') {
-              if (!args.notificationKey && !args.query) return { result: 'error', label: 'notification target required', detail: 'Provide notificationKey or query for android_notification_open.' };
-              const allowShadeFallback = Boolean(args.query) &&
-                await isAndroidDaemonActionAllowed(userId, 'android_read_screen');
-              if (!args.notificationKey && !allowShadeFallback) {
-                return { result: 'error', label: 'Permission denied', detail: 'android_read_screen permission is required for a query-only notification open.' };
-              }
-              op = {
-                type: 'android_notification_open',
-                notificationKey: args.notificationKey ? String(args.notificationKey) : undefined,
-                query: args.query ? String(args.query) : undefined,
-                appName: args.appName ? String(args.appName) : undefined,
-                allowShadeFallback,
+              const outcome = await runAndroidOpenNotification(args, userId);
+              return {
+                result: outcome.ok ? 'success' : 'error',
+                label: outcome.label,
+                detail: JSON.stringify(outcome.detail),
               };
             } else if (action === 'android_notifications_list') {
               const limit = typeof args.limit === 'number' ? Math.min(args.limit, 60) : 20;
