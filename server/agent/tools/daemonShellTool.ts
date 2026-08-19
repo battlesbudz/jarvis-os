@@ -1716,10 +1716,6 @@ export const androidSearchInAppTool: AgentTool = {
         }
         screenRaw = JSON.stringify(baseline.data || "");
       }
-      // Capture pre-submit screen fingerprint: length + node count for change detection
-      const preSubmitLen = screenRaw.length;
-      const preSubmitNodeCount = (screenRaw.match(/"type"|"className"|"contentDesc"/g) || []).length;
-
       // Primary: invoke the focused field's accessibility IME Search/Go action.
       // If the field does not expose it, the visible submit-control fallback below
       // remains available without relying on privileged input injection.
@@ -1732,19 +1728,18 @@ export const androidSearchInAppTool: AgentTool = {
       await sleep(2500);
 
       function isResultsState(raw: string): boolean {
-        // Results screen criteria (all must be true):
-        // 1. Keyboard/IME has been dismissed     no active input method in a11y tree
         const keyboardDismissed = !screenContains(raw, ["\"inputmethod\"", "inputmethod_service", "\"isFocused\":true", "\"focused\":true"]);
-        // 2. Screen content changed significantly     more nodes than the typing state
-        const newNodeCount = (raw.match(/"type"|"className"|"contentDesc"/g) || []).length;
-        const contentGrew = newNodeCount > preSubmitNodeCount + 2 || raw.length > preSubmitLen + 300;
-        const contentChanged = raw !== screenRaw && Math.abs(raw.length - preSubmitLen) > 80;
-        // 3. Screen is not showing an error dialog that typically indicates failure
+        const resultEvidence = [
+          /search[_ -]?results?/i,
+          /results?[_ -]?(?:list|container|grid)/i,
+          /results?\s+(?:for|matching)/i,
+          /no\s+results?/i,
+          /[?&](?:q|query|search_query)=/i,
+        ];
+        const hasNewResultEvidence = resultEvidence.some((pattern) => pattern.test(raw) && !pattern.test(screenRaw));
         const isErrorDialog = screenContains(raw, ["network error", "something went wrong", "no connection", "retry"]) &&
           !screenContains(raw, SEARCH_KEYWORDS);
-        return !isErrorDialog &&
-          keyboardDismissed &&
-          (contentGrew || contentChanged);
+        return !isErrorDialog && keyboardDismissed && hasNewResultEvidence;
       }
 
       const afterSearch = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
