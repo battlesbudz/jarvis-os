@@ -94,6 +94,8 @@ assert.equal(isPhoneRuntimeCoveredRequest("Screenshot my phone"), true);
 assert.equal(isPhoneRuntimeCoveredRequest("Show me a screenshot from last week's chat"), false);
 assert.equal(isPhoneRuntimeCoveredRequest("Get me a screenshot of the homepage"), false);
 assert.equal(isPhoneRuntimeCoveredRequest("Show me a screenshot of my phone"), true);
+assert.equal(isPhoneRuntimeCoveredRequest("Why does Chrome navigate to a website automatically?"), false);
+assert.equal(isPhoneRuntimeCoveredRequest("Can you navigate to a website on my phone?"), true);
 assert.equal(isPhoneRuntimeCoveredRequest("Where can I find privacy settings in Facebook?"), false);
 assert.equal(isPhoneRuntimeCoveredRequest("I can\'t find privacy settings in Facebook"), false);
 assert.equal(isPhoneRuntimeCoveredRequest("Show that one"), false);
