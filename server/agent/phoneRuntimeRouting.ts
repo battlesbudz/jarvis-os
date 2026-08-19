@@ -501,6 +501,10 @@ export function resolvePhoneRuntimeRequestText(
 
   const lastUserText = String(messages[lastUserIndex].content);
   if (!PHONE_RUNTIME_RETRY_PATTERN.test(lastUserText) || PHONE_RUNTIME_NEGATED_RETRY_PATTERN.test(lastUserText)) return lastUserText;
+  const hasUpdatedPhoneTarget = lastUserText
+    .split(new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i"))
+    .some((segment) => extractExplicitPhoneAppTarget(segment.trim()));
+  if (hasUpdatedPhoneTarget) return lastUserText;
 
   let inspectedUserMessages = 0;
   for (let index = lastUserIndex - 1; index >= 0 && inspectedUserMessages < maxUserMessages; index -= 1) {
