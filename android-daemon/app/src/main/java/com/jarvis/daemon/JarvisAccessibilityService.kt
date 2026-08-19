@@ -773,14 +773,17 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     // ── Type ─────────────────────────────────────────────────────────────────
     //
-    // ACTION_IME_ENTER: public in API 33 ext5+, reflected with fallback for older APIs.
-    // PhoneClaw pattern: https://github.com/rohanarun/phoneclaw
-    private val actionImeEnterCompat: Int by lazy {
-        try {
-            AccessibilityNodeInfo::class.java.getField("ACTION_IME_ENTER").getInt(null)
-        } catch (_: Throwable) {
-            0x00002000  // Internal bit flag — consistent across AOSP since API 16
-        }
+    // ACTION_IME_ENTER lives on the nested AccessibilityAction class. Older
+    // Android versions may not expose it, so fail closed and use the visible
+    // submit-control fallback instead of dispatching an unrelated action ID.
+    private val actionImeEnterCompat: Int? by lazy {
+        runCatching {
+            AccessibilityNodeInfo.AccessibilityAction::class.java
+                .getField("ACTION_IME_ENTER")
+                .get(null)
+                .let { it as AccessibilityNodeInfo.AccessibilityAction }
+                .id
+        }.getOrNull()
     }
 
     /** Type text into the currently-focused editable field.
@@ -805,7 +808,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         // Optional IME submit (Search/Go/Enter key on keyboard)
         val submitted = if (submit && ok) {
             Thread.sleep(80)  // Give IME time to react
-            focused.performAction(actionImeEnterCompat)
+            actionImeEnterCompat?.let { focused.performAction(it) } ?: false
         } else false
 
         return TypeTextResult(typed = ok, submitted = submitted)
