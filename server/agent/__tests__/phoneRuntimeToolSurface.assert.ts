@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { resolvePhoneRuntimeRequestText } from "../phoneRuntimeRouting";
+import { isPhoneRuntimeCoveredRequest, resolvePhoneRuntimeRequestText } from "../phoneRuntimeRouting";
 
 
 const reproducedPhoneRetryConversation = [
@@ -57,6 +57,19 @@ assert.equal(
   "Try opening Instagram again.",
   "a retry with a new explicit target must not revive the previous app",
 );
+assert.equal(
+  resolvePhoneRuntimeRequestText([
+    { role: "user", content: "Open Facebook on my phone." },
+    { role: "assistant", content: "The phone action failed." },
+    { role: "user", content: "Why are cats nocturnal?" },
+    { role: "assistant", content: "They are adapted to low-light hunting." },
+    { role: "user", content: "Try that again." },
+  ]),
+  "Try that again.",
+  "an unrelated intervening question must stop phone retry backtracking",
+);
+assert.equal(isPhoneRuntimeCoveredRequest("Find tutorials on app development"), false);
+assert.equal(isPhoneRuntimeCoveredRequest("Find tutorials in the app"), true);
 
 const routesSource = fs.readFileSync(path.resolve("server/routes.ts"), "utf8");
 const insightsSource = fs.readFileSync(path.resolve("app/(tabs)/insights.tsx"), "utf8");
