@@ -501,7 +501,11 @@ export function resolvePhoneRuntimeRequestText(
 
   const lastUserText = String(messages[lastUserIndex].content);
   if (!PHONE_RUNTIME_RETRY_PATTERN.test(lastUserText) || PHONE_RUNTIME_NEGATED_RETRY_PATTERN.test(lastUserText)) return lastUserText;
-  const hasUpdatedPhoneTarget = lastUserText
+  const retryCandidate = lastUserText.replace(
+    /^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:try|retry|repeat|run|do)\s+/i,
+    "",
+  );
+  const hasUpdatedPhoneTarget = retryCandidate
     .split(new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i"))
     .some((segment) => extractExplicitPhoneAppTarget(segment.trim()));
   if (hasUpdatedPhoneTarget) return lastUserText;
