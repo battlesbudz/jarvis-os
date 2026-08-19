@@ -806,8 +806,7 @@ export async function runAndroidOpenNotification(args: ToolArgs, userId: string)
   let notificationKey = String(args.notificationKey || "").trim();
   const query = String(args.query || args.title || "").trim();
   let appName = String(args.appName || "").trim();
-  const allowShadeFallback = screenReadAllowed &&
-    (!appName || Array.from(normalizeAppLookup(appName)).length > 1);
+  const allowShadeFallback = screenReadAllowed;
   let expectedPackage = "";
   let resolvedNotification: Record<string, unknown> | null = null;
 
