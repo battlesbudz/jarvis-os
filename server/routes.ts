@@ -1854,7 +1854,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         .filter((name) => !unavailablePhoneToolNames.has(name));
       const nonPhoneToolGroups = classifiedToolAwareRoute.toolGroups
         .filter((group) => group !== "system");
-      const hasNonPhoneToolRoute = classifiedToolAwareRoute.intents.length > 0 &&
+      const nonPhoneIntents = classifiedToolAwareRoute.intents
+        .filter((intent) => intent !== "research" && intent !== "browser");
+      const hasNonPhoneToolRoute = nonPhoneIntents.length > 0 &&
         (nonPhonePriorityToolNames.length > 0 || nonPhoneToolGroups.length > 0);
       const toolAwareRoute = !phoneRuntimeAvailable && classifiedToolAwareRoute.actionType === "jarvis_device_action"
         ? {
