@@ -172,6 +172,7 @@ assert.match(bridgeSource, /type: ["']android_notification_open["']/);
 assert.match(daemonShellSource, /type: ["']android_press_key["'], key: ["']enter["']/);
 assert.match(daemonShellSource, /if \(!screenRaw\)[\s\S]*submit_search_baseline/);
 assert.match(daemonShellSource, /function parseSubmitElement/);
+assert.match(daemonShellSource, /contentdesc\|content_desc\|contentdescription/);
 assert.match(daemonShellSource, /coordinateMatch = ranked[\s\S]*extractNodeCoords[\s\S]*\.find\(\(entry\) => entry\.coords !== null\)/);
 const androidApprovalGateStart = routesSource.indexOf("const androidRouteApprovalRequired");
 const androidApprovalGateEnd = routesSource.indexOf("const isHighStakes", androidApprovalGateStart);
