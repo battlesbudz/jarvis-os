@@ -233,7 +233,7 @@ assert.doesNotMatch(androidApprovalGateSource, /toolAwareRoute\.approvalRequired
 assert.match(routesSource, /androidRouteApprovalRequired \|\|[\s\S]*androidSubmitApprovalRequired/);
 assert.match(routesSource, /operationArgs: diagnosticOperationArgs\(tc\.function\.name, args\)/);
 assert.doesNotMatch(routesSource, /detail:\s*String\(execResult\.detail/);
-const voiceApprovalStart = routesSource.indexOf("setDaemonVoiceApprovalHandler");
+const voiceApprovalStart = routesSource.indexOf("setDaemonVoiceApprovalHandler(async");
 const voiceApprovalEnd = routesSource.indexOf("registerCoachActionConfirmationRoutes", voiceApprovalStart);
 const voiceApprovalSource = routesSource.slice(voiceApprovalStart, voiceApprovalEnd);
 assert.doesNotMatch(voiceApprovalSource, /detail:\s*execResult\.detail/);
