@@ -965,6 +965,7 @@ export async function runAndroidOpenNotification(args: ToolArgs, userId: string)
       destinationPackage,
       matchesExpectedPackage,
       foregroundTransitioned,
+      screenContentChanged,
       verified: true,
       screenContext: screen.ok ? compactScreenContext(screen.data, 5000) : undefined,
     },
