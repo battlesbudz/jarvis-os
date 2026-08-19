@@ -138,6 +138,9 @@ assert.match(
   routesSource,
   /!phoneRuntimeAvailable && classifiedToolAwareRoute\.actionType === ["']jarvis_device_action["'][\s\S]*shouldPreferTool: hasNonPhoneToolRoute/,
 );
+assert.match(routesSource, /nonPhoneIntents[\s\S]*intent !== ["']research["'][\s\S]*intent !== ["']browser["']/);
+assert.match(routesSource, /intents: hasNonPhoneToolRoute \? classifiedToolAwareRoute\.intents : \[\]/);
+assert.match(routesSource, /priorityToolNames: hasNonPhoneToolRoute \? nonPhonePriorityToolNames : \[\]/);
 assert.doesNotMatch(routesSource, /androidActive \|\| originChannel === ["']voice["']/);
 assert.doesNotMatch(routesSource, /'launch',/);
 assert.doesNotMatch(routesSource, /'look it up'/);
@@ -167,6 +170,7 @@ assert.match(runtimeToolNamesSource, /android_search_in_app/);
 assert.match(runtimeSource, /type: ["']android_notification_open["']/);
 assert.match(bridgeSource, /type: ["']android_notification_open["']/);
 assert.match(daemonShellSource, /type: ["']android_press_key["'], key: ["']enter["']/);
+assert.match(daemonShellSource, /if \(!screenRaw\)[\s\S]*submit_search_baseline/);
 assert.match(daemonShellSource, /function parseSubmitElement/);
 assert.match(daemonShellSource, /coordinateMatch = ranked[\s\S]*extractNodeCoords[\s\S]*\.find\(\(entry\) => entry\.coords !== null\)/);
 const androidApprovalGateStart = routesSource.indexOf("const androidRouteApprovalRequired");
@@ -219,10 +223,11 @@ assert.equal(
 for (const opHandlerSource of [generatedAndroidOpHandlerSource, pluginAndroidOpHandlerSource, androidOpHandlerSource]) {
   assert.match(opHandlerSource, /allowShadeFallback = op\.optBoolean\("allowShadeFallback", false\)/);
   assert.match(opHandlerSource, /!allowShadeFallback[\s\S]*android_read_screen permission is required for the notification-shade fallback/);
+  assert.doesNotMatch(opHandlerSource, /"enter"\s*->\s*Pair\("KEYCODE_ENTER"/);
 }
 assert.match(runtimeSource, /allowShadeFallback,\s*\n/);
-assert.match(runtimeSource, /directContentIntentPackage = !screen\.ok[\s\S]*daemonResult\.opened === true[\s\S]*daemonResult\.method === "content_intent"/);
-assert.match(runtimeSource, /destinationPackage = foregroundPackageAfter \|\| daemonDestinationPackage \|\| directContentIntentPackage/);
+assert.doesNotMatch(runtimeSource, /directContentIntentPackage/);
+assert.match(runtimeSource, /destinationPackage = foregroundPackageAfter \|\| daemonDestinationPackage/);
 assert.match(bridgeSource, /allowShadeFallback\?: boolean/);
 assert.match(bridgeSource, /op\.type === "android_notification_open" && op\.allowShadeFallback === true[\s\S]*android_read_screen/);
 const highRiskToolsStart = approvalToolRiskSource.indexOf("const HIGH_RISK_TOOLS");
