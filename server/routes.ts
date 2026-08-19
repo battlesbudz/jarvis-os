@@ -1861,8 +1861,9 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const toolAwareRoute = !phoneRuntimeAvailable && classifiedToolAwareRoute.actionType === "jarvis_device_action"
         ? {
             ...classifiedToolAwareRoute,
-            priorityToolNames: nonPhonePriorityToolNames,
-            toolGroups: nonPhoneToolGroups,
+            intents: hasNonPhoneToolRoute ? classifiedToolAwareRoute.intents : [],
+            priorityToolNames: hasNonPhoneToolRoute ? nonPhonePriorityToolNames : [],
+            toolGroups: hasNonPhoneToolRoute ? nonPhoneToolGroups : [],
             shouldPreferTool: hasNonPhoneToolRoute,
             guidance: hasNonPhoneToolRoute ? classifiedToolAwareRoute.guidance : "",
           }
