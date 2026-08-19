@@ -859,6 +859,17 @@ export async function runAndroidOpenNotification(args: ToolArgs, userId: string)
   }
 
   const effectiveQuery = query || String(resolvedNotification?.title || resolvedNotification?.text || "").trim();
+  if (!screenReadAllowed) {
+    return {
+      ok: false,
+      label: "Notification verification unavailable",
+      detail: {
+        operation: "android_notification_open",
+        target: { app: appName, query: effectiveQuery },
+        error: "android_read_screen permission is required to verify the notification destination before opening it.",
+      },
+    };
+  }
   const beforeScreen = screenReadAllowed
     ? await sendAndroidDaemonOp(userId, { type: "android_read_screen" }, 10000)
     : { ok: false as const, error: "android_read_screen permission is not enabled" };
