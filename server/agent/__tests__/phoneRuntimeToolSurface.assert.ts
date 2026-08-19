@@ -88,6 +88,9 @@ assert.equal(
 );
 assert.equal(isPhoneRuntimeCoveredRequest("Find tutorials on app development"), false);
 assert.equal(isPhoneRuntimeCoveredRequest("Find tutorials in the app"), true);
+assert.equal(isPhoneRuntimeCoveredRequest("How do screenshots work on Android?"), false);
+assert.equal(isPhoneRuntimeCoveredRequest("Can you please take a screenshot of my phone?"), true);
+assert.equal(isPhoneRuntimeCoveredRequest("Screenshot my phone"), true);
 assert.equal(isPhoneRuntimeCoveredRequest("Where can I find privacy settings in Facebook?"), false);
 assert.equal(isPhoneRuntimeCoveredRequest("I can\'t find privacy settings in Facebook"), false);
 assert.equal(isPhoneRuntimeCoveredRequest("Show that one"), false);
