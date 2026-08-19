@@ -179,6 +179,7 @@ assert.match(routesSource, /phoneRuntimeActionRequest \|\|[\s\S]*isPhoneDeviceCo
 assert.match(insightsSource, /originPlatform: Platform\.OS/);
 assert.match(deviceControlCardSource, /const statusReady = healthy && !checkingAccessibility && !needsAccessibility;/);
 assert.doesNotMatch(deviceControlCardSource, /const statusReady =[\s\S]{0,180}notificationPermission/);
+assert.match(deviceControlCardSource, /detail: !healthy[\s\S]{0,100}Connect Device Control to check Notification Access/);
 assert.doesNotMatch(routesSource, /isAndroidVoiceOrigin|rawOriginPlatform/);
 assert.match(routesSource, /const phoneRuntimeAvailable = androidActive;/);
 assert.match(routesSource, /phoneRuntimeAvailable && !memoryPhoneBypassRequest && \([\s\S]*isPhoneRuntimeCoveredRequest\(phoneRuntimeRequestText\)/);
@@ -232,6 +233,11 @@ assert.doesNotMatch(androidApprovalGateSource, /toolAwareRoute\.approvalRequired
 assert.match(routesSource, /androidRouteApprovalRequired \|\|[\s\S]*androidSubmitApprovalRequired/);
 assert.match(routesSource, /operationArgs: diagnosticOperationArgs\(tc\.function\.name, args\)/);
 assert.doesNotMatch(routesSource, /detail:\s*String\(execResult\.detail/);
+const voiceApprovalStart = routesSource.indexOf("setDaemonVoiceApprovalHandler");
+const voiceApprovalEnd = routesSource.indexOf("registerCoachActionConfirmationRoutes", voiceApprovalStart);
+const voiceApprovalSource = routesSource.slice(voiceApprovalStart, voiceApprovalEnd);
+assert.doesNotMatch(voiceApprovalSource, /detail:\s*execResult\.detail/);
+assert.doesNotMatch(voiceApprovalSource, /failed:\s*\$\{execResult\.detail/);
 assert.match(routesSource, /else if \(typeof value === ["\']string["\']\)[\s\S]{0,120}<redacted:/);
 assert.match(runtimeSource, /notificationsByKey = new Map<string, Record<string, unknown>>/);
 assert.match(runtimeSource, /if \(!notificationsByKey\.has\(mapKey\)\) notificationsByKey\.set\(mapKey, notification\)/);
