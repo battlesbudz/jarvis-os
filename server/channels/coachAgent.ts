@@ -27,6 +27,7 @@ import { routeAutonomyRequest } from "../agent/autonomyRuntime";
 import { buildBackgroundJobPrompt } from "../agent/backgroundJobHandoff";
 import { getCoachAppAgentId } from "../agent/coreAgentIds";
 import { createSystemApprovalOnBeforeTool } from "../agent/systemApprovalGate";
+import { resolvePhoneRuntimeRequestText } from "../agent/phoneRuntimeRouting";
 import { getCoachAgentSessionAgentId } from "./coachAgentSession";
 import { listPendingPersonalCommitments } from "../commitments/dbCommitmentRepository";
 // Side-effect import: registers workspace topic context provider.
@@ -641,7 +642,11 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   const turnStrategyBlock = turnGuidance
     ? `\n\n## Turn Strategy\n${turnGuidance}`
     : "";
-  const classifiedToolAwareRoute = classifyToolAwareRoute(userText || "");
+  const phoneRuntimeRequestText = resolvePhoneRuntimeRequestText([
+    ...(sessionResumed ? cachedSessionMessages : [...chatMessages].reverse()),
+    { role: "user", content: userText || "" },
+  ]);
+  const classifiedToolAwareRoute = classifyToolAwareRoute(phoneRuntimeRequestText);
   const phoneRuntimeUnavailable =
     classifiedToolAwareRoute.actionType === "jarvis_device_action" && !androidActive;
   const toolAwareRoute = phoneRuntimeUnavailable
