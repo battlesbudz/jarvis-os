@@ -426,7 +426,13 @@ function hasNonRuntimeActionAlongsidePhoneAction(text: string): boolean {
 }
 
 function isPhoneScreenshotRequest(text: string): boolean {
-  return /^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)(?:\s+you)?\s+to\s+|i(?:\s+would|['’]d)\s+like\s+you\s+to\s+)?(?:(?:take|capture|make|get|show)\s+(?:me\s+)?(?:a\s+)?(?:screenshot|screen\s+shot|screen\s+capture)|(?:screenshot|screen\s+shot|screen\s+capture)\b)/i.test(text);
+  const commandPrefix = String.raw`^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)(?:\s+you)?\s+to\s+|i(?:\s+would|['’]d)\s+like\s+you\s+to\s+)?`;
+  const capture = String.raw`(?:(?:take|capture|make)\s+(?:me\s+)?(?:a\s+)?(?:screenshot|screen\s+shot|screen\s+capture)|(?:screenshot|screen\s+shot|screen\s+capture)\b)`;
+  if (new RegExp(commandPrefix + capture, "i").test(text)) return true;
+  return new RegExp(
+    commandPrefix + String.raw`(?:get|show)\s+(?:me\s+)?(?:a\s+)?(?:screenshot|screen\s+shot|screen\s+capture)\b[\s\S]{0,48}\b(?:my|the|current)\s+(?:phone|screen|display)\b`,
+    "i",
+  ).test(text);
 }
 
 function hasPhoneRuntimeAction(normalized: string): boolean {
