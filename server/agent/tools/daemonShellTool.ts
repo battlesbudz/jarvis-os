@@ -1736,7 +1736,39 @@ export const androidSearchInAppTool: AgentTool = {
           /no\s+results?/i,
           /[?&](?:q|query|search_query)=/i,
         ];
-        const hasNewResultEvidence = resultEvidence.some((pattern) => pattern.test(raw) && !pattern.test(screenRaw));
+        const hasNamedResultEvidence = resultEvidence.some((pattern) => pattern.test(raw) && !pattern.test(screenRaw));
+        function collectResultStructure(serialized: string): { labels: Set<string>; containers: Set<string> } {
+          const labels = new Set<string>();
+          const containers = new Set<string>();
+          try {
+            const collect = (value: unknown): void => {
+              if (!value || typeof value !== "object") return;
+              if (Array.isArray(value)) { value.forEach(collect); return; }
+              const node = value as Record<string, unknown>;
+              const className = String(node.className || node.class_name || node.class || node.type || "").toLowerCase();
+              const resourceId = String(node.resourceId || node.resource_id || node.viewId || "").toLowerCase();
+              if (!/inputmethod|keyboard|edittext|textfield|textinput/.test(className)) {
+                const label = String(node.text || node.label || node.contentDesc || node.contentdesc || node.content_desc || node.contentDescription || "")
+                  .trim()
+                  .replace(/\s+/g, " ");
+                if (label.length >= 3 && label.toLowerCase() !== searchQuery.toLowerCase() && !/^(?:search|go|submit)$/.test(label.toLowerCase())) {
+                  labels.add(label.toLowerCase());
+                }
+                if (/result|recyclerview|listview|gridview/.test(`${className} ${resourceId}`)) {
+                  containers.add(`${className}|${resourceId}`);
+                }
+              }
+              Object.values(node).forEach(collect);
+            };
+            collect(JSON.parse(serialized));
+          } catch {}
+          return { labels, containers };
+        }
+        const before = collectResultStructure(screenRaw);
+        const after = collectResultStructure(raw);
+        const newLabels = [...after.labels].filter((label) => !before.labels.has(label));
+        const hasNewResultContainer = [...after.containers].some((container) => !before.containers.has(container));
+        const hasNewResultEvidence = hasNamedResultEvidence || hasNewResultContainer || newLabels.length >= 2;
         const isErrorDialog = screenContains(raw, ["network error", "something went wrong", "no connection", "retry"]) &&
           !screenContains(raw, SEARCH_KEYWORDS);
         return !isErrorDialog && keyboardDismissed && hasNewResultEvidence;
