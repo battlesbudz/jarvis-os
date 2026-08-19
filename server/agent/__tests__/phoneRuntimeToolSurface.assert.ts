@@ -48,6 +48,15 @@ for (const cancellation of ["Don't try that again.", "Do not run that again."]) 
     "a negated retry must not revive a canceled phone command",
   );
 }
+assert.equal(
+  resolvePhoneRuntimeRequestText([
+    { role: "user", content: "Open Facebook on my phone." },
+    { role: "assistant", content: "The phone action failed." },
+    { role: "user", content: "Try opening Instagram again." },
+  ]),
+  "Try opening Instagram again.",
+  "a retry with a new explicit target must not revive the previous app",
+);
 
 const routesSource = fs.readFileSync(path.resolve("server/routes.ts"), "utf8");
 const insightsSource = fs.readFileSync(path.resolve("app/(tabs)/insights.tsx"), "utf8");
@@ -183,7 +192,8 @@ assert.match(bridgeSource, /type: ["']android_notification_open["']/);
 assert.match(daemonShellSource, /type: ["']android_press_key["'], key: ["']enter["']/);
 assert.match(daemonShellSource, /if \(!screenRaw\)[\s\S]*submit_search_baseline/);
 assert.match(daemonShellSource, /function parseSubmitElement/);
-assert.match(daemonShellSource, /contentdesc\|content_desc\|contentdescription/);
+assert.match(daemonShellSource, /node\.contentDesc[\s\S]{0,160}node\.content_desc/);
+assert.match(daemonShellSource, /\^\(\?:search\|go\|submit\)\\b/);
 assert.match(daemonShellSource, /coordinateMatch = ranked[\s\S]*extractNodeCoords[\s\S]*\.find\(\(entry\) => entry\.coords !== null\)/);
 const androidApprovalGateStart = routesSource.indexOf("const androidRouteApprovalRequired");
 const androidApprovalGateEnd = routesSource.indexOf("const isHighStakes", androidApprovalGateStart);
