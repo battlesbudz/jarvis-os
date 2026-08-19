@@ -973,7 +973,7 @@ function autoDiscoverSearchNode(
 export const androidSearchInAppTool: AgentTool = {
   name: "android_search_in_app",
   description:
-    "High-level macro that performs a complete in-app search on Android as a single resumable sequence: open app     wait for load     detect login walls     locate search bar     tap it (with focus verification)     type query (with text confirmation)     submit     verify results loaded     optional result capture. Returns a structured result with { ok, step_reached, result?, error_at_step?, suggestion? } so Jarvis can tell the user exactly what happened and how to recover. Supply resume_from_step (2-6) after a partial failure to skip the open/load steps and retry from the specific failed step. PREFER this over manually orchestrating individual android_* steps whenever the user asks to search for something inside a specific app.",
+    "High-level macro that performs a complete in-app search on Android as a single resumable sequence: open app     wait for load     detect login walls     locate search bar     tap it (with focus verification)     type query (with text confirmation)     submit     verify results loaded     optional result capture. Returns a structured result with { ok, step_reached, result?, error_at_step?, suggestion? } so Jarvis can tell the user exactly what happened and how to recover. Supply resume_from_step (2-5) after a partial failure to skip the open/load steps and retry from the specific failed step. PREFER this over manually orchestrating individual android_* steps whenever the user asks to search for something inside a specific app.",
   parameters: {
     type: "object",
     properties: {
@@ -1000,7 +1000,7 @@ export const androidSearchInAppTool: AgentTool = {
       },
       resume_from_step: {
         type: "number",
-        description: "Skip to a specific step (2-6) after a previous partial failure. Use the step_reached value from the prior failure response. Steps 1 (open app) and load-wait are skipped when resuming.",
+        description: "Skip to a specific step (2-5) after a previous partial failure. Use the step_reached value from the prior failure response. Steps 1 (open app) and load-wait are skipped when resuming.",
       },
     },
     required: ["app_package", "app_name", "search_query"],
@@ -1013,12 +1013,12 @@ export const androidSearchInAppTool: AgentTool = {
     const actionAfterSearch = args.action_after_search ? String(args.action_after_search) : null;
     const resumeFromStepRaw = typeof args.resume_from_step === "number" ? Math.floor(args.resume_from_step) : null;
     const resumeFromStep = resumeFromStepRaw;
-    if (resumeFromStepRaw !== null && (resumeFromStepRaw < 2 || resumeFromStepRaw > 6)) {
+    if (resumeFromStepRaw !== null && (resumeFromStepRaw < 2 || resumeFromStepRaw > 5)) {
       return {
         ok: false,
         content: JSON.stringify({
           ok: false,
-          error: `resume_from_step must be between 2 and 6 (got ${resumeFromStepRaw}). Use the step_reached value returned by a prior partial failure.`,
+          error: `resume_from_step must be between 2 and 5 (got ${resumeFromStepRaw}). Use the step_reached value returned by a prior partial failure.`,
         }),
       };
     }
@@ -1811,7 +1811,7 @@ export const androidSearchInAppTool: AgentTool = {
             step_reached: 5,
             error_at_step: "execute_search",
             error: `Search was submitted in ${appName} but the results screen did not appear. The app may require a different submission method, may have shown a network error, or may not have recognised the search input.`,
-            suggestion: "Use android_screenshot to see the current state. If results are visually present but the accessibility tree is sparse, retry with resume_from_step: 6 and action_after_search: 'screenshot'.",
+            suggestion: "Use android_screenshot to inspect the current state. Retry from step 5 only after confirming the results screen is visible.",
             steps: stepLog,
           }),
         };
