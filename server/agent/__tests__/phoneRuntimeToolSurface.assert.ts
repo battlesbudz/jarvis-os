@@ -59,6 +59,15 @@ assert.equal(
 );
 assert.equal(
   resolvePhoneRuntimeRequestText([
+    { role: "user", content: "Search for cats on Facebook." },
+    { role: "assistant", content: "The phone action failed." },
+    { role: "user", content: "Try searching for dogs on Instagram again." },
+  ]),
+  "Try searching for dogs on Instagram again.",
+  "a retry with a new in-app search target must not revive the previous app or query",
+);
+assert.equal(
+  resolvePhoneRuntimeRequestText([
     { role: "user", content: "Open Facebook on my phone." },
     { role: "assistant", content: "The phone action failed." },
     { role: "user", content: "Why are cats nocturnal?" },
@@ -274,6 +283,8 @@ assert.match(androidAccessibilitySource, /Regex\("\[\^\\\\p\{L\}\\\\p\{N\}\]\+"\
 assert.match(androidAccessibilitySource, /queryTokens\.size > 1 -> containsBoundedNotificationTerm\(label, normalizedQuery\)/);
 assert.match(androidAccessibilitySource, /score = if \(appMatches && queryMatches\)/);
 assert.match(daemonShellSource, /keyboardDismissed && hasNewResultEvidence/);
+assert.match(daemonShellSource, /resumeFromStepRaw > 5/);
+assert.doesNotMatch(daemonShellSource, /resume_from_step: 6/);
 assert.match(daemonShellSource, /hasNewResultContainer[\s\S]*newLabels\.length >= 2/);
 assert.doesNotMatch(daemonShellSource, /contentGrew|contentChanged|preSubmitLen|preSubmitNodeCount/);
 assert.equal(
@@ -313,8 +324,7 @@ assert.match(actionOntologySource, /isPhoneRuntimeCoveredRequest\(normalized\)/)
 assert.doesNotMatch(actionOntologySource, /open\|launch\|tap\|press\|swipe\|scroll\|type\|search\|find\|read\|show[\s\S]*android\|phone\|screen\|app/);
 assert.match(daemonActionSource, /allowShadeFallback = Boolean\(args\.query\)[\s\S]*isAndroidDaemonActionAllowed\(ctx\.userId, "android_read_screen"\)/);
 assert.match(daemonActionSource, /allowShadeFallback,[\s\S]*type: "android_notification_open"|type: "android_notification_open"[\s\S]*allowShadeFallback/);
-assert.match(routesSource, /allowShadeFallback = Boolean\(args\.query\)[\s\S]*isAndroidDaemonActionAllowed\(userId, 'android_read_screen'\)/);
-assert.match(routesSource, /type: 'android_notification_open'[\s\S]*allowShadeFallback/);
+assert.match(routesSource, /runAndroidOpenNotification\(args, userId\)/);
 assert.match(bridgeSource, /android_read_screen:\s*"android_read_screen"/);
 assert.doesNotMatch(daemonShellSource, /type: ["']android_type["'], text: ["']\\n["']/);
 assert.match(runtimeSource, /\{ type: ["']android_notify["'], title, body \}/);
