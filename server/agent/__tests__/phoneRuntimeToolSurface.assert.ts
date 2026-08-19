@@ -60,6 +60,7 @@ assert.equal(
 
 const routesSource = fs.readFileSync(path.resolve("server/routes.ts"), "utf8");
 const insightsSource = fs.readFileSync(path.resolve("app/(tabs)/insights.tsx"), "utf8");
+const deviceControlCardSource = fs.readFileSync(path.resolve("components/androidDaemon/AndroidDeviceControlCard.tsx"), "utf8");
 const routingSource = fs.readFileSync(path.resolve("server/agent/phoneRuntimeRouting.ts"), "utf8");
 const runtimeToolNamesSource = fs.readFileSync(path.resolve("server/agent/androidPhoneRuntimeToolNames.ts"), "utf8");
 const runtimeSource = fs.readFileSync(path.resolve("server/agent/tools/androidAppRuntime.ts"), "utf8");
@@ -151,6 +152,8 @@ assert.match(
 assert.match(routesSource, /phoneRuntimeRequestText[\s\S]*isPhoneRuntimeCoveredRequest\(phoneRuntimeRequestText\)/);
 assert.match(routesSource, /phoneRuntimeActionRequest \|\|[\s\S]*isPhoneDeviceControlKeywordRequest/);
 assert.match(insightsSource, /originPlatform: Platform\.OS/);
+assert.match(deviceControlCardSource, /const statusReady = healthy && !checkingAccessibility && !needsAccessibility;/);
+assert.doesNotMatch(deviceControlCardSource, /const statusReady =[\s\S]{0,180}notificationPermission/);
 assert.doesNotMatch(routesSource, /isAndroidVoiceOrigin|rawOriginPlatform/);
 assert.match(routesSource, /const phoneRuntimeAvailable = androidActive;/);
 assert.match(routesSource, /phoneRuntimeAvailable && !memoryPhoneBypassRequest && \([\s\S]*isPhoneRuntimeCoveredRequest\(phoneRuntimeRequestText\)/);
@@ -233,6 +236,7 @@ assert.match(androidAccessibilitySource, /Regex\("\[\^\\\\p\{L\}\\\\p\{N\}\]\+"\
 assert.match(androidAccessibilitySource, /queryTokens\.size > 1 -> containsBoundedNotificationTerm\(label, normalizedQuery\)/);
 assert.match(androidAccessibilitySource, /score = if \(appMatches && queryMatches\)/);
 assert.match(daemonShellSource, /keyboardDismissed && hasNewResultEvidence/);
+assert.match(daemonShellSource, /hasNewResultContainer[\s\S]*newLabels\.length >= 2/);
 assert.doesNotMatch(daemonShellSource, /contentGrew|contentChanged|preSubmitLen|preSubmitNodeCount/);
 assert.equal(
   pluginAndroidAccessibilitySource,
