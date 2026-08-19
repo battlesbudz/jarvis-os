@@ -180,6 +180,8 @@ assert.match(androidApprovalGateSource, /isAndroidPhoneRuntimeToolName/);
 assert.match(androidApprovalGateSource, /daemon_action[\s\S]*startsWith\('android_'\)/);
 assert.doesNotMatch(androidApprovalGateSource, /toolAwareRoute\.approvalRequired/);
 assert.match(routesSource, /androidRouteApprovalRequired \|\|[\s\S]*androidSubmitApprovalRequired/);
+assert.match(routesSource, /operationArgs: diagnosticOperationArgs\(tc\.function\.name, args\)/);
+assert.doesNotMatch(routesSource, /detail:\s*String\(execResult\.detail/);
 assert.match(runtimeSource, /notificationsByKey = new Map<string, Record<string, unknown>>/);
 assert.match(runtimeSource, /if \(!notificationsByKey\.has\(mapKey\)\) notificationsByKey\.set\(mapKey, notification\)/);
 assert.match(runtimeSource, /appIdentityFields = \[notification\.app, notification\.pkg\]/);
