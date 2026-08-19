@@ -72,6 +72,7 @@ assert.equal(isPhoneRuntimeCoveredRequest("Find tutorials on app development"), 
 assert.equal(isPhoneRuntimeCoveredRequest("Find tutorials in the app"), true);
 assert.equal(isPhoneRuntimeCoveredRequest("Show that one"), false);
 assert.equal(isPhoneRuntimeCoveredRequest("Show that notification"), true);
+assert.equal(isPhoneRuntimeCoveredRequest("What happens when I open a notification?"), false);
 assert.equal(
   resolvePhoneRuntimeRequestText([
     { role: "user", content: "Open Facebook on my phone." },
