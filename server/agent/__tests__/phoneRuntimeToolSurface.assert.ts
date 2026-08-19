@@ -248,6 +248,8 @@ assert.match(runtimeSource, /containsNormalizedPhrase\(field, normalizedApp\)/);
 assert.doesNotMatch(runtimeSource, /appMatches = !normalizedApp \|\| haystack\.includes\(normalizedApp\)/);
 assert.match(daemonShellSource, /node\.className \|\| node\.class_name \|\| node\.class/);
 assert.match(androidAccessibilitySource, /fun notificationRowHasAppLabel\(candidate: AccessibilityNodeInfo, app: String\)/);
+assert.match(androidAccessibilitySource, /root\.packageName\?\.toString\(\) != ["']com\.android\.systemui["']\) continue/);
+assert.match(standaloneAndroidAccessibilitySource, /root\.packageName\?\.toString\(\) != ["']com\.android\.systemui["']\) continue/);
 assert.match(androidAccessibilitySource, /AccessibilityNodeInfo\.AccessibilityAction::class\.java[\s\S]*getField\("ACTION_IME_ENTER"\)/);
 assert.doesNotMatch(androidAccessibilitySource, /0x00002000/);
 assert.match(androidAccessibilitySource, /\.any \{ value -> value == app \}/);
