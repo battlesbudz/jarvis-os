@@ -226,6 +226,8 @@ for (const opHandlerSource of [generatedAndroidOpHandlerSource, pluginAndroidOpH
   assert.doesNotMatch(opHandlerSource, /"enter"\s*->\s*Pair\("KEYCODE_ENTER"/);
 }
 assert.match(runtimeSource, /allowShadeFallback,\s*\n/);
+assert.match(runtimeSource, /const allowShadeFallback = screenReadAllowed;/);
+assert.doesNotMatch(runtimeSource, /Array\.from\(normalizeAppLookup\(appName\)\)\.length/);
 assert.doesNotMatch(runtimeSource, /directContentIntentPackage/);
 assert.match(runtimeSource, /destinationPackage = foregroundPackageAfter \|\| daemonDestinationPackage/);
 assert.match(bridgeSource, /allowShadeFallback\?: boolean/);
