@@ -48,7 +48,7 @@ for (const source of [androidNotificationListenerSource, legacyNotificationListe
   assert.match(source, /NotificationListenerService\.requestRebind/);
   assert.match(source, /fun openNotification\(context: Context, key: String\)/);
   assert.match(source, /contentIntent\.send/);
-  assert.match(source, /activeNotifications\?\.forEach \{ cacheNotification\(it, forward = false\) \}/);
+  assert.match(source, /activeNotifications[\s\S]*sortedByDescending \{ it\.postTime \}[\s\S]*take\(MAX_CACHED\)[\s\S]*asReversed\(\)[\s\S]*cacheNotification\(it, forward = false\)/);
   assert.match(source, /\.put\("ts", sbn\.postTime\)/);
   assert.match(source, /if \(forward\) \{/);
   assert.match(source, /recent\.removeIf \{ it\.optString\("key"\) == sbn\.key \}/);
