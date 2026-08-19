@@ -37,6 +37,18 @@ assert.equal(
   "a diagnostic question must remain conversational",
 );
 
+for (const cancellation of ["Don't try that again.", "Do not run that again."]) {
+  assert.equal(
+    resolvePhoneRuntimeRequestText([
+      { role: "user", content: "Open Chrome on my phone." },
+      { role: "assistant", content: "The phone action failed." },
+      { role: "user", content: cancellation },
+    ]),
+    cancellation,
+    "a negated retry must not revive a canceled phone command",
+  );
+}
+
 const routesSource = fs.readFileSync(path.resolve("server/routes.ts"), "utf8");
 const insightsSource = fs.readFileSync(path.resolve("app/(tabs)/insights.tsx"), "utf8");
 const routingSource = fs.readFileSync(path.resolve("server/agent/phoneRuntimeRouting.ts"), "utf8");
@@ -182,6 +194,7 @@ assert.doesNotMatch(androidApprovalGateSource, /toolAwareRoute\.approvalRequired
 assert.match(routesSource, /androidRouteApprovalRequired \|\|[\s\S]*androidSubmitApprovalRequired/);
 assert.match(routesSource, /operationArgs: diagnosticOperationArgs\(tc\.function\.name, args\)/);
 assert.doesNotMatch(routesSource, /detail:\s*String\(execResult\.detail/);
+assert.match(routesSource, /else if \(typeof value === ["\']string["\']\)[\s\S]{0,120}<redacted:/);
 assert.match(runtimeSource, /notificationsByKey = new Map<string, Record<string, unknown>>/);
 assert.match(runtimeSource, /if \(!notificationsByKey\.has\(mapKey\)\) notificationsByKey\.set\(mapKey, notification\)/);
 assert.match(runtimeSource, /appIdentityFields = \[notification\.app, notification\.pkg\]/);
