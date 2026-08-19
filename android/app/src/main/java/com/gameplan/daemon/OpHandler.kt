@@ -1026,9 +1026,11 @@ object OpHandler {
         if (key.isNotEmpty()) {
             val direct = JarvisNotificationListener.performOpen(context, key)
             if (direct.ok) return direct
-            if (query.isEmpty()) return direct
+            if (query.isEmpty() && appName == null) return direct
         }
-        if (query.isEmpty()) return OpResult(false, error = "notificationKey or query is required")
+        if (query.isEmpty() && appName == null) {
+            return OpResult(false, error = "notificationKey, query, or appName is required")
+        }
         if (!allowShadeFallback) {
             return OpResult(false, error = "android_read_screen permission is required for the notification-shade fallback.")
         }
