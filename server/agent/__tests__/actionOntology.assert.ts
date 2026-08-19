@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { classifyActionOntology } from "../actionOntology";
 import { resolveToolsForAction } from "../toolResolver";
+import { requiresApproval, requiresHumanApproval } from "../approvalToolRisk";
 
 function assertAction(
   text: string,
@@ -134,6 +135,15 @@ const deviceResolution = resolveToolsForAction(deviceAction);
 assert.ok(deviceResolution.requiredToolNames.includes("android_open_notification"));
 assert.ok(deviceResolution.requiredToolNames.includes("android_search_in_app"));
 assert.equal(deviceResolution.approvalRequired, true);
+
+for (const toolName of [
+  "android_open_notification",
+  "android_search_in_app",
+  "android_read_notifications",
+]) {
+  assert.equal(requiresApproval(toolName), true, `${toolName}: shared channel gate requires approval`);
+  assert.equal(requiresHumanApproval(toolName), true, `${toolName}: device action waits for human approval`);
+}
 
 const inconsistentDeviceResolution = resolveToolsForAction({
   ...deviceAction,
