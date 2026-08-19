@@ -26,7 +26,7 @@ class JarvisNotificationListener : NotificationListenerService() {
         lastError = null
         try {
             recent.clear()
-            activeNotifications?.forEach { onNotificationPosted(it) }
+            activeNotifications?.forEach { cacheNotification(it, forward = false) }
         } catch (e: Exception) {
             lastError = "Cannot seed active notifications: ${e.message}"
             Log.w(TAG, lastError ?: "Cannot seed active notifications")
@@ -44,6 +44,10 @@ class JarvisNotificationListener : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         sbn ?: return
+        cacheNotification(sbn, forward = true)
+    }
+
+    private fun cacheNotification(sbn: StatusBarNotification, forward: Boolean) {
         val pkg = sbn.packageName ?: return
         if (pkg in DENY_PACKAGES) return
         if (sbn.isOngoing) return
@@ -72,7 +76,7 @@ class JarvisNotificationListener : NotificationListenerService() {
             .put("app", appLabel)
             .put("title", title ?: "")
             .put("text", text ?: "")
-            .put("ts", System.currentTimeMillis())
+            .put("ts", sbn.postTime)
             .put("key", sbn.key)
             .put("hasReplyAction", hasReplyAction)
 
@@ -83,14 +87,16 @@ class JarvisNotificationListener : NotificationListenerService() {
 
         Log.d(TAG, "Notification from $appLabel: $title")
 
-        // Forward to server over WebSocket (best-effort, won't fail the listener)
-        try {
-            val event = JSONObject()
-                .put("type", "notification_event")
-                .put("notification", obj)
-            WebSocketService.sendEvent(event.toString())
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to forward notification: ${e.message}")
+        // Forward only genuinely posted notifications; connection seeding must not replay old alerts.
+        if (forward) {
+            try {
+                val event = JSONObject()
+                    .put("type", "notification_event")
+                    .put("notification", obj)
+                WebSocketService.sendEvent(event.toString())
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to forward notification: ${e.message}")
+            }
         }
     }
 
