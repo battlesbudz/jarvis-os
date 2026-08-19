@@ -913,6 +913,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         while (SystemClock.uptimeMillis() < deadline && matched == null) {
             Thread.sleep(120)
             val root = rootInActiveWindow ?: continue
+            if (root.packageName?.toString() != "com.android.systemui") continue
             val queue = ArrayDeque<AccessibilityNodeInfo>()
             queue.add(root)
             var bestScore = 0
