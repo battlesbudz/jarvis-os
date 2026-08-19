@@ -37,7 +37,7 @@ assert.equal(
   "a diagnostic question must remain conversational",
 );
 
-for (const cancellation of ["Don't try that again.", "Do not run that again."]) {
+for (const cancellation of ["Don't try that again.", "Do not run that again.", "Try that again—actually don't."]) {
   assert.equal(
     resolvePhoneRuntimeRequestText([
       { role: "user", content: "Open Chrome on my phone." },
