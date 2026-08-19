@@ -379,6 +379,7 @@ async function main() {
     assert.deepEqual(emptyListenerVoiceNotificationObservations, [[]]);
 
     const openNotificationOps: string[] = [];
+    let openNotificationScreenReads = 0;
     _setAndroidAppRuntimeDepsForTesting({
       isAndroidDaemonActive: () => true,
       isAndroidDaemonActionAllowed: async () => true,
@@ -406,7 +407,14 @@ async function main() {
           return { ok: true, data: { opened: true, method: "content_intent", packageName: "com.google.android.youtube" } };
         }
         if (op.type === "android_read_screen") {
-          return { ok: true, data: { package: "com.google.android.youtube", text: ["Alex Hormozi"] } };
+          openNotificationScreenReads += 1;
+          return {
+            ok: true,
+            data: {
+              package: openNotificationScreenReads === 1 ? "com.facebook.katana" : "com.google.android.youtube",
+              text: ["Alex Hormozi"],
+            },
+          };
         }
         return { ok: false, error: `unexpected op ${op.type}` };
       },
@@ -445,7 +453,7 @@ async function main() {
         }
         if (op.type === "android_read_screen") {
           unchangedForegroundReadCount += 1;
-          return { ok: true, data: { package: "com.facebook.katana", text: ["Unrelated app"] } };
+          return { ok: true, data: { package: "com.google.android.youtube", text: ["YouTube"] } };
         }
         return { ok: false, error: `unexpected op ${op.type}` };
       },
@@ -456,10 +464,11 @@ async function main() {
     }, "user-phone");
     assert.equal(unchangedForegroundReadCount, 2);
     assert.equal(unchangedForegroundResult.ok, false);
-    assert.equal(unchangedForegroundResult.detail.matchesExpectedPackage, false);
+    assert.equal(unchangedForegroundResult.detail.matchesExpectedPackage, true);
+    assert.equal(unchangedForegroundResult.detail.observedExpectedDestination, false);
     assert.equal(unchangedForegroundResult.detail.foregroundTransitioned, false);
-    assert.equal(unchangedForegroundResult.detail.destinationPackage, "com.facebook.katana");
-    assert.match(String(unchangedForegroundResult.detail.error), /neither matched.*nor changed/i);
+    assert.equal(unchangedForegroundResult.detail.destinationPackage, "com.google.android.youtube");
+    assert.match(String(unchangedForegroundResult.detail.error), /no new foreground transition/i);
 
     const weakMatchOps: string[] = [];
     _setAndroidAppRuntimeDepsForTesting({
