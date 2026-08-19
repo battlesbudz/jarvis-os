@@ -711,8 +711,8 @@ async function main() {
       query: "Latest target video",
       appName: "YouTube",
     }, "user-phone");
-    assert.equal(duplicateRevisionResult.ok, true);
-    assert.equal(duplicateRevisionResult.detail.verified, true);
+    assert.equal(duplicateRevisionResult.ok, false);
+    assert.equal(duplicateRevisionResult.label, "Notification open could not be verified");
     assert.equal(duplicateRevisionScreenReads, 0);
     assert.deepEqual(duplicateRevisionOps, [
       "android_notifications_list",
@@ -751,13 +751,12 @@ async function main() {
       query: "Target video",
       appName: "YouTube",
     }, "user-phone");
-    assert.equal(deniedScreenReadResult.ok, true);
-    assert.equal(deniedScreenReadResult.detail.verified, true);
+    assert.equal(deniedScreenReadResult.ok, false);
+    assert.equal(deniedScreenReadResult.label, "Notification open could not be verified");
     assert.equal(deniedScreenReadResult.detail.method, "content_intent");
-    assert.equal(deniedScreenReadResult.detail.destinationPackage, "com.google.android.youtube");
+    assert.equal(deniedScreenReadResult.detail.destinationPackage, "");
     assert.deepEqual(deniedScreenReadOps, ["android_notifications_list", "android_notification_open"]);
-    assert.equal("screenContext" in deniedScreenReadResult.detail, true);
-    assert.equal(deniedScreenReadResult.detail.screenContext, undefined);
+    assert.equal("screenContext" in deniedScreenReadResult.detail, false);
 
     const accessibilityOps: string[] = [];
     const accessibilityObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];
