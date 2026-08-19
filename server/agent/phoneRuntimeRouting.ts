@@ -446,7 +446,7 @@ function hasPhoneRuntimeAction(normalized: string): boolean {
     hasCurrentTargetBeforePhoneOpenFollowUp(normalized) ||
     isPhoneOpenActionRequest(normalized) ||
     (/\b(?:open|launch|tap|show)\b/i.test(normalized) && /\b(?:notification|alert|that one|this one)\b/i.test(normalized)) ||
-    (/\b(?:search|find|look up|look for)\b/i.test(normalized) && /\b(?:on|in)\s+(?:facebook|fb|instagram|ig|reddit|linkedin|twitter|x|tiktok|snapchat|app)\b/i.test(normalized)) ||
+    (/\b(?:search|find|look up|look for)\b/i.test(normalized) && /\b(?:on|in)\s+(?:facebook|fb|instagram|ig|reddit|linkedin|twitter|x|tiktok|snapchat|(?:the\s+)?app(?=\s*(?:[.!?]|$)))/i.test(normalized)) ||
     /\b(?:browse to|navigate to|open (?:a )?(?:url|link|website|site))\b/i.test(normalized) ||
     /\b(?:screenshot|screen shot|screen capture)\b/i.test(normalized) ||
     /\b(?:read|inspect|look at|what(?:'s| is))\b.{0,48}\b(?:screen|display|phone)\b/i.test(normalized) ||
@@ -484,8 +484,15 @@ const PHONE_RUNTIME_NEGATED_RETRY_PATTERN =
   /\b(?:don[’\']t|do\s+not|dont|never|stop)\b[^;.!?]{0,48}\b(?:try|retry|repeat|run|do)\b[^;.!?]{0,48}\b(?:again|once\s+more)\b/i;
 const PHONE_RUNTIME_RETRY_RETRACTION_PATTERN =
   /\b(?:again|once\s+more)\b[^.!?]{0,80}(?:actually\s+)?(?:don[’']t|do\s+not|dont|never\s*mind|cancel(?:\s+(?:that|it))?|scratch\s+that|forget\s+it|stop)\b/i;
-const PHONE_RUNTIME_CONTEXT_BRIDGE_PATTERN =
-  /^\s*(?:did\s+you|have\s+you|why\s+(?:did|do|does|are)|(?:do|did)\s+you\s+understand|okay\s+so\s+you\s+understood|was\s+that|what\s+happened|that\s+failed|it\s+failed)\b/i;
+function isPhoneRuntimeContextBridge(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (/^(?:what\s+happened|that\s+failed|it\s+failed)\b/.test(normalized)) return true;
+  if (/^(?:(?:do|did)\s+you\s+understand|okay\s+so\s+you\s+understood)\b/.test(normalized)) {
+    return /\b(?:phone|app|intent|request|open|search|that|it|this)\b/.test(normalized);
+  }
+  return /^(?:did\s+you|have\s+you|why\s+(?:did|do|does|are)|was\s+that)\b/.test(normalized) &&
+    /\b(?:phone|app|action|request|that|it|this|what\s+i\s+asked)\b/.test(normalized);
+}
 
 /**
  * Preserve an explicit phone target across a bounded retry chain. Assistant
@@ -518,7 +525,7 @@ export function resolvePhoneRuntimeRequestText(
     if (message?.role !== "user" || typeof message.content !== "string") continue;
     inspectedUserMessages += 1;
     const text = message.content.trim();
-    if (PHONE_RUNTIME_CONTEXT_BRIDGE_PATTERN.test(text)) continue;
+    if (isPhoneRuntimeContextBridge(text)) continue;
     const retryCandidate = text.replace(
       /^\s*(?:let['’]?s\s+)?(?:try|retry|repeat|run|do)(?:\s+this)?\s+(?:again|once\s+more)\s*[,;:-]?\s*/i,
       "",
