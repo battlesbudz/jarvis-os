@@ -130,9 +130,8 @@ assert.match(
 assert.match(routesSource, /phoneRuntimeRequestText[\s\S]*isPhoneRuntimeCoveredRequest\(phoneRuntimeRequestText\)/);
 assert.match(routesSource, /phoneRuntimeActionRequest \|\|[\s\S]*isPhoneDeviceControlKeywordRequest/);
 assert.match(insightsSource, /originPlatform: Platform\.OS/);
-assert.match(routesSource, /originPlatform: rawOriginPlatform/);
-assert.match(routesSource, /const isAndroidVoiceOrigin = originChannel === ["']voice["'] && rawOriginPlatform === ["']android["']/);
-assert.match(routesSource, /const phoneRuntimeAvailable = androidActive \|\| isAndroidVoiceOrigin/);
+assert.doesNotMatch(routesSource, /isAndroidVoiceOrigin|rawOriginPlatform/);
+assert.match(routesSource, /const phoneRuntimeAvailable = androidActive;/);
 assert.match(routesSource, /phoneRuntimeAvailable && !memoryPhoneBypassRequest && \([\s\S]*isPhoneRuntimeCoveredRequest\(phoneRuntimeRequestText\)/);
 assert.match(
   routesSource,
