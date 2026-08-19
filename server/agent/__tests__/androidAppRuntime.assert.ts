@@ -721,12 +721,9 @@ async function main() {
       appName: "YouTube",
     }, "user-phone");
     assert.equal(duplicateRevisionResult.ok, false);
-    assert.equal(duplicateRevisionResult.label, "Notification open could not be verified");
+    assert.equal(duplicateRevisionResult.label, "Notification verification unavailable");
     assert.equal(duplicateRevisionScreenReads, 0);
-    assert.deepEqual(duplicateRevisionOps, [
-      "android_notifications_list",
-      "android_notification_open",
-    ]);
+    assert.deepEqual(duplicateRevisionOps, ["android_notifications_list"]);
 
     const deniedScreenReadOps: string[] = [];
     _setAndroidAppRuntimeDepsForTesting({
@@ -761,10 +758,9 @@ async function main() {
       appName: "YouTube",
     }, "user-phone");
     assert.equal(deniedScreenReadResult.ok, false);
-    assert.equal(deniedScreenReadResult.label, "Notification open could not be verified");
-    assert.equal(deniedScreenReadResult.detail.method, "content_intent");
-    assert.equal(deniedScreenReadResult.detail.destinationPackage, "");
-    assert.deepEqual(deniedScreenReadOps, ["android_notifications_list", "android_notification_open"]);
+    assert.equal(deniedScreenReadResult.label, "Notification verification unavailable");
+    assert.match(String(deniedScreenReadResult.detail.error), /android_read_screen permission is required/);
+    assert.deepEqual(deniedScreenReadOps, ["android_notifications_list"]);
     assert.equal("screenContext" in deniedScreenReadResult.detail, false);
 
     const accessibilityOps: string[] = [];
