@@ -446,7 +446,7 @@ function hasPhoneRuntimeAction(normalized: string): boolean {
     hasCurrentTargetBeforePhoneOpenFollowUp(normalized) ||
     isPhoneOpenActionRequest(normalized) ||
     /^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|launch|tap)\b[\s\S]{0,160}\b(?:notification|alert)\b/i.test(normalized) ||
-    (/\b(?:search|find|look up|look for)\b/i.test(normalized) && /\b(?:on|in)\s+(?:facebook|fb|instagram|ig|reddit|linkedin|twitter|x|tiktok|snapchat|(?:the\s+)?app(?=\s*(?:[.!?]|$)))/i.test(normalized)) ||
+    (/^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:search|find|look\s+up|look\s+for)\b/i.test(normalized) && /\b(?:on|in)\s+(?:facebook|fb|instagram|ig|reddit|linkedin|twitter|x|tiktok|snapchat|(?:the\s+)?app(?=\s*(?:[.!?]|$)))/i.test(normalized)) ||
     /\b(?:browse to|navigate to|open (?:a )?(?:url|link|website|site))\b/i.test(normalized) ||
     /\b(?:screenshot|screen shot|screen capture)\b/i.test(normalized) ||
     /\b(?:read|inspect|look at|what(?:'s| is))\b.{0,48}\b(?:screen|display|phone)\b/i.test(normalized) ||
