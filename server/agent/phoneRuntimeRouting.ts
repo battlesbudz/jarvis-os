@@ -479,7 +479,7 @@ export function hasUnsupportedPhoneDeviceControlRequest(text: string): boolean {
 }
 
 const PHONE_RUNTIME_RETRY_PATTERN =
-  /^\s*(?:(?:can|could|would|will)\s+you\s+|please\s+|let['’]?s\s+)?(?:try|retry|repeat|run|do)\b[\s\S]{0,48}\b(?:again|once\s+more)\b/i;
+  /^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:let['’]?s\s+)?(?:try|retry|repeat|run|do)\b[\s\S]{0,48}\b(?:again|once\s+more)\b/i;
 const PHONE_RUNTIME_NEGATED_RETRY_PATTERN =
   /\b(?:don[’\']t|do\s+not|dont|never|stop)\b[^;.!?]{0,48}\b(?:try|retry|repeat|run|do)\b[^;.!?]{0,48}\b(?:again|once\s+more)\b/i;
 const PHONE_RUNTIME_RETRY_RETRACTION_PATTERN =
