@@ -285,7 +285,7 @@ function scoreNotificationReference(entry: AndroidNotificationSummaryEntry, quer
   for (const token of tokens) {
     if (normalizedApp === token) score += 8;
     else if (appTerms.has(token)) score += 5;
-    else if (titleAndText.includes(token)) score += 2;
+    else if (includesPhraseToken(titleAndText, token)) score += 2;
   }
   return score;
 }
