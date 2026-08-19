@@ -70,6 +70,17 @@ assert.equal(
 );
 assert.equal(isPhoneRuntimeCoveredRequest("Find tutorials on app development"), false);
 assert.equal(isPhoneRuntimeCoveredRequest("Find tutorials in the app"), true);
+assert.equal(isPhoneRuntimeCoveredRequest("Show that one"), false);
+assert.equal(isPhoneRuntimeCoveredRequest("Show that notification"), true);
+assert.equal(
+  resolvePhoneRuntimeRequestText([
+    { role: "user", content: "Open Facebook on my phone." },
+    { role: "assistant", content: "The phone action failed." },
+    { role: "user", content: "What should I do again?" },
+  ]),
+  "What should I do again?",
+  "a question containing do and again must not be treated as a retry command",
+);
 
 const routesSource = fs.readFileSync(path.resolve("server/routes.ts"), "utf8");
 const insightsSource = fs.readFileSync(path.resolve("app/(tabs)/insights.tsx"), "utf8");
