@@ -1216,7 +1216,7 @@ export const androidSearchInAppTool: AgentTool = {
           if (/edittext|textfield|textinput/.test(className)) return { node, score: -1 };
           let score = 0;
           if (/search_button|searchbutton|submit_search|search_icon|action_search/.test(serialized)) score += 12;
-          if (/"(?:text|label|contentdesc|contentdescription)"\s*:\s*"(?:search|go)"/.test(serialized)) score += 10;
+          if (/"(?:text|label|contentdesc|content_desc|contentdescription)"\s*:\s*"(?:search|go)"/.test(serialized)) score += 10;
           if (/search|submit|\bgo\b/.test(serialized)) score += 3;
           if (/"(?:clickable|isclickable)"\s*:\s*true/.test(serialized)) score += 3;
           if (/"(?:focused|isfocused)"\s*:\s*true/.test(serialized)) score -= 5;
