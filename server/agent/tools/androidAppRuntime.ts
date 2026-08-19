@@ -1306,7 +1306,7 @@ export const androidOpenNotificationTool: AgentTool = {
     properties: {
       notificationKey: { type: "string", description: "Stable key returned by android_read_notifications, when available." },
       query: { type: "string", description: "Distinctive notification title or text, such as 'You're Selling a Channel You're Not Using'." },
-      appName: { type: "string", description: "Optional app or sender name used to disambiguate, such as YouTube or Alex Hormozi." },
+      appName: { type: "string", description: "Optional app name used to disambiguate, such as YouTube or Gmail. Put sender names in query." },
     },
     required: [],
   },
