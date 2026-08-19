@@ -214,6 +214,7 @@ assert.match(deviceControlCardSource, /detail: !healthy[\s\S]{0,100}Connect Devi
 assert.match(deviceControlCardSource, /notificationPermissionGranted === true && status\?\.notificationServiceConnected === true[\s\S]{0,180}Permission granted and listener connected/);
 assert.doesNotMatch(routesSource, /isAndroidVoiceOrigin|rawOriginPlatform/);
 assert.match(routesSource, /const phoneRuntimeAvailable = androidActive;/);
+assert.match(channelCoachSource, /resolvePhoneRuntimeRequestText\(\[[\s\S]*cachedSessionMessages[\s\S]*\[\.\.\.chatMessages\]\.reverse\(\)[\s\S]*role: ["']user["'][\s\S]*classifyToolAwareRoute\(phoneRuntimeRequestText\)/);
 assert.match(channelCoachSource, /classifiedToolAwareRoute\.actionType === ["']jarvis_device_action["'] && !androidActive/);
 assert.match(channelCoachSource, /phoneRuntimeUnavailable[\s\S]*toolGroups: \[\][\s\S]*priorityToolNames: \[\][\s\S]*shouldPreferTool: false/);
 assert.match(channelCoachSource, /queryText: phoneRuntimeUnavailable \? undefined : userText/);
@@ -274,7 +275,8 @@ const voiceApprovalEnd = routesSource.indexOf("registerCoachActionConfirmationRo
 const voiceApprovalSource = routesSource.slice(voiceApprovalStart, voiceApprovalEnd);
 assert.doesNotMatch(voiceApprovalSource, /detail:\s*execResult\.detail/);
 assert.doesNotMatch(voiceApprovalSource, /failed:\s*\$\{execResult\.detail/);
-assert.match(routesSource, /else if \(typeof value === ["\']string["\']\)[\s\S]{0,120}<redacted:/);
+assert.match(routesSource, /const redactValue = \(key: string, value: unknown\)[\s\S]*Array\.isArray\(value\)[\s\S]*Object\.fromEntries/);
+assert.match(routesSource, /\^\(\?:action\|type\)\$[\s\S]*value\.slice\(0, 80\)/);
 assert.match(runtimeSource, /notificationsByKey = new Map<string, Record<string, unknown>>/);
 assert.match(runtimeSource, /if \(!notificationsByKey\.has\(mapKey\)\) notificationsByKey\.set\(mapKey, notification\)/);
 assert.match(runtimeSource, /appIdentityFields = \[notification\.app, notification\.pkg\]/);
