@@ -2820,7 +2820,6 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               operationArgs: diagnosticOperationArgs(tc.function.name, args),
               toolCallId: tc.id,
               durationMs: Date.now() - toolStartedAt,
-              detail: String(execResult.detail || '').slice(0, 5000),
               ...(verification !== undefined ? { verification } : {}),
               result: execResult.result,
               label: execResult.label,
