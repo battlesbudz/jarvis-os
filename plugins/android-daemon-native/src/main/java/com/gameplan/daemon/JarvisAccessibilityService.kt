@@ -855,7 +855,7 @@ class JarvisAccessibilityService : AccessibilityService() {
     /** Press the IME action key (Search/Go/Done/Enter) on the currently focused field. */
     fun pressImeAction(): Boolean {
         val focused = findFocusedEditable(rootInActiveWindow) ?: return false
-        return focused.performAction(actionImeEnterCompat)
+        return actionImeEnterCompat?.let { focused.performAction(it) } ?: false
     }
 
     data class NotificationShadeOpenResult(
