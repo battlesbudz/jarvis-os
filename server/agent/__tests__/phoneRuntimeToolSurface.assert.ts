@@ -232,8 +232,8 @@ assert.match(runtimeSource, /if \(ranked\.length === 0\) \{[\s\S]*if \(!allowSha
 assert.match(androidAccessibilitySource, /Regex\("\[\^\\\\p\{L\}\\\\p\{N\}\]\+"\)/);
 assert.match(androidAccessibilitySource, /queryTokens\.size > 1 -> containsBoundedNotificationTerm\(label, normalizedQuery\)/);
 assert.match(androidAccessibilitySource, /score = if \(appMatches && queryMatches\)/);
-assert.match(daemonShellSource, /keyboardDismissed &&[\s\S]*\(contentGrew \|\| contentChanged\)/);
-assert.doesNotMatch(daemonShellSource, /resultSignals \|\| contentGrew \|\| contentChanged/);
+assert.match(daemonShellSource, /keyboardDismissed && hasNewResultEvidence/);
+assert.doesNotMatch(daemonShellSource, /contentGrew|contentChanged|preSubmitLen|preSubmitNodeCount/);
 assert.equal(
   pluginAndroidAccessibilitySource,
   androidAccessibilitySource,
