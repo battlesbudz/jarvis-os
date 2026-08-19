@@ -20,6 +20,15 @@ assert.equal(
 );
 assert.equal(
   resolvePhoneRuntimeRequestText([
+    { role: "user", content: "Open Chrome on my phone." },
+    { role: "assistant", content: "The phone action failed." },
+    { role: "user", content: "Could you please try that again?" },
+  ]),
+  "Open Chrome on my phone.",
+  "a retry must accept stacked modal and politeness prefixes",
+);
+assert.equal(
+  resolvePhoneRuntimeRequestText([
     { role: "user", content: "Tell me a joke" },
     { role: "assistant", content: "That failed." },
     { role: "user", content: "Try again." },
@@ -259,6 +268,10 @@ assert.doesNotMatch(voiceApprovalSource, /detail:\s*execResult\.detail/);
 assert.doesNotMatch(voiceApprovalSource, /failed:\s*\$\{execResult\.detail/);
 assert.match(routesSource, /else if \(typeof value === ["\']string["\']\)[\s\S]{0,120}<redacted:/);
 assert.match(runtimeSource, /notificationsByKey = new Map<string, Record<string, unknown>>/);
+for (const source of [androidNotificationListenerSource, legacyNotificationListenerSource]) {
+  assert.match(source, /activeNotifications\?\.forEach \{ onNotificationPosted\(it\) \}/);
+  assert.match(source, /recent\.removeIf \{ it\.optString\("key"\) == sbn\.key \}/);
+}
 assert.match(runtimeSource, /if \(!notificationsByKey\.has\(mapKey\)\) notificationsByKey\.set\(mapKey, notification\)/);
 assert.match(runtimeSource, /appIdentityFields = \[notification\.app, notification\.pkg\]/);
 assert.match(runtimeSource, /containsNormalizedPhrase\(field, normalizedApp\)/);
@@ -288,6 +301,7 @@ assert.match(androidAccessibilitySource, /Regex\("\[\^\\\\p\{L\}\\\\p\{N\}\]\+"\
 assert.match(androidAccessibilitySource, /queryTokens\.size > 1 -> containsBoundedNotificationTerm\(label, normalizedQuery\)/);
 assert.match(androidAccessibilitySource, /score = if \(appMatches && queryMatches\)/);
 assert.match(daemonShellSource, /keyboardDismissed && hasNewResultEvidence/);
+assert.match(daemonShellSource, /Array\.isArray\(node\.text\)[\s\S]*for \(const value of labelValues\)/);
 assert.match(daemonShellSource, /resumeFromStepRaw > 5/);
 assert.doesNotMatch(daemonShellSource, /resume_from_step: 6/);
 assert.match(daemonShellSource, /hasNewResultContainer[\s\S]*newLabels\.length >= 2/);
