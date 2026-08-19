@@ -347,7 +347,8 @@ assert.match(notificationSummarySource, /key: String\(item\.key \|\| item\.notif
 assert.match(routesSource, /notificationKey: appNotificationFollowUp\.notification\.key/);
 assert.match(actionOntologySource, /isPhoneRuntimeCoveredRequest\(normalized\)/);
 assert.doesNotMatch(actionOntologySource, /open\|launch\|tap\|press\|swipe\|scroll\|type\|search\|find\|read\|show[\s\S]*android\|phone\|screen\|app/);
-assert.match(daemonActionSource, /allowShadeFallback = Boolean\(args\.query\)[\s\S]*isAndroidDaemonActionAllowed\(ctx\.userId, "android_read_screen"\)/);
+assert.match(daemonActionSource, /!args\.notificationKey && !args\.query && !args\.appName/);
+assert.match(daemonActionSource, /allowShadeFallback = Boolean\(args\.query \|\| args\.appName\)[\s\S]*isAndroidDaemonActionAllowed\(ctx\.userId, "android_read_screen"\)/);
 assert.match(daemonActionSource, /allowShadeFallback,[\s\S]*type: "android_notification_open"|type: "android_notification_open"[\s\S]*allowShadeFallback/);
 assert.match(routesSource, /runAndroidOpenNotification\(args, userId\)/);
 assert.match(bridgeSource, /android_read_screen:\s*"android_read_screen"/);
