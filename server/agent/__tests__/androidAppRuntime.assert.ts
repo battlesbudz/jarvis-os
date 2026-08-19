@@ -651,6 +651,13 @@ async function main() {
             },
           };
         }
+        if (op.type === "android_read_screen") {
+          return { ok: false, error: "screen unavailable" };
+        }
+        if (op.type === "android_notification_open") {
+          assert.equal(op.allowShadeFallback, true);
+          return { ok: false, error: "No visible notification matched." };
+        }
         return { ok: false, error: `unexpected op ${op.type}` };
       },
     });
@@ -659,8 +666,12 @@ async function main() {
       appName: "X",
     }, "user-phone");
     assert.equal(shortAppNameResult.ok, false);
-    assert.equal(shortAppNameResult.label, "Notification not found");
-    assert.deepEqual(shortAppNameOps, ["android_notifications_list"]);
+    assert.equal(shortAppNameResult.label, "Notification did not open");
+    assert.deepEqual(shortAppNameOps, [
+      "android_notifications_list",
+      "android_read_screen",
+      "android_notification_open",
+    ]);
 
     const duplicateRevisionOps: string[] = [];
     let duplicateRevisionScreenReads = 0;
