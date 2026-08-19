@@ -480,6 +480,8 @@ export function hasUnsupportedPhoneDeviceControlRequest(text: string): boolean {
 
 const PHONE_RUNTIME_RETRY_PATTERN =
   /\b(?:try|retry|repeat|run|do)\b[\s\S]{0,48}\b(?:again|once\s+more)\b/i;
+const PHONE_RUNTIME_NEGATED_RETRY_PATTERN =
+  /\b(?:don[’\']t|do\s+not|dont|never|stop)\b[^;.!?]{0,48}\b(?:try|retry|repeat|run|do)\b[^;.!?]{0,48}\b(?:again|once\s+more)\b/i;
 const PHONE_RUNTIME_CONTEXT_BRIDGE_PATTERN =
   /^\s*(?:did\s+you|have\s+you|why\s+(?:did|do|does|are)|(?:do|did)\s+you\s+understand|okay\s+so\s+you\s+understood|was\s+that|what\s+happened|that\s+failed|it\s+failed)\b/i;
 
@@ -498,7 +500,7 @@ export function resolvePhoneRuntimeRequestText(
   if (lastUserIndex < 0) return "";
 
   const lastUserText = String(messages[lastUserIndex].content);
-  if (!PHONE_RUNTIME_RETRY_PATTERN.test(lastUserText)) return lastUserText;
+  if (!PHONE_RUNTIME_RETRY_PATTERN.test(lastUserText) || PHONE_RUNTIME_NEGATED_RETRY_PATTERN.test(lastUserText)) return lastUserText;
 
   let inspectedUserMessages = 0;
   for (let index = lastUserIndex - 1; index >= 0 && inspectedUserMessages < maxUserMessages; index -= 1) {
