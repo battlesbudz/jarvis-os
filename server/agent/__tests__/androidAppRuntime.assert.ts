@@ -470,6 +470,50 @@ async function main() {
     assert.equal(unchangedForegroundResult.detail.destinationPackage, "com.google.android.youtube");
     assert.match(String(unchangedForegroundResult.detail.error), /no new foreground transition/i);
 
+    let sameAppReadCount = 0;
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      sendDaemonOp: async (_userId, op) => {
+        if (op.type === "android_notifications_list") {
+          return {
+            ok: true,
+            data: {
+              listenerEnabled: true,
+              notifications: [{
+                key: "gmail-message-key",
+                pkg: "com.google.android.gm",
+                app: "Gmail",
+                title: "Quarterly report",
+                text: "Open the report",
+              }],
+            },
+          };
+        }
+        if (op.type === "android_notification_open") {
+          return { ok: true, data: { opened: true, method: "content_intent", packageName: "com.google.android.gm" } };
+        }
+        if (op.type === "android_read_screen") {
+          sameAppReadCount += 1;
+          return {
+            ok: true,
+            data: {
+              package: "com.google.android.gm",
+              text: sameAppReadCount === 1 ? ["Inbox", "Quarterly report"] : ["Quarterly report", "Open the report"],
+            },
+          };
+        }
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const sameAppResult = await runAndroidOpenNotification({
+      query: "Quarterly report",
+      appName: "Gmail",
+    }, "user-phone");
+    assert.equal(sameAppResult.ok, true);
+    assert.equal(sameAppResult.detail.screenContentChanged, true);
+    assert.equal(sameAppResult.detail.foregroundTransitioned, false);
+
     const weakMatchOps: string[] = [];
     _setAndroidAppRuntimeDepsForTesting({
       isAndroidDaemonActive: () => true,
