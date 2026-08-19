@@ -183,6 +183,7 @@ assert.match(insightsSource, /originPlatform: Platform\.OS/);
 assert.match(deviceControlCardSource, /const statusReady = healthy && !checkingAccessibility && !needsAccessibility;/);
 assert.doesNotMatch(deviceControlCardSource, /const statusReady =[\s\S]{0,180}notificationPermission/);
 assert.match(deviceControlCardSource, /detail: !healthy[\s\S]{0,100}Connect Device Control to check Notification Access/);
+assert.match(deviceControlCardSource, /notificationPermissionGranted === true && status\?\.notificationServiceConnected === true[\s\S]{0,180}Permission granted and listener connected/);
 assert.doesNotMatch(routesSource, /isAndroidVoiceOrigin|rawOriginPlatform/);
 assert.match(routesSource, /const phoneRuntimeAvailable = androidActive;/);
 assert.match(routesSource, /phoneRuntimeAvailable && !memoryPhoneBypassRequest && \([\s\S]*isPhoneRuntimeCoveredRequest\(phoneRuntimeRequestText\)/);
