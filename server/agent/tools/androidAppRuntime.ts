@@ -924,7 +924,7 @@ export async function runAndroidOpenNotification(args: ToolArgs, userId: string)
         matchesExpectedPackage,
         observedExpectedDestination,
         foregroundTransitioned,
-        error: screen.ok ? "Android accepted the notification action, but the foreground app neither matched the notification target nor changed." : screen.error || "Destination verification failed.",
+        error: screen.ok ? "Android accepted the notification action, but no new foreground transition or explicit daemon destination was observed." : screen.error || "Destination verification failed.",
       },
     };
   }
