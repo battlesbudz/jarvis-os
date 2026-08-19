@@ -132,7 +132,12 @@ assert.match(routesSource, /phoneRuntimeActionRequest \|\|[\s\S]*isPhoneDeviceCo
 assert.match(insightsSource, /originPlatform: Platform\.OS/);
 assert.match(routesSource, /originPlatform: rawOriginPlatform/);
 assert.match(routesSource, /const isAndroidVoiceOrigin = originChannel === ["']voice["'] && rawOriginPlatform === ["']android["']/);
-assert.match(routesSource, /\(androidActive \|\| isAndroidVoiceOrigin\)[\s\S]*isPhoneRuntimeCoveredRequest\(phoneRuntimeRequestText\)/);
+assert.match(routesSource, /const phoneRuntimeAvailable = androidActive \|\| isAndroidVoiceOrigin/);
+assert.match(routesSource, /phoneRuntimeAvailable && !memoryPhoneBypassRequest && \([\s\S]*isPhoneRuntimeCoveredRequest\(phoneRuntimeRequestText\)/);
+assert.match(
+  routesSource,
+  /!phoneRuntimeAvailable && classifiedToolAwareRoute\.actionType === ["']jarvis_device_action["'][\s\S]*shouldPreferTool: hasNonPhoneToolRoute/,
+);
 assert.doesNotMatch(routesSource, /androidActive \|\| originChannel === ["']voice["']/);
 assert.doesNotMatch(routesSource, /'launch',/);
 assert.doesNotMatch(routesSource, /'look it up'/);

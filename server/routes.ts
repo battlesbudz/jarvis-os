@@ -1778,6 +1778,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const lastUserOrigText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
       const lastUserContent = lastUserOrigText.toLowerCase();
       const phoneRuntimeRequestText = resolvePhoneRuntimeRequestText(messages);
+      const phoneRuntimeAvailable = androidActive || isAndroidVoiceOrigin;
       const recentPhoneRuntimeConversation = messages
         .slice(-12)
         .map((message: { content?: unknown }) => typeof message.content === "string" ? message.content : "")
@@ -1792,22 +1793,22 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         : null;
       const confirmedAppCoversRequest = Boolean(confirmedAppTarget) &&
         isUnqualifiedPhoneAppOnlyRequest(phoneRuntimeRequestText);
-      const phoneRuntimeActionRequest = (androidActive || isAndroidVoiceOrigin) && !memoryPhoneBypassRequest && (
+      const phoneRuntimeActionRequest = phoneRuntimeAvailable && !memoryPhoneBypassRequest && (
         hasPhoneRuntimeActionRequest(phoneRuntimeRequestText) ||
         hasContextualPhoneRuntimeActionRequest(phoneRuntimeRequestText, recentPhoneRuntimeConversation.slice(0, -1)) ||
         Boolean(confirmedAppTarget)
       );
-      const phoneRuntimeCoveredRequest = (androidActive || isAndroidVoiceOrigin) && !memoryPhoneBypassRequest && (
+      const phoneRuntimeCoveredRequest = phoneRuntimeAvailable && !memoryPhoneBypassRequest && (
         isPhoneRuntimeCoveredRequest(phoneRuntimeRequestText) ||
         isContextualPhoneRuntimeCoveredRequest(phoneRuntimeRequestText, recentPhoneRuntimeConversation.slice(0, -1)) ||
         confirmedAppCoversRequest
       );
-      const isDeviceControlRequest = (androidActive || isAndroidVoiceOrigin) && !memoryPhoneBypassRequest && (
+      const isDeviceControlRequest = phoneRuntimeAvailable && !memoryPhoneBypassRequest && (
         phoneRuntimeActionRequest ||
         isPhoneDeviceControlKeywordRequest(phoneRuntimeRequestText)
       );
       const youtubeServerResearchRequest =
-        (androidActive || isAndroidVoiceOrigin) &&
+        phoneRuntimeAvailable &&
         isYoutubeServerResearchRequest(phoneRuntimeRequestText);
       const keepDaemonActionFallback = androidActive && !memoryPhoneBypassRequest &&
         hasUnsupportedPhoneDeviceControlRequest(phoneRuntimeRequestText) && !youtubeServerResearchRequest;
@@ -1847,7 +1848,23 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const buildInstruction = codexDelegationEnabled
         ? "When the user asks you to build, create, edit, inspect, or test a local code project or website, use delegate_to_codex so Codex can do the implementation work. If the user explicitly asks for the change to be permanent, pushed, published, deployed, or on GitHub, delegate that commit/push/publish requirement to Codex too and set allow_external_side_effects=true only for that exact requested action. If the user did not explicitly ask for commit/push/deploy, keep the work local and say that it still needs approval to be pushed."
         : "When the user asks you to build a standalone app, website, or landing page, use queue_background_job with agentType='app_project' so Jarvis can build it persistently in the hosted workspace.";
-      const toolAwareRoute = classifyToolAwareRoute(lastUserOrigText);
+      const classifiedToolAwareRoute = classifyToolAwareRoute(lastUserOrigText);
+      const unavailablePhoneToolNames = new Set<string>(ANDROID_PHONE_RUNTIME_TOOL_NAMES);
+      const nonPhonePriorityToolNames = classifiedToolAwareRoute.priorityToolNames
+        .filter((name) => !unavailablePhoneToolNames.has(name));
+      const nonPhoneToolGroups = classifiedToolAwareRoute.toolGroups
+        .filter((group) => group !== "system");
+      const hasNonPhoneToolRoute = classifiedToolAwareRoute.intents.length > 0 &&
+        (nonPhonePriorityToolNames.length > 0 || nonPhoneToolGroups.length > 0);
+      const toolAwareRoute = !phoneRuntimeAvailable && classifiedToolAwareRoute.actionType === "jarvis_device_action"
+        ? {
+            ...classifiedToolAwareRoute,
+            priorityToolNames: nonPhonePriorityToolNames,
+            toolGroups: nonPhoneToolGroups,
+            shouldPreferTool: hasNonPhoneToolRoute,
+            guidance: hasNonPhoneToolRoute ? classifiedToolAwareRoute.guidance : "",
+          }
+        : classifiedToolAwareRoute;
       const phoneRuntimeRequiredToolNames = buildPhoneRuntimeRequiredToolNames(
         phoneRuntimeRequestText,
         isDeviceControlRequest,
