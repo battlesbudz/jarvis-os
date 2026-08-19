@@ -906,8 +906,10 @@ export async function runAndroidOpenNotification(args: ToolArgs, userId: string)
     foregroundPackageAfter &&
     foregroundPackageAfter !== foregroundPackageBefore);
   const daemonVerifiedDestination = Boolean(!screen.ok && daemonDestinationPackage);
+  const observedExpectedDestination = matchesExpectedPackage &&
+    (!foregroundPackageBefore || foregroundTransitioned);
   const verified = safeDestination &&
-    (matchesExpectedPackage || foregroundTransitioned || daemonVerifiedDestination);
+    (observedExpectedDestination || foregroundTransitioned || daemonVerifiedDestination);
   if (!verified) {
     return {
       ok: false,
@@ -920,6 +922,7 @@ export async function runAndroidOpenNotification(args: ToolArgs, userId: string)
         foregroundPackageAfter,
         destinationPackage,
         matchesExpectedPackage,
+        observedExpectedDestination,
         foregroundTransitioned,
         error: screen.ok ? "Android accepted the notification action, but the foreground app neither matched the notification target nor changed." : screen.error || "Destination verification failed.",
       },
