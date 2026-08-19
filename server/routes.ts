@@ -99,6 +99,7 @@ import {
   isMemoryPhoneBypassRequest,
   isPhoneDeviceControlKeywordRequest,
   isPhoneRuntimeCoveredRequest,
+  resolvePhoneRuntimeRequestText,
   isYoutubePhoneActionRequest,
   isYoutubePhoneRequest,
   isYoutubeServerResearchRequest,
@@ -214,7 +215,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         parameters: {
           type: "object",
           properties: {
-            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list", "android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_screen_context", "android_operator_action", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list", "android_wait", "android_return_to_jarvis"], description: "Action to perform. 'notify' works on BOTH desktop and Android daemons — sends a pop-up banner notification with title and body. 'android_wait' pauses for ms milliseconds (default 1500, max 10000) — use between steps when the phone UI needs time to settle (e.g. after tapping a video to let it load before read_screen). 'android_screen_context' returns structured accessibility context. 'android_operator_action' executes a narrow operatorAction payload. 'android_return_to_jarvis' returns the phone to the Jarvis app or existing chat surface — call this as the LAST step of every multi-step task after the notify banner, to return the user to the conversation." },
+            action: { type: "string", enum: ["shell", "notify", "file_read", "file_write", "file_list", "android_open_app", "android_browse", "android_screenshot", "android_read_screen", "android_screen_context", "android_operator_action", "android_tap", "android_type", "android_swipe", "android_press_key", "android_file_list", "android_file_read", "android_notifications_list", "android_notification_open", "android_wait", "android_return_to_jarvis"], description: "Action to perform. 'notify' works on BOTH desktop and Android daemons — sends a pop-up banner notification with title and body. 'android_notification_open' opens one exact notification by key or title/app query. 'android_wait' pauses for ms milliseconds (default 1500, max 10000) — use between steps when the phone UI needs time to settle (e.g. after tapping a video to let it load before read_screen). 'android_screen_context' returns structured accessibility context. 'android_operator_action' executes a narrow operatorAction payload. 'android_return_to_jarvis' returns the phone to the Jarvis app or existing chat surface — call this as the LAST step of every multi-step task after the notify banner, to return the user to the conversation." },
             cmd: { type: "string", description: "Shell command (for 'shell' action)" },
             title: { type: "string", description: "Notification title (for 'notify' action)" },
             body: { type: "string", description: "Notification body (for 'notify' action)" },
@@ -232,6 +233,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             y2: { type: "number", description: "Swipe end Y (for android_swipe)" },
             key: { type: "string", enum: ["back", "home", "recents", "volume_up", "volume_down", "enter"], description: "System key (for android_press_key). Use 'enter' to press IME Search/Go/Done/Enter on the keyboard." },
             limit: { type: "number", description: "Max notifications to return (for android_notifications_list, default 20)" },
+            notificationKey: { type: "string", description: "Stable notification key for android_notification_open." },
+            query: { type: "string", description: "Notification title/text query for android_notification_open." },
+            appName: { type: "string", description: "Optional notification app/sender for android_notification_open." },
             ms: { type: "number", description: "Milliseconds to wait (for android_wait, default 1500, max 10000). Use 1500–3000ms after tapping a video to let YouTube load." },
             operatorAction: { type: "object", description: "Structured operator payload for android_operator_action. Example: { type: 'tap_element', elementId: 3 }" },
           },
@@ -632,7 +636,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             return { result: 'error', label: 'Daemon not connected', detail: 'No daemon paired. Install and pair either the desktop daemon or the Android APK from Profile → Connected Channels.' };
           }
           const isAndroidDaemon = isAndroidDaemonActive(userId);
-          const androidActions = ['android_open_app', 'android_browse', 'android_return_to_jarvis', 'android_screenshot', 'android_read_screen', 'android_screen_context', 'android_operator_action', 'android_tap', 'android_type', 'android_swipe', 'android_press_key', 'android_file_list', 'android_file_read', 'android_notifications_list', 'android_wait'];
+          const androidActions = ['android_open_app', 'android_browse', 'android_return_to_jarvis', 'android_screenshot', 'android_read_screen', 'android_screen_context', 'android_operator_action', 'android_tap', 'android_type', 'android_swipe', 'android_press_key', 'android_file_list', 'android_file_read', 'android_notifications_list', 'android_notification_open', 'android_wait'];
           const desktopActions = ['shell', 'file_read', 'file_write', 'file_list'];
 
           let op: DaemonOp;
@@ -650,6 +654,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               android_file_list: 'android_file_list', android_file_read: 'android_file_read',
               android_tap: 'android_tap_type', android_type: 'android_tap_type',
               android_swipe: 'android_tap_type', android_press_key: 'android_tap_type',
+              android_notification_open: 'android_tap_type',
               android_notifications_list: null,  // served from server cache — no daemon permission needed
             };
             const permKey = permMap[action];
@@ -693,6 +698,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             } else if (action === 'android_type') {
               if (!args.text) return { result: 'error', label: 'text required', detail: 'Provide text for android_type.' };
               op = { type: 'android_type', text: String(args.text), submit: !!args.submit };
+            } else if (action === 'android_notification_open') {
+              if (!args.notificationKey && !args.query) return { result: 'error', label: 'notification target required', detail: 'Provide notificationKey or query for android_notification_open.' };
+              const allowShadeFallback = Boolean(args.query) &&
+                await isAndroidDaemonActionAllowed(userId, 'android_read_screen');
+              if (!args.notificationKey && !allowShadeFallback) {
+                return { result: 'error', label: 'Permission denied', detail: 'android_read_screen permission is required for a query-only notification open.' };
+              }
+              op = {
+                type: 'android_notification_open',
+                notificationKey: args.notificationKey ? String(args.notificationKey) : undefined,
+                query: args.query ? String(args.query) : undefined,
+                appName: args.appName ? String(args.appName) : undefined,
+                allowShadeFallback,
+              };
             } else if (action === 'android_notifications_list') {
               const limit = typeof args.limit === 'number' ? Math.min(args.limit, 60) : 20;
 
@@ -883,6 +902,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             android_open_app: 15000,
             android_screenshot: 20000,
             android_notifications_list: 12000,
+            android_notification_open: 15000,
             android_file_list: 8000,
             android_file_read: 10000,
             shell: 20000,
@@ -1272,11 +1292,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let stopKeepalive: () => void = () => {};
     let stopVisibleProgress: () => void = () => {};
     try {
-      const { messages: requestedMessages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: rawIncomingAppSessionId, originChannel: rawOriginChannel } = req.body;
+      const { messages: requestedMessages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: rawIncomingAppSessionId, originChannel: rawOriginChannel, originPlatform: rawOriginPlatform } = req.body;
       const incomingAppSessionId = typeof rawIncomingAppSessionId === "string" && rawIncomingAppSessionId.trim()
         ? rawIncomingAppSessionId.trim()
         : undefined;
       const originChannel: string = (typeof rawOriginChannel === "string" && rawOriginChannel.trim()) ? rawOriginChannel.trim().toLowerCase() : "appchat";
+      const isAndroidVoiceOrigin = originChannel === "voice" && rawOriginPlatform === "android";
       userId = req.userId ?? await getUserIdFromRequest(req);
 
       if (!requestedMessages || !Array.isArray(requestedMessages)) {
@@ -1756,37 +1777,40 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user');
       const lastUserOrigText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
       const lastUserContent = lastUserOrigText.toLowerCase();
+      const phoneRuntimeRequestText = resolvePhoneRuntimeRequestText(messages);
       const recentPhoneRuntimeConversation = messages
         .slice(-12)
         .map((message: { content?: unknown }) => typeof message.content === "string" ? message.content : "")
         .filter(Boolean);
       const memoryPhoneBypassRequest = isMemoryPhoneBypassRequest(lastUserContent);
       const unqualifiedAppTarget = androidActive && !memoryPhoneBypassRequest
-        ? unqualifiedPhoneAppTarget(lastUserOrigText)
+        ? unqualifiedPhoneAppTarget(phoneRuntimeRequestText)
         : null;
       const confirmedAppTarget = unqualifiedAppTarget &&
         await confirmInstalledAndroidAppName(userId, unqualifiedAppTarget)
         ? unqualifiedAppTarget
         : null;
       const confirmedAppCoversRequest = Boolean(confirmedAppTarget) &&
-        isUnqualifiedPhoneAppOnlyRequest(lastUserOrigText);
-      const phoneRuntimeActionRequest = androidActive && !memoryPhoneBypassRequest && (
-        hasPhoneRuntimeActionRequest(lastUserContent) ||
-        hasContextualPhoneRuntimeActionRequest(lastUserContent, recentPhoneRuntimeConversation.slice(0, -1)) ||
+        isUnqualifiedPhoneAppOnlyRequest(phoneRuntimeRequestText);
+      const phoneRuntimeActionRequest = (androidActive || isAndroidVoiceOrigin) && !memoryPhoneBypassRequest && (
+        hasPhoneRuntimeActionRequest(phoneRuntimeRequestText) ||
+        hasContextualPhoneRuntimeActionRequest(phoneRuntimeRequestText, recentPhoneRuntimeConversation.slice(0, -1)) ||
         Boolean(confirmedAppTarget)
       );
-      const phoneRuntimeCoveredRequest = androidActive && !memoryPhoneBypassRequest && (
-        isPhoneRuntimeCoveredRequest(lastUserContent) ||
-        isContextualPhoneRuntimeCoveredRequest(lastUserContent, recentPhoneRuntimeConversation.slice(0, -1)) ||
+      const phoneRuntimeCoveredRequest = (androidActive || isAndroidVoiceOrigin) && !memoryPhoneBypassRequest && (
+        isPhoneRuntimeCoveredRequest(phoneRuntimeRequestText) ||
+        isContextualPhoneRuntimeCoveredRequest(phoneRuntimeRequestText, recentPhoneRuntimeConversation.slice(0, -1)) ||
         confirmedAppCoversRequest
       );
-      const isDeviceControlRequest = androidActive && !memoryPhoneBypassRequest && (
+      const isDeviceControlRequest = (androidActive || isAndroidVoiceOrigin) && !memoryPhoneBypassRequest && (
         phoneRuntimeActionRequest ||
-        isPhoneDeviceControlKeywordRequest(lastUserContent)
+        isPhoneDeviceControlKeywordRequest(phoneRuntimeRequestText)
       );
-      const youtubeServerResearchRequest = androidActive && isYoutubeServerResearchRequest(lastUserContent);
+      const youtubeServerResearchRequest =
+        (androidActive || isAndroidVoiceOrigin) &&
+        isYoutubeServerResearchRequest(phoneRuntimeRequestText);
       const keepDaemonActionFallback = androidActive && !memoryPhoneBypassRequest &&
-        hasUnsupportedPhoneDeviceControlRequest(lastUserContent) && !youtubeServerResearchRequest;
+        hasUnsupportedPhoneDeviceControlRequest(phoneRuntimeRequestText) && !youtubeServerResearchRequest;
 
       // Absolute prohibition injected at the TOP of the system message so the model
       // reads it before any other context. Without this, the model pattern-matches
@@ -1825,7 +1849,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         : "When the user asks you to build a standalone app, website, or landing page, use queue_background_job with agentType='app_project' so Jarvis can build it persistently in the hosted workspace.";
       const toolAwareRoute = classifyToolAwareRoute(lastUserOrigText);
       const phoneRuntimeRequiredToolNames = buildPhoneRuntimeRequiredToolNames(
-        lastUserContent,
+        phoneRuntimeRequestText,
         isDeviceControlRequest,
         phoneRuntimeActionRequest,
       );
@@ -1905,7 +1929,23 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           ]
         : chatMessages;
 
-      const actionResults: { tool: string; result: 'success' | 'error' | 'pending'; label: string; actionType?: string; actor?: string; approvalRequired?: boolean; actionReason?: string; url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string; imageCaption?: string; videoUrl?: string; videoCaption?: string; mcpServerName?: string }[] = [];
+      const actionResults: { tool: string; operation?: string; operationArgs?: Record<string, unknown>; toolCallId?: string; durationMs?: number; detail?: string; verification?: unknown; result: 'success' | 'error' | 'pending'; label: string; actionType?: string; actor?: string; approvalRequired?: boolean; actionReason?: string; url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string; imageCaption?: string; videoUrl?: string; videoCaption?: string; mcpServerName?: string }[] = [];
+      const diagnosticOperationArgs = (toolName: string, input: Record<string, unknown>): Record<string, unknown> => {
+        const output: Record<string, unknown> = {};
+        for (const [key, value] of Object.entries(input)) {
+          if (/token|secret|password|authorization/i.test(key)) {
+            output[key] = "<redacted>";
+          } else if (/notificationKey/i.test(key) && typeof value === "string") {
+            output[key] = `<sha256:${createHash('sha256').update(value).digest('hex').slice(0, 12)}>`;
+          } else if (/^(?:text|content|body|replyText|message|query|search_query)$/i.test(key) && typeof value === "string") {
+            output[key] = `<redacted:${value.length} chars>`;
+          } else if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) {
+            output[key] = value;
+          }
+        }
+        if (toolName === 'daemon_action' && typeof input.action === 'string') output.action = input.action;
+        return output;
+      };
       // Accumulates MCP rich attachments across all tool calls in this request.
       // Emitted alongside executedActions in the type:'actions' SSE event to
       // mirror the CoachReplyResult { executedActions, attachments } contract.
@@ -2107,7 +2147,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           getToolName: (tool) => chatToolName(tool) ?? "",
           forceRequired: isDeviceControlRequest || isDiagnosticsRequest || isResearchRequest || routeRequiredToolNames.length > 0,
         });
-        const usePhoneRuntimeToolSurfaceOnly = androidActive && phoneRuntimeCoveredRequest;
+        const usePhoneRuntimeToolSurfaceOnly = phoneRuntimeCoveredRequest;
         const modelRequestTools = usePhoneRuntimeToolSurfaceOnly
           ? filterPhoneRuntimeModelTools(firstTurnToolPolicy.tools, {
               allowDaemonActionFallback: keepDaemonActionFallback,
@@ -2164,14 +2204,29 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             detail: useToolFocusedLoop ? "Tool-focused route selected" : "Full coach context route selected",
           });
           const phase1StartedAt = Date.now();
-          const deterministicToolCall = turn === 0
+          const deterministicNotificationOpenCall = turn === 0 && appNotificationFollowUp?.kind === "open" &&
+            modelRequestTools.some((tool) => chatToolName(tool) === "android_open_notification")
+            ? {
+                id: `jarvis_notification_open_${Date.now().toString(36)}_0`,
+                type: "function" as const,
+                function: {
+                  name: "android_open_notification",
+                  arguments: JSON.stringify({
+                    notificationKey: appNotificationFollowUp.notification.key,
+                    query: appNotificationFollowUp.notification.title || appNotificationFollowUp.notification.text,
+                    appName: appNotificationFollowUp.notification.app,
+                  }),
+                },
+              }
+            : null;
+          const deterministicToolCall = deterministicNotificationOpenCall ?? (turn === 0
             ? deterministicPhoneRuntimeToolCallFromRequest(lastUserOrigText, modelRequestTools, {
                 androidActive,
                 phoneRuntimeCoveredRequest,
                 confirmedAppTarget,
                 recentConversation: recentPhoneRuntimeConversation.slice(0, -1),
               })
-            : null;
+            : null);
           if (deterministicToolCall) {
             emitMeaningfulProgress({
               source: "runtime",
@@ -2378,10 +2433,14 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             const androidSubmitApprovalRequired = isAndroidSubmitCapableAction(tc.function.name, args, userRequestText);
             const codexDelegationApprovalRequired = tc.function.name === 'delegate_to_codex' &&
               codexDelegationRequiresConfirmation(args);
+            const androidRouteApprovalRequired =
+              isAndroidPhoneRuntimeToolName(tc.function.name) ||
+              (tc.function.name === 'daemon_action' && String(args.action || '').startsWith('android_'));
             const isHighStakes = tc.function.name === 'send_email' ||
               (tc.function.name === 'connected_accounts_execute' && connectedAccountPermission?.approvalRequired === true && args.dry_run !== true) ||
               (tc.function.name === 'daemon_action' && ['shell', 'file_write'].includes(String(args.action || ''))) ||
               codexDelegationApprovalRequired ||
+              androidRouteApprovalRequired ||
               androidSubmitApprovalRequired;
 
             if (isHighStakes) {
@@ -2412,8 +2471,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 preview.timeoutSeconds = String(normalizeCodexDelegationTimeoutMs(args.timeout_seconds) / 1000);
                 if (args.allow_external_side_effects === true) preview.externalSideEffects = 'Allowed for this task';
                 preview.reason = 'Codex requested permission to modify the workspace or an external system.';
-              } else if (androidSubmitApprovalRequired) {
+              } else if (androidRouteApprovalRequired || androidSubmitApprovalRequired) {
                 Object.assign(preview, buildAndroidSubmitConfirmationPreview(tc.function.name, args, userRequestText));
+                if (androidRouteApprovalRequired && !androidSubmitApprovalRequired) {
+                  preview.reason = toolAwareRoute.approvalRequired
+                    ? toolAwareRoute.reason
+                    : "This Android device action requires explicit approval before execution.";
+                }
               } else {
                 preview.action = String(args.action || '');
                 if (args.cmd) preview.cmd = String(args.cmd);
@@ -2450,6 +2514,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 android_screenshot: 'Taking screenshot...',
                 android_press_key: 'Pressing key...',
                 android_notifications_list: 'Checking notifications...',
+                android_notification_open: 'Opening the selected notification...',
                 notify: 'Sending you a notification...',
               };
               const highLevelActionLabel: Record<string, string> = {
@@ -2464,6 +2529,8 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 android_press_phone_key: 'Pressing phone key...',
                 android_wait_for_ui: 'Waiting for the phone UI...',
                 android_read_notifications: 'Checking notifications...',
+                android_open_notification: 'Opening the selected notification...',
+                android_search_in_app: 'Searching inside the app...',
                 android_notify_user: 'Sending you a notification...',
                 android_return_to_jarvis_chat: 'Returning to Jarvis...',
               };
@@ -2497,6 +2564,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             }
 
             // MCP tools are executed via the agent tool registry (not executeCoachTool)
+            const toolStartedAt = Date.now();
             let execResult: CoachToolExecutionResult;
             let plainMcpServerName: string | undefined;
             if (tc.function.name.startsWith('mcp__') && mcpAgentToolsMap.has(tc.function.name)) {
@@ -2718,8 +2786,22 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             if (execResult.buttonLabel && !linkData.buttonLabel) {
               linkData.buttonLabel = execResult.buttonLabel;
             }
+            const operation = tc.function.name === 'daemon_action' ? String(args.action || 'unknown') : tc.function.name;
+            let verification: unknown;
+            try {
+              const parsedDetail = JSON.parse(execResult.detail || '{}') as Record<string, unknown>;
+              verification = parsedDetail.verified ?? (parsedDetail.detail && typeof parsedDetail.detail === 'object'
+                ? (parsedDetail.detail as Record<string, unknown>).verified
+                : undefined);
+            } catch {}
             actionResults.push({
               tool: tc.function.name,
+              operation,
+              operationArgs: diagnosticOperationArgs(tc.function.name, args),
+              toolCallId: tc.id,
+              durationMs: Date.now() - toolStartedAt,
+              detail: String(execResult.detail || '').slice(0, 5000),
+              ...(verification !== undefined ? { verification } : {}),
               result: execResult.result,
               label: execResult.label,
               actionType: toolAwareRoute.actionType,

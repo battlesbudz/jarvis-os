@@ -1198,6 +1198,41 @@ export const androidSearchInAppTool: AgentTool = {
       }
     }
 
+    function parseSubmitElement(raw: string): { found: boolean; x: number | null; y: number | null } {
+      try {
+        const parsed = JSON.parse(raw);
+        const nodes: Array<Record<string, unknown>> = [];
+        const collect = (value: unknown): void => {
+          if (!value || typeof value !== "object") return;
+          if (Array.isArray(value)) { value.forEach(collect); return; }
+          const node = value as Record<string, unknown>;
+          nodes.push(node);
+          Object.values(node).forEach(collect);
+        };
+        collect(parsed);
+        const ranked = nodes.map((node) => {
+          const serialized = JSON.stringify(node).toLowerCase();
+          const className = String(node.className || node.class_name || node.class || node.type || "").toLowerCase();
+          if (/edittext|textfield|textinput/.test(className)) return { node, score: -1 };
+          let score = 0;
+          if (/search_button|searchbutton|submit_search|search_icon|action_search/.test(serialized)) score += 12;
+          if (/"(?:text|label|contentdesc|contentdescription)"\s*:\s*"(?:search|go)"/.test(serialized)) score += 10;
+          if (/search|submit|\bgo\b/.test(serialized)) score += 3;
+          if (/"(?:clickable|isclickable)"\s*:\s*true/.test(serialized)) score += 3;
+          if (/"(?:focused|isfocused)"\s*:\s*true/.test(serialized)) score -= 5;
+          return { node, score };
+        }).filter((entry) => entry.score > 5).sort((left, right) => right.score - left.score);
+        const coordinateMatch = ranked
+          .map((entry) => ({ ...entry, coords: extractNodeCoords(entry.node) }))
+          .find((entry) => entry.coords !== null);
+        return coordinateMatch?.coords
+          ? { found: true, x: coordinateMatch.coords.x, y: coordinateMatch.coords.y }
+          : { found: false, x: null, y: null };
+      } catch {
+        return { found: false, x: null, y: null };
+      }
+    }
+
     //        Helper: freshly locate the search element from current screen                            
     async function relocateSearchElement(): Promise<{ found: boolean; x: number | null; y: number | null; screenRaw: string; discoveredResourceId?: string }> {
       const r = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
@@ -1205,6 +1240,11 @@ export const androidSearchInAppTool: AgentTool = {
       const raw = JSON.stringify(r.data || "");
       const parsed = parseSearchElement(raw);
       return { ...parsed, screenRaw: raw };
+    }
+
+    async function relocateSubmitElement(): Promise<{ found: boolean; x: number | null; y: number | null }> {
+      const result = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      return result.ok ? parseSubmitElement(JSON.stringify(result.data || "")) : { found: false, x: null, y: null };
     }
 
     let screenRaw = "";
@@ -1663,8 +1703,15 @@ export const androidSearchInAppTool: AgentTool = {
       const preSubmitLen = screenRaw.length;
       const preSubmitNodeCount = (screenRaw.match(/"type"|"className"|"contentDesc"/g) || []).length;
 
-      // Primary: send Enter/newline     triggers IME Search/Go action on most keyboards
-      await sendDaemonOp(ctx.userId, { type: "android_type", text: "\n" }, 10000);
+      // Primary: invoke the focused field's IME Search/Go action. The daemon
+      // falls back to a hardware-style KEYCODE_ENTER for custom Facebook/WebView
+      // inputs that do not expose ACTION_IME_ENTER through accessibility.
+      const enterResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "enter" }, 10000);
+      stepLog.push({
+        step: 5,
+        outcome: enterResult.ok ? "enter_dispatched" : "enter_failed",
+        detail: enterResult.ok ? JSON.stringify(enterResult.data || {}) : enterResult.error || "IME and keyevent submission failed",
+      });
       await sleep(2500);
 
       function isResultsState(raw: string): boolean {
@@ -1674,10 +1721,13 @@ export const androidSearchInAppTool: AgentTool = {
         // 2. Screen content changed significantly     more nodes than the typing state
         const newNodeCount = (raw.match(/"type"|"className"|"contentDesc"/g) || []).length;
         const contentGrew = newNodeCount > preSubmitNodeCount + 2 || raw.length > preSubmitLen + 300;
+        const contentChanged = raw !== screenRaw && Math.abs(raw.length - preSubmitLen) > 80;
         // 3. Screen is not showing an error dialog that typically indicates failure
         const isErrorDialog = screenContains(raw, ["network error", "something went wrong", "no connection", "retry"]) &&
           !screenContains(raw, SEARCH_KEYWORDS);
-        return keyboardDismissed && contentGrew && !isErrorDialog;
+        return !isErrorDialog &&
+          keyboardDismissed &&
+          (contentGrew || contentChanged);
       }
 
       const afterSearch = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
@@ -1692,7 +1742,7 @@ export const androidSearchInAppTool: AgentTool = {
       // Fallback: locate and tap a visible search/go button
       if (!resultsLoaded) {
         emitProgress(`Retrying submission via search button…`);
-        const btnLocated = await relocateSearchElement();
+        const btnLocated = await relocateSubmitElement();
         if (btnLocated.found && btnLocated.x !== null && btnLocated.y !== null) {
           await sendDaemonOp(ctx.userId, { type: "android_tap", x: btnLocated.x, y: btnLocated.y }, 10000);
           await sleep(2500);

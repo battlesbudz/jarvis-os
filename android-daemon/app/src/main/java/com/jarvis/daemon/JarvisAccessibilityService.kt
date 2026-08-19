@@ -785,13 +785,15 @@ class JarvisAccessibilityService : AccessibilityService() {
 
     /** Type text into the currently-focused editable field.
      *  @param submit If true, send IME action (Search/Go/Enter) after typing. */
-    fun typeText(text: String, submit: Boolean = false): Boolean {
+    data class TypeTextResult(val typed: Boolean, val submitted: Boolean)
+
+    fun typeTextDetailed(text: String, submit: Boolean = false): TypeTextResult {
         val focused = findFocusedEditable(rootInActiveWindow)
             ?: findFirstEditable(rootInActiveWindow)
 
         if (focused == null) {
             Log.w(TAG, "typeText: no editable field found")
-            return false
+            return TypeTextResult(typed = false, submitted = false)
         }
 
         // Set text
@@ -801,18 +803,138 @@ class JarvisAccessibilityService : AccessibilityService() {
         val ok = focused.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
 
         // Optional IME submit (Search/Go/Enter key on keyboard)
-        if (submit && ok) {
+        val submitted = if (submit && ok) {
             Thread.sleep(80)  // Give IME time to react
             focused.performAction(actionImeEnterCompat)
-        }
+        } else false
 
-        return ok
+        return TypeTextResult(typed = ok, submitted = submitted)
+    }
+
+    fun typeText(text: String, submit: Boolean = false): Boolean {
+        val result = typeTextDetailed(text, submit)
+        return result.typed && (!submit || result.submitted)
     }
 
     /** Press the IME action key (Search/Go/Done/Enter) on the currently focused field. */
     fun pressImeAction(): Boolean {
         val focused = findFocusedEditable(rootInActiveWindow) ?: return false
         return focused.performAction(actionImeEnterCompat)
+    }
+
+    data class NotificationShadeOpenResult(
+        val opened: Boolean,
+        val matchedText: String? = null,
+        val destinationPackage: String? = null,
+        val error: String? = null,
+    )
+
+    fun openNotificationFromShade(query: String, appName: String? = null): NotificationShadeOpenResult {
+        val normalizedQuery = query.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+        val normalizedApp = appName.orEmpty().lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+        if (normalizedQuery.isEmpty() && normalizedApp.isEmpty()) return NotificationShadeOpenResult(false, error = "A notification title, app, or text query is required.")
+        if (!performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS)) return NotificationShadeOpenResult(false, error = "Android did not open the notification shade.")
+        fun closeNotificationShadeAfterFailure() {
+            performGlobalAction(GLOBAL_ACTION_BACK)
+            Thread.sleep(150)
+        }
+        val deadline = SystemClock.uptimeMillis() + 3_000L
+        var matched: AccessibilityNodeInfo? = null
+        var matchedLabel: String? = null
+        var matchedAmbiguous = false
+        fun aggregateNotificationRowLabel(candidate: AccessibilityNodeInfo): String {
+            val labels = mutableListOf<String>()
+            val descendants = ArrayDeque<AccessibilityNodeInfo>()
+            descendants.add(candidate)
+            while (descendants.isNotEmpty()) {
+                val descendant = descendants.removeFirst()
+                listOfNotNull(descendant.text?.toString(), descendant.contentDescription?.toString())
+                    .filter { value -> value.isNotBlank() }
+                    .forEach(labels::add)
+                for (index in 0 until descendant.childCount) descendant.getChild(index)?.let(descendants::add)
+            }
+            return labels.joinToString(" ").lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim()
+        }
+        fun containsBoundedNotificationTerm(value: String, term: String): Boolean =
+            term.isNotEmpty() && Regex("(^|[^\\p{L}\\p{N}])${Regex.escape(term)}([^\\p{L}\\p{N}]|$)").containsMatchIn(value)
+        fun notificationRowHasAppLabel(candidate: AccessibilityNodeInfo, app: String): Boolean {
+            if (app.isEmpty()) return true
+            val descendants = ArrayDeque<AccessibilityNodeInfo>()
+            descendants.add(candidate)
+            while (descendants.isNotEmpty()) {
+                val descendant = descendants.removeFirst()
+                val hasExactAppLabel = listOfNotNull(descendant.text?.toString(), descendant.contentDescription?.toString())
+                    .map { value -> value.lowercase().replace(Regex("[^\\p{L}\\p{N}]+"), " ").trim() }
+                    .any { value -> value == app }
+                if (hasExactAppLabel) return true
+                for (index in 0 until descendant.childCount) descendant.getChild(index)?.let(descendants::add)
+            }
+            return false
+        }
+        while (SystemClock.uptimeMillis() < deadline && matched == null) {
+            Thread.sleep(120)
+            val root = rootInActiveWindow ?: continue
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            queue.add(root)
+            var bestScore = 0
+            while (queue.isNotEmpty()) {
+                val node = queue.removeFirst()
+                var clickCandidate: AccessibilityNodeInfo? = node
+                while (clickCandidate != null && !clickCandidate.isClickable) clickCandidate = clickCandidate.parent
+                val label = clickCandidate?.let(::aggregateNotificationRowLabel).orEmpty()
+                val appMatches = normalizedApp.isEmpty() ||
+                    (clickCandidate != null && notificationRowHasAppLabel(clickCandidate, normalizedApp))
+                val queryTokens = normalizedQuery.split(' ')
+                    .filter { token -> token.length > 2 }
+                    .distinct()
+                val exactQueryMatch = when {
+                    normalizedQuery.isEmpty() -> true
+                    queryTokens.size > 1 -> containsBoundedNotificationTerm(label, normalizedQuery)
+                    else -> containsBoundedNotificationTerm(label, normalizedQuery)
+                }
+                val matchedTokens = queryTokens.count { token -> containsBoundedNotificationTerm(label, token) }
+                val meaningfulPartialMatch = queryTokens.size >= 2 &&
+                    matchedTokens >= 2 &&
+                    matchedTokens.toDouble() / queryTokens.size >= 0.6
+                val queryMatches = exactQueryMatch || meaningfulPartialMatch
+                val score = if (appMatches && queryMatches) {
+                    (if (normalizedApp.isNotEmpty()) 12 else 0) +
+                        (if (exactQueryMatch && normalizedQuery.isNotEmpty()) 30 else matchedTokens * 4)
+                } else {
+                    0
+                }
+                if (score > bestScore && clickCandidate != null) {
+                    bestScore = score
+                    matched = clickCandidate
+                    matchedLabel = label
+                    matchedAmbiguous = false
+                } else if (score > 0 && score == bestScore && clickCandidate != null && clickCandidate != matched) {
+                    matchedAmbiguous = true
+                }
+                for (index in 0 until node.childCount) node.getChild(index)?.let(queue::add)
+            }
+        }
+        val target = matched
+        if (target == null) {
+            closeNotificationShadeAfterFailure()
+            return NotificationShadeOpenResult(false, error = "No visible notification matched '$query'.")
+        }
+        if (matchedAmbiguous) {
+            closeNotificationShadeAfterFailure()
+            return NotificationShadeOpenResult(false, error = "Multiple visible notifications matched '$query'; specify a more precise title.")
+        }
+        var clickable: AccessibilityNodeInfo? = target
+        while (clickable != null && !clickable.isClickable) clickable = clickable.parent
+        val clickTarget = clickable ?: target
+        if (!clickTarget.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            closeNotificationShadeAfterFailure()
+            return NotificationShadeOpenResult(false, matchedText = matchedLabel, error = "The matching notification was visible but Android rejected the click.")
+        }
+        Thread.sleep(700)
+        val destination = runCatching { rootInActiveWindow?.packageName?.toString() }.getOrNull()
+        val leftShade = !destination.isNullOrBlank() && destination != "com.android.systemui"
+        if (!leftShade) closeNotificationShadeAfterFailure()
+        return NotificationShadeOpenResult(leftShade, matchedLabel, destination, if (leftShade) null else "The notification was tapped, but the notification shade remained open.")
     }
 
     data class ClearFieldResult(

@@ -31,6 +31,7 @@ const HIGH_RISK_TOOLS = new Set([
   "setup_named_agent",
   // OS / system actions via daemon
   "daemon_action",
+  "android_open_notification",
   // Delegating to Codex may transitively reach local MCP/CLI capabilities.
   "delegate_to_codex",
 ]);
@@ -49,6 +50,7 @@ export const STRICTLY_IRREVERSIBLE_TOOLS = new Set([
   "send_email",
   "gmail_action",
   "daemon_action",
+  "android_open_notification",
   "discord_post",
   "speak",
   "sessions_send",

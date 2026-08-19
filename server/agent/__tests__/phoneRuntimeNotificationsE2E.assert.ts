@@ -694,6 +694,8 @@ async function main() {
     false,
     "informational notification questions should not force phone-control routing",
   );
+  assert.equal(isPhoneRuntimeCoveredRequest("Open that notification"), true);
+  assert.equal(isPhoneRuntimeCoveredRequest("Search for Alex Hormozi on Facebook"), true);
   assert.equal(
     deterministicPhoneRuntimeToolCallFromRequest("Do not read my notifications.", phoneTools, connectedPhoneRuntime),
     null,
@@ -856,6 +858,16 @@ async function main() {
   const referencedOpen = resolveAndroidNotificationFollowUp("Open the Reddit one", followUpNotifications);
   assert.equal(referencedOpen?.kind, "open");
   assert.equal(referencedOpen?.notification.app, "Reddit");
+
+  const tiedBudgetNotifications = [
+    { key: "gmail-budget-1", app: "Gmail", pkg: "com.google.android.gm", title: "Budget", text: "First update", ts: Date.now() },
+    { key: "gmail-budget-2", app: "Gmail", pkg: "com.google.android.gm", title: "Budget", text: "Second update", ts: Date.now() },
+  ];
+  const ambiguousBudgetOpen = resolveAndroidNotificationFollowUp("Open the Budget notification", tiedBudgetNotifications);
+  assert.equal(ambiguousBudgetOpen, null, "tied non-ordinal notification matches must not select an arbitrary key");
+  const ordinalBudgetOpen = resolveAndroidNotificationFollowUp("Open the second one", tiedBudgetNotifications);
+  assert.equal(ordinalBudgetOpen?.kind, "open");
+  assert.equal(ordinalBudgetOpen?.notification.key, "gmail-budget-2");
 
   const plainOpen = resolveAndroidNotificationFollowUp("Open Reddit", [
     { app: "Gmail", pkg: "com.google.android.gm", title: "Reddit digest", text: "Trending posts from Reddit", ts: Date.now() },

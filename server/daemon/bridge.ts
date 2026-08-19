@@ -67,6 +67,7 @@ export type DaemonOp =
   | { type: "android_file_list"; path: string }
   | { type: "android_file_read"; path: string }
   | { type: "android_notifications_list"; limit?: number }
+  | { type: "android_notification_open"; notificationKey?: string; query?: string; appName?: string; allowShadeFallback?: boolean }
   | { type: "android_return_to_jarvis" }
   | { type: "android_file_search"; query: string; root?: string; fileType?: string; maxDepth?: number }
   | { type: "android_open_file"; path: string }
@@ -973,11 +974,13 @@ export async function sendDaemonOp(
       android_location_get:   "android_location",
       android_sms_send:       "android_sms",
       android_screen_record:  "android_screen_record",
+      android_read_screen:    "android_read_screen",
       android_screen_context: "android_read_screen",
       android_view_hierarchy: "android_read_screen",
       android_copy_to_clipboard: "android_tap_type",
       android_copy_text_to_clipboard: "android_tap_type",
       android_pinch:          "android_tap_type",
+      android_notification_open: "android_tap_type",
       android_local_model_status:   "android_local_model",
       android_local_model_import:   "android_local_model",
       android_local_model_validate: "android_local_model",
@@ -993,6 +996,14 @@ export async function sendDaemonOp(
       if (!allowed) {
         const msg = `Android permission '${requiredPerm}' is disabled. Enable it in Profile → Connected Channels → Android Daemon before using this feature.`;
         console.log(`[daemon] op BLOCKED (bridge-level permission) userId=${userId} op=${op.type} perm=${requiredPerm}`);
+        return { ok: false, error: msg };
+      }
+    }
+    if (op.type === "android_notification_open" && op.allowShadeFallback === true) {
+      const screenReadAllowed = await isAndroidDaemonActionAllowed(userId, "android_read_screen");
+      if (!screenReadAllowed) {
+        const msg = "Android permission 'android_read_screen' is disabled. Enable it before using the notification-shade fallback.";
+        console.log(`[daemon] op BLOCKED (bridge-level permission) userId=${userId} op=${op.type} perm=android_read_screen`);
         return { ok: false, error: msg };
       }
     }

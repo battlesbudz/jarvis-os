@@ -80,7 +80,33 @@ function testFailedActionCopyBundle() {
   assert.match(copied, /permission missing/);
   assert.match(copied, /stateCard/);
   assert.equal(bundle.contextEstimate.approximateTokens > 0, true);
+  assert.equal(bundle.schemaVersion, 2);
   console.log("OK: failed action copy includes context, tools, errors, and Android state");
+}
+
+function testOperationLevelDiagnostics() {
+  const bundle = buildTurnDiagnosticBundle({
+    turnId: "turn_operation",
+    source: "in_app",
+    channel: "appchat",
+    requestText: "Open the YouTube notification",
+    contextPacket: {},
+    normalizedToolCalls: [{
+      tool: "daemon_action",
+      operation: "android_notification_open",
+      operationArgs: { notificationKey: "<sha256:123456789abc>", query: "<redacted:20 chars>" },
+      toolCallId: "call-1",
+      durationMs: 812,
+      verification: true,
+    }],
+    toolResults: [{ tool: "daemon_action", operation: "android_notification_open", result: "success", verification: true }],
+    timing: { startedAt: "2026-08-16T20:00:00.000Z", durationMs: 812 },
+  });
+  const copied = formatDiagnosticBundleForClipboard(bundle);
+  assert.match(copied, /android_notification_open/);
+  assert.match(copied, /toolCallId/);
+  assert.match(copied, /durationMs/);
+  assert.match(copied, /verification/);
 }
 
 function testSuccessfulTurnCopyBundle() {
@@ -166,6 +192,7 @@ function testAppContextTraceWiringContract() {
   assert.match(insights, /appSubmittedMessages: apiMessages/);
   assert.match(insights, /offeredTools: serverContextTrace\?\.offeredToolNames \?\? \[\]/);
   assert.match(insights, /originChannel: origin\.source === 'voice' \? 'voice' : 'appchat'/);
+  assert.match(insights, /originPlatform: Platform\.OS/);
   assert.match(
     insights,
     /if \(reply\.intent === 'restore'\)[\s\S]*?acceptedVoiceRestore = voiceRestore;[\s\S]*?const normalizedVoiceText/,
@@ -364,6 +391,7 @@ function testTelegramVoiceDiagnosticsCaptureMessageIdContract() {
 }
 
 testFailedActionCopyBundle();
+testOperationLevelDiagnostics();
 testSuccessfulTurnCopyBundle();
 testTruthfulAppContextDiagnostics();
 testAppContextTraceWiringContract();

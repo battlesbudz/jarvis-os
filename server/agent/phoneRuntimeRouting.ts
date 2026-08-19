@@ -426,6 +426,16 @@ function hasNonRuntimeActionAlongsidePhoneAction(text: string): boolean {
 }
 
 function hasPhoneRuntimeAction(normalized: string): boolean {
+  const withoutAffirmativeIdioms = normalized.replace(
+    /\b(?:don['’]?t\s+forget|do\s+not\s+hesitate)\s+to\s+(?=(?:open|launch|start|search|find|tap|press|swipe|scroll|type|enter|read|show)\b)/gi,
+    "",
+  );
+  const actionClauses = phoneOpenClauses(withoutAffirmativeIdioms);
+  const negatesPhoneAction = actionClauses.length === 1 &&
+    /\b(?:don't|dont|do not|never|stop)\b[\s\S]{0,64}\b(?:open|launch|start|search|find|tap|press|swipe|scroll|type|enter|read|show)\b/i.test(actionClauses[0]);
+  if (negatesPhoneAction) return false;
+  const asksForInstructions = /^\s*(?:how\s+(?:do|can|could|should|would)\s+(?:i|you|we)|(?:can|could|would)\s+you\s+(?:show|tell|explain)(?:\s+me)?\s+how(?:\s+to)?|show\s+me\s+how(?:\s+to)?|tell\s+me\s+how(?:\s+to)?|what(?:'s|\s+is)\s+the\s+(?:best\s+)?way\s+to)\b/i.test(normalized);
+  if (asksForInstructions) return false;
   const youtubePhoneActionRequest = !isYoutubeServerResearchRequest(normalized) &&
     !/\b(?:do\s+not|don['’]?t|dont|never|stop)\b[\s\S]{0,48}\b(?:open|launch|start|search|find|look\s+up|look\s+for|play|watch)\b/i.test(normalized) && (
       extractYoutubePhoneSearchQuery(normalized) !== null ||
@@ -435,6 +445,8 @@ function hasPhoneRuntimeAction(normalized: string): boolean {
   return youtubePhoneActionRequest ||
     hasCurrentTargetBeforePhoneOpenFollowUp(normalized) ||
     isPhoneOpenActionRequest(normalized) ||
+    (/\b(?:open|launch|tap|show)\b/i.test(normalized) && /\b(?:notification|alert|that one|this one)\b/i.test(normalized)) ||
+    (/\b(?:search|find|look up|look for)\b/i.test(normalized) && /\b(?:on|in)\s+(?:facebook|fb|instagram|ig|reddit|linkedin|twitter|x|tiktok|snapchat|app)\b/i.test(normalized)) ||
     /\b(?:browse to|navigate to|open (?:a )?(?:url|link|website|site))\b/i.test(normalized) ||
     /\b(?:screenshot|screen shot|screen capture)\b/i.test(normalized) ||
     /\b(?:read|inspect|look at|what(?:'s| is))\b.{0,48}\b(?:screen|display|phone)\b/i.test(normalized) ||
@@ -464,6 +476,50 @@ export function hasUnsupportedPhoneDeviceControlRequest(text: string): boolean {
   return segments.some((segment) => (
     isPhoneDeviceControlKeywordRequest(segment) && !hasPhoneRuntimeAction(segment)
   ));
+}
+
+const PHONE_RUNTIME_RETRY_PATTERN =
+  /\b(?:try|retry|repeat|run|do)\b[\s\S]{0,48}\b(?:again|once\s+more)\b/i;
+const PHONE_RUNTIME_CONTEXT_BRIDGE_PATTERN =
+  /^\s*(?:did\s+you|have\s+you|why\s+(?:did|do|does|are)|(?:do|did)\s+you\s+understand|okay\s+so\s+you\s+understood|was\s+that|what\s+happened|that\s+failed|it\s+failed)\b/i;
+
+/**
+ * Preserve an explicit phone target across a bounded retry chain. Assistant
+ * failure prose is deliberately ignored so a server-browser error cannot
+ * redirect a phone command back to the generic browser runtime.
+ */
+export function resolvePhoneRuntimeRequestText(
+  messages: Array<{ role?: string; content?: unknown }>,
+  maxUserMessages = 6,
+): string {
+  const lastUserIndex = messages.findLastIndex((message) => (
+    message.role === "user" && typeof message.content === "string"
+  ));
+  if (lastUserIndex < 0) return "";
+
+  const lastUserText = String(messages[lastUserIndex].content);
+  if (!PHONE_RUNTIME_RETRY_PATTERN.test(lastUserText)) return lastUserText;
+
+  let inspectedUserMessages = 0;
+  for (let index = lastUserIndex - 1; index >= 0 && inspectedUserMessages < maxUserMessages; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "user" || typeof message.content !== "string") continue;
+    inspectedUserMessages += 1;
+    const text = message.content.trim();
+    if (PHONE_RUNTIME_CONTEXT_BRIDGE_PATTERN.test(text)) continue;
+    const retryCandidate = text.replace(
+      /^\s*(?:let['’]?s\s+)?(?:try|retry|repeat|run|do)(?:\s+this)?\s+(?:again|once\s+more)\s*[,;:-]?\s*/i,
+      "",
+    );
+    const hasExplicitPhoneTarget = retryCandidate
+      .split(new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i"))
+      .some((segment) => extractExplicitPhoneAppTarget(segment.trim()));
+    if (isPhoneRuntimeCoveredRequest(text) || hasExplicitPhoneTarget) return text;
+    if (PHONE_RUNTIME_RETRY_PATTERN.test(text)) continue;
+    break;
+  }
+
+  return lastUserText;
 }
 
 export function isPhoneNotificationReadRequest(text: string): boolean {

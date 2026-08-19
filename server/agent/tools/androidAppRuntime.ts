@@ -459,6 +459,36 @@ function jsonObject(data: unknown): Record<string, unknown> {
   return data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {};
 }
 
+function notificationMatchScore(notification: Record<string, unknown>, query: string, appName: string): number {
+  const fields = [notification.app, notification.pkg, notification.title, notification.text]
+    .map((value) => String(value || "").toLowerCase().replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const haystack = fields.join(" ");
+  const normalizedQuery = normalizeAppLookup(query);
+  const normalizedApp = normalizeAppLookup(appName);
+  const appIdentityFields = [notification.app, notification.pkg]
+    .map((value) => normalizeAppLookup(String(value || "")))
+    .filter(Boolean);
+  const appMatches = !normalizedApp ||
+    appIdentityFields.some((field) => containsNormalizedPhrase(field, normalizedApp));
+  if (!appMatches) return 0;
+
+  let score = normalizedApp ? 12 : 0;
+  if (!normalizedQuery) return score;
+
+  const queryTokens = Array.from(new Set(normalizedQuery.split(/\s+/).filter((token) => token.length > 2)));
+  const exactQueryMatch = fields.some((field) =>
+    containsNormalizedPhrase(normalizeAppLookup(field), normalizedQuery),
+  );
+  if (exactQueryMatch) return score + 30;
+
+  const matchedTokens = queryTokens.filter((token) => containsNormalizedPhrase(normalizeAppLookup(haystack), normalizeAppLookup(token))).length;
+  const meaningfulPartialMatch = queryTokens.length >= 2 &&
+    matchedTokens >= 2 &&
+    matchedTokens / queryTokens.length >= 0.6;
+  return meaningfulPartialMatch ? score + matchedTokens * 4 : 0;
+}
+
 function compactScreenContext(data: unknown, maxChars = 2500): string {
   const text = typeof data === "string" ? data : JSON.stringify(data ?? {});
   return text.slice(0, maxChars);
@@ -766,6 +796,158 @@ export async function runAndroidReadNotifications(args: ToolArgs, userId: string
   };
   await recordAndroidOutcomeObservation(userId, "notifications", outcome);
   return outcome;
+}
+
+export async function runAndroidOpenNotification(args: ToolArgs, userId: string): Promise<RuntimeOutcome> {
+  if (!androidDaemonActive(userId)) return daemonDisconnected();
+  const permissionError = await permissionDenied(userId, "android_tap_type");
+  if (permissionError) return permissionError;
+  const screenReadAllowed = await androidActionAllowed(userId, "android_read_screen");
+  let notificationKey = String(args.notificationKey || "").trim();
+  const query = String(args.query || args.title || "").trim();
+  let appName = String(args.appName || "").trim();
+  const allowShadeFallback = screenReadAllowed &&
+    (!appName || Array.from(normalizeAppLookup(appName)).length > 1);
+  let expectedPackage = "";
+  let resolvedNotification: Record<string, unknown> | null = null;
+
+  if (!notificationKey) {
+    if (!query && !appName) {
+      return { ok: false, label: "Notification reference required", detail: { error: "Provide a notification title/text query, app name, or notification key." } };
+    }
+    const listed = await sendAndroidDaemonOp(userId, { type: "android_notifications_list", limit: 60 }, 10000);
+    const notifications = listed.ok && Array.isArray(jsonObject(listed.data).notifications)
+      ? jsonObject(listed.data).notifications as unknown[]
+      : [];
+    const notificationsByKey = new Map<string, Record<string, unknown>>();
+    notifications.forEach((candidate, index) => {
+      const notification = jsonObject(candidate);
+      const key = String(notification.key || "").trim();
+      const mapKey = key || `__notification_without_key_${index}`;
+      if (!notificationsByKey.has(mapKey)) notificationsByKey.set(mapKey, notification);
+    });
+    const ranked = [...notificationsByKey.values()]
+      .map((candidate) => ({ candidate, score: notificationMatchScore(candidate, query, appName) }))
+      .filter((entry) => entry.score > 0)
+      .sort((left, right) => right.score - left.score);
+    if (ranked.length === 0) {
+      if (!allowShadeFallback) {
+        return {
+          ok: false,
+          label: "Notification not found",
+          detail: {
+            error: "No active notification matched the requested title, text, and app strongly enough to open safely.",
+            target: { app: appName, query },
+          },
+        };
+      }
+    } else {
+      if (ranked.length > 1 && ranked[0].score === ranked[1].score) {
+        return {
+          ok: false,
+          label: "Notification reference is ambiguous",
+          detail: {
+            error: "More than one active notification matched. Ask the user which title or app they mean.",
+            matches: ranked.slice(0, 3).map(({ candidate }) => ({ app: candidate.app, title: candidate.title, text: candidate.text })),
+          },
+        };
+      }
+      resolvedNotification = ranked[0]?.candidate ?? null;
+      notificationKey = String(resolvedNotification?.key || "").trim();
+      appName ||= String(resolvedNotification?.app || "").trim();
+      expectedPackage = String(resolvedNotification?.pkg || "").trim();
+    }
+  }
+
+  const effectiveQuery = query || String(resolvedNotification?.title || resolvedNotification?.text || "").trim();
+  const beforeScreen = screenReadAllowed
+    ? await sendAndroidDaemonOp(userId, { type: "android_read_screen" }, 10000)
+    : { ok: false as const, error: "android_read_screen permission is not enabled" };
+  const foregroundPackageBefore = beforeScreen.ok
+    ? String(jsonObject(beforeScreen.data).package || "").trim()
+    : "";
+  const openResult = await sendAndroidDaemonOp(userId, {
+    type: "android_notification_open",
+    notificationKey: notificationKey || undefined,
+    query: effectiveQuery || undefined,
+    appName: appName || undefined,
+    allowShadeFallback,
+  }, 15000);
+  if (!openResult.ok) {
+    return {
+      ok: false,
+      label: "Notification did not open",
+      detail: {
+        operation: "android_notification_open",
+        target: { app: appName, query: effectiveQuery },
+        error: openResult.error || "Android did not open the selected notification.",
+      },
+    };
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  const screen = screenReadAllowed
+    ? await sendAndroidDaemonOp(userId, { type: "android_read_screen" }, 10000)
+    : { ok: false as const, error: "android_read_screen permission is not enabled" };
+  const daemonResult = jsonObject(openResult.data);
+  const foregroundPackageAfter = screen.ok
+    ? String(jsonObject(screen.data).package || "").trim()
+    : "";
+  const daemonDestinationPackage = String(daemonResult.destinationPackage || "").trim();
+  const daemonNotificationPackage = String(daemonResult.packageName || "").trim();
+  const directContentIntentPackage = !screen.ok &&
+    daemonResult.opened === true &&
+    daemonResult.method === "content_intent"
+    ? daemonNotificationPackage
+    : "";
+  const expectedDestinationPackage = expectedPackage || daemonNotificationPackage;
+  const destinationPackage = foregroundPackageAfter || daemonDestinationPackage || directContentIntentPackage;
+  const safeDestination = Boolean(destinationPackage &&
+    destinationPackage !== "com.android.systemui" &&
+    destinationPackage !== "com.gameplan" &&
+    destinationPackage !== "com.jarvis.daemon");
+  const matchesExpectedPackage = Boolean(expectedDestinationPackage &&
+    destinationPackage === expectedDestinationPackage);
+  const foregroundTransitioned = Boolean(foregroundPackageBefore &&
+    foregroundPackageAfter &&
+    foregroundPackageAfter !== foregroundPackageBefore);
+  const daemonVerifiedDestination = Boolean(!screen.ok &&
+    (daemonDestinationPackage || directContentIntentPackage));
+  const verified = safeDestination &&
+    (matchesExpectedPackage || foregroundTransitioned || daemonVerifiedDestination);
+  if (!verified) {
+    return {
+      ok: false,
+      label: "Notification open could not be verified",
+      detail: {
+        operation: "android_notification_open",
+        method: daemonResult.method || "unknown",
+        target: { app: appName, query: effectiveQuery, expectedPackage: expectedDestinationPackage },
+        foregroundPackageBefore,
+        foregroundPackageAfter,
+        destinationPackage,
+        matchesExpectedPackage,
+        foregroundTransitioned,
+        error: screen.ok ? "Android accepted the notification action, but the foreground app neither matched the notification target nor changed." : screen.error || "Destination verification failed.",
+      },
+    };
+  }
+  return {
+    ok: true,
+    label: `Opened ${appName || "notification"}`,
+    detail: {
+      operation: "android_notification_open",
+      method: daemonResult.method || "unknown",
+      target: { app: appName, query: effectiveQuery, expectedPackage: expectedDestinationPackage },
+      foregroundPackageBefore,
+      foregroundPackageAfter,
+      destinationPackage,
+      matchesExpectedPackage,
+      foregroundTransitioned,
+      verified: true,
+      screenContext: screen.ok ? compactScreenContext(screen.data, 5000) : undefined,
+    },
+  };
 }
 
 export async function runAndroidNotifyUser(args: ToolArgs, userId: string): Promise<RuntimeOutcome> {
@@ -1120,6 +1302,23 @@ export const androidReadNotificationsTool: AgentTool = {
   },
 };
 
+export const androidOpenNotificationTool: AgentTool = {
+  name: "android_open_notification",
+  description: "Phone Runtime: open one exact active Android notification. Resolve by notificationKey when available or by app/title/text query, use the notification content intent when possible, fall back to one atomic notification-shade action, and verify the destination before reporting success.",
+  parameters: {
+    type: "object",
+    properties: {
+      notificationKey: { type: "string", description: "Stable key returned by android_read_notifications, when available." },
+      query: { type: "string", description: "Distinctive notification title or text, such as 'You're Selling a Channel You're Not Using'." },
+      appName: { type: "string", description: "Optional app or sender name used to disambiguate, such as YouTube or Alex Hormozi." },
+    },
+    required: [],
+  },
+  async execute(args, ctx) {
+    return jsonToolResult(await runAndroidOpenNotification(args, ctx.userId));
+  },
+};
+
 export const androidNotifyUserTool: AgentTool = {
   name: "android_notify_user",
   description: "Phone Runtime: send a local Android notification banner to the user at the end of a multi-step phone task.",
@@ -1161,6 +1360,7 @@ export const androidPhoneRuntimeTools: AgentTool[] = [
   androidPressPhoneKeyTool,
   androidWaitForUiTool,
   androidReadNotificationsTool,
+  androidOpenNotificationTool,
   androidNotifyUserTool,
   androidReturnToJarvisChatTool,
 ];

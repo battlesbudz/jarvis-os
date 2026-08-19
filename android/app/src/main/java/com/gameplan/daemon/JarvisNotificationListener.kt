@@ -4,10 +4,12 @@ import android.app.Notification
 import android.app.PendingIntent
 import android.app.RemoteInput
 import android.content.Context
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import android.util.Log
@@ -20,12 +22,16 @@ class JarvisNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         super.onListenerConnected()
         instance = this
+        lastConnectedAt = System.currentTimeMillis()
+        lastError = null
         Log.i(TAG, "Notification listener connected")
     }
 
     override fun onListenerDisconnected() {
         super.onListenerDisconnected()
         instance = null
+        lastDisconnectedAt = System.currentTimeMillis()
+        lastError = "Notification listener disconnected by Android."
         Log.i(TAG, "Notification listener disconnected")
     }
 
@@ -123,6 +129,34 @@ class JarvisNotificationListener : NotificationListenerService() {
         }
     }
 
+    fun openNotification(context: Context, key: String): OpResult {
+        val active = try {
+            activeNotifications
+        } catch (e: Exception) {
+            lastError = "Cannot access active notifications: ${e.message}"
+            return OpResult(false, error = lastError)
+        }
+        val sbn = active?.firstOrNull { it.key == key }
+            ?: return OpResult(false, error = "Notification with key '$key' is no longer active or has been dismissed.")
+        val contentIntent = sbn.notification.contentIntent
+            ?: return OpResult(false, error = "This notification does not expose an action that Android can open.")
+        return try {
+            contentIntent.send(context, 0, Intent())
+            Log.i(TAG, "Notification opened: key=$key package=${sbn.packageName}")
+            OpResult(true, data = JSONObject()
+                .put("opened", true)
+                .put("key", key)
+                .put("packageName", sbn.packageName)
+                .put("method", "content_intent"))
+        } catch (e: PendingIntent.CanceledException) {
+            lastError = "The notification action was cancelled or expired."
+            OpResult(false, error = lastError)
+        } catch (e: Exception) {
+            lastError = "Failed to open notification: ${e.message}"
+            OpResult(false, error = lastError)
+        }
+    }
+
     companion object {
         private const val TAG = "JarvisNotifListener"
         private const val MAX_CACHED = 60
@@ -131,6 +165,14 @@ class JarvisNotificationListener : NotificationListenerService() {
 
         var instance: JarvisNotificationListener? = null
             private set
+
+        @Volatile var lastConnectedAt: Long = 0L
+            private set
+        @Volatile var lastDisconnectedAt: Long = 0L
+            private set
+        @Volatile var lastError: String? = null
+            private set
+        @Volatile private var lastRebindRequestedAt: Long = 0L
 
         private val DENY_PACKAGES = setOf(
             "com.gameplan",
@@ -149,9 +191,61 @@ class JarvisNotificationListener : NotificationListenerService() {
             return arr
         }
 
+        fun permissionGranted(context: Context): Boolean {
+            val component = ComponentName(context, JarvisNotificationListener::class.java)
+            val enabled = Settings.Secure.getString(
+                context.contentResolver,
+                "enabled_notification_listeners",
+            ).orEmpty()
+            return enabled.split(':').any { flattened ->
+                ComponentName.unflattenFromString(flattened) == component
+            }
+        }
+
+        fun componentDeclared(context: Context): Boolean = try {
+            context.packageManager.getServiceInfo(
+                ComponentName(context, JarvisNotificationListener::class.java),
+                PackageManager.MATCH_DISABLED_COMPONENTS,
+            )
+            true
+        } catch (_: PackageManager.NameNotFoundException) {
+            false
+        }
+
+        fun componentEnabled(context: Context): Boolean {
+            val state = context.packageManager.getComponentEnabledSetting(
+                ComponentName(context, JarvisNotificationListener::class.java),
+            )
+            return state != PackageManager.COMPONENT_ENABLED_STATE_DISABLED &&
+                state != PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER &&
+                state != PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED
+        }
+
+        fun requestRebindIfNeeded(context: Context): Boolean {
+            if (instance != null || !permissionGranted(context) || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
+            val now = System.currentTimeMillis()
+            if (now - lastRebindRequestedAt < 10_000L) return false
+            return try {
+                lastRebindRequestedAt = now
+                NotificationListenerService.requestRebind(ComponentName(context, JarvisNotificationListener::class.java))
+                true
+            } catch (e: Exception) {
+                lastError = "Notification listener rebind failed: ${e.message}"
+                false
+            }
+        }
+
         fun performReply(context: Context, key: String, text: String): OpResult {
             return instance?.replyToNotification(context, key, text)
                 ?: OpResult(false, error = "Notification listener service is not connected. Grant notification access in Settings > Notifications > Device & App Notifications > Jarvis app.")
+        }
+
+        fun performOpen(context: Context, key: String): OpResult {
+            return instance?.openNotification(context, key)
+                ?: OpResult(false, error = if (permissionGranted(context))
+                    "Notification access is granted, but the listener service is disconnected."
+                else
+                    "Notification access is not granted in Android settings.")
         }
     }
 }

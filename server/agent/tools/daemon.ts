@@ -29,6 +29,7 @@ const ANDROID_ACTIONS: readonly string[] = [
   "android_file_list",
   "android_file_read",
   "android_notifications_list",
+  "android_notification_open",
   "android_wait",
   "android_return_to_jarvis",
   "android_file_search",
@@ -66,7 +67,7 @@ function androidPermKey(action: string): AndroidDaemonAction | null {
   if (action === "android_open_file") return "android_file_list";
   if (action === "android_copy_to_clipboard") return "android_file_list";
   if (action === "android_tap" || action === "android_type" || action === "android_swipe" || action === "android_press_key") return "android_tap_type";
-  if (action === "android_notification_reply") return "android_tap_type";
+  if (action === "android_notification_reply" || action === "android_notification_open") return "android_tap_type";
   if (action === "android_camera_snap" || action === "android_camera_clip") return "android_camera";
   if (action === "android_location_get") return "android_location";
   if (action === "android_sms_send") return "android_sms";
@@ -170,6 +171,7 @@ Do not require confirmation for low-risk phone navigation and read-only control:
           "android_screen_context", "android_operator_action",
           "android_tap", "android_type", "android_swipe", "android_press_key",
           "android_file_list", "android_file_read", "android_notifications_list",
+          "android_notification_open",
           "android_wait", "android_return_to_jarvis",
           "android_file_search", "android_open_file", "android_copy_to_clipboard",
           "android_notification_reply",
@@ -198,12 +200,13 @@ Do not require confirmation for low-risk phone navigation and read-only control:
       durationMs: { type: "number", description: "Swipe duration in ms (when action is 'android_swipe', default 300)" },
       ms: { type: "number", description: "Milliseconds to pause (when action is 'android_wait', default 1500, max 10000)" },
       key: { type: "string", enum: ["back", "home", "recents", "volume_up", "volume_down", "enter"], description: "System key (when action is 'android_press_key'). 'enter' presses the IME action key (Search/Go/Done)." },
-      query: { type: "string", description: "Search term — substring match against filename (when action is 'android_file_search')" },
+      query: { type: "string", description: "Search term for android_file_search, or notification title/text for android_notification_open." },
+      appName: { type: "string", description: "Optional notification app/sender used by android_notification_open." },
       root: { type: "string", description: "Root path to start search from (when action is 'android_file_search', defaults to external storage root)" },
       fileType: { type: "string", enum: ["image", "video", "audio", "document", "any"], description: "File type filter (when action is 'android_file_search', default 'any')" },
       maxDepth: { type: "number", description: "Maximum directory depth to recurse (when action is 'android_file_search', default 4, max 8)" },
       limit: { type: "number", description: "Maximum notifications to return (when action is 'android_notifications_list')" },
-      notificationKey: { type: "string", description: "Notification status-bar key from android_notifications_list (when action is 'android_notification_reply')" },
+      notificationKey: { type: "string", description: "Notification status-bar key from android_notifications_list (for android_notification_open or android_notification_reply)." },
       replyText: { type: "string", description: "The reply text to send inline (when action is 'android_notification_reply')" },
       approved: { type: "boolean", description: "Must be true for android_notification_reply and android_sms_send — set only after the user has explicitly confirmed in the conversation" },
       facing: { type: "string", enum: ["front", "back", "both"], description: "Camera facing direction (when action is 'android_camera_snap': front/back/both returns one or both images; android_camera_clip: front/back only; default 'back')" },
@@ -446,6 +449,20 @@ Do not require confirmation for low-risk phone navigation and read-only control:
       } else if (rawAction === "android_copy_to_clipboard") {
         if (!args.path) return { ok: false, content: jsonErrorContent("path required") };
         op = { type: "android_copy_to_clipboard", path: String(args.path) };
+      } else if (rawAction === "android_notification_open") {
+        if (!args.notificationKey && !args.query) return { ok: false, content: jsonErrorContent("notificationKey or query required") };
+        const allowShadeFallback = Boolean(args.query) &&
+          await isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen");
+        if (!args.notificationKey && !allowShadeFallback) {
+          return { ok: false, content: jsonErrorContent("android_read_screen permission is required for a query-only notification open.") };
+        }
+        op = {
+          type: "android_notification_open",
+          notificationKey: args.notificationKey ? String(args.notificationKey) : undefined,
+          query: args.query ? String(args.query) : undefined,
+          appName: args.appName ? String(args.appName) : undefined,
+          allowShadeFallback,
+        };
       } else if (rawAction === "android_notification_reply") {
         if (!args.notificationKey) return { ok: false, content: jsonErrorContent("notificationKey required") };
         if (!args.replyText) return { ok: false, content: jsonErrorContent("replyText required") };

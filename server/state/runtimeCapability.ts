@@ -379,7 +379,8 @@ async function loadDeviceControlStateFromDaemon(userId: string, checkedAt: strin
   };
 
   const liveAccessibility = boolFromLiveData(liveData, ["accessibilityEnabled", "accessibilityServiceEnabled"]);
-  const liveNotifications = boolFromLiveData(liveData, ["notificationListenerActive", "notificationAccessEnabled"]);
+  const liveNotificationPermission = boolFromLiveData(liveData, ["notificationPermissionGranted", "notificationAccessEnabled"]);
+  const liveNotificationService = boolFromLiveData(liveData, ["notificationServiceConnected", "notificationListenerActive"]);
   const liveMicrophone = boolFromLiveData(liveData, ["microphonePermissionGranted", "micPermissionGranted", "recordAudioPermissionGranted"]);
 
   return {
@@ -409,12 +410,18 @@ async function loadDeviceControlStateFromDaemon(userId: string, checkedAt: strin
           )
           : offlineCheck,
         notificationAccess: androidConnected
-          ? liveBooleanCheck(
-            liveNotifications,
-            checkedAt,
-            "Android notification listener is disabled.",
-            liveUnknownReason,
-          )
+          ? liveNotificationPermission === false
+            ? { status: "disabled", reason: "Android notification access is not granted for this Jarvis app installation.", lastCheckedAt: checkedAt }
+            : liveNotificationPermission === true && liveNotificationService === false
+              ? { status: "disabled", reason: "Notification access is granted, but Android has not connected the listener service; Jarvis requested a rebind.", lastCheckedAt: checkedAt }
+              : liveNotificationPermission === true && liveNotificationService === true
+                ? { status: "ready", lastCheckedAt: checkedAt }
+                : liveBooleanCheck(
+                  liveNotificationService,
+                  checkedAt,
+                  "This older daemon only reported that the listener service was disconnected; the permission grant is unknown.",
+                  liveUnknownReason,
+                )
           : offlineCheck,
         microphone: androidConnected
           ? liveBooleanCheck(
@@ -547,7 +554,7 @@ function renderDeviceControlAnswer(state: RuntimeCapabilityState): string {
     renderEffectiveAndroidStatus("Screen capture", state, "android_capture_screen"),
     renderEffectiveAndroidStatus("Read screen", state, "android_read_screen"),
     renderEffectiveAndroidStatus("Tap/type", state, "android_tap_type"),
-    `Notification access: ${permissions.notificationAccess.status}.`,
+    `Notification access: ${permissions.notificationAccess.status}${permissions.notificationAccess.reason ? ` (${permissions.notificationAccess.reason})` : ""}.`,
     `Microphone: ${permissions.microphone.status}.`,
   ].join(" ");
 }
