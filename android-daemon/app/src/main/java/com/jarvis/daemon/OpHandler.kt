@@ -739,10 +739,9 @@ object OpHandler {
             if (ok) return OpResult(true, data = JSONObject().put("key", key).put("method", "native"))
         }
 
-        // select_all and delete fall back to the shell keyevent path when the
-        // accessibility service is unavailable or pressKey returned false (e.g.
-        // no focused editable found — covers WebViews and custom IME fields).
-        if (key == "select_all" || key == "delete" || key == "enter") {
+        // select_all and delete retain the legacy shell fallback. Enter must stay
+        // on the accessibility path because ordinary app UIDs cannot inject it.
+        if (key == "select_all" || key == "delete") {
             return handlePressKeyViaShell(key)
         }
 
@@ -760,7 +759,6 @@ object OpHandler {
             "select_all" -> Pair("KEYCODE_CTRL_A", true)
             // KEYCODE_DEL is the standard backspace / delete-backward key (keycode 67).
             "delete"     -> Pair("KEYCODE_DEL", false)
-            "enter"      -> Pair("KEYCODE_ENTER", false)
             else         -> return OpResult(false, error = "Unknown shell key: $key")
         }
         return try {
