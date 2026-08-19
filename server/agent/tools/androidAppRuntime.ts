@@ -895,13 +895,8 @@ export async function runAndroidOpenNotification(args: ToolArgs, userId: string)
     : "";
   const daemonDestinationPackage = String(daemonResult.destinationPackage || "").trim();
   const daemonNotificationPackage = String(daemonResult.packageName || "").trim();
-  const directContentIntentPackage = !screen.ok &&
-    daemonResult.opened === true &&
-    daemonResult.method === "content_intent"
-    ? daemonNotificationPackage
-    : "";
   const expectedDestinationPackage = expectedPackage || daemonNotificationPackage;
-  const destinationPackage = foregroundPackageAfter || daemonDestinationPackage || directContentIntentPackage;
+  const destinationPackage = foregroundPackageAfter || daemonDestinationPackage;
   const safeDestination = Boolean(destinationPackage &&
     destinationPackage !== "com.android.systemui" &&
     destinationPackage !== "com.gameplan" &&
@@ -911,8 +906,7 @@ export async function runAndroidOpenNotification(args: ToolArgs, userId: string)
   const foregroundTransitioned = Boolean(foregroundPackageBefore &&
     foregroundPackageAfter &&
     foregroundPackageAfter !== foregroundPackageBefore);
-  const daemonVerifiedDestination = Boolean(!screen.ok &&
-    (daemonDestinationPackage || directContentIntentPackage));
+  const daemonVerifiedDestination = Boolean(!screen.ok && daemonDestinationPackage);
   const verified = safeDestination &&
     (matchesExpectedPackage || foregroundTransitioned || daemonVerifiedDestination);
   if (!verified) {
