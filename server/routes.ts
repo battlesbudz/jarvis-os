@@ -3127,20 +3127,17 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           });
           const resultText = execResult.result === "success"
             ? `${execResult.label || "Action"} completed successfully.`
-            : `${execResult.label || "Action"} failed: ${execResult.detail || "Unknown error"}`;
+            : `${execResult.label || "Action"} failed.`;
           await saveApprovalOutcome(resultText, {
             tool: pending?.tool || "confirmed_action",
             result: execResult.result === "success" ? "success" : "error",
             label: execResult.label || (execResult.result === "success" ? "Done" : "Failed"),
-            detail: execResult.detail,
           });
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
+        } catch {
           await saveApprovalOutcome("That action could not be completed. The approval may have expired.", {
             tool: pending?.tool || "confirmed_action",
             result: "error",
             label: "Action failed",
-            detail,
           });
         }
         return;
