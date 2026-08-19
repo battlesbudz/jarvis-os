@@ -484,6 +484,13 @@ const PHONE_RUNTIME_NEGATED_RETRY_PATTERN =
   /\b(?:don[’\']t|do\s+not|dont|never|stop)\b[^;.!?]{0,48}\b(?:try|retry|repeat|run|do)\b[^;.!?]{0,48}\b(?:again|once\s+more)\b/i;
 const PHONE_RUNTIME_RETRY_RETRACTION_PATTERN =
   /\b(?:again|once\s+more)\b[^.!?]{0,80}(?:actually\s+)?(?:don[’']t|do\s+not|dont|never\s*mind|cancel(?:\s+(?:that|it))?|scratch\s+that|forget\s+it|stop)\b/i;
+const PHONE_RUNTIME_IN_APP_SEARCH_RETRY_PATTERN =
+  /^\s*(?:search(?:ing)?|find(?:ing)?|look(?:ing)?\s+(?:up|for))\b[\s\S]{1,160}\b(?:on|in)\s+(?:facebook|fb|instagram|ig|reddit|linkedin|twitter|x|tiktok|snapchat|(?:the\s+)?app)\b/i;
+
+function hasExplicitInAppSearchTarget(text: string): boolean {
+  return PHONE_RUNTIME_IN_APP_SEARCH_RETRY_PATTERN.test(text);
+}
+
 function isPhoneRuntimeContextBridge(text: string): boolean {
   const normalized = text.trim().toLowerCase();
   if (/^(?:what\s+happened|that\s+failed|it\s+failed)\b/.test(normalized)) return true;
@@ -516,7 +523,10 @@ export function resolvePhoneRuntimeRequestText(
   );
   const hasUpdatedPhoneTarget = retryCandidate
     .split(new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i"))
-    .some((segment) => extractExplicitPhoneAppTarget(segment.trim()));
+    .some((segment) => {
+      const candidate = segment.trim();
+      return extractExplicitPhoneAppTarget(candidate) !== null || hasExplicitInAppSearchTarget(candidate);
+    });
   if (hasUpdatedPhoneTarget) return lastUserText;
 
   let inspectedUserMessages = 0;
