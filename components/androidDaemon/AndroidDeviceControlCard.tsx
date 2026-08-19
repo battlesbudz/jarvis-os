@@ -140,7 +140,9 @@ export function AndroidDeviceControlCard({
     {
       key: "notifications",
       label: "Notifications",
-      detail: notificationPermissionUnknown
+      detail: !healthy
+        ? "Connect Device Control to check Notification Access."
+        : notificationPermissionUnknown
         ? "This APK does not report the Android notification permission separately. Update the app to diagnose it."
         : needsNotificationPermission
         ? "Android notification access is not granted. Tap to open Device & App Notifications."
@@ -190,6 +192,7 @@ export function AndroidDeviceControlCard({
   ], [
     nativeSpeechStatus?.available,
     nativeSpeechStatus?.message,
+    healthy,
     status?.accessibilityEnabled,
     status?.notificationListenerActive,
     status?.notificationPermissionGranted,
