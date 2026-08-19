@@ -445,7 +445,7 @@ function hasPhoneRuntimeAction(normalized: string): boolean {
   return youtubePhoneActionRequest ||
     hasCurrentTargetBeforePhoneOpenFollowUp(normalized) ||
     isPhoneOpenActionRequest(normalized) ||
-    /^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|launch|tap|show)\b[\s\S]{0,160}\b(?:notification|alert)\b/i.test(normalized) ||
+    /^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|launch|tap)\b[\s\S]{0,160}\b(?:notification|alert)\b/i.test(normalized) ||
     (/\b(?:search|find|look up|look for)\b/i.test(normalized) && /\b(?:on|in)\s+(?:facebook|fb|instagram|ig|reddit|linkedin|twitter|x|tiktok|snapchat|(?:the\s+)?app(?=\s*(?:[.!?]|$)))/i.test(normalized)) ||
     /\b(?:browse to|navigate to|open (?:a )?(?:url|link|website|site))\b/i.test(normalized) ||
     /\b(?:screenshot|screen shot|screen capture)\b/i.test(normalized) ||
