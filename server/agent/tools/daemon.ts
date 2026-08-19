@@ -450,11 +450,11 @@ Do not require confirmation for low-risk phone navigation and read-only control:
         if (!args.path) return { ok: false, content: jsonErrorContent("path required") };
         op = { type: "android_copy_to_clipboard", path: String(args.path) };
       } else if (rawAction === "android_notification_open") {
-        if (!args.notificationKey && !args.query) return { ok: false, content: jsonErrorContent("notificationKey or query required") };
-        const allowShadeFallback = Boolean(args.query) &&
+        if (!args.notificationKey && !args.query && !args.appName) return { ok: false, content: jsonErrorContent("notificationKey, query, or appName required") };
+        const allowShadeFallback = Boolean(args.query || args.appName) &&
           await isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen");
         if (!args.notificationKey && !allowShadeFallback) {
-          return { ok: false, content: jsonErrorContent("android_read_screen permission is required for a query-only notification open.") };
+          return { ok: false, content: jsonErrorContent("android_read_screen permission is required for an app- or query-only notification open.") };
         }
         op = {
           type: "android_notification_open",
