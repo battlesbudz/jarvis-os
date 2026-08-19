@@ -26,7 +26,11 @@ class JarvisNotificationListener : NotificationListenerService() {
         lastError = null
         try {
             recent.clear()
-            activeNotifications?.forEach { cacheNotification(it, forward = false) }
+            activeNotifications
+                ?.sortedByDescending { it.postTime }
+                ?.take(MAX_CACHED)
+                ?.asReversed()
+                ?.forEach { cacheNotification(it, forward = false) }
         } catch (e: Exception) {
             lastError = "Cannot seed active notifications: ${e.message}"
             Log.w(TAG, lastError ?: "Cannot seed active notifications")
