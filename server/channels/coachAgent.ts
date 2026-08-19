@@ -641,10 +641,25 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   const turnStrategyBlock = turnGuidance
     ? `\n\n## Turn Strategy\n${turnGuidance}`
     : "";
-  const toolAwareRoute = classifyToolAwareRoute(userText || "");
-  const toolAwareBlock = toolAwareRoute.shouldPreferTool
-    ? `\n\n## Tool-Aware Routing\n${toolAwareRoute.guidance}\nDo not give a capability disclaimer until you have tried the matching tool path or confirmed the required integration is not connected.`
-    : "";
+  const classifiedToolAwareRoute = classifyToolAwareRoute(userText || "");
+  const phoneRuntimeUnavailable =
+    classifiedToolAwareRoute.actionType === "jarvis_device_action" && !androidActive;
+  const toolAwareRoute = phoneRuntimeUnavailable
+    ? {
+        ...classifiedToolAwareRoute,
+        capabilityIds: [],
+        toolGroups: [],
+        priorityToolNames: [],
+        blockedToolNames: [],
+        shouldPreferTool: false,
+        approvalRequired: false,
+      }
+    : classifiedToolAwareRoute;
+  const toolAwareBlock = phoneRuntimeUnavailable
+    ? "\n\n## Phone Runtime Unavailable\nThe Android daemon is not active. Do not request a phone tool or approval. Explain that the user must open Jarvis and connect Android Device Control before retrying."
+    : toolAwareRoute.shouldPreferTool
+      ? `\n\n## Tool-Aware Routing\n${toolAwareRoute.guidance}\nDo not give a capability disclaimer until you have tried the matching tool path or confirmed the required integration is not connected.`
+      : "";
   const effectiveSystemPromptBase = systemPrompt + youtubeInlineConstraint + turnStrategyBlock + toolAwareBlock;
 
   // ── Context registry: inject registered provider context ────────────────────
@@ -778,7 +793,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     channelActivationPlan = await activationPlanner.plan(userId, {
       source: "channel",
       channel: channelName,
-      queryText: userText,
+      queryText: phoneRuntimeUnavailable ? undefined : userText,
       upcomingMeetingMinutes,
     });
     console.log(`[${channelName}] activation: shouldRun=${channelActivationPlan.shouldRun} — ${channelActivationPlan.reason}`);
