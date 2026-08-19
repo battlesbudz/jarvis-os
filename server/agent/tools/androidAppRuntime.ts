@@ -876,6 +876,16 @@ export async function runAndroidOpenNotification(args: ToolArgs, userId: string)
   const foregroundPackageBefore = beforeScreen.ok
     ? String(jsonObject(beforeScreen.data).package || "").trim()
     : "";
+  const stableScreenText = (data: unknown): string => {
+    const screen = jsonObject(data);
+    const values = [screen.text, screen.visibleText]
+      .flatMap((value) => Array.isArray(value) ? value : [value])
+      .filter((value): value is string => typeof value === "string")
+      .map((value) => value.trim().replace(/\s+/g, " ").toLowerCase())
+      .filter(Boolean);
+    return [...new Set(values)].sort().join("\n");
+  };
+  const screenTextBefore = beforeScreen.ok ? stableScreenText(beforeScreen.data) : "";
   const openResult = await sendAndroidDaemonOp(userId, {
     type: "android_notification_open",
     notificationKey: notificationKey || undefined,
@@ -916,11 +926,14 @@ export async function runAndroidOpenNotification(args: ToolArgs, userId: string)
   const foregroundTransitioned = Boolean(foregroundPackageBefore &&
     foregroundPackageAfter &&
     foregroundPackageAfter !== foregroundPackageBefore);
+  const screenTextAfter = screen.ok ? stableScreenText(screen.data) : "";
+  const screenContentChanged = Boolean(screenTextBefore && screenTextAfter && screenTextBefore !== screenTextAfter);
   const daemonVerifiedDestination = Boolean(!screen.ok && daemonDestinationPackage);
   const observedExpectedDestination = matchesExpectedPackage &&
     (!foregroundPackageBefore || foregroundTransitioned);
   const verified = safeDestination &&
-    (observedExpectedDestination || foregroundTransitioned || daemonVerifiedDestination);
+    (observedExpectedDestination || foregroundTransitioned || daemonVerifiedDestination ||
+      (matchesExpectedPackage && screenContentChanged));
   if (!verified) {
     return {
       ok: false,
@@ -935,6 +948,7 @@ export async function runAndroidOpenNotification(args: ToolArgs, userId: string)
         matchesExpectedPackage,
         observedExpectedDestination,
         foregroundTransitioned,
+        screenContentChanged,
         error: screen.ok ? "Android accepted the notification action, but no new foreground transition or explicit daemon destination was observed." : screen.error || "Destination verification failed.",
       },
     };
