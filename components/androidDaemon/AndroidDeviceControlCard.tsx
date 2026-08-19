@@ -83,8 +83,7 @@ export function AndroidDeviceControlCard({
   const notificationPermissionUnknown = nativeAvailable && healthy && status?.notificationPermissionGranted === undefined;
   const needsNotificationPermission = nativeAvailable && healthy && status?.notificationPermissionGranted === false;
   const notificationServiceDisconnected = nativeAvailable && healthy && status?.notificationPermissionGranted === true && status?.notificationServiceConnected !== true;
-  const statusReady = healthy && !checkingAccessibility && !needsAccessibility &&
-    !notificationPermissionUnknown && !needsNotificationPermission && !notificationServiceDisconnected;
+  const statusReady = healthy && !checkingAccessibility && !needsAccessibility;
   const anyBusy = busy !== null;
   const alreadyConnected = healthy;
   const canDisconnect = !anyBusy && (nativeAvailable || !!onUnpair);
@@ -240,12 +239,6 @@ export function AndroidDeviceControlCard({
           <Text style={styles.subtitle}>
             {needsAccessibility
               ? "Connected - enable Accessibility for app control."
-              : needsNotificationPermission
-              ? "Connected - enable Notification Access for exact notification actions."
-              : notificationServiceDisconnected
-              ? "Connected - notification listener is reconnecting."
-              : notificationPermissionUnknown
-              ? "Connected - update Jarvis to diagnose Notification Access."
               : checkingAccessibility
               ? "Connected - checking Accessibility setup."
               : healthy
@@ -255,30 +248,24 @@ export function AndroidDeviceControlCard({
         </View>
         <View style={[
           styles.statusPill,
-          statusReady ? styles.statusPillGood : (needsAccessibility || needsNotificationPermission || notificationServiceDisconnected) ? styles.statusPillWarning : styles.statusPillNeutral,
+          statusReady ? styles.statusPillGood : needsAccessibility ? styles.statusPillWarning : styles.statusPillNeutral,
         ]}>
           <Ionicons
-            name={statusReady ? "checkmark-circle" : (needsAccessibility || needsNotificationPermission || notificationServiceDisconnected) ? "alert-circle-outline" : "ellipse-outline"}
+            name={statusReady ? "checkmark-circle" : needsAccessibility ? "alert-circle-outline" : "ellipse-outline"}
             size={13}
-            color={statusReady ? Colors.success : (needsAccessibility || needsNotificationPermission || notificationServiceDisconnected) ? Colors.warning : Colors.textSecondary}
+            color={statusReady ? Colors.success : needsAccessibility ? Colors.warning : Colors.textSecondary}
           />
           <Text
             numberOfLines={1}
             style={[
               styles.statusText,
-              statusReady ? styles.statusTextGood : (needsAccessibility || needsNotificationPermission || notificationServiceDisconnected) ? styles.statusTextWarning : undefined,
+              statusReady ? styles.statusTextGood : needsAccessibility ? styles.statusTextWarning : undefined,
             ]}
           >
             {statusReady
               ? "Ready"
               : needsAccessibility
               ? "Accessibility"
-              : needsNotificationPermission
-              ? "Notifications"
-              : notificationServiceDisconnected
-              ? "Reconnecting"
-              : notificationPermissionUnknown
-              ? "Update needed"
               : checkingAccessibility
               ? "Checking"
               : status?.status ?? "Checking"}
