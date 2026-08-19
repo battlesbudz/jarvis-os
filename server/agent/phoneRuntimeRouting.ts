@@ -425,6 +425,10 @@ function hasNonRuntimeActionAlongsidePhoneAction(text: string): boolean {
   return hasPhoneAction && hasNonRuntimeAction;
 }
 
+function isPhoneScreenshotRequest(text: string): boolean {
+  return /^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)(?:\s+you)?\s+to\s+|i(?:\s+would|['’]d)\s+like\s+you\s+to\s+)?(?:(?:take|capture|make|get|show)\s+(?:me\s+)?(?:a\s+)?(?:screenshot|screen\s+shot|screen\s+capture)|(?:screenshot|screen\s+shot|screen\s+capture)\b)/i.test(text);
+}
+
 function hasPhoneRuntimeAction(normalized: string): boolean {
   const withoutAffirmativeIdioms = normalized.replace(
     /\b(?:don['’]?t\s+forget|do\s+not\s+hesitate)\s+to\s+(?=(?:open|launch|start|search|find|tap|press|swipe|scroll|type|enter|read|show)\b)/gi,
@@ -448,7 +452,7 @@ function hasPhoneRuntimeAction(normalized: string): boolean {
     /^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|launch|tap)\b[\s\S]{0,160}\b(?:notification|alert)\b/i.test(normalized) ||
     (/^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:search|find|look\s+up|look\s+for)\b/i.test(normalized) && /\b(?:on|in)\s+(?:facebook|fb|instagram|ig|reddit|linkedin|twitter|x|tiktok|snapchat|(?:the\s+)?app(?=\s*(?:[.!?]|$)))/i.test(normalized)) ||
     /\b(?:browse to|navigate to|open (?:a )?(?:url|link|website|site))\b/i.test(normalized) ||
-    /\b(?:screenshot|screen shot|screen capture)\b/i.test(normalized) ||
+    isPhoneScreenshotRequest(normalized) ||
     /\b(?:read|inspect|look at|what(?:'s| is))\b.{0,48}\b(?:screen|display|phone)\b/i.test(normalized) ||
     isPhoneNotificationReadRequest(normalized) ||
     (hasPhoneRuntimeContext(normalized) && /\b(?:tap|swipe|scroll|type|press|back|home|recents|enter)\b/i.test(normalized));
