@@ -1748,11 +1748,15 @@ export const androidSearchInAppTool: AgentTool = {
               const className = String(node.className || node.class_name || node.class || node.type || "").toLowerCase();
               const resourceId = String(node.resourceId || node.resource_id || node.viewId || "").toLowerCase();
               if (!/inputmethod|keyboard|edittext|textfield|textinput/.test(className)) {
-                const label = String(node.text || node.label || node.contentDesc || node.contentdesc || node.content_desc || node.contentDescription || "")
-                  .trim()
-                  .replace(/\s+/g, " ");
-                if (label.length >= 3 && label.toLowerCase() !== searchQuery.toLowerCase() && !/^(?:search|go|submit)$/.test(label.toLowerCase())) {
-                  labels.add(label.toLowerCase());
+                const labelValues = Array.isArray(node.text)
+                  ? node.text
+                  : [node.text, node.label, node.contentDesc, node.contentdesc, node.content_desc, node.contentDescription];
+                for (const value of labelValues) {
+                  if (typeof value !== "string") continue;
+                  const label = value.trim().replace(/\s+/g, " ");
+                  if (label.length >= 3 && label.toLowerCase() !== searchQuery.toLowerCase() && !/^(?:search|go|submit)$/.test(label.toLowerCase())) {
+                    labels.add(label.toLowerCase());
+                  }
                 }
                 if (/result|recyclerview|listview|gridview/.test(`${className} ${resourceId}`)) {
                   containers.add(`${className}|${resourceId}`);
