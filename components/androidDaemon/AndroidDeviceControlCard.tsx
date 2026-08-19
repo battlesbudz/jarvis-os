@@ -148,7 +148,9 @@ export function AndroidDeviceControlCard({
         ? "Android notification access is not granted. Tap to open Device & App Notifications."
         : notificationServiceDisconnected
         ? `Access is granted, but Android has not connected the listener${status?.notificationRebindRequested ? "; Jarvis requested a rebind" : ""}.`
-        : `Permission granted and listener connected${typeof status?.notificationCacheCount === "number" ? `; ${status.notificationCacheCount} cached` : ""}.`,
+        : status?.notificationPermissionGranted === true && status?.notificationServiceConnected === true
+        ? `Permission granted and listener connected${typeof status?.notificationCacheCount === "number" ? `; ${status.notificationCacheCount} cached` : ""}.`
+        : "Notification Access status is unavailable on this device.",
       enabled: status?.notificationPermissionGranted === true && status?.notificationServiceConnected === true,
       action: () => AndroidDaemonNative?.openNotificationListenerSettings() ?? Promise.resolve(),
     },
