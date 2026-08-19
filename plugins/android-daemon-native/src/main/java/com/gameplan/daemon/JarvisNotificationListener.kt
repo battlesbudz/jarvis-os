@@ -24,6 +24,13 @@ class JarvisNotificationListener : NotificationListenerService() {
         instance = this
         lastConnectedAt = System.currentTimeMillis()
         lastError = null
+        try {
+            recent.clear()
+            activeNotifications?.forEach { onNotificationPosted(it) }
+        } catch (e: Exception) {
+            lastError = "Cannot seed active notifications: ${e.message}"
+            Log.w(TAG, lastError ?: "Cannot seed active notifications")
+        }
         Log.i(TAG, "Notification listener connected")
     }
 
@@ -69,7 +76,8 @@ class JarvisNotificationListener : NotificationListenerService() {
             .put("key", sbn.key)
             .put("hasReplyAction", hasReplyAction)
 
-        // Ring buffer — newest first
+        // Ring buffer — newest first, with one current entry per active key.
+        recent.removeIf { it.optString("key") == sbn.key }
         recent.add(0, obj)
         while (recent.size > MAX_CACHED) recent.removeAt(recent.size - 1)
 
