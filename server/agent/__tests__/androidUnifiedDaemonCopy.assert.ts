@@ -51,7 +51,7 @@ for (const source of [androidNotificationListenerSource, legacyNotificationListe
 }
 for (const source of [androidOpHandlerSource, legacyOpHandlerSource]) {
   assert.match(source, /"android_notification_open" -> handleNotificationOpen/);
-  assert.match(source, /"enter"\s+-> Pair\("KEYCODE_ENTER", false\)/);
+  assert.doesNotMatch(source, /"enter"\s+-> Pair\("KEYCODE_ENTER", false\)/);
   assert.match(source, /notificationPermissionGranted/);
   assert.match(source, /notificationServiceConnected/);
 }
