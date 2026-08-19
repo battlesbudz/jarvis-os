@@ -71,7 +71,7 @@ assert.equal(
 assert.equal(isPhoneRuntimeCoveredRequest("Find tutorials on app development"), false);
 assert.equal(isPhoneRuntimeCoveredRequest("Find tutorials in the app"), true);
 assert.equal(isPhoneRuntimeCoveredRequest("Show that one"), false);
-assert.equal(isPhoneRuntimeCoveredRequest("Show that notification"), false);
+assert.equal(isPhoneRuntimeCoveredRequest("Show that notification"), true);
 assert.equal(isPhoneRuntimeCoveredRequest("Open that notification"), true);
 assert.equal(isPhoneRuntimeCoveredRequest("What happens when I open a notification?"), false);
 assert.equal(isPhoneRuntimeCoveredRequest("Can you show me what happens when I open a notification?"), false);
