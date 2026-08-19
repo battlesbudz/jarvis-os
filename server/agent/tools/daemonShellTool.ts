@@ -1699,13 +1699,29 @@ export const androidSearchInAppTool: AgentTool = {
     //        Step 5: Submit search and verify results loaded                                                             
     if (!resumeFromStep || resumeFromStep <= 5) {
       emitProgress(`Submitting search…`);
+      if (!screenRaw) {
+        const baseline = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        if (!baseline.ok) {
+          return {
+            ok: false,
+            content: JSON.stringify({
+              ok: false,
+              step_reached: 5,
+              error_at_step: "submit_search_baseline",
+              error: "Could not capture the current search screen before submitting.",
+              suggestion: "Retry from step 4 so the query and pre-submit state can be verified.",
+            }),
+          };
+        }
+        screenRaw = JSON.stringify(baseline.data || "");
+      }
       // Capture pre-submit screen fingerprint: length + node count for change detection
       const preSubmitLen = screenRaw.length;
       const preSubmitNodeCount = (screenRaw.match(/"type"|"className"|"contentDesc"/g) || []).length;
 
-      // Primary: invoke the focused field's IME Search/Go action. The daemon
-      // falls back to a hardware-style KEYCODE_ENTER for custom Facebook/WebView
-      // inputs that do not expose ACTION_IME_ENTER through accessibility.
+      // Primary: invoke the focused field's accessibility IME Search/Go action.
+      // If the field does not expose it, the visible submit-control fallback below
+      // remains available without relying on privileged input injection.
       const enterResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "enter" }, 10000);
       stepLog.push({
         step: 5,
