@@ -1944,20 +1944,26 @@ You can extend yourself by building new tools directly. Generate the complete Ty
 
       const actionResults: { tool: string; operation?: string; operationArgs?: Record<string, unknown>; toolCallId?: string; durationMs?: number; detail?: string; verification?: unknown; result: 'success' | 'error' | 'pending'; label: string; actionType?: string; actor?: string; approvalRequired?: boolean; actionReason?: string; url?: string; buttonLabel?: string; code?: string; channel?: string; screenshotUrl?: string; imageUrl?: string; imageCaption?: string; videoUrl?: string; videoCaption?: string; mcpServerName?: string }[] = [];
       const diagnosticOperationArgs = (toolName: string, input: Record<string, unknown>): Record<string, unknown> => {
-        const output: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(input)) {
-          if (/token|secret|password|authorization/i.test(key)) {
-            output[key] = "<redacted>";
-          } else if (/notificationKey/i.test(key) && typeof value === "string") {
-            output[key] = `<sha256:${createHash('sha256').update(value).digest('hex').slice(0, 12)}>`;
-          } else if (/^(?:text|content|body|replyText|message|query|search_query)$/i.test(key) && typeof value === "string") {
-            output[key] = `<redacted:${value.length} chars>`;
-          } else if (typeof value === "string") {
-            output[key] = `<redacted:${value.length} chars>`;
-          } else if (typeof value === "number" || typeof value === "boolean" || value === null) {
-            output[key] = value;
+        const redactValue = (key: string, value: unknown): unknown => {
+          if (/token|secret|password|authorization/i.test(key)) return "<redacted>";
+          if (/notificationKey/i.test(key) && typeof value === "string") {
+            return `<sha256:${createHash('sha256').update(value).digest('hex').slice(0, 12)}>`;
           }
-        }
+          if (typeof value === "string") {
+            return /^(?:action|type)$/i.test(key) ? value.slice(0, 80) : `<redacted:${value.length} chars>`;
+          }
+          if (typeof value === "number" || typeof value === "boolean" || value === null) return value;
+          if (Array.isArray(value)) return value.slice(0, 50).map((item) => redactValue("", item));
+          if (value && typeof value === "object") {
+            return Object.fromEntries(
+              Object.entries(value as Record<string, unknown>)
+                .slice(0, 50)
+                .map(([nestedKey, nestedValue]) => [nestedKey, redactValue(nestedKey, nestedValue)]),
+            );
+          }
+          return undefined;
+        };
+        const output = redactValue("", input) as Record<string, unknown>;
         if (toolName === 'daemon_action' && typeof input.action === 'string') output.action = input.action;
         return output;
       };
