@@ -434,7 +434,7 @@ function hasPhoneRuntimeAction(normalized: string): boolean {
   const negatesPhoneAction = actionClauses.length === 1 &&
     /\b(?:don't|dont|do not|never|stop)\b[\s\S]{0,64}\b(?:open|launch|start|search|find|tap|press|swipe|scroll|type|enter|read|show)\b/i.test(actionClauses[0]);
   if (negatesPhoneAction) return false;
-  const asksForInstructions = /^\s*(?:how\s+(?:do|can|could|should|would)\s+(?:i|you|we)|(?:can|could|would)\s+you\s+(?:show|tell|explain)(?:\s+me)?\s+how(?:\s+to)?|show\s+me\s+how(?:\s+to)?|tell\s+me\s+how(?:\s+to)?|what(?:'s|\s+is)\s+the\s+(?:best\s+)?way\s+to)\b/i.test(normalized);
+  const asksForInstructions = /^\s*(?:how\s+(?:do|can|could|should|would)\s+(?:i|you|we)|where\s+(?:do|can|could|should|would)\s+(?:i|you|we)|(?:can|could|would)\s+you\s+(?:show|tell|explain)(?:\s+me)?\s+how(?:\s+to)?|show\s+me\s+how(?:\s+to)?|tell\s+me\s+how(?:\s+to)?|what(?:'s|\s+is)\s+the\s+(?:best\s+)?way\s+to)\b/i.test(normalized);
   if (asksForInstructions) return false;
   const youtubePhoneActionRequest = !isYoutubeServerResearchRequest(normalized) &&
     !/\b(?:do\s+not|don['’]?t|dont|never|stop)\b[\s\S]{0,48}\b(?:open|launch|start|search|find|look\s+up|look\s+for|play|watch)\b/i.test(normalized) && (
