@@ -551,6 +551,8 @@ export function isPhoneNotificationReadRequest(text: string): boolean {
     return false;
   }
   if (
+    /^\s*(?:(?:can|could|would)\s+you\s+)?(?:show|tell|explain)(?:\s+me)?\s+what\s+happens?\s+when\b[\s\S]{0,96}\bnotifications?\b/i.test(normalized) ||
+    /^\s*what\s+happens?\s+when\b[\s\S]{0,96}\bnotifications?\b/i.test(normalized) ||
     /\bnotifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept|settings?|enabled|disabled|on|off|noisy|muted|silenced|allowed|blocked)\b/i.test(normalized) ||
     /\b(?:explain|describe|define|summari[sz]e)\b[\s\S]{0,64}\b(?:how\s+)?(?:android\s+)?notifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept)\b/i.test(normalized) ||
     /\b(?:ways?|tips?|advice|recommendations?|steps?|guide|guidance|best\s+way)\b[\s\S]{0,64}\bnotifications?\b/i.test(normalized) ||
