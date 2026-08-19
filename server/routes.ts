@@ -1292,12 +1292,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let stopKeepalive: () => void = () => {};
     let stopVisibleProgress: () => void = () => {};
     try {
-      const { messages: requestedMessages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: rawIncomingAppSessionId, originChannel: rawOriginChannel, originPlatform: rawOriginPlatform } = req.body;
+      const { messages: requestedMessages, goals, stats, history, calendarEvents, lifeContext, gmailItems, gmailConnected, slackMessages, slackConnected, coachingMode, telegramMessages, telegramConnected, sdkSessionId: rawIncomingAppSessionId, originChannel: rawOriginChannel } = req.body;
       const incomingAppSessionId = typeof rawIncomingAppSessionId === "string" && rawIncomingAppSessionId.trim()
         ? rawIncomingAppSessionId.trim()
         : undefined;
       const originChannel: string = (typeof rawOriginChannel === "string" && rawOriginChannel.trim()) ? rawOriginChannel.trim().toLowerCase() : "appchat";
-      const isAndroidVoiceOrigin = originChannel === "voice" && rawOriginPlatform === "android";
       userId = req.userId ?? await getUserIdFromRequest(req);
 
       if (!requestedMessages || !Array.isArray(requestedMessages)) {
@@ -1778,7 +1777,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const lastUserOrigText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
       const lastUserContent = lastUserOrigText.toLowerCase();
       const phoneRuntimeRequestText = resolvePhoneRuntimeRequestText(messages);
-      const phoneRuntimeAvailable = androidActive || isAndroidVoiceOrigin;
+      const phoneRuntimeAvailable = androidActive;
       const recentPhoneRuntimeConversation = messages
         .slice(-12)
         .map((message: { content?: unknown }) => typeof message.content === "string" ? message.content : "")
