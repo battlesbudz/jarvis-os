@@ -445,7 +445,7 @@ function hasPhoneRuntimeAction(normalized: string): boolean {
   return youtubePhoneActionRequest ||
     hasCurrentTargetBeforePhoneOpenFollowUp(normalized) ||
     isPhoneOpenActionRequest(normalized) ||
-    (/\b(?:open|launch|tap|show)\b/i.test(normalized) && /\b(?:notification|alert|that one|this one)\b/i.test(normalized)) ||
+    (/\b(?:open|launch|tap|show)\b/i.test(normalized) && /\b(?:notification|alert)\b/i.test(normalized)) ||
     (/\b(?:search|find|look up|look for)\b/i.test(normalized) && /\b(?:on|in)\s+(?:facebook|fb|instagram|ig|reddit|linkedin|twitter|x|tiktok|snapchat|(?:the\s+)?app(?=\s*(?:[.!?]|$)))/i.test(normalized)) ||
     /\b(?:browse to|navigate to|open (?:a )?(?:url|link|website|site))\b/i.test(normalized) ||
     /\b(?:screenshot|screen shot|screen capture)\b/i.test(normalized) ||
@@ -479,7 +479,7 @@ export function hasUnsupportedPhoneDeviceControlRequest(text: string): boolean {
 }
 
 const PHONE_RUNTIME_RETRY_PATTERN =
-  /\b(?:try|retry|repeat|run|do)\b[\s\S]{0,48}\b(?:again|once\s+more)\b/i;
+  /^\s*(?:(?:can|could|would|will)\s+you\s+|please\s+|let['’]?s\s+)?(?:try|retry|repeat|run|do)\b[\s\S]{0,48}\b(?:again|once\s+more)\b/i;
 const PHONE_RUNTIME_NEGATED_RETRY_PATTERN =
   /\b(?:don[’\']t|do\s+not|dont|never|stop)\b[^;.!?]{0,48}\b(?:try|retry|repeat|run|do)\b[^;.!?]{0,48}\b(?:again|once\s+more)\b/i;
 const PHONE_RUNTIME_RETRY_RETRACTION_PATTERN =
