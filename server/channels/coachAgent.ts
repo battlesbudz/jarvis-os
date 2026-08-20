@@ -28,6 +28,7 @@ import { buildBackgroundJobPrompt } from "../agent/backgroundJobHandoff";
 import { getCoachAppAgentId } from "../agent/coreAgentIds";
 import { createSystemApprovalOnBeforeTool } from "../agent/systemApprovalGate";
 import { resolvePhoneRuntimeRequestText } from "../agent/phoneRuntimeRouting";
+import { ANDROID_PHONE_RUNTIME_TOOL_NAMES } from "../agent/androidPhoneRuntimeToolNames";
 import { getCoachAgentSessionAgentId } from "./coachAgentSession";
 import { listPendingPersonalCommitments } from "../commitments/dbCommitmentRepository";
 // Side-effect import: registers workspace topic context provider.
@@ -747,6 +748,10 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       scopedTools = [...scopedTools, ...boostedTools];
       console.log(`[${channelName}] tool-aware boost: +${boostedTools.length} tools for ${toolAwareRoute.intents.join(", ")}`);
     }
+  }
+  if (phoneRuntimeUnavailable) {
+    const phoneRuntimeToolNames = new Set<string>(ANDROID_PHONE_RUNTIME_TOOL_NAMES);
+    scopedTools = scopedTools.filter((tool) => !phoneRuntimeToolNames.has(tool.name));
   }
   const canonicalKey = parseChannelKey(channelName);
   const registeredChannel = canonicalKey ? getChannel(canonicalKey) : undefined;
