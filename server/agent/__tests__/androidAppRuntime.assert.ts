@@ -41,6 +41,7 @@ async function main() {
     _setAndroidAppRuntimeDepsForTesting,
     explainUnsupportedPhoneRuntimeAction,
     runAndroidOpenAppByName,
+    runAndroidOpenNotification,
     runAndroidReadNotifications,
     runAndroidYoutubeSearch,
     resolveAndroidAppName,
@@ -49,12 +50,14 @@ async function main() {
   const { _setRuntimeCapabilityDepsForTesting } = await import("../../state/runtimeCapability");
 
   assert.deepEqual(
-    androidPhoneRuntimeTools.map((tool) => tool.name),
-    [...ANDROID_PHONE_RUNTIME_TOOL_NAMES],
+    new Set([...androidPhoneRuntimeTools.map((tool) => tool.name), "android_search_in_app"]),
+    new Set(ANDROID_PHONE_RUNTIME_TOOL_NAMES),
   );
   assert.equal(new Set(ANDROID_PHONE_RUNTIME_TOOL_NAMES).size, ANDROID_PHONE_RUNTIME_TOOL_NAMES.length);
   assert.ok(ANDROID_PHONE_RUNTIME_TOOL_NAMES.includes("android_capture_screen"));
   assert.ok(ANDROID_PHONE_RUNTIME_TOOL_NAMES.includes("android_open_phone_url"));
+  assert.ok(ANDROID_PHONE_RUNTIME_TOOL_NAMES.includes("android_open_notification"));
+  assert.ok(ANDROID_PHONE_RUNTIME_TOOL_NAMES.includes("android_search_in_app"));
 
   const youtube = await resolveAndroidAppName("user-phone", "YouTube", { includeLiveInventory: false });
   assert.equal(youtube.app?.packageName, "com.google.android.youtube");
@@ -374,6 +377,435 @@ async function main() {
     assert.equal(emptyListenerResult.ok, true);
     assert.equal(emptyListenerResult.label, "No notifications");
     assert.deepEqual(emptyListenerVoiceNotificationObservations, [[]]);
+
+    const openNotificationOps: string[] = [];
+    let openNotificationScreenReads = 0;
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      sendDaemonOp: async (_userId, op) => {
+        openNotificationOps.push(op.type);
+        if (op.type === "android_notifications_list") {
+          return {
+            ok: true,
+            data: {
+              listenerEnabled: true,
+              notifications: [{
+                key: "youtube-notification-key",
+                pkg: "com.google.android.youtube",
+                app: "YouTube",
+                title: "You're Selling a Channel You're Not Using",
+                text: "Alex Hormozi",
+              }],
+            },
+          };
+        }
+        if (op.type === "android_notification_open") {
+          assert.equal(op.notificationKey, "youtube-notification-key");
+          assert.equal(op.allowShadeFallback, true);
+          assert.match(String(op.query), /Selling a Channel/);
+          return { ok: true, data: { opened: true, method: "content_intent", packageName: "com.google.android.youtube" } };
+        }
+        if (op.type === "android_read_screen") {
+          openNotificationScreenReads += 1;
+          return {
+            ok: true,
+            data: {
+              package: openNotificationScreenReads === 1 ? "com.facebook.katana" : "com.google.android.youtube",
+              text: ["Alex Hormozi"],
+            },
+          };
+        }
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const openNotificationResult = await runAndroidOpenNotification({
+      query: "You're Selling a Channel You're Not Using",
+      appName: "YouTube",
+    }, "user-phone");
+    assert.equal(openNotificationResult.ok, true);
+    assert.equal(openNotificationResult.detail.verified, true);
+    assert.equal(openNotificationResult.detail.destinationPackage, "com.google.android.youtube");
+    assert.deepEqual(openNotificationOps, ["android_notifications_list", "android_read_screen", "android_notification_open", "android_read_screen"]);
+
+    let unchangedForegroundReadCount = 0;
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      sendDaemonOp: async (_userId, op) => {
+        if (op.type === "android_notifications_list") {
+          return {
+            ok: true,
+            data: {
+              listenerEnabled: true,
+              notifications: [{
+                key: "youtube-notification-key",
+                pkg: "com.google.android.youtube",
+                app: "YouTube",
+                title: "Target video",
+                text: "Open this video",
+              }],
+            },
+          };
+        }
+        if (op.type === "android_notification_open") {
+          return { ok: true, data: { opened: true, method: "content_intent", packageName: "com.google.android.youtube" } };
+        }
+        if (op.type === "android_read_screen") {
+          unchangedForegroundReadCount += 1;
+          return { ok: true, data: { package: "com.google.android.youtube", text: ["YouTube"] } };
+        }
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const unchangedForegroundResult = await runAndroidOpenNotification({
+      query: "Target video",
+      appName: "YouTube",
+    }, "user-phone");
+    assert.equal(unchangedForegroundReadCount, 2);
+    assert.equal(unchangedForegroundResult.ok, false);
+    assert.equal(unchangedForegroundResult.detail.matchesExpectedPackage, true);
+    assert.equal(unchangedForegroundResult.detail.observedExpectedDestination, false);
+    assert.equal(unchangedForegroundResult.detail.foregroundTransitioned, false);
+    assert.equal(unchangedForegroundResult.detail.destinationPackage, "com.google.android.youtube");
+    assert.match(String(unchangedForegroundResult.detail.error), /no new foreground transition/i);
+
+    let sameAppReadCount = 0;
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      sendDaemonOp: async (_userId, op) => {
+        if (op.type === "android_notifications_list") {
+          return {
+            ok: true,
+            data: {
+              listenerEnabled: true,
+              notifications: [{
+                key: "gmail-message-key",
+                pkg: "com.google.android.gm",
+                app: "Gmail",
+                title: "Quarterly report",
+                text: "Open the report",
+              }],
+            },
+          };
+        }
+        if (op.type === "android_notification_open") {
+          return { ok: true, data: { opened: true, method: "content_intent", packageName: "com.google.android.gm" } };
+        }
+        if (op.type === "android_read_screen") {
+          sameAppReadCount += 1;
+          return {
+            ok: true,
+            data: {
+              package: "com.google.android.gm",
+              text: sameAppReadCount === 1 ? ["Inbox", "Quarterly report"] : ["Quarterly report", "Open the report"],
+            },
+          };
+        }
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const sameAppResult = await runAndroidOpenNotification({
+      query: "Quarterly report",
+      appName: "Gmail",
+    }, "user-phone");
+    assert.equal(sameAppResult.ok, true);
+    assert.equal(sameAppResult.detail.screenContentChanged, true);
+    assert.equal(sameAppResult.detail.foregroundTransitioned, false);
+
+    const weakMatchOps: string[] = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async (_userId, action) => action !== "android_read_screen",
+      sendDaemonOp: async (_userId, op) => {
+        weakMatchOps.push(op.type);
+        if (op.type === "android_notifications_list") {
+          return {
+            ok: true,
+            data: {
+              listenerEnabled: true,
+              notifications: [{
+                key: "slack-budget-key",
+                pkg: "com.Slack",
+                app: "Slack",
+                title: "Budget discussion",
+                text: "A teammate mentioned budget",
+              }],
+            },
+          };
+        }
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const weakMatchResult = await runAndroidOpenNotification({
+      query: "budget",
+      appName: "Gmail",
+    }, "user-phone");
+    assert.equal(weakMatchResult.ok, false);
+    assert.equal(weakMatchResult.label, "Notification not found");
+    assert.deepEqual(weakMatchOps, ["android_notifications_list"]);
+
+    const partialSubstringOps: string[] = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async (_userId, action) => action !== "android_read_screen",
+      sendDaemonOp: async (_userId, op) => {
+        partialSubstringOps.push(op.type);
+        if (op.type === "android_notifications_list") {
+          return {
+            ok: true,
+            data: {
+              listenerEnabled: true,
+              notifications: [{
+                key: "gmail-annual-concert",
+                pkg: "com.google.android.gm",
+                app: "Gmail",
+                title: "Annual concert",
+                text: "Tickets are available",
+              }],
+            },
+          };
+        }
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const partialSubstringResult = await runAndroidOpenNotification({
+      query: "Ann concert",
+      appName: "Gmail",
+    }, "user-phone");
+    assert.equal(partialSubstringResult.ok, false);
+    assert.equal(partialSubstringResult.label, "Notification not found");
+    assert.deepEqual(partialSubstringOps, ["android_notifications_list"]);
+
+    const exactSubstringOps: string[] = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async (_userId, action) => action !== "android_read_screen",
+      sendDaemonOp: async (_userId, op) => {
+        exactSubstringOps.push(op.type);
+        if (op.type === "android_notifications_list") {
+          return {
+            ok: true,
+            data: {
+              listenerEnabled: true,
+              notifications: [{
+                key: "gmail-joann-concert",
+                pkg: "com.google.android.gm",
+                app: "Gmail",
+                title: "Joann concert",
+              }],
+            },
+          };
+        }
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const exactSubstringResult = await runAndroidOpenNotification({
+      query: "Ann concert",
+      appName: "Gmail",
+    }, "user-phone");
+    assert.equal(exactSubstringResult.ok, false);
+    assert.equal(exactSubstringResult.label, "Notification not found");
+    assert.deepEqual(exactSubstringOps, ["android_notifications_list"]);
+
+    const unicodeAppOps: string[] = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async (_userId, action) => action !== "android_read_screen",
+      sendDaemonOp: async (_userId, op) => {
+        unicodeAppOps.push(op.type);
+        if (op.type === "android_notifications_list") {
+          return {
+            ok: true,
+            data: {
+              listenerEnabled: true,
+              notifications: [{
+                key: "unrelated-budget",
+                pkg: "com.example.unrelated",
+                app: "Unrelated",
+                title: "Budget",
+              }],
+            },
+          };
+        }
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const unicodeAppResult = await runAndroidOpenNotification({
+      query: "Budget",
+      appName: "微信",
+    }, "user-phone");
+    assert.equal(unicodeAppResult.ok, false);
+    assert.equal(unicodeAppResult.label, "Notification not found");
+    assert.deepEqual(unicodeAppOps, ["android_notifications_list"]);
+
+    const shadeFallbackOps: string[] = [];
+    let shadeFallbackReads = 0;
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      sendDaemonOp: async (_userId, op) => {
+        shadeFallbackOps.push(op.type);
+        if (op.type === "android_notifications_list") {
+          return { ok: true, data: { listenerEnabled: false, notifications: [] } };
+        }
+        if (op.type === "android_read_screen") {
+          shadeFallbackReads += 1;
+          return {
+            ok: true,
+            data: {
+              package: shadeFallbackReads === 1 ? "com.facebook.katana" : "com.google.android.gm",
+              text: shadeFallbackReads === 1 ? "Before" : "Gmail Budget",
+            },
+          };
+        }
+        if (op.type === "android_notification_open") {
+          assert.equal(op.notificationKey, undefined);
+          assert.equal(op.query, "Budget");
+          assert.equal(op.appName, "Gmail");
+          assert.equal(op.allowShadeFallback, true);
+          return { ok: true, data: { opened: true, method: "notification_shade", destinationPackage: "com.google.android.gm" } };
+        }
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const shadeFallbackResult = await runAndroidOpenNotification({
+      query: "Budget",
+      appName: "Gmail",
+    }, "user-phone");
+    assert.equal(shadeFallbackResult.ok, true);
+    assert.equal(shadeFallbackResult.detail.verified, true);
+    assert.deepEqual(shadeFallbackOps, [
+      "android_notifications_list",
+      "android_read_screen",
+      "android_notification_open",
+      "android_read_screen",
+    ]);
+
+    const shortAppNameOps: string[] = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async () => true,
+      sendDaemonOp: async (_userId, op) => {
+        shortAppNameOps.push(op.type);
+        if (op.type === "android_notifications_list") {
+          return {
+            ok: true,
+            data: {
+              listenerEnabled: true,
+              notifications: [{
+                key: "slack-next-budget-key",
+                pkg: "com.slack",
+                app: "Slack",
+                title: "Next budget meeting",
+                text: "Budget meeting moved",
+              }],
+            },
+          };
+        }
+        if (op.type === "android_read_screen") {
+          return { ok: false, error: "screen unavailable" };
+        }
+        if (op.type === "android_notification_open") {
+          assert.equal(op.allowShadeFallback, true);
+          return { ok: false, error: "No visible notification matched." };
+        }
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const shortAppNameResult = await runAndroidOpenNotification({
+      query: "budget meeting",
+      appName: "X",
+    }, "user-phone");
+    assert.equal(shortAppNameResult.ok, false);
+    assert.equal(shortAppNameResult.label, "Notification did not open");
+    assert.deepEqual(shortAppNameOps, [
+      "android_notifications_list",
+      "android_read_screen",
+      "android_notification_open",
+    ]);
+
+    const duplicateRevisionOps: string[] = [];
+    let duplicateRevisionScreenReads = 0;
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async (_userId, action) => action !== "android_read_screen",
+      sendDaemonOp: async (_userId, op) => {
+        duplicateRevisionOps.push(op.type);
+        if (op.type === "android_notifications_list") {
+          const revision = {
+            key: "youtube-updated-key",
+            pkg: "com.google.android.youtube",
+            app: "YouTube",
+            title: "Target video",
+            text: "Open this video",
+          };
+          return {
+            ok: true,
+            data: {
+              listenerEnabled: true,
+              notifications: [
+                { ...revision, title: "Latest target video", text: "Newest cached revision" },
+                { ...revision, title: "Old target video", text: "Stale cached revision" },
+              ],
+            },
+          };
+        }
+        if (op.type === "android_notification_open") {
+          assert.equal(op.notificationKey, "youtube-updated-key");
+          assert.equal(op.allowShadeFallback, false);
+          return { ok: true, data: { opened: true, method: "content_intent", packageName: "com.google.android.youtube" } };
+        }
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const duplicateRevisionResult = await runAndroidOpenNotification({
+      query: "Latest target video",
+      appName: "YouTube",
+    }, "user-phone");
+    assert.equal(duplicateRevisionResult.ok, false);
+    assert.equal(duplicateRevisionResult.label, "Notification verification unavailable");
+    assert.equal(duplicateRevisionScreenReads, 0);
+    assert.deepEqual(duplicateRevisionOps, ["android_notifications_list"]);
+
+    const deniedScreenReadOps: string[] = [];
+    _setAndroidAppRuntimeDepsForTesting({
+      isAndroidDaemonActive: () => true,
+      isAndroidDaemonActionAllowed: async (_userId, permission) => permission !== "android_read_screen",
+      sendDaemonOp: async (_userId, op) => {
+        deniedScreenReadOps.push(op.type);
+        if (op.type === "android_notifications_list") {
+          return {
+            ok: true,
+            data: {
+              listenerEnabled: true,
+              notifications: [{
+                key: "youtube-notification-key",
+                pkg: "com.google.android.youtube",
+                app: "YouTube",
+                title: "Target video",
+                text: "Open this video",
+              }],
+            },
+          };
+        }
+        if (op.type === "android_notification_open") {
+          assert.equal(op.allowShadeFallback, false);
+          return { ok: true, data: { opened: true, method: "content_intent", packageName: "com.google.android.youtube" } };
+        }
+        return { ok: false, error: `unexpected op ${op.type}` };
+      },
+    });
+    const deniedScreenReadResult = await runAndroidOpenNotification({
+      query: "Target video",
+      appName: "YouTube",
+    }, "user-phone");
+    assert.equal(deniedScreenReadResult.ok, false);
+    assert.equal(deniedScreenReadResult.label, "Notification verification unavailable");
+    assert.match(String(deniedScreenReadResult.detail.error), /android_read_screen permission is required/);
+    assert.deepEqual(deniedScreenReadOps, ["android_notifications_list"]);
+    assert.equal("screenContext" in deniedScreenReadResult.detail, false);
 
     const accessibilityOps: string[] = [];
     const accessibilityObservations: Array<{ kind?: string; summary?: string; detail?: string | null }> = [];

@@ -7,6 +7,8 @@ const SUBMIT_KEYS = new Set(["enter", "search", "go", "send", "done"]);
 const HIGH_RISK_ANDROID_ACTIONS = new Set([
   "android_sms_send",
   "android_notification_reply",
+  "android_notification_open",
+  "android_open_notification",
   "android_camera_clip",
   "android_screen_record",
 ]);

@@ -973,7 +973,7 @@ function autoDiscoverSearchNode(
 export const androidSearchInAppTool: AgentTool = {
   name: "android_search_in_app",
   description:
-    "High-level macro that performs a complete in-app search on Android as a single resumable sequence: open app     wait for load     detect login walls     locate search bar     tap it (with focus verification)     type query (with text confirmation)     submit     verify results loaded     optional result capture. Returns a structured result with { ok, step_reached, result?, error_at_step?, suggestion? } so Jarvis can tell the user exactly what happened and how to recover. Supply resume_from_step (2-6) after a partial failure to skip the open/load steps and retry from the specific failed step. PREFER this over manually orchestrating individual android_* steps whenever the user asks to search for something inside a specific app.",
+    "High-level macro that performs a complete in-app search on Android as a single resumable sequence: open app     wait for load     detect login walls     locate search bar     tap it (with focus verification)     type query (with text confirmation)     submit     verify results loaded     optional result capture. Returns a structured result with { ok, step_reached, result?, error_at_step?, suggestion? } so Jarvis can tell the user exactly what happened and how to recover. Supply resume_from_step (2-5) after a partial failure to skip the open/load steps and retry from the specific failed step. PREFER this over manually orchestrating individual android_* steps whenever the user asks to search for something inside a specific app.",
   parameters: {
     type: "object",
     properties: {
@@ -1000,7 +1000,7 @@ export const androidSearchInAppTool: AgentTool = {
       },
       resume_from_step: {
         type: "number",
-        description: "Skip to a specific step (2-6) after a previous partial failure. Use the step_reached value from the prior failure response. Steps 1 (open app) and load-wait are skipped when resuming.",
+        description: "Skip to a specific step (2-5) after a previous partial failure. Use the step_reached value from the prior failure response. Steps 1 (open app) and load-wait are skipped when resuming.",
       },
     },
     required: ["app_package", "app_name", "search_query"],
@@ -1013,12 +1013,12 @@ export const androidSearchInAppTool: AgentTool = {
     const actionAfterSearch = args.action_after_search ? String(args.action_after_search) : null;
     const resumeFromStepRaw = typeof args.resume_from_step === "number" ? Math.floor(args.resume_from_step) : null;
     const resumeFromStep = resumeFromStepRaw;
-    if (resumeFromStepRaw !== null && (resumeFromStepRaw < 2 || resumeFromStepRaw > 6)) {
+    if (resumeFromStepRaw !== null && (resumeFromStepRaw < 2 || resumeFromStepRaw > 5)) {
       return {
         ok: false,
         content: JSON.stringify({
           ok: false,
-          error: `resume_from_step must be between 2 and 6 (got ${resumeFromStepRaw}). Use the step_reached value returned by a prior partial failure.`,
+          error: `resume_from_step must be between 2 and 5 (got ${resumeFromStepRaw}). Use the step_reached value returned by a prior partial failure.`,
         }),
       };
     }
@@ -1198,6 +1198,42 @@ export const androidSearchInAppTool: AgentTool = {
       }
     }
 
+    function parseSubmitElement(raw: string): { found: boolean; x: number | null; y: number | null } {
+      try {
+        const parsed = JSON.parse(raw);
+        const nodes: Array<Record<string, unknown>> = [];
+        const collect = (value: unknown): void => {
+          if (!value || typeof value !== "object") return;
+          if (Array.isArray(value)) { value.forEach(collect); return; }
+          const node = value as Record<string, unknown>;
+          nodes.push(node);
+          Object.values(node).forEach(collect);
+        };
+        collect(parsed);
+        const ranked = nodes.map((node) => {
+          const serialized = JSON.stringify(node).toLowerCase();
+          const className = String(node.className || node.class_name || node.class || node.type || "").toLowerCase();
+          const label = String(node.text || node.label || node.contentDesc || node.contentdesc || node.content_desc || node.contentDescription || "").trim();
+          if (/edittext|textfield|textinput/.test(className)) return { node, score: -1 };
+          let score = 0;
+          if (/search_button|searchbutton|submit_search|search_icon|action_search/.test(serialized)) score += 12;
+          if (/^(?:search|go|submit)\b/i.test(label)) score += 10;
+          if (/search|submit|\bgo\b/.test(serialized)) score += 3;
+          if (/"(?:clickable|isclickable)"\s*:\s*true/.test(serialized)) score += 3;
+          if (/"(?:focused|isfocused)"\s*:\s*true/.test(serialized)) score -= 5;
+          return { node, score };
+        }).filter((entry) => entry.score > 5).sort((left, right) => right.score - left.score);
+        const coordinateMatch = ranked
+          .map((entry) => ({ ...entry, coords: extractNodeCoords(entry.node) }))
+          .find((entry) => entry.coords !== null);
+        return coordinateMatch?.coords
+          ? { found: true, x: coordinateMatch.coords.x, y: coordinateMatch.coords.y }
+          : { found: false, x: null, y: null };
+      } catch {
+        return { found: false, x: null, y: null };
+      }
+    }
+
     //        Helper: freshly locate the search element from current screen                            
     async function relocateSearchElement(): Promise<{ found: boolean; x: number | null; y: number | null; screenRaw: string; discoveredResourceId?: string }> {
       const r = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
@@ -1205,6 +1241,11 @@ export const androidSearchInAppTool: AgentTool = {
       const raw = JSON.stringify(r.data || "");
       const parsed = parseSearchElement(raw);
       return { ...parsed, screenRaw: raw };
+    }
+
+    async function relocateSubmitElement(): Promise<{ found: boolean; x: number | null; y: number | null }> {
+      const result = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      return result.ok ? parseSubmitElement(JSON.stringify(result.data || "")) : { found: false, x: null, y: null };
     }
 
     let screenRaw = "";
@@ -1659,25 +1700,82 @@ export const androidSearchInAppTool: AgentTool = {
     //        Step 5: Submit search and verify results loaded                                                             
     if (!resumeFromStep || resumeFromStep <= 5) {
       emitProgress(`Submitting search…`);
-      // Capture pre-submit screen fingerprint: length + node count for change detection
-      const preSubmitLen = screenRaw.length;
-      const preSubmitNodeCount = (screenRaw.match(/"type"|"className"|"contentDesc"/g) || []).length;
-
-      // Primary: send Enter/newline     triggers IME Search/Go action on most keyboards
-      await sendDaemonOp(ctx.userId, { type: "android_type", text: "\n" }, 10000);
+      if (!screenRaw) {
+        const baseline = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        if (!baseline.ok) {
+          return {
+            ok: false,
+            content: JSON.stringify({
+              ok: false,
+              step_reached: 5,
+              error_at_step: "submit_search_baseline",
+              error: "Could not capture the current search screen before submitting.",
+              suggestion: "Retry from step 4 so the query and pre-submit state can be verified.",
+            }),
+          };
+        }
+        screenRaw = JSON.stringify(baseline.data || "");
+      }
+      // Primary: invoke the focused field's accessibility IME Search/Go action.
+      // If the field does not expose it, the visible submit-control fallback below
+      // remains available without relying on privileged input injection.
+      const enterResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "enter" }, 10000);
+      stepLog.push({
+        step: 5,
+        outcome: enterResult.ok ? "enter_dispatched" : "enter_failed",
+        detail: enterResult.ok ? JSON.stringify(enterResult.data || {}) : enterResult.error || "IME and keyevent submission failed",
+      });
       await sleep(2500);
 
       function isResultsState(raw: string): boolean {
-        // Results screen criteria (all must be true):
-        // 1. Keyboard/IME has been dismissed     no active input method in a11y tree
         const keyboardDismissed = !screenContains(raw, ["\"inputmethod\"", "inputmethod_service", "\"isFocused\":true", "\"focused\":true"]);
-        // 2. Screen content changed significantly     more nodes than the typing state
-        const newNodeCount = (raw.match(/"type"|"className"|"contentDesc"/g) || []).length;
-        const contentGrew = newNodeCount > preSubmitNodeCount + 2 || raw.length > preSubmitLen + 300;
-        // 3. Screen is not showing an error dialog that typically indicates failure
+        const resultEvidence = [
+          /search[_ -]?results?/i,
+          /results?[_ -]?(?:list|container|grid)/i,
+          /results?\s+(?:for|matching)/i,
+          /no\s+results?/i,
+          /[?&](?:q|query|search_query)=/i,
+        ];
+        const hasNamedResultEvidence = resultEvidence.some((pattern) => pattern.test(raw) && !pattern.test(screenRaw));
+        function collectResultStructure(serialized: string): { labels: Set<string>; containers: Set<string> } {
+          const labels = new Set<string>();
+          const containers = new Set<string>();
+          try {
+            const collect = (value: unknown): void => {
+              if (!value || typeof value !== "object") return;
+              if (Array.isArray(value)) { value.forEach(collect); return; }
+              const node = value as Record<string, unknown>;
+              const className = String(node.className || node.class_name || node.class || node.type || "").toLowerCase();
+              const resourceId = String(node.resourceId || node.resource_id || node.viewId || "").toLowerCase();
+              if (!/inputmethod|keyboard|edittext|textfield|textinput/.test(className)) {
+                const labelValues = Array.isArray(node.text)
+                  ? node.text
+                  : [node.text, node.label, node.contentDesc, node.contentdesc, node.content_desc, node.contentDescription];
+                for (const value of labelValues) {
+                  if (typeof value !== "string") continue;
+                  const label = value.trim().replace(/\s+/g, " ");
+                  if (label.length >= 3 && label.toLowerCase() !== searchQuery.toLowerCase() && !/^(?:search|go|submit)$/.test(label.toLowerCase())) {
+                    labels.add(label.toLowerCase());
+                  }
+                }
+                if (/result|recyclerview|listview|gridview/.test(`${className} ${resourceId}`)) {
+                  containers.add(`${className}|${resourceId}`);
+                }
+              }
+              Object.values(node).forEach(collect);
+            };
+            collect(JSON.parse(serialized));
+          } catch {}
+          return { labels, containers };
+        }
+        const before = collectResultStructure(screenRaw);
+        const after = collectResultStructure(raw);
+        const newLabels = [...after.labels].filter((label) => !before.labels.has(label));
+        const hasNewResultContainer = [...after.containers].some((container) => !before.containers.has(container));
+        const hasNewResultEvidence = hasNamedResultEvidence || hasNewResultContainer || newLabels.length >= 2;
         const isErrorDialog = screenContains(raw, ["network error", "something went wrong", "no connection", "retry"]) &&
           !screenContains(raw, SEARCH_KEYWORDS);
-        return keyboardDismissed && contentGrew && !isErrorDialog;
+        return !isErrorDialog && keyboardDismissed && hasNewResultEvidence;
       }
 
       const afterSearch = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
@@ -1692,7 +1790,7 @@ export const androidSearchInAppTool: AgentTool = {
       // Fallback: locate and tap a visible search/go button
       if (!resultsLoaded) {
         emitProgress(`Retrying submission via search button…`);
-        const btnLocated = await relocateSearchElement();
+        const btnLocated = await relocateSubmitElement();
         if (btnLocated.found && btnLocated.x !== null && btnLocated.y !== null) {
           await sendDaemonOp(ctx.userId, { type: "android_tap", x: btnLocated.x, y: btnLocated.y }, 10000);
           await sleep(2500);
@@ -1717,7 +1815,7 @@ export const androidSearchInAppTool: AgentTool = {
             step_reached: 5,
             error_at_step: "execute_search",
             error: `Search was submitted in ${appName} but the results screen did not appear. The app may require a different submission method, may have shown a network error, or may not have recognised the search input.`,
-            suggestion: "Use android_screenshot to see the current state. If results are visually present but the accessibility tree is sparse, retry with resume_from_step: 6 and action_after_search: 'screenshot'.",
+            suggestion: "Use android_screenshot to inspect the current state. Retry from step 5 only after confirming the results screen is visible.",
             steps: stepLog,
           }),
         };

@@ -38,7 +38,7 @@ export interface ServerContextTrace {
 }
 
 export interface TurnDiagnosticBundle {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   turnId: string;
   createdAt: string;
   source: DiagnosticSource;
@@ -131,7 +131,7 @@ export function buildTurnDiagnosticBundle(input: {
 }): TurnDiagnosticBundle {
   const contextEstimate = estimateDiagnosticContext(input.contextPacket);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     turnId: input.turnId,
     createdAt: new Date().toISOString(),
     source: input.source,

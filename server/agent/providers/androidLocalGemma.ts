@@ -201,6 +201,8 @@ const ANDROID_PHONE_RUNTIME_TOOL_NAMES = new Set([
   "android_press_phone_key",
   "android_wait_for_ui",
   "android_read_notifications",
+  "android_open_notification",
+  "android_search_in_app",
   "android_notify_user",
   "android_return_to_jarvis_chat",
 ]);
@@ -1386,6 +1388,8 @@ function auditToolNameFromCall(name: string, args: Record<string, unknown> | nul
       return "android_read_screen_context";
     case "android_notifications_list":
       return "android_read_notifications";
+    case "android_notification_open":
+      return "android_open_notification";
     default:
       return action || name;
   }

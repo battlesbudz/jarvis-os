@@ -85,6 +85,14 @@ export function resolveToolsForAction(decision: ActionOntologyDecision): ToolRes
         reason: "Code ownership work should be scoped through Codex/self-edit tools with approval before writes, commits, pushes, or deploys.",
       });
 
+    case "jarvis_device_action":
+      return resolution({
+        requiredToolNames: decision.priorityToolNames,
+        blockedToolNames: ["connected_accounts_execute", "send_email", "cron_create", "queue_background_job"],
+        approvalRequired: true,
+        reason: "Android actions require explicit approval, must stay on the observable Phone Runtime path, and must verify the resulting device state.",
+      });
+
     case "cloud_worker_task":
       return resolution({
         requiredToolNames: ["queue_background_job"],

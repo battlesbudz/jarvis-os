@@ -302,6 +302,11 @@ export interface McpAttachment {
 
 export interface ExecutedAction {
   tool: string;
+  operation?: string;
+  operationArgs?: Record<string, unknown>;
+  toolCallId?: string;
+  durationMs?: number;
+  verification?: unknown;
   result: 'success' | 'error';
   label: string;
   detail?: string;

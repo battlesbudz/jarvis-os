@@ -10,6 +10,8 @@ export const ANDROID_PHONE_RUNTIME_TOOL_NAMES = [
   "android_press_phone_key",
   "android_wait_for_ui",
   "android_read_notifications",
+  "android_open_notification",
+  "android_search_in_app",
   "android_notify_user",
   "android_return_to_jarvis_chat",
 ] as const;

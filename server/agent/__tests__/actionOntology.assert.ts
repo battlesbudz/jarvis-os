@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { classifyActionOntology } from "../actionOntology";
+import { resolveToolsForAction } from "../toolResolver";
+import { requiresApproval, requiresHumanApproval } from "../approvalToolRisk";
+import { ANDROID_PHONE_RUNTIME_TOOL_NAMES } from "../androidPhoneRuntimeToolNames";
 
 function assertAction(
   text: string,
@@ -70,6 +73,22 @@ assertAction("Read my unread messages", {
   approvalRequired: false,
 });
 
+for (const text of [
+  "Show me how Android notifications work",
+  "How do I open notifications on Android?",
+  "How do I search for someone on Facebook?",
+  "Can you explain how to open that notification?",
+  "Could you explain how I can search for someone on Facebook?",
+  "Don't open Facebook",
+  "Do not open that notification",
+  "Find an app for budgeting",
+  "Read about Android app development",
+]) {
+  const informational = classifyActionOntology(text);
+  assert.notEqual(informational.actionType, "jarvis_device_action", `${text}: informational request is not a device action`);
+  assert.equal(informational.approvalRequired, false, `${text}: informational request does not require device approval`);
+}
+
 assertAction("Reply Bob and tell him I am running late", {
   actionType: "jarvis_external_write",
   actor: "human_approval_required",
@@ -107,5 +126,31 @@ assert.ok(userTask.allowedToolGroups.includes("scheduling"), "user tasks allow s
 const codeTask = classifyActionOntology("Update your own source code and push it");
 assert.ok(codeTask.priorityToolNames.includes("delegate_to_codex"), "code tasks prioritize Codex delegation");
 assert.ok(codeTask.allowedToolGroups.includes("self_edit"), "code tasks allow self-edit inspection");
+
+const deviceAction = classifyActionOntology("Open the Alex Hormozi notification on my phone");
+assert.equal(deviceAction.actionType, "jarvis_device_action");
+assert.equal(deviceAction.actor, "human_approval_required");
+assert.equal(deviceAction.approvalRequired, true);
+assert.ok(deviceAction.priorityToolNames.includes("android_open_notification"));
+const deviceResolution = resolveToolsForAction(deviceAction);
+assert.ok(deviceResolution.requiredToolNames.includes("android_open_notification"));
+assert.ok(deviceResolution.requiredToolNames.includes("android_search_in_app"));
+assert.equal(deviceResolution.approvalRequired, true);
+
+for (const toolName of ANDROID_PHONE_RUNTIME_TOOL_NAMES) {
+  assert.equal(requiresApproval(toolName), true, `${toolName}: shared channel gate requires approval`);
+  assert.equal(requiresHumanApproval(toolName), true, `${toolName}: device action waits for human approval`);
+}
+
+const inconsistentDeviceResolution = resolveToolsForAction({
+  ...deviceAction,
+  actor: "jarvis",
+  approvalRequired: false,
+});
+assert.equal(
+  inconsistentDeviceResolution.approvalRequired,
+  true,
+  "the resolver must enforce approval even if an upstream device decision is malformed",
+);
 
 console.log("OK: action ontology classifies ownership, approval, tools, and reasons");

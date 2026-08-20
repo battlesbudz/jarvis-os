@@ -6,6 +6,15 @@ export type AndroidDaemonStatus = {
   status: string;
   accessibilityEnabled: boolean;
   notificationListenerActive: boolean;
+  notificationPermissionGranted?: boolean;
+  notificationServiceConnected?: boolean;
+  notificationComponentDeclared?: boolean;
+  notificationComponentEnabled?: boolean;
+  notificationRebindRequested?: boolean;
+  notificationLastConnectedAt?: number;
+  notificationLastDisconnectedAt?: number;
+  notificationLastError?: string | null;
+  notificationCacheCount?: number;
   assistantActive?: boolean;
   assistantStatus?: string;
   hotwordPhrase?: string;

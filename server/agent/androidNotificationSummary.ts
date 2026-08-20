@@ -3,6 +3,7 @@ function jsonObject(data: unknown): Record<string, unknown> {
 }
 
 export interface AndroidNotificationSummaryEntry {
+  key?: string;
   app: string;
   title: string;
   text: string;
@@ -166,6 +167,7 @@ export function normalizeAndroidNotifications(notifications: unknown[]): Android
     const text = String(item.text || "").trim();
     const age = relativeNotificationAge(item.ts) || receivedAtAge(item.receivedAt);
     return {
+      key: String(item.key || item.notificationKey || "").trim() || undefined,
       app,
       title,
       text,
@@ -283,7 +285,7 @@ function scoreNotificationReference(entry: AndroidNotificationSummaryEntry, quer
   for (const token of tokens) {
     if (normalizedApp === token) score += 8;
     else if (appTerms.has(token)) score += 5;
-    else if (titleAndText.includes(token)) score += 2;
+    else if (includesPhraseToken(titleAndText, token)) score += 2;
   }
   return score;
 }
@@ -317,7 +319,10 @@ export function resolveAndroidNotificationReference(
   }
 
   const best = scored[0];
-  if (best) return { notification: best.notification, index: best.index };
+  if (best && (scored.length === 1 || best.score > (scored[1]?.score ?? 0))) {
+    return { notification: best.notification, index: best.index };
+  }
+  if (best) return null;
 
   if (entries.length === 1 && referencesSoleNotification(query)) {
     return { notification: entries[0], index: 0 };

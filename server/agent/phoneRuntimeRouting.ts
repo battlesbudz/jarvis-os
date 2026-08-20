@@ -425,7 +425,31 @@ function hasNonRuntimeActionAlongsidePhoneAction(text: string): boolean {
   return hasPhoneAction && hasNonRuntimeAction;
 }
 
+function isPhoneScreenshotRequest(text: string): boolean {
+  const commandPrefix = String.raw`^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)(?:\s+you)?\s+to\s+|i(?:\s+would|['’]d)\s+like\s+you\s+to\s+)?`;
+  const capture = String.raw`(?:(?:take|capture|make)\s+(?:me\s+)?(?:a\s+)?(?:screenshot|screen\s+shot|screen\s+capture)|(?:screenshot|screen\s+shot|screen\s+capture)\b)`;
+  if (new RegExp(commandPrefix + capture, "i").test(text)) return true;
+  return new RegExp(
+    commandPrefix + String.raw`(?:get|show)\s+(?:me\s+)?(?:a\s+)?(?:screenshot|screen\s+shot|screen\s+capture)\b[\s\S]{0,48}\b(?:my|the|current)\s+(?:phone|screen|display)\b`,
+    "i",
+  ).test(text);
+}
+
+function isPhoneNavigationRequest(text: string): boolean {
+  return /^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?|i\s+(?:want|need)(?:\s+you)?\s+to\s+|i(?:\s+would|['’]d)\s+like\s+you\s+to\s+)?(?:browse\s+to|navigate\s+to|open\s+(?:a\s+)?(?:url|link|website|site))\b/i.test(text);
+}
+
 function hasPhoneRuntimeAction(normalized: string): boolean {
+  const withoutAffirmativeIdioms = normalized.replace(
+    /\b(?:don['’]?t\s+forget|do\s+not\s+hesitate)\s+to\s+(?=(?:open|launch|start|search|find|tap|press|swipe|scroll|type|enter|read|show)\b)/gi,
+    "",
+  );
+  const actionClauses = phoneOpenClauses(withoutAffirmativeIdioms);
+  const negatesPhoneAction = actionClauses.length === 1 &&
+    /\b(?:don't|dont|do not|never|stop)\b[\s\S]{0,64}\b(?:open|launch|start|search|find|tap|press|swipe|scroll|type|enter|read|show)\b/i.test(actionClauses[0]);
+  if (negatesPhoneAction) return false;
+  const asksForInstructions = /^\s*(?:how\s+(?:do|can|could|should|would)\s+(?:i|you|we)|where\s+(?:do|can|could|should|would)\s+(?:i|you|we)|(?:can|could|would)\s+you\s+(?:show|tell|explain)(?:\s+me)?\s+how(?:\s+to)?|show\s+me\s+how(?:\s+to)?|tell\s+me\s+how(?:\s+to)?|what(?:'s|\s+is)\s+the\s+(?:best\s+)?way\s+to)\b/i.test(normalized);
+  if (asksForInstructions) return false;
   const youtubePhoneActionRequest = !isYoutubeServerResearchRequest(normalized) &&
     !/\b(?:do\s+not|don['’]?t|dont|never|stop)\b[\s\S]{0,48}\b(?:open|launch|start|search|find|look\s+up|look\s+for|play|watch)\b/i.test(normalized) && (
       extractYoutubePhoneSearchQuery(normalized) !== null ||
@@ -435,8 +459,10 @@ function hasPhoneRuntimeAction(normalized: string): boolean {
   return youtubePhoneActionRequest ||
     hasCurrentTargetBeforePhoneOpenFollowUp(normalized) ||
     isPhoneOpenActionRequest(normalized) ||
-    /\b(?:browse to|navigate to|open (?:a )?(?:url|link|website|site))\b/i.test(normalized) ||
-    /\b(?:screenshot|screen shot|screen capture)\b/i.test(normalized) ||
+    /^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|launch|tap)\b[\s\S]{0,160}\b(?:notification|alert)\b/i.test(normalized) ||
+    (/^\s*(?:(?:hey|hi|okay|ok|alright|now)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:search|find|look\s+up|look\s+for)\b/i.test(normalized) && /\b(?:on|in)\s+(?:facebook|fb|instagram|ig|reddit|linkedin|twitter|x|tiktok|snapchat|(?:the\s+)?app(?=\s*(?:[.!?]|$)))/i.test(normalized)) ||
+    isPhoneNavigationRequest(normalized) ||
+    isPhoneScreenshotRequest(normalized) ||
     /\b(?:read|inspect|look at|what(?:'s| is))\b.{0,48}\b(?:screen|display|phone)\b/i.test(normalized) ||
     isPhoneNotificationReadRequest(normalized) ||
     (hasPhoneRuntimeContext(normalized) && /\b(?:tap|swipe|scroll|type|press|back|home|recents|enter)\b/i.test(normalized));
@@ -466,6 +492,79 @@ export function hasUnsupportedPhoneDeviceControlRequest(text: string): boolean {
   ));
 }
 
+const PHONE_RUNTIME_RETRY_PATTERN =
+  /^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:let['’]?s\s+)?(?:try|retry|repeat|run|do)\b[\s\S]{0,48}\b(?:again|once\s+more)\b/i;
+const PHONE_RUNTIME_NEGATED_RETRY_PATTERN =
+  /\b(?:don[’\']t|do\s+not|dont|never|stop)\b[^;.!?]{0,48}\b(?:try|retry|repeat|run|do)\b[^;.!?]{0,48}\b(?:again|once\s+more)\b/i;
+const PHONE_RUNTIME_RETRY_RETRACTION_PATTERN =
+  /\b(?:again|once\s+more)\b[^.!?]{0,80}(?:actually\s+)?(?:don[’']t|do\s+not|dont|never\s*mind|cancel(?:\s+(?:that|it))?|scratch\s+that|forget\s+it|stop)\b/i;
+const PHONE_RUNTIME_IN_APP_SEARCH_RETRY_PATTERN =
+  /^\s*(?:search(?:ing)?|find(?:ing)?|look(?:ing)?\s+(?:up|for))\b[\s\S]{1,160}\b(?:on|in)\s+(?:facebook|fb|instagram|ig|reddit|linkedin|twitter|x|tiktok|snapchat|(?:the\s+)?app)\b/i;
+
+function hasExplicitInAppSearchTarget(text: string): boolean {
+  return PHONE_RUNTIME_IN_APP_SEARCH_RETRY_PATTERN.test(text);
+}
+
+function isPhoneRuntimeContextBridge(text: string): boolean {
+  const normalized = text.trim().toLowerCase();
+  if (/^(?:what\s+happened|that\s+failed|it\s+failed)\b/.test(normalized)) return true;
+  if (/^(?:(?:do|did)\s+you\s+understand|okay\s+so\s+you\s+understood)\b/.test(normalized)) {
+    return /\b(?:phone|app|intent|request|open|search|that|it|this)\b/.test(normalized);
+  }
+  return /^(?:did\s+you|have\s+you|why\s+(?:did|do|does|are)|was\s+that)\b/.test(normalized) &&
+    /\b(?:phone|app|action|request|that|it|this|what\s+i\s+asked)\b/.test(normalized);
+}
+
+/**
+ * Preserve an explicit phone target across a bounded retry chain. Assistant
+ * failure prose is deliberately ignored so a server-browser error cannot
+ * redirect a phone command back to the generic browser runtime.
+ */
+export function resolvePhoneRuntimeRequestText(
+  messages: Array<{ role?: string; content?: unknown }>,
+  maxUserMessages = 6,
+): string {
+  const lastUserIndex = messages.findLastIndex((message) => (
+    message.role === "user" && typeof message.content === "string"
+  ));
+  if (lastUserIndex < 0) return "";
+
+  const lastUserText = String(messages[lastUserIndex].content);
+  if (!PHONE_RUNTIME_RETRY_PATTERN.test(lastUserText) || PHONE_RUNTIME_NEGATED_RETRY_PATTERN.test(lastUserText) || PHONE_RUNTIME_RETRY_RETRACTION_PATTERN.test(lastUserText)) return lastUserText;
+  const retryCandidate = lastUserText.replace(
+    /^\s*(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:try|retry|repeat|run|do)\s+/i,
+    "",
+  );
+  const hasUpdatedPhoneTarget = retryCandidate
+    .split(new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i"))
+    .some((segment) => {
+      const candidate = segment.trim();
+      return extractExplicitPhoneAppTarget(candidate) !== null || hasExplicitInAppSearchTarget(candidate);
+    });
+  if (hasUpdatedPhoneTarget) return lastUserText;
+
+  let inspectedUserMessages = 0;
+  for (let index = lastUserIndex - 1; index >= 0 && inspectedUserMessages < maxUserMessages; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "user" || typeof message.content !== "string") continue;
+    inspectedUserMessages += 1;
+    const text = message.content.trim();
+    if (isPhoneRuntimeContextBridge(text)) continue;
+    const retryCandidate = text.replace(
+      /^\s*(?:let['’]?s\s+)?(?:try|retry|repeat|run|do)(?:\s+this)?\s+(?:again|once\s+more)\s*[,;:-]?\s*/i,
+      "",
+    );
+    const hasExplicitPhoneTarget = retryCandidate
+      .split(new RegExp(String.raw`\b${PHONE_COMPOUND_CONNECTOR_PATTERN}\b`, "i"))
+      .some((segment) => extractExplicitPhoneAppTarget(segment.trim()));
+    if (isPhoneRuntimeCoveredRequest(text) || hasExplicitPhoneTarget) return text;
+    if (PHONE_RUNTIME_RETRY_PATTERN.test(text)) continue;
+    break;
+  }
+
+  return lastUserText;
+}
+
 export function isPhoneNotificationReadRequest(text: string): boolean {
   const normalized = normalizePhoneRuntimeRequestText(text);
   if (!/\bnotifications?\b/i.test(normalized)) return false;
@@ -476,6 +575,8 @@ export function isPhoneNotificationReadRequest(text: string): boolean {
     return false;
   }
   if (
+    /^\s*(?:(?:can|could|would)\s+you\s+)?(?:show|tell|explain)(?:\s+me)?\s+what\s+happens?\s+when\b[\s\S]{0,96}\bnotifications?\b/i.test(normalized) ||
+    /^\s*what\s+happens?\s+when\b[\s\S]{0,96}\bnotifications?\b/i.test(normalized) ||
     /\bnotifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept|settings?|enabled|disabled|on|off|noisy|muted|silenced|allowed|blocked)\b/i.test(normalized) ||
     /\b(?:explain|describe|define|summari[sz]e)\b[\s\S]{0,64}\b(?:how\s+)?(?:android\s+)?notifications?\b[\s\S]{0,64}\b(?:work|works|mean|means|definition|concept)\b/i.test(normalized) ||
     /\b(?:ways?|tips?|advice|recommendations?|steps?|guide|guidance|best\s+way)\b[\s\S]{0,64}\bnotifications?\b/i.test(normalized) ||

@@ -30,6 +30,7 @@ async function main() {
   const {
     extractAndroidNotificationsFromScreenContext,
     normalizeAndroidNotifications,
+    resolveAndroidNotificationReference,
     summarizeAndroidNotifications,
   } = await import("../androidNotificationSummary");
 
@@ -694,6 +695,8 @@ async function main() {
     false,
     "informational notification questions should not force phone-control routing",
   );
+  assert.equal(isPhoneRuntimeCoveredRequest("Open that notification"), true);
+  assert.equal(isPhoneRuntimeCoveredRequest("Search for Alex Hormozi on Facebook"), true);
   assert.equal(
     deterministicPhoneRuntimeToolCallFromRequest("Do not read my notifications.", phoneTools, connectedPhoneRuntime),
     null,
@@ -857,6 +860,21 @@ async function main() {
   assert.equal(referencedOpen?.kind, "open");
   assert.equal(referencedOpen?.notification.app, "Reddit");
 
+  const boundedTitleReference = resolveAndroidNotificationReference([
+    { key: "annual-concert", app: "Gmail", title: "Annual concert", text: "Tonight", ts: Date.now() },
+  ], "Open the Ann notification");
+  assert.equal(boundedTitleReference, null, "partial title tokens must not select and bypass the opener with a stable key");
+
+  const tiedBudgetNotifications = [
+    { key: "gmail-budget-1", app: "Gmail", pkg: "com.google.android.gm", title: "Budget", text: "First update", ts: Date.now() },
+    { key: "gmail-budget-2", app: "Gmail", pkg: "com.google.android.gm", title: "Budget", text: "Second update", ts: Date.now() },
+  ];
+  const ambiguousBudgetOpen = resolveAndroidNotificationFollowUp("Open the Budget notification", tiedBudgetNotifications);
+  assert.equal(ambiguousBudgetOpen, null, "tied non-ordinal notification matches must not select an arbitrary key");
+  const ordinalBudgetOpen = resolveAndroidNotificationFollowUp("Open the second one", tiedBudgetNotifications);
+  assert.equal(ordinalBudgetOpen?.kind, "open");
+  assert.equal(ordinalBudgetOpen?.notification.key, "gmail-budget-2");
+
   const plainOpen = resolveAndroidNotificationFollowUp("Open Reddit", [
     { app: "Gmail", pkg: "com.google.android.gm", title: "Reddit digest", text: "Trending posts from Reddit", ts: Date.now() },
   ]);
@@ -975,6 +993,21 @@ async function main() {
   assert.equal(soleGenericOneAppOpen, null, "generic one-app requests must not target the sole notification");
   const solePluralNotificationOpen = resolveAndroidNotificationFollowUp("Open my notifications", soleNotification);
   assert.equal(solePluralNotificationOpen, null, "plural notification-shade requests must not target the sole notification");
+  for (const configurationRequest of [
+    "Open the notification settings",
+    "Show notification permissions",
+    "Go to Android notification access",
+    "Open preferences for notifications",
+    "Open the notification history",
+    "Show the notification log",
+    "Go to the history of my notifications",
+  ]) {
+    assert.equal(
+      resolveAndroidNotificationFollowUp(configurationRequest, soleNotification),
+      null,
+      `${configurationRequest} must not open the cached notification`,
+    );
+  }
   const emptyObservedNotifications = resolveAndroidNotificationFollowUp("Read all of them", []);
   assert.equal(emptyObservedNotifications?.kind, "read_all", "empty observations must remain valid follow-up context");
   assert.match(emptyObservedNotifications?.response ?? "", /no current notifications/i);

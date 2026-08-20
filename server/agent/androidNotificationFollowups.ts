@@ -52,7 +52,14 @@ function hasNotificationReferent(transcript: string): boolean {
   return /\b(?:it|that|this|those|these|them|one|ones|notification|notifications|alert|alerts)\b/i.test(transcript);
 }
 
+function isNotificationConfigurationRequest(transcript: string): boolean {
+  return /\bnotifications?\s+(?:settings?|permissions?|access|preferences?|history|logs?)\b/i.test(transcript) ||
+    /\b(?:settings?|permissions?|access|preferences?)\s+(?:for\s+|to\s+)?(?:my\s+|android\s+)?notifications?\b/i.test(transcript) ||
+    /\b(?:history|logs?)\s+of\s+(?:my\s+|android\s+)?notifications?\b/i.test(transcript);
+}
+
 function wantsNotificationReferenceOpen(transcript: string, notifications: unknown[]): boolean {
+  if (isNotificationConfigurationRequest(transcript)) return false;
   if (!/\b(?:open|launch|show|tap|go to)\b/i.test(transcript)) return false;
   const match = resolveAndroidNotificationReference(notifications, transcript);
   if (!match) return false;

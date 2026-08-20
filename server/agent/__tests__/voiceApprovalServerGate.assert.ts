@@ -17,6 +17,26 @@ assert.equal(
 );
 
 assert.equal(
+  isAndroidSubmitCapableAction(
+    "android_open_notification",
+    { query: "Target video", appName: "YouTube" },
+    "Open the YouTube notification",
+  ),
+  true,
+  "high-level notification opens must require confirmation",
+);
+
+assert.equal(
+  isAndroidSubmitCapableAction(
+    "daemon_action",
+    { action: "android_notification_open", query: "Target video", appName: "YouTube" },
+    "Open the YouTube notification",
+  ),
+  true,
+  "raw notification opens must require confirmation",
+);
+
+assert.equal(
   isAndroidSubmitCapableAction("android_type_text", { text: "Thanks", submit: true }, "Reply to this text"),
   true,
   "high-level android_type_text submit should require confirmation",

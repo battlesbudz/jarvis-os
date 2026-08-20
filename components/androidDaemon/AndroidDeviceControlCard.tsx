@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   Linking,
   Platform,
   Pressable,
@@ -65,7 +66,13 @@ export function AndroidDeviceControlCard({
     const interval = setInterval(() => {
       refreshNativeStatus().catch(() => {});
     }, 5000);
-    return () => clearInterval(interval);
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") refreshNativeStatus().catch(() => {});
+    });
+    return () => {
+      clearInterval(interval);
+      subscription.remove();
+    };
   }, [refreshNativeStatus]);
 
   const nativeConnected = status?.connected === true;
@@ -73,6 +80,9 @@ export function AndroidDeviceControlCard({
   const nativeAvailable = Platform.OS === "android" && status?.available !== false && !!AndroidDaemonNative;
   const checkingAccessibility = nativeAvailable && healthy && status?.accessibilityEnabled === undefined;
   const needsAccessibility = nativeAvailable && healthy && status?.accessibilityEnabled === false;
+  const notificationPermissionUnknown = nativeAvailable && healthy && status?.notificationPermissionGranted === undefined;
+  const needsNotificationPermission = nativeAvailable && healthy && status?.notificationPermissionGranted === false;
+  const notificationServiceDisconnected = nativeAvailable && healthy && status?.notificationPermissionGranted === true && status?.notificationServiceConnected !== true;
   const statusReady = healthy && !checkingAccessibility && !needsAccessibility;
   const anyBusy = busy !== null;
   const alreadyConnected = healthy;
@@ -130,8 +140,18 @@ export function AndroidDeviceControlCard({
     {
       key: "notifications",
       label: "Notifications",
-      detail: "Read and reply to Android notifications.",
-      enabled: status?.notificationListenerActive,
+      detail: !healthy
+        ? "Connect Device Control to check Notification Access."
+        : notificationPermissionUnknown
+        ? "This APK does not report the Android notification permission separately. Update the app to diagnose it."
+        : needsNotificationPermission
+        ? "Android notification access is not granted. Tap to open Device & App Notifications."
+        : notificationServiceDisconnected
+        ? `Access is granted, but Android has not connected the listener${status?.notificationRebindRequested ? "; Jarvis requested a rebind" : ""}.`
+        : status?.notificationPermissionGranted === true && status?.notificationServiceConnected === true
+        ? `Permission granted and listener connected${typeof status?.notificationCacheCount === "number" ? `; ${status.notificationCacheCount} cached` : ""}.`
+        : "Notification Access status is unavailable on this device.",
+      enabled: status?.notificationPermissionGranted === true && status?.notificationServiceConnected === true,
       action: () => AndroidDaemonNative?.openNotificationListenerSettings() ?? Promise.resolve(),
     },
     {
@@ -174,8 +194,16 @@ export function AndroidDeviceControlCard({
   ], [
     nativeSpeechStatus?.available,
     nativeSpeechStatus?.message,
+    healthy,
     status?.accessibilityEnabled,
     status?.notificationListenerActive,
+    status?.notificationPermissionGranted,
+    status?.notificationServiceConnected,
+    status?.notificationRebindRequested,
+    status?.notificationCacheCount,
+    notificationPermissionUnknown,
+    needsNotificationPermission,
+    notificationServiceDisconnected,
     status?.voiceOverlayPermission,
   ]);
 

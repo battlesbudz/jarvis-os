@@ -27,6 +27,8 @@ import { routeAutonomyRequest } from "../agent/autonomyRuntime";
 import { buildBackgroundJobPrompt } from "../agent/backgroundJobHandoff";
 import { getCoachAppAgentId } from "../agent/coreAgentIds";
 import { createSystemApprovalOnBeforeTool } from "../agent/systemApprovalGate";
+import { resolvePhoneRuntimeRequestText } from "../agent/phoneRuntimeRouting";
+import { ANDROID_PHONE_RUNTIME_TOOL_NAMES } from "../agent/androidPhoneRuntimeToolNames";
 import { getCoachAgentSessionAgentId } from "./coachAgentSession";
 import { listPendingPersonalCommitments } from "../commitments/dbCommitmentRepository";
 // Side-effect import: registers workspace topic context provider.
@@ -641,10 +643,29 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   const turnStrategyBlock = turnGuidance
     ? `\n\n## Turn Strategy\n${turnGuidance}`
     : "";
-  const toolAwareRoute = classifyToolAwareRoute(userText || "");
-  const toolAwareBlock = toolAwareRoute.shouldPreferTool
-    ? `\n\n## Tool-Aware Routing\n${toolAwareRoute.guidance}\nDo not give a capability disclaimer until you have tried the matching tool path or confirmed the required integration is not connected.`
-    : "";
+  const phoneRuntimeRequestText = resolvePhoneRuntimeRequestText([
+    ...(sessionResumed ? cachedSessionMessages : [...chatMessages].reverse()),
+    { role: "user", content: userText || "" },
+  ]);
+  const classifiedToolAwareRoute = classifyToolAwareRoute(phoneRuntimeRequestText);
+  const phoneRuntimeUnavailable =
+    classifiedToolAwareRoute.actionType === "jarvis_device_action" && !androidActive;
+  const toolAwareRoute = phoneRuntimeUnavailable
+    ? {
+        ...classifiedToolAwareRoute,
+        capabilityIds: [],
+        toolGroups: [],
+        priorityToolNames: [],
+        blockedToolNames: [],
+        shouldPreferTool: false,
+        approvalRequired: false,
+      }
+    : classifiedToolAwareRoute;
+  const toolAwareBlock = phoneRuntimeUnavailable
+    ? "\n\n## Phone Runtime Unavailable\nThe Android daemon is not active. Do not request a phone tool or approval. Explain that the user must open Jarvis and connect Android Device Control before retrying."
+    : toolAwareRoute.shouldPreferTool
+      ? `\n\n## Tool-Aware Routing\n${toolAwareRoute.guidance}\nDo not give a capability disclaimer until you have tried the matching tool path or confirmed the required integration is not connected.`
+      : "";
   const effectiveSystemPromptBase = systemPrompt + youtubeInlineConstraint + turnStrategyBlock + toolAwareBlock;
 
   // ── Context registry: inject registered provider context ────────────────────
@@ -728,6 +749,10 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       console.log(`[${channelName}] tool-aware boost: +${boostedTools.length} tools for ${toolAwareRoute.intents.join(", ")}`);
     }
   }
+  if (phoneRuntimeUnavailable) {
+    const phoneRuntimeToolNames = new Set<string>(ANDROID_PHONE_RUNTIME_TOOL_NAMES);
+    scopedTools = scopedTools.filter((tool) => !phoneRuntimeToolNames.has(tool.name));
+  }
   const canonicalKey = parseChannelKey(channelName);
   const registeredChannel = canonicalKey ? getChannel(canonicalKey) : undefined;
   console.log(
@@ -778,7 +803,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     channelActivationPlan = await activationPlanner.plan(userId, {
       source: "channel",
       channel: channelName,
-      queryText: userText,
+      queryText: phoneRuntimeUnavailable ? undefined : userText,
       upcomingMeetingMinutes,
     });
     console.log(`[${channelName}] activation: shouldRun=${channelActivationPlan.shouldRun} — ${channelActivationPlan.reason}`);

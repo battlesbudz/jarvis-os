@@ -3199,6 +3199,11 @@ export default function InsightsScreen() {
         rawToolCalls: diagnosticRawToolCalls.slice(),
         normalizedToolCalls: (params.executedActions ?? []).map((action) => ({
           tool: action.tool,
+          operation: action.operation,
+          operationArgs: action.operationArgs,
+          toolCallId: action.toolCallId,
+          durationMs: action.durationMs,
+          verification: action.verification,
           result: action.result,
           label: action.label,
           detail: action.detail,
@@ -3246,6 +3251,7 @@ export default function InsightsScreen() {
           coachingMode: coachingModeRef.current,
           sdkSessionId: sdkSessionIdRef.current || undefined,
           originChannel: origin.source === 'voice' ? 'voice' : 'appchat',
+          originPlatform: Platform.OS,
         }),
         signal: fetchAbort.signal,
       });
@@ -3785,6 +3791,11 @@ export default function InsightsScreen() {
         rawToolCalls: [{ token, tool, preview: msg.pendingConfirm?.preview }],
         normalizedToolCalls: input.executedActions.map((action) => ({
           tool: action.tool,
+          operation: action.operation,
+          operationArgs: action.operationArgs,
+          toolCallId: action.toolCallId,
+          durationMs: action.durationMs,
+          verification: action.verification,
           result: action.result,
           label: action.label,
           detail: action.detail,

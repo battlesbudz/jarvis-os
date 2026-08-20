@@ -43,7 +43,7 @@ object OpHandler {
         DaemonLog.add("op received: $type")
         return try {
             val result = when (type) {
-                "ping" -> handlePing()
+                "ping" -> handlePing(context)
                 "android_list_apps" -> handleListApps(context)
                 "android_open_app" -> handleOpenApp(context, op)
                 "android_browse" -> handleBrowse(context, op)
@@ -59,7 +59,8 @@ object OpHandler {
                 "android_press_key" -> handlePressKey(op)
                 "android_file_list" -> handleFileList(op)
                 "android_file_read" -> handleFileRead(op)
-                "android_notifications_list" -> handleNotificationsList(op)
+                "android_notifications_list" -> handleNotificationsList(context, op)
+                "android_notification_open" -> handleNotificationOpen(context, op)
                 "android_notification_reply" -> handleNotificationReply(context, op)
                 "android_file_search" -> handleFileSearch(op)
                 "android_open_file" -> handleOpenFile(context, op)
@@ -97,10 +98,12 @@ object OpHandler {
         }
     }
 
-    private fun handlePing(): OpResult {
+    private fun handlePing(context: Context): OpResult {
         val svc = JarvisAccessibilityService.instance
         val accessibilityEnabled = svc != null
-        val notificationListenerActive = JarvisNotificationListener.instance != null
+        val notificationPermissionGranted = JarvisNotificationListener.permissionGranted(context)
+        val notificationServiceConnected = JarvisNotificationListener.instance != null
+        val notificationRebindRequested = JarvisNotificationListener.requestRebindIfNeeded(context)
         val foregroundPackage = try {
             svc?.rootInActiveWindow?.packageName?.toString() ?: "unknown"
         } catch (e: Exception) { "unknown" }
@@ -113,7 +116,16 @@ object OpHandler {
                 .put("androidVersion", Build.VERSION.RELEASE)
                 .put("sdkInt", Build.VERSION.SDK_INT)
                 .put("accessibilityEnabled", accessibilityEnabled)
-                .put("notificationListenerActive", notificationListenerActive)
+                .put("notificationListenerActive", notificationServiceConnected)
+                .put("notificationPermissionGranted", notificationPermissionGranted)
+                .put("notificationServiceConnected", notificationServiceConnected)
+                .put("notificationComponentDeclared", JarvisNotificationListener.componentDeclared(context))
+                .put("notificationComponentEnabled", JarvisNotificationListener.componentEnabled(context))
+                .put("notificationRebindRequested", notificationRebindRequested)
+                .put("notificationLastConnectedAt", JarvisNotificationListener.lastConnectedAt.takeIf { it > 0L })
+                .put("notificationLastDisconnectedAt", JarvisNotificationListener.lastDisconnectedAt.takeIf { it > 0L })
+                .put("notificationLastError", JarvisNotificationListener.lastError)
+                .put("notificationCacheCount", JarvisNotificationListener.recent.size)
                 .put("foregroundPackage", foregroundPackage)
                 .put("uptimeMs", SystemClock.elapsedRealtime())
         )
@@ -487,13 +499,20 @@ object OpHandler {
         val submit = op.optBoolean("submit", false)
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running.")
-        val ok = svc.typeText(text, submit)
+        val result = svc.typeTextDetailed(text, submit)
+        val ok = result.typed && (!submit || result.submitted)
         return OpResult(
             ok = ok,
             data = JSONObject()
-                .put("typed", text.length)
-                .put("submitted", submit && ok),
-            error = if (!ok) "No editable field found — tap a text input first, then type" else null
+                .put("typed", result.typed)
+                .put("typedCharacters", if (result.typed) text.length else 0)
+                .put("submitRequested", submit)
+                .put("submitted", result.submitted),
+            error = when {
+                !result.typed -> "No editable field found or Android rejected text entry — tap a text input first, then type"
+                submit && !result.submitted -> "Text was entered, but the focused field rejected the IME Search/Go/Enter action"
+                else -> null
+            }
         )
     }
 
@@ -720,9 +739,8 @@ object OpHandler {
             if (ok) return OpResult(true, data = JSONObject().put("key", key).put("method", "native"))
         }
 
-        // select_all and delete fall back to the shell keyevent path when the
-        // accessibility service is unavailable or pressKey returned false (e.g.
-        // no focused editable found — covers WebViews and custom IME fields).
+        // select_all and delete retain the legacy shell fallback. Enter must stay
+        // on the accessibility path because ordinary app UIDs cannot inject it.
         if (key == "select_all" || key == "delete") {
             return handlePressKeyViaShell(key)
         }
@@ -824,9 +842,11 @@ object OpHandler {
         }
     }
 
-    private fun handleNotificationsList(op: JSONObject): OpResult {
+    private fun handleNotificationsList(context: Context, op: JSONObject): OpResult {
         val limit = op.optInt("limit", 20).coerceIn(1, 60)
+        val permissionGranted = JarvisNotificationListener.permissionGranted(context)
         val listenerRunning = JarvisNotificationListener.instance != null
+        val rebindRequested = JarvisNotificationListener.requestRebindIfNeeded(context)
         val arr = JarvisNotificationListener.getRecentJson(limit)
         return OpResult(
             ok = true,
@@ -834,7 +854,48 @@ object OpHandler {
                 .put("notifications", arr)
                 .put("count", arr.length())
                 .put("listenerEnabled", listenerRunning)
-                .put("hint", if (!listenerRunning) "Grant notification access in Settings > Notifications > Device & App Notifications > Jarvis Daemon" else null)
+                .put("notificationPermissionGranted", permissionGranted)
+                .put("notificationServiceConnected", listenerRunning)
+                .put("notificationComponentDeclared", JarvisNotificationListener.componentDeclared(context))
+                .put("notificationComponentEnabled", JarvisNotificationListener.componentEnabled(context))
+                .put("notificationRebindRequested", rebindRequested)
+                .put("notificationLastConnectedAt", JarvisNotificationListener.lastConnectedAt.takeIf { it > 0L })
+                .put("notificationLastDisconnectedAt", JarvisNotificationListener.lastDisconnectedAt.takeIf { it > 0L })
+                .put("notificationLastError", JarvisNotificationListener.lastError)
+                .put("hint", when {
+                    !permissionGranted -> "Grant notification access in Settings > Notifications > Device & App Notifications > Jarvis Daemon"
+                    !listenerRunning -> "Notification access is granted, but Android has not connected the listener service. A rebind was requested."
+                    else -> null
+                })
+        )
+    }
+
+    private fun handleNotificationOpen(context: Context, op: JSONObject): OpResult {
+        val key = op.optString("notificationKey").trim()
+        val query = op.optString("query").trim()
+        val appName = op.optString("appName").trim().ifEmpty { null }
+        val allowShadeFallback = op.optBoolean("allowShadeFallback", false)
+        if (key.isNotEmpty()) {
+            val direct = JarvisNotificationListener.performOpen(context, key)
+            if (direct.ok) return direct
+            if (query.isEmpty() && appName == null) return direct
+        }
+        if (query.isEmpty() && appName == null) {
+            return OpResult(false, error = "notificationKey, query, or appName is required")
+        }
+        if (!allowShadeFallback) {
+            return OpResult(false, error = "android_read_screen permission is required for the notification-shade fallback.")
+        }
+        val svc = JarvisAccessibilityService.instance ?: return OpResult(false, error = "Accessibility service is not running, so Jarvis cannot use the notification-shade fallback.")
+        val fallback = svc.openNotificationFromShade(query, appName)
+        return OpResult(
+            ok = fallback.opened,
+            data = JSONObject()
+                .put("opened", fallback.opened)
+                .put("method", "notification_shade_accessibility")
+                .put("matchedText", fallback.matchedText)
+                .put("destinationPackage", fallback.destinationPackage),
+            error = fallback.error,
         )
     }
 

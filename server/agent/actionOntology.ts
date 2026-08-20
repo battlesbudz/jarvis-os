@@ -1,4 +1,5 @@
 import type { ToolGroup } from "./tools/index";
+import { isPhoneRuntimeCoveredRequest } from "./phoneRuntimeRouting";
 
 export type ActionType =
   | "user_task"
@@ -8,6 +9,7 @@ export type ActionType =
   | "jarvis_external_write"
   | "jarvis_code_proposal"
   | "jarvis_code_apply"
+  | "jarvis_device_action"
   | "cloud_worker_task"
   | "system_admin"
   | "blocked_physical_action"
@@ -84,6 +86,17 @@ export function classifyActionOntology(text: string): ActionOntologyDecision {
       allowedToolGroups: [],
       priorityToolNames: [],
       reason: "The request asks Jarvis to inspect the current conversation, not send or change an external message.",
+    });
+  }
+
+  if (isPhoneRuntimeCoveredRequest(normalized)) {
+    return decision({
+      actionType: "jarvis_device_action",
+      actor: "human_approval_required",
+      approvalRequired: true,
+      allowedToolGroups: ["system"],
+      priorityToolNames: ["android_open_notification", "android_search_in_app", "android_read_notifications"],
+      reason: "The request is an Android device action; Jarvis must obtain explicit approval before executing the matching observable Phone Runtime tool and then verify the result.",
     });
   }
 

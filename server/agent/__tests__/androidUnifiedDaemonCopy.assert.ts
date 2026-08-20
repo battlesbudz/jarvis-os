@@ -25,6 +25,12 @@ const legacyAccessibilitySource = fs.readFileSync(
   path.join(projectRoot, "android-daemon/app/src/main/java/com/jarvis/daemon/JarvisAccessibilityService.kt"),
   "utf8",
 );
+const androidNotificationListenerSource = fs.readFileSync(path.join(projectRoot, "android/app/src/main/java/com/gameplan/daemon/JarvisNotificationListener.kt"), "utf8");
+const pluginNotificationListenerSource = fs.readFileSync(path.join(projectRoot, "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisNotificationListener.kt"), "utf8");
+const legacyNotificationListenerSource = fs.readFileSync(path.join(projectRoot, "android-daemon/app/src/main/java/com/jarvis/daemon/JarvisNotificationListener.kt"), "utf8");
+const androidOpHandlerSource = fs.readFileSync(path.join(projectRoot, "android/app/src/main/java/com/gameplan/daemon/OpHandler.kt"), "utf8");
+const pluginOpHandlerSource = fs.readFileSync(path.join(projectRoot, "plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OpHandler.kt"), "utf8");
+const legacyOpHandlerSource = fs.readFileSync(path.join(projectRoot, "android-daemon/app/src/main/java/com/jarvis/daemon/OpHandler.kt"), "utf8");
 const nativeWrapperPath = path.join(projectRoot, "lib/android-daemon-native.ts");
 
 assert.equal(
@@ -34,6 +40,25 @@ assert.equal(
 );
 
 const nativeWrapperSource = fs.readFileSync(nativeWrapperPath, "utf8");
+
+assert.equal(androidNotificationListenerSource, pluginNotificationListenerSource, "Generated and plugin notification listeners must stay byte-for-byte synchronized.");
+assert.equal(androidOpHandlerSource, pluginOpHandlerSource, "Generated and plugin operation handlers must stay byte-for-byte synchronized.");
+for (const source of [androidNotificationListenerSource, legacyNotificationListenerSource]) {
+  assert.match(source, /fun permissionGranted\(context: Context\)/);
+  assert.match(source, /NotificationListenerService\.requestRebind/);
+  assert.match(source, /fun openNotification\(context: Context, key: String\)/);
+  assert.match(source, /contentIntent\.send/);
+  assert.match(source, /activeNotifications[\s\S]*sortedByDescending \{ it\.postTime \}[\s\S]*take\(MAX_CACHED\)[\s\S]*asReversed\(\)[\s\S]*cacheNotification\(it, forward = false\)/);
+  assert.match(source, /\.put\("ts", sbn\.postTime\)/);
+  assert.match(source, /if \(forward\) \{/);
+  assert.match(source, /recent\.removeIf \{ it\.optString\("key"\) == sbn\.key \}/);
+}
+for (const source of [androidOpHandlerSource, legacyOpHandlerSource]) {
+  assert.match(source, /"android_notification_open" -> handleNotificationOpen/);
+  assert.doesNotMatch(source, /"enter"\s+-> Pair\("KEYCODE_ENTER", false\)/);
+  assert.match(source, /notificationPermissionGranted/);
+  assert.match(source, /notificationServiceConnected/);
+}
 
 assert.match(
   profileSource,
