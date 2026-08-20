@@ -152,9 +152,10 @@ Jarvis blocks actions that cannot be safely or lawfully performed, exceed authen
 - Voice acknowledgement is not task completion.
 - Tool execution continues independently of microphone and playback state.
 - Reconnects, duplicate transcripts, and repeated status questions cannot duplicate external effects.
-- Every amendment carries a stable authenticated source-action identity and enters through the task lifecycle lock shared with cancellation. Duplicate transcript or reconnect delivery returns the original amendment result instead of applying it again, and the lock rejects new amendments once the task is cancelling or terminal.
+- Every amendment carries a stable authenticated source-action identity and enters through the task lifecycle lock shared with cancellation and every completion or failure transition. Duplicate transcript or reconnect delivery returns the original amendment result instead of applying it again, and the lock rejects new amendments once terminal admission closes or the task is cancelling or terminal.
 - Under that lock, the voice session may attach a non-side-effecting amendment only when it remains inside the task's existing open scope.
 - An amendment that adds an external or irreversible step or changes any material side-effect field is reclassified from the amendment's authenticated source turn. Material fields include target, recipient, account, repository, environment, item, amount or price ceiling, quantity, date, time, timezone, attendee, duration, scope, and choice. The amendment receives a new bounded authority linked to the same task and cannot reopen or extend the original closed manifest. Authority issuance and task linking use the same locked, deduplicated amendment transaction.
+- Every task terminal transition acquires that lifecycle lock, closes amendment admission, and snapshots all linked authorities after winning the lock. Task success requires every required original and amendment-linked operation in that snapshot to have a successful terminal outcome; pending, failed, cancelled, or reconciliation-required amendment work prevents a false `completed` result.
 - Materially different work creates a separate task instead of silently mutating the first.
 - Task cancellation, speech cancellation, and microphone pause are distinct commands.
 - Task cancellation locks the task and enumerates every linked authority, including terminal authorities and their consumed effects. In one transaction it atomically closes forward admission and cancels or fences every unstarted covered step across all nonterminal authorities before terminalizing the task. The cancellation result preserves and surfaces already-consumed effects with their recovery or manual-rollback guidance. Already-started attempts with uncertain outcomes become `reconciliation_required` with an explicit uncertain-outcome and manual-recovery warning; the task and remaining linked authorities may then reach terminal `cancelled` without waiting indefinitely, and later reconciliation cannot reactivate them.
@@ -231,7 +232,7 @@ No owner may infer another owner's terminal state. For example, a voice disconne
 
 ## Rollout
 
-Each capability is independently disableable. Voice feature flags must not bypass canonical execution policy: action-first voice handoff remains disabled, or preserves the legacy approval behavior, until Trusted Execution PR 5 reconciles root `AGENTS.md`, `agents/TOOL_POLICY.md`, `agents/PRIME.md`, `agents/ROUTING.md`, and their enforcement fixtures:
+Each capability is independently disableable. Voice feature flags must not bypass canonical execution policy: action-first voice handoff remains disabled, or preserves the legacy approval behavior, until Trusted Execution PR 5 completes a repo-wide parity audit and reconciles every active safety, behavior, contributor, security, crew, prompt, and enforcement contract. The required set includes root `AGENTS.md`, `SECURITY.md`, `CONTRIBUTING.md`, `agents/TOOL_POLICY.md`, `agents/PRIME.md`, `agents/ROUTING.md`, `agents/crew/communications.md`, other affected crew contracts, and their enforcement fixtures; `SOUL.md` must return to identity/personality only with misplaced tool-approval policy removed:
 
 1. instrument current voice latency, interruptions, failures, and task handoffs;
 2. enable continuous audio for internal devices;
@@ -259,7 +260,7 @@ Depends on PR 1.
 
 Detach substantial tool work from the conversational turn, establish durable task identity, preserve idempotency, and separate speech/listening/task controls.
 
-Implementation depends on the authority, idempotency, cancellation, and task-linkage foundation in #269. Its action-first feature flag must remain disabled—or continue enforcing legacy gates—until Trusted Execution PR 5 completes canonical policy and enforcement-fixture reconciliation, including root `AGENTS.md`; no voice-specific approval bypass is permitted.
+Implementation depends on the authority, idempotency, cancellation, and task-linkage foundation in #269. Its action-first feature flag must remain disabled—or continue enforcing legacy gates—until Trusted Execution PR 5 completes the repo-wide policy/contract audit and enforcement-fixture reconciliation above; no voice-specific approval bypass is permitted.
 
 ### PR 4 — Live progress and voice task controls
 
@@ -285,7 +286,7 @@ Depends on PRs 1–5 and uses PR #259 as the wearable baseline.
 2. Jarvis speaks the first useful response segment before the full response is generated.
 3. The user interrupts halfway through a normalized spoken phrase after canonical Markdown has advanced further; audio stops promptly, the frontier records the acknowledged `spokenCharacterOffset`, and the canonical model-input history substitutes that assistant turn with only the derived `heardAssistantText`, excluding the parallel full response, unspoken Markdown, omitted content, and Jarvis's own captured output. Saying "stop talking" additionally suppresses every later TTS chunk for that response while its displayed text continues.
 4. While a task runs, the user asks for status and receives sanitized truthful progress without stopping the task.
-5. A non-side-effecting preference change inside existing scope updates the intended task once even after duplicate transcript or reconnect delivery; every amendment serializes with cancellation and is rejected after cancellation starts. An amendment that adds an external step or changes any material side-effect field receives a new bounded authority linked to that task without reopening the old manifest; unrelated work creates a new task.
+5. A non-side-effecting preference change inside existing scope updates the intended task once even after duplicate transcript or reconnect delivery; every amendment serializes with cancellation, completion, and failure and is rejected after terminal admission closes. An amendment that adds an external step or changes any material side-effect field receives a new bounded authority linked to that task without reopening the old manifest, and the task cannot report success until all required linked amendment work succeeds; unrelated work creates a new task.
 6. "Stop talking" suppresses speech for the current response without stopping text generation, "stop listening" pauses only microphone capture, and "cancel the task" atomically fences unstarted work across every linked nonterminal authority while reporting already-consumed effects and their recovery guidance, without changing either speech control.
 7. After the Trusted Execution PR 5 canonical-policy parity gate passes and the voice flag is enabled, ordinary non-destructive tool work never creates a duplicate approval request; before then, voice retains legacy gates.
 8. With Trusted Execution enabled after its PR 5 parity gate, messages, posts, purchases, merges, deployments, and other ordinarily remediable actions execute from a materially complete command without another question; nonrecoverable or root-wide destruction is narrowed to a permitted recoverable path or blocked, and voice confirmation cannot override that block.
@@ -302,6 +303,6 @@ Depends on PRs 1–5 and uses PR #259 as the wearable baseline.
 - All six implementation issues are complete in dependency order.
 - Each implementation PR has focused regression coverage and a clean Codex review before merge.
 - Physical-device acceptance passes on the Galaxy Z Fold 6 and the supported CY003 route.
-- Trusted Execution PR 5 has reconciled root `AGENTS.md`, canonical agent policies, and enforcement fixtures before action-first voice flags enable.
+- Trusted Execution PR 5 has completed the repo-wide parity audit, reconciled every affected active contract and enforcement fixture—including the required files named in Rollout—and removed tool-approval policy from `SOUL.md` before action-first voice flags enable.
 - The authorization matrix proves that, after that parity gate, materially complete ordinary commands—including sends, posts, purchases, merges, and deployments—execute without follow-up questions, while nonrecoverable or root-wide destruction remains blocked unless it can be narrowed to a Trusted Execution-permitted recoverable path.
 - No duplicate execution, cross-user progress leakage, hidden-reasoning exposure, or abandoned durable task is observed in the golden workflows.
