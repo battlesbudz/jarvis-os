@@ -227,7 +227,7 @@ No owner may infer another owner's terminal state. For example, a voice disconne
 
 ## Rollout
 
-Each capability is independently disableable. Voice feature flags must not bypass canonical execution policy: action-first voice handoff remains disabled, or preserves the legacy approval behavior, until Trusted Execution PR 5 reconciles `agents/TOOL_POLICY.md`, `agents/PRIME.md`, `agents/ROUTING.md`, and their enforcement fixtures:
+Each capability is independently disableable. Voice feature flags must not bypass canonical execution policy: action-first voice handoff remains disabled, or preserves the legacy approval behavior, until Trusted Execution PR 5 reconciles root `AGENTS.md`, `agents/TOOL_POLICY.md`, `agents/PRIME.md`, `agents/ROUTING.md`, and their enforcement fixtures:
 
 1. instrument current voice latency, interruptions, failures, and task handoffs;
 2. enable continuous audio for internal devices;
@@ -255,7 +255,7 @@ Depends on PR 1.
 
 Detach substantial tool work from the conversational turn, establish durable task identity, preserve idempotency, and separate speech/listening/task controls.
 
-Implementation depends on the authority, idempotency, cancellation, and task-linkage foundation in #269. Its action-first feature flag must remain disabled—or continue enforcing legacy gates—until Trusted Execution PR 5 completes canonical policy and enforcement-fixture reconciliation; no voice-specific approval bypass is permitted.
+Implementation depends on the authority, idempotency, cancellation, and task-linkage foundation in #269. Its action-first feature flag must remain disabled—or continue enforcing legacy gates—until Trusted Execution PR 5 completes canonical policy and enforcement-fixture reconciliation, including root `AGENTS.md`; no voice-specific approval bypass is permitted.
 
 ### PR 4 — Live progress and voice task controls
 
@@ -298,6 +298,6 @@ Depends on PRs 1–5 and uses PR #259 as the wearable baseline.
 - All six implementation issues are complete in dependency order.
 - Each implementation PR has focused regression coverage and a clean Codex review before merge.
 - Physical-device acceptance passes on the Galaxy Z Fold 6 and the supported CY003 route.
-- Trusted Execution PR 5 has reconciled canonical agent policies and enforcement fixtures before action-first voice flags enable.
+- Trusted Execution PR 5 has reconciled root `AGENTS.md`, canonical agent policies, and enforcement fixtures before action-first voice flags enable.
 - The authorization matrix proves that, after that parity gate, materially complete ordinary commands—including sends, posts, purchases, merges, and deployments—execute without follow-up questions, while nonrecoverable or root-wide destruction remains blocked unless it can be narrowed to a Trusted Execution-permitted recoverable path.
 - No duplicate execution, cross-user progress leakage, hidden-reasoning exposure, or abandoned durable task is observed in the golden workflows.
