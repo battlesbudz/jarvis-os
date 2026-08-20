@@ -8,7 +8,7 @@ Proposed product requirements for Jarvis OS.
 
 Jarvis should hold a natural, interruptible voice conversation while independently executing the user's tasks through the canonical agent and tool runtime.
 
-A clear authenticated user command is sufficient authority to act within Trusted Execution's safety contract. For voice side effects, authentication includes verified speaker presence or a current protected OS/device reauthentication; a paired daemon socket alone identifies the account but not the speaker. Jarvis should say okay and do the work without routine follow-up questions. For destructive requests, it chooses a bounded recoverable path when one exists; root-wide or nonrecoverable destruction remains blocked and cannot be converted into executable authority by a voice warning or affirmative response. Irreversibility by itself is not destructive.
+A clear authenticated user command is sufficient authority to act within Trusted Execution's safety contract. Before voice may retrieve or disclose private user context or authorize side effects, authentication includes verified speaker presence or a current protected OS/device reauthentication; a paired daemon socket alone identifies the account but not the speaker. Jarvis should say okay and do the work without routine follow-up questions. For destructive requests, it chooses a bounded recoverable path when one exists; root-wide or nonrecoverable destruction remains blocked and cannot be converted into executable authority by a voice warning or affirmative response. Irreversibility by itself is not destructive.
 
 The result should feel like one continuous assistant rather than separate voice, chat, tool, and background-job products.
 
@@ -124,9 +124,9 @@ Jarvis blocks actions that cannot be safely or lawfully performed, exceed authen
 ### Voice authentication
 
 - Account/device pairing is transport identity, not speaker authentication, and cannot by itself issue side-effecting voice authority.
-- Before a committed voice command can authorize an external or irreversible step, the session proves user presence through supported speaker verification with liveness or a current protected OS/device reauthentication scoped to that voice session.
+- Before a committed voice command can retrieve or speak private user context or authorize an external or irreversible step, the session proves user presence through supported speaker verification with liveness or a current protected OS/device reauthentication scoped to that voice session.
 - Media playback, Jarvis output, unverified nearby speech, and stale authentication cannot become an authenticated source turn.
-- If protected verification is unavailable or stale, Jarvis may continue conversation and safe preparatory work but reports setup or reauthentication required before issuing side-effect authority; it does not create a duplicate approval prompt.
+- If protected verification is unavailable or stale, voice is limited to public, non-user-scoped conversation plus verification/setup guidance. It cannot read notifications, memory, calendar, messages, task or agent status, artifacts, account data, or other private context; invoke user-scoped tools; or perform preparatory work derived from that data. Jarvis reports setup or reauthentication required rather than creating a duplicate approval prompt.
 - The authority audit records the protected authentication method and session reference without retaining a reusable biometric secret.
 
 ### Streaming response and speech
@@ -291,7 +291,7 @@ Depends on PRs 1–5 and uses PR #259 as the wearable baseline.
 12. Completed work appears consistently in conversation, Live Action, and artifact surfaces.
 13. Echo, background noise, or another rejected interruption candidate snapshots and fences delivery acknowledgement before ducking; callbacks during the fence do not count as heard, and rejection resumes the same response from the snapshot without skipping, losing, or duplicating queued speech.
 14. A response that would trigger the existing Android post-stream quality revision either completes that revision before any speakable chunk is emitted or bypasses the revision in explicit speakable-stream mode; displayed text, spoken text, captions, interruption context, and the final harness reply identify the same canonical response.
-15. A paired device receives a side-effecting utterance from media playback or an unverified nearby speaker; no execution authority is issued until protected speaker verification or current OS/device reauthentication binds the command to the user, while safe conversation remains available.
+15. A paired device receives an utterance from media playback or an unverified nearby speaker; until protected speaker verification or current OS/device reauthentication binds the command to the user, Jarvis issues no execution authority and refuses notification, memory, calendar, message, task/status, artifact, and account-data reads while allowing only public non-user-scoped conversation and verification/setup guidance.
 
 ## Definition of done
 
