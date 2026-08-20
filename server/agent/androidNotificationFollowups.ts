@@ -53,8 +53,9 @@ function hasNotificationReferent(transcript: string): boolean {
 }
 
 function isNotificationConfigurationRequest(transcript: string): boolean {
-  return /\bnotifications?\s+(?:settings?|permissions?|access|preferences?)\b/i.test(transcript) ||
-    /\b(?:settings?|permissions?|access|preferences?)\s+(?:for\s+|to\s+)?(?:my\s+|android\s+)?notifications?\b/i.test(transcript);
+  return /\bnotifications?\s+(?:settings?|permissions?|access|preferences?|history|logs?)\b/i.test(transcript) ||
+    /\b(?:settings?|permissions?|access|preferences?)\s+(?:for\s+|to\s+)?(?:my\s+|android\s+)?notifications?\b/i.test(transcript) ||
+    /\b(?:history|logs?)\s+of\s+(?:my\s+|android\s+)?notifications?\b/i.test(transcript);
 }
 
 function wantsNotificationReferenceOpen(transcript: string, notifications: unknown[]): boolean {
