@@ -993,6 +993,18 @@ async function main() {
   assert.equal(soleGenericOneAppOpen, null, "generic one-app requests must not target the sole notification");
   const solePluralNotificationOpen = resolveAndroidNotificationFollowUp("Open my notifications", soleNotification);
   assert.equal(solePluralNotificationOpen, null, "plural notification-shade requests must not target the sole notification");
+  for (const configurationRequest of [
+    "Open the notification settings",
+    "Show notification permissions",
+    "Go to Android notification access",
+    "Open preferences for notifications",
+  ]) {
+    assert.equal(
+      resolveAndroidNotificationFollowUp(configurationRequest, soleNotification),
+      null,
+      `${configurationRequest} must not open the cached notification`,
+    );
+  }
   const emptyObservedNotifications = resolveAndroidNotificationFollowUp("Read all of them", []);
   assert.equal(emptyObservedNotifications?.kind, "read_all", "empty observations must remain valid follow-up context");
   assert.match(emptyObservedNotifications?.response ?? "", /no current notifications/i);
