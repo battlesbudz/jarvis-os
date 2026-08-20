@@ -998,6 +998,9 @@ async function main() {
     "Show notification permissions",
     "Go to Android notification access",
     "Open preferences for notifications",
+    "Open the notification history",
+    "Show the notification log",
+    "Go to the history of my notifications",
   ]) {
     assert.equal(
       resolveAndroidNotificationFollowUp(configurationRequest, soleNotification),
