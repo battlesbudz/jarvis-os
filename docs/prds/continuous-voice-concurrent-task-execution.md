@@ -115,7 +115,7 @@ Jarvis blocks actions that cannot be safely or lawfully performed, exceed authen
 
 - Android owns one explicit Talk Mode audio session and one authoritative state machine.
 - The session supports capture, playback, interruption, route changes, backgrounding, and recovery.
-- Partial recognition results are available for responsiveness but only committed transcript segments enter canonical conversation history.
+- Partial recognition results are available for responsiveness, but only committed transcript segments from a protected authenticated turn enter canonical conversation history. Unverified public-mode transcripts remain isolated and ephemeral.
 - Acoustic echo cancellation, noise suppression, and automatic gain control are enabled when supported and validated per route.
 - Voice activity detection distinguishes probable user speech from Jarvis playback.
 - Bluetooth and hearing-aid communication routes are enabled only in PR 6 after PR #259 lands and must reuse its wearable route manager.
@@ -129,6 +129,7 @@ Jarvis blocks actions that cannot be safely or lawfully performed, exceed authen
 - Device lock, app/session backgrounding, route or device transfer, loss of the verified speaker/presence signal, or Talk Mode restart revokes the lease immediately. Background Talk Mode returns to public non-user-scoped behavior until fresh protected verification succeeds.
 - Media playback, Jarvis output, unverified nearby speech, and stale authentication cannot become an authenticated source turn.
 - If protected verification is unavailable or stale, voice is limited to public, non-user-scoped conversation plus verification/setup guidance. It cannot read notifications, memory, calendar, messages, task or agent status, artifacts, account data, or other private context; invoke user-scoped tools; or perform preparatory work derived from that data. Jarvis reports setup or reauthentication required rather than creating a duplicate approval prompt.
+- Unverified public mode uses a separate ephemeral conversation with no durable chat/session, memory extraction, living-context, task, artifact, or profile writes. Its utterances and responses are never merged into authenticated history after verification; successful verification starts a fresh protected turn. Security telemetry may record only redacted event metadata needed to detect abuse, not reusable transcript content.
 - The authority audit records the protected authentication method and session reference without retaining a reusable biometric secret.
 
 ### Streaming response and speech
@@ -293,7 +294,7 @@ Depends on PRs 1–5 and uses PR #259 as the wearable baseline.
 12. Completed work appears consistently in conversation, Live Action, and artifact surfaces.
 13. Echo, background noise, or another rejected interruption candidate continues acknowledging audibly rendered output until the actual duck/stop transition, then atomically snapshots and fences delivery; callbacks after that boundary do not count as heard, and rejection resumes the same response from the snapshot without skipping, losing, or duplicating queued speech.
 14. A response that would trigger the existing Android post-stream quality revision either completes that revision before any speakable chunk is emitted or bypasses the revision in explicit speakable-stream mode; displayed text, spoken text, captions, interruption context, and the final harness reply identify the same canonical response.
-15. A paired device receives an utterance from media playback or an unverified nearby speaker; until protected speaker verification or current OS/device reauthentication binds the command to the user, Jarvis issues no execution authority and refuses notification, memory, calendar, message, task/status, artifact, and account-data reads while allowing only public non-user-scoped conversation and verification/setup guidance. After valid verification, a later utterance following device lock, backgrounding, route transfer, lost presence, Talk Mode restart, or the 30-second lease expiry is restricted again until fresh verification succeeds.
+15. A paired device receives an utterance from media playback or an unverified nearby speaker; until protected speaker verification or current OS/device reauthentication binds the command to the user, Jarvis issues no execution authority and refuses notification, memory, calendar, message, task/status, artifact, and account-data reads while allowing only public non-user-scoped conversation and verification/setup guidance in an isolated ephemeral session. That session creates no durable chat, memory, learned-context, task, artifact, or profile writes and is never merged after verification. After valid verification, a later utterance following device lock, backgrounding, route transfer, lost presence, Talk Mode restart, or the 30-second lease expiry is restricted again until fresh verification succeeds.
 
 ## Definition of done
 
