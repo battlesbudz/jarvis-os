@@ -8,7 +8,7 @@ Proposed product requirements for Jarvis OS.
 
 Jarvis should hold a natural, interruptible voice conversation while independently executing the user's tasks through the canonical agent and tool runtime.
 
-A clear authenticated user command is sufficient authority to act within Trusted Execution's safety contract. Jarvis should say okay and do the work without routine follow-up questions. For destructive requests, it chooses a bounded recoverable path when one exists; root-wide or nonrecoverable destruction remains blocked and cannot be converted into executable authority by a voice warning or affirmative response. Irreversibility by itself is not destructive.
+A clear authenticated user command is sufficient authority to act within Trusted Execution's safety contract. For voice side effects, authentication includes verified speaker presence or a current protected OS/device reauthentication; a paired daemon socket alone identifies the account but not the speaker. Jarvis should say okay and do the work without routine follow-up questions. For destructive requests, it chooses a bounded recoverable path when one exists; root-wide or nonrecoverable destruction remains blocked and cannot be converted into executable authority by a voice warning or affirmative response. Irreversibility by itself is not destructive.
 
 The result should feel like one continuous assistant rather than separate voice, chat, tool, and background-job products.
 
@@ -121,6 +121,14 @@ Jarvis blocks actions that cannot be safely or lawfully performed, exceed authen
 - Bluetooth and hearing-aid communication routes are enabled only in PR 6 after PR #259 lands and must reuse its wearable route manager.
 - Devices that cannot sustain reliable duplex audio fall back to interruption-aware turn-taking.
 
+### Voice authentication
+
+- Account/device pairing is transport identity, not speaker authentication, and cannot by itself issue side-effecting voice authority.
+- Before a committed voice command can authorize an external or irreversible step, the session proves user presence through supported speaker verification with liveness or a current protected OS/device reauthentication scoped to that voice session.
+- Media playback, Jarvis output, unverified nearby speech, and stale authentication cannot become an authenticated source turn.
+- If protected verification is unavailable or stale, Jarvis may continue conversation and safe preparatory work but reports setup or reauthentication required before issuing side-effect authority; it does not create a duplicate approval prompt.
+- The authority audit records the protected authentication method and session reference without retaining a reusable biometric secret.
+
 ### Streaming response and speech
 
 - The canonical agent response stream is segmented into bounded, speakable phrases with stable per-response chunk IDs.
@@ -145,7 +153,7 @@ Jarvis blocks actions that cannot be safely or lawfully performed, exceed authen
 - An amendment that adds an external or irreversible step or changes any material side-effect field is reclassified from the amendment's authenticated source turn. Material fields include target, recipient, account, repository, environment, item, amount or price ceiling, quantity, date, time, timezone, attendee, duration, scope, and choice. The amendment receives a new bounded authority linked to the same task and cannot reopen or extend the original closed manifest. Authority issuance and task linking use the same locked, deduplicated amendment transaction.
 - Materially different work creates a separate task instead of silently mutating the first.
 - Task cancellation, speech cancellation, and microphone pause are distinct commands.
-- Task cancellation locks the task, enumerates every linked nonterminal authority, and in one transaction atomically closes forward admission and cancels or fences every unstarted covered step across all of them before terminalizing the task. Already-started attempts with uncertain outcomes become `reconciliation_required` with an explicit uncertain-outcome and manual-recovery warning; the task and linked authorities may then reach terminal `cancelled` without waiting indefinitely, and later reconciliation cannot reactivate them.
+- Task cancellation locks the task and enumerates every linked authority, including terminal authorities and their consumed effects. In one transaction it atomically closes forward admission and cancels or fences every unstarted covered step across all nonterminal authorities before terminalizing the task. The cancellation result preserves and surfaces already-consumed effects with their recovery or manual-rollback guidance. Already-started attempts with uncertain outcomes become `reconciliation_required` with an explicit uncertain-outcome and manual-recovery warning; the task and remaining linked authorities may then reach terminal `cancelled` without waiting indefinitely, and later reconciliation cannot reactivate them.
 
 ### Progress conversation
 
@@ -204,7 +212,7 @@ The canonical owners remain separate:
 - **Task owner:** plan, tools, retries, cancellation, result, and artifacts.
 - **Live Action projection:** sanitized progress and controls for presentation only.
 
-No owner may infer another owner's terminal state. For example, a voice disconnect cannot mark a task failed, and a completed spoken acknowledgement cannot mark the task succeeded. A task-cancellation command coordinates both owners through Trusted Execution under a task lock shared with amendment issuance. Every linked nonterminal authority has forward admission closed and unstarted steps fenced atomically before cancellation becomes terminal, so no concurrent amendment can attach new authority after enumeration. Started attempts with unresolved outcomes move to `reconciliation_required`; terminal cancellation exposes uncertainty and recovery guidance, and later reconciliation updates only audit/recovery state without reactivating the task or any authority.
+No owner may infer another owner's terminal state. For example, a voice disconnect cannot mark a task failed, and a completed spoken acknowledgement cannot mark the task succeeded. A task-cancellation command coordinates both owners through Trusted Execution under a task lock shared with amendment issuance. It snapshots all linked authorities and consumed effects for the cancellation result, then closes forward admission and fences unstarted steps across every linked nonterminal authority before cancellation becomes terminal, so no concurrent amendment can attach new authority after enumeration. Completed effects remain visible with recovery or manual-rollback guidance. Started attempts with unresolved outcomes move to `reconciliation_required`; terminal cancellation exposes uncertainty and recovery guidance, and later reconciliation updates only audit/recovery state without reactivating the task or any authority.
 
 ## Failure and fallback behavior
 
@@ -235,7 +243,7 @@ Disabling a new capability must return users to the current canonical voice or t
 
 ### PR 1 — Continuous native audio session
 
-Create the single Android voice-session state machine, partial recognition plumbing, playback/capture coordination, echo-control policy, interruption detection with rejected-candidate resume behavior, built-in phone-route handling, and turn-based fallback. Do not add wearable route ownership; wearable integration is deferred to PR 6 after #259 lands.
+Create the single Android voice-session state machine, protected speaker/session authentication lifecycle, partial recognition plumbing, playback/capture coordination, echo-control policy, interruption detection with rejected-candidate resume behavior, built-in phone-route handling, and turn-based fallback. Do not add wearable route ownership; wearable integration is deferred to PR 6 after #259 lands.
 
 ### PR 2 — Streaming response and upgraded TTS
 
@@ -274,7 +282,7 @@ Depends on PRs 1–5 and uses PR #259 as the wearable baseline.
 3. The user interrupts halfway through a normalized spoken phrase after canonical Markdown has advanced further; audio stops promptly, the frontier records the acknowledged `spokenCharacterOffset`, and the canonical model-input history substitutes that assistant turn with only the derived `heardAssistantText`, excluding the parallel full response, unspoken Markdown, omitted content, and Jarvis's own captured output. Saying "stop talking" additionally suppresses every later TTS chunk for that response while its displayed text continues.
 4. While a task runs, the user asks for status and receives sanitized truthful progress without stopping the task.
 5. A non-side-effecting preference change inside existing scope updates the intended task once even after duplicate transcript or reconnect delivery; every amendment serializes with cancellation and is rejected after cancellation starts. An amendment that adds an external step or changes any material side-effect field receives a new bounded authority linked to that task without reopening the old manifest; unrelated work creates a new task.
-6. "Stop talking" suppresses speech for the current response without stopping text generation, "stop listening" pauses only microphone capture, and "cancel the task" atomically fences unstarted work across every linked authority without changing either speech control.
+6. "Stop talking" suppresses speech for the current response without stopping text generation, "stop listening" pauses only microphone capture, and "cancel the task" atomically fences unstarted work across every linked nonterminal authority while reporting already-consumed effects and their recovery guidance, without changing either speech control.
 7. After the Trusted Execution PR 5 canonical-policy parity gate passes and the voice flag is enabled, ordinary non-destructive tool work never creates a duplicate approval request; before then, voice retains legacy gates.
 8. With Trusted Execution enabled after its PR 5 parity gate, messages, posts, purchases, merges, deployments, and other ordinarily remediable actions execute from a materially complete command without another question; nonrecoverable or root-wide destruction is narrowed to a permitted recoverable path or blocked, and voice confirmation cannot override that block.
 9. App restart, network loss, duplicated events, and route changes do not duplicate tool effects or lose accepted work.
@@ -283,6 +291,7 @@ Depends on PRs 1–5 and uses PR #259 as the wearable baseline.
 12. Completed work appears consistently in conversation, Live Action, and artifact surfaces.
 13. Echo, background noise, or another rejected interruption candidate snapshots and fences delivery acknowledgement before ducking; callbacks during the fence do not count as heard, and rejection resumes the same response from the snapshot without skipping, losing, or duplicating queued speech.
 14. A response that would trigger the existing Android post-stream quality revision either completes that revision before any speakable chunk is emitted or bypasses the revision in explicit speakable-stream mode; displayed text, spoken text, captions, interruption context, and the final harness reply identify the same canonical response.
+15. A paired device receives a side-effecting utterance from media playback or an unverified nearby speaker; no execution authority is issued until protected speaker verification or current OS/device reauthentication binds the command to the user, while safe conversation remains available.
 
 ## Definition of done
 
