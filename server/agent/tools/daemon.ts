@@ -13,6 +13,7 @@ import {
   type DaemonOp,
 } from "../../daemon/bridge";
 import { checkAndIncrementScreenshotBudget } from "./daemonShellTool";
+import { runAndroidOpenNotification } from "./androidAppRuntime";
 
 const DESKTOP_ACTIONS: readonly DaemonAction[] = ["shell", "notify", "file_read", "file_write", "file_list", "desktop_screenshot", "desktop_read_screen"] as const;
 const ANDROID_ACTIONS: readonly string[] = [
@@ -450,18 +451,17 @@ Do not require confirmation for low-risk phone navigation and read-only control:
         if (!args.path) return { ok: false, content: jsonErrorContent("path required") };
         op = { type: "android_copy_to_clipboard", path: String(args.path) };
       } else if (rawAction === "android_notification_open") {
-        if (!args.notificationKey && !args.query && !args.appName) return { ok: false, content: jsonErrorContent("notificationKey, query, or appName required") };
-        const allowShadeFallback = Boolean(args.query || args.appName) &&
-          await isAndroidDaemonActionAllowed(ctx.userId, "android_read_screen");
-        if (!args.notificationKey && !allowShadeFallback) {
-          return { ok: false, content: jsonErrorContent("android_read_screen permission is required for an app- or query-only notification open.") };
-        }
-        op = {
-          type: "android_notification_open",
-          notificationKey: args.notificationKey ? String(args.notificationKey) : undefined,
-          query: args.query ? String(args.query) : undefined,
-          appName: args.appName ? String(args.appName) : undefined,
-          allowShadeFallback,
+        const outcome = await runAndroidOpenNotification(args, ctx.userId);
+        return {
+          ok: outcome.ok,
+          content: JSON.stringify({
+            ok: outcome.ok,
+            data: {
+              result: outcome.ok ? "success" : "error",
+              label: outcome.label,
+              detail: outcome.detail,
+            },
+          }),
         };
       } else if (rawAction === "android_notification_reply") {
         if (!args.notificationKey) return { ok: false, content: jsonErrorContent("notificationKey required") };
