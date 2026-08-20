@@ -217,6 +217,7 @@ assert.match(routesSource, /const phoneRuntimeAvailable = androidActive;/);
 assert.match(channelCoachSource, /resolvePhoneRuntimeRequestText\(\[[\s\S]*cachedSessionMessages[\s\S]*\[\.\.\.chatMessages\]\.reverse\(\)[\s\S]*role: ["']user["'][\s\S]*classifyToolAwareRoute\(phoneRuntimeRequestText\)/);
 assert.match(channelCoachSource, /classifiedToolAwareRoute\.actionType === ["']jarvis_device_action["'] && !androidActive/);
 assert.match(channelCoachSource, /phoneRuntimeUnavailable[\s\S]*toolGroups: \[\][\s\S]*priorityToolNames: \[\][\s\S]*shouldPreferTool: false/);
+assert.match(channelCoachSource, /phoneRuntimeUnavailable[\s\S]*new Set<string>\(ANDROID_PHONE_RUNTIME_TOOL_NAMES\)[\s\S]*scopedTools = scopedTools\.filter/);
 assert.match(channelCoachSource, /queryText: phoneRuntimeUnavailable \? undefined : userText/);
 assert.match(channelCoachSource, /The Android daemon is not active\. Do not request a phone tool or approval\./);
 assert.match(routesSource, /phoneRuntimeAvailable && !memoryPhoneBypassRequest && \([\s\S]*isPhoneRuntimeCoveredRequest\(phoneRuntimeRequestText\)/);
