@@ -124,6 +124,7 @@ Jarvis blocks actions that cannot be safely or lawfully performed, exceed authen
 ### Streaming response and speech
 
 - The canonical agent response stream is segmented into bounded, speakable phrases with stable per-response chunk IDs.
+- Speakable streaming runs use an explicit harness mode in which emitted canonical chunks and the final returned reply are the same response. The existing Android post-stream quality-revision path must be bypassed for that mode or moved before any chunk can reach display or TTS; it cannot silently replace text that the user has already seen, heard, or acknowledged. Non-voice streaming behavior remains unchanged.
 - Every TTS adapter reports playback range progress as a stable character offset within the current chunk's stored normalized `spokenText` and reports completion at that spoken string's boundary. The response's spoken-delivery frontier advances monotonically from those acknowledgements; queued, skipped, failed, and unplayed portions do not advance it.
 - The next model turn receives the exact acknowledged `heardAssistantText` separately from the canonical displayed response; speech normalization never reuses an offset as a position in Markdown or other canonical text.
 - TTS may begin before the full response is complete.
@@ -237,7 +238,7 @@ Create the single Android voice-session state machine, partial recognition plumb
 
 ### PR 2 — Streaming response and upgraded TTS
 
-Connect canonical response streaming to safe phrase chunking, stable chunk IDs, separately stored normalized `spokenText`, range-progress and completion acknowledgements, acknowledged `heardAssistantText`, the partial spoken-delivery frontier, one high-quality streaming TTS implementation, native TTS fallback, end-to-end cancellation, and spoken-content normalization.
+Connect canonical response streaming to safe phrase chunking, stable chunk IDs, separately stored normalized `spokenText`, range-progress and completion acknowledgements, acknowledged `heardAssistantText`, the partial spoken-delivery frontier, one high-quality streaming TTS implementation, native TTS fallback, end-to-end cancellation, and spoken-content normalization. Add the explicit speakable-stream harness mode and reconcile the existing Android post-stream quality revision so an emitted response cannot be replaced by a different final reply.
 
 Depends on PR 1.
 
@@ -280,6 +281,7 @@ Depends on PRs 1–5 and uses PR #259 as the wearable baseline.
 11. Bluetooth glasses can capture the user and play Jarvis through the selected communication route.
 12. Completed work appears consistently in conversation, Live Action, and artifact surfaces.
 13. Echo, background noise, or another rejected interruption candidate temporarily ducks playback, then resumes the same response from the acknowledged frontier without losing or duplicating queued speech.
+14. A response that would trigger the existing Android post-stream quality revision either completes that revision before any speakable chunk is emitted or bypasses the revision in explicit speakable-stream mode; displayed text, spoken text, captions, interruption context, and the final harness reply identify the same canonical response.
 
 ## Definition of done
 
