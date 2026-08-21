@@ -574,6 +574,10 @@ for (const [query, label] of [
   assert(plan.priorityToolNames.includes("memory_save"), `${label}: exposes memory_save`);
 }
 {
+  const plan = classifyToolAwareRoute("That memory is wrong");
+  assert(plan.guidance.includes("otherwise ask the user for the corrected content and do not call memory_save"), "correction without replacement: asks for corrected content after search");
+}
+{
   const plan = classifyToolAwareRoute("What you know about TypeScript is wrong");
   assert(!plan.intents.includes("memory"), "general knowledge correction: does not detect personal memory intent");
   assert(!plan.toolGroups.includes("memory"), "general knowledge correction: does not expose memory tools");

@@ -165,7 +165,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     capabilityIds: ["memory"],
     toolGroups: ["memory"],
     priorityToolNames: ["memory_search", "memory_get", "memory_save", "living_context_update"],
-    guidance: "For memory or preference questions, search memory/living context before claiming not to know. When the user explicitly asks Jarvis to remember or save one or more stated facts, call memory_save for each distinct durable fact. When the user asks to edit or correct an existing memory, call memory_search first to retrieve its memory_id, then call memory_save with the corrected content and supersedes_memory_id so the change remains reviewable and provenance-aware.",
+    guidance: "For memory or preference questions, search memory/living context before claiming not to know. When the user explicitly asks Jarvis to remember or save one or more stated facts, call memory_save for each distinct durable fact. When the user asks to edit or correct an existing memory, call memory_search first to retrieve its memory_id. If the turn states the corrected content, call memory_save with that content and supersedes_memory_id so the change remains reviewable and provenance-aware; otherwise ask the user for the corrected content and do not call memory_save.",
   },
   {
     intent: "research",
