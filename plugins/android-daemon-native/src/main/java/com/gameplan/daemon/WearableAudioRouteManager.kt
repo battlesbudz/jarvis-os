@@ -101,6 +101,7 @@ internal object WearableAudioRouteManager {
     private var callbackRegistered = false
     private var scoReceiverRegistered = false
     private var communicationDeviceListenerRegistered = false
+    private var communicationDeviceOwnedByJarvis = false
     private var routeRecoveryPending = false
     private var legacyScoTeardownPending = false
     private var legacyScoTeardownWaitElapsed = false
@@ -219,6 +220,7 @@ internal object WearableAudioRouteManager {
         lastError = null
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            communicationDeviceOwnedByJarvis = false
             val accepted = try {
                 manager.setCommunicationDevice(device)
             } catch (error: Throwable) {
@@ -236,6 +238,7 @@ internal object WearableAudioRouteManager {
                 scheduleRouteRecovery(expectLegacy = false)
                 return
             }
+            communicationDeviceOwnedByJarvis = true
             waitForRouteConfirmation(device.id, requestGeneration)
         } else {
             @Suppress("DEPRECATION")
@@ -433,6 +436,9 @@ internal object WearableAudioRouteManager {
     private fun handleCommunicationDeviceChanged(device: AudioDeviceInfo?) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || owners.isEmpty()) return
         if (device != null && WearableAudioRoutePolicy.isWearableCommunicationType(device.type)) {
+            if (communicationDeviceOwnedByJarvis && requestedDeviceId != device.id) {
+                communicationDeviceOwnedByJarvis = false
+            }
             requestedDeviceId = device.id
             routeState = "active"
             lastError = null
@@ -440,6 +446,7 @@ internal object WearableAudioRouteManager {
             appContext?.let { completePending(snapshot(it)) }
             return
         }
+        communicationDeviceOwnedByJarvis = false
         if (routeState != "active") return
         routeGeneration += 1
         routeState = "failed"
@@ -512,7 +519,7 @@ internal object WearableAudioRouteManager {
         if (waitForLegacyTeardown) beginLegacyScoTeardownWait()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                manager.clearCommunicationDevice()
+                if (communicationDeviceOwnedByJarvis) manager.clearCommunicationDevice()
             } else {
                 @Suppress("DEPRECATION")
                 manager.stopBluetoothSco()
@@ -534,6 +541,7 @@ internal object WearableAudioRouteManager {
                 }
             }
             previousAudioMode = null
+            communicationDeviceOwnedByJarvis = false
             requestedDeviceId = null
             routeGeneration += 1
             routeState = "idle"
