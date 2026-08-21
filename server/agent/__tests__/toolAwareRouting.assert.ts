@@ -573,6 +573,8 @@ for (const [query, label] of [
   ["Can you change an old memory about me?", "old personal-memory correction"],
   ["Can you edit this specific, exact memory that I\'m referring to?", "modifier-aware referential correction"],
   ["Please correct the inaccurate memory about Sarah.", "descriptive personal-memory correction"],
+  ["One of your memories is wrong", "partitive owned-memory correction"],
+  ["One of your saved memories about Sarah is inaccurate", "qualified partitive saved-memory correction"],
 ] as const) {
   const plan = classifyToolAwareRoute(query);
   assert(plan.shouldPreferTool, `${label}: prefers tool use`);

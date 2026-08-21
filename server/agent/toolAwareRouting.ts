@@ -65,7 +65,7 @@ const TECHNICAL_MEMORY_CONTINUATION_PATTERN = String.raw`(?:address(?:es)?|alloc
 const MEMORY_REFERENCE_MODIFIER_PATTERN = String.raw`(?:specific|exact|particular|individual|old|new|existing|saved|stored|incorrect|wrong|inaccurate|outdated|previous|prior|original|current)`;
 const MEMORY_REFERENCE_MODIFIERS_PATTERN = String.raw`(?:${MEMORY_REFERENCE_MODIFIER_PATTERN}(?:\s*,\s*|\s+)){0,4}`;
 const REFERENTIAL_MEMORY_TARGET_PATTERN = String.raw`(?:the|that|this|these|those|my|your)\s+${MEMORY_REFERENCE_MODIFIERS_PATTERN}memor(?:y|ies)\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)`;
-const PERSONAL_MEMORY_CORRECTION_TARGET_PATTERN = String.raw`(?:${REFERENTIAL_MEMORY_TARGET_PATTERN}|(?:a|an)\s+${MEMORY_REFERENCE_MODIFIERS_PATTERN}memor(?:y|ies)\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)\s+(?:about|of|for)\s+(?:me|my|our)\b)`;
+const PERSONAL_MEMORY_CORRECTION_TARGET_PATTERN = String.raw`(?:${REFERENTIAL_MEMORY_TARGET_PATTERN}|one\s+of\s+(?:the|these|those|my|your|our)\s+${MEMORY_REFERENCE_MODIFIERS_PATTERN}memories\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)|(?:a|an)\s+${MEMORY_REFERENCE_MODIFIERS_PATTERN}memor(?:y|ies)\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)\s+(?:about|of|for)\s+(?:me|my|our)\b)`;
 const MEMORY_CORRECTION_PREDICATE_PATTERN = String.raw`(?:wrong|incorrect|inaccurate|outdated|false|mistaken|not\s+(?:quite\s+)?(?:right|correct|accurate|true))`;
 const MEMORY_CORRECTION_QUALIFIER_PATTERN = String.raw`(?:\s+(?:about|of|for)\s+[^.!?\n]{1,60}?)?`;
 
