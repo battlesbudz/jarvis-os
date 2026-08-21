@@ -108,6 +108,7 @@ class OutsideAppVoiceSessionService : Service() {
         const val ACTION_APPROVE = "com.gameplan.daemon.VOICE_SESSION_APPROVE"
         const val ACTION_DENY = "com.gameplan.daemon.VOICE_SESSION_DENY"
         const val ACTION_E2E_SIMULATE_CRASH = "com.gameplan.daemon.VOICE_SESSION_E2E_SIMULATE_CRASH"
+        const val ACTION_TAKE_CAPTURE = "com.gameplan.daemon.VOICE_SESSION_TAKE_CAPTURE"
         const val EXTRA_STATE = "state"
         const val EXTRA_APPROVAL_PROMPT = "approval_prompt"
         const val EXTRA_APPROVAL_TOKEN = "approval_token"
@@ -146,6 +147,15 @@ class OutsideAppVoiceSessionService : Service() {
         fun currentApprovalPrompt(): String = instance?.approvalPrompt ?: ""
 
         fun currentApprovalToken(): String = instance?.approvalToken ?: ""
+
+        fun prepareForInAppCapture() {
+            val service = instance
+            if (service == null) {
+                WakeWordService.pauseForInAppCapture()
+            } else {
+                service.releaseCaptureToApp()
+            }
+        }
 
         fun startIntent(context: Context): Intent {
             return Intent(context, OutsideAppVoiceSessionService::class.java).apply {
@@ -188,6 +198,7 @@ class OutsideAppVoiceSessionService : Service() {
     @Volatile private var approvalPrompt = ""
     @Volatile private var approvalToken = ""
     @Volatile private var expectedStop = false
+    @Volatile private var ownsVoiceCapture = false
 
     override fun onCreate() {
         super.onCreate()
@@ -210,11 +221,13 @@ class OutsideAppVoiceSessionService : Service() {
             }
             ACTION_PAUSE -> {
                 if (!sessionActive) sessionActive = true
+                ownsVoiceCapture = true
                 pauseWakeCapture()
                 setState(OutsideAppVoiceState.PAUSED)
             }
             ACTION_RESUME -> {
                 if (!sessionActive) sessionActive = true
+                ownsVoiceCapture = true
                 resumeWakeCapture()
                 setState(OutsideAppVoiceState.LISTENING, "resume")
             }
@@ -237,6 +250,16 @@ class OutsideAppVoiceSessionService : Service() {
                 approvalPrompt = ""
                 approvalToken = ""
                 setState(OutsideAppVoiceState.LISTENING)
+            }
+            ACTION_TAKE_CAPTURE -> {
+                if (!sessionActive) sessionActive = true
+                ownsVoiceCapture = true
+                if (state == OutsideAppVoiceState.LISTENING || state == OutsideAppVoiceState.APPROVAL) {
+                    resumeWakeCapture()
+                }
+                startForegroundCompat()
+                updateOverlay()
+                sendVoiceSessionEvent("capture_outside")
             }
             ACTION_E2E_SIMULATE_CRASH -> {
                 simulateUnexpectedStopForE2e(startId)
@@ -299,9 +322,16 @@ class OutsideAppVoiceSessionService : Service() {
         }
     }
 
+    private fun releaseCaptureToApp() {
+        ownsVoiceCapture = false
+        WakeWordService.pauseForInAppCapture()
+        DaemonLog.add("outside_app_voice: microphone ownership returned to app")
+    }
+
     internal fun onOverlayTapped() {
         when (OutsideAppVoiceSessionStateMachine.overlayTapAction(state)) {
             OutsideAppVoiceOverlayTapAction.INTERRUPT_AND_LISTEN -> {
+                ownsVoiceCapture = true
                 JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = true)
                 sendVoiceSessionEvent("interrupt")
                 setState(OutsideAppVoiceState.LISTENING)
@@ -316,6 +346,7 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     internal fun onOverlayResume() {
+        ownsVoiceCapture = true
         resumeWakeCapture()
         setState(OutsideAppVoiceState.LISTENING, "resume")
     }
@@ -354,7 +385,10 @@ class OutsideAppVoiceSessionService : Service() {
         val previousState = state
         if (nextState == OutsideAppVoiceState.WORKING && previousState != OutsideAppVoiceState.WORKING) {
             WakeWordService.pauseForResponse()
-        } else if (OutsideAppVoiceSessionStateMachine.shouldResumeWakeCapture(previousState, nextState)) {
+        } else if (
+            ownsVoiceCapture &&
+            OutsideAppVoiceSessionStateMachine.shouldResumeWakeCapture(previousState, nextState)
+        ) {
             resumeWakeCapture()
         }
         if (nextState != OutsideAppVoiceState.IDLE) {
@@ -373,6 +407,7 @@ class OutsideAppVoiceSessionService : Service() {
     private fun endSession() {
         expectedStop = true
         endedSessionBlocksPlayback = true
+        ownsVoiceCapture = false
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         endTalkModeCapture()
         sendVoiceSessionEvent("end")
