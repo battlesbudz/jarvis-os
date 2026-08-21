@@ -310,17 +310,15 @@ internal object WearableAudioRouteManager {
             state == AudioManager.SCO_AUDIO_STATE_DISCONNECTED &&
             legacyScoTeardownPending
         ) {
-            @Suppress("DEPRECATION")
-            val replacementStillRouted =
+            val replacementRequestInFlight =
                 legacyScoTeardownWaitElapsed &&
-                    (routeState == "requesting" || routeState == "active") &&
-                    audioManager?.isBluetoothScoOn == true
+                    routeState == "requesting"
             legacyScoTeardownPending = false
             legacyScoTeardownWaitElapsed = false
             legacyScoTeardownGeneration += 1
-            if (replacementStillRouted) {
+            if (replacementRequestInFlight) {
                 DaemonLog.add(
-                    "wearable_audio: ignored stale legacy SCO teardown after replacement connected",
+                    "wearable_audio: ignored stale legacy SCO teardown while replacement request was in flight",
                 )
                 return
             }
