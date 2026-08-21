@@ -90,6 +90,12 @@ assert.ok(
 );
 
 assert.ok(
+  /corrected_by_memory_id = \$\{duplicateId\}/.test(memorySearchSource) &&
+    /completedResult\.rows/.test(memorySearchSource),
+  "a retry of an immediate duplicate correction should accept the existing source-to-canonical linkage",
+);
+
+assert.ok(
   /SELECT id, pending_review, review_status, supersedes_memory_id/.test(memorySearchSource) &&
     /duplicateIsSamePendingCorrection/.test(memorySearchSource) &&
     /plan\.supersedeMemoryIds\.includes\(duplicate\.supersedes_memory_id!\)/.test(memorySearchSource),

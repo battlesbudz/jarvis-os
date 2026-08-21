@@ -208,11 +208,21 @@ async function executeMemorySave(
           duplicateId,
         );
         if (supersededCount !== correctionTargets.length) {
-          return {
-            ok: false,
-            content: "The memory being corrected changed before the correction could be applied. Search memory again and retry.",
-            label: "Memory correction conflict",
-          };
+          const completedResult = await db.execute<{ id: string }>(sql`
+            SELECT id
+            FROM user_memories
+            WHERE user_id = ${ctx.userId}
+              AND id = ANY(${correctionTargets}::varchar[])
+              AND review_status = 'superseded'
+              AND corrected_by_memory_id = ${duplicateId}
+          `);
+          if ((completedResult.rows ?? []).length !== correctionTargets.length) {
+            return {
+              ok: false,
+              content: "The memory being corrected changed before the correction could be applied. Search memory again and retry.",
+              label: "Memory correction conflict",
+            };
+          }
         }
         deps.markSoulStale(ctx.userId).catch(() => {});
         if (process.env.JARVIS_BRAIN_PROJECTION === "1") {
