@@ -156,7 +156,8 @@ async function executeMemorySave(
         AND (
           ((pending_review = FALSE OR pending_review IS NULL)
             AND review_status IN ('active', 'kept', 'edited'))
-          OR (pending_review = TRUE AND supersedes_memory_id = ${supersedesMemoryId || null})
+          OR (pending_review = TRUE AND review_status = 'pending'
+            AND supersedes_memory_id = ${supersedesMemoryId || null})
         )
       `;
     const duplicateResult = await db.execute<{

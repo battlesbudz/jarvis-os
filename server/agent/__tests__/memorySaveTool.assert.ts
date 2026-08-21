@@ -107,7 +107,7 @@ assert.ok(
 );
 
 assert.ok(
-  /pending_review = TRUE AND supersedes_memory_id = \\${supersedesMemoryId \\|\\| null}/.test(memorySearchSource) &&
+  /pending_review = TRUE AND review_status = 'pending'[\\s\\S]*supersedes_memory_id = \\${supersedesMemoryId \\|\\| null}/.test(memorySearchSource) &&
     /Memory correction is already awaiting review/.test(memorySearchSource) &&
     /memoryWriteStatus: "pending_review"/.test(memorySearchSource) &&
     /pendingReview: true/.test(memorySearchSource),
