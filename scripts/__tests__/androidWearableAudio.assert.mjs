@@ -184,7 +184,7 @@ assert.match(androidDaemonNative, /acquireAndroidNativeVoicePlaybackRoute/);
 assert.match(androidDaemonNative, /releaseAndroidNativeVoicePlaybackRoute/);
 assert.match(
   insights,
-  /acquireAndroidNativeVoicePlaybackRoute\(\)[\s\S]*?Speech\.speak\([\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(\)/,
+  /acquireAndroidNativeVoicePlaybackRoute\(\)[\s\S]*?abortController\.signal\.aborted[\s\S]*?Speech\.speak\([\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(\)/,
 );
 assert.match(
   insights,
