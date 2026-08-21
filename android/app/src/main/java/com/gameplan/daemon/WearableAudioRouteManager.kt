@@ -226,8 +226,12 @@ internal object WearableAudioRouteManager {
             if (!accepted) {
                 routeState = "failed"
                 if (lastError == null) lastError = "Android rejected the communication route request."
-                finishRouteRecovery(success = false, lastError ?: "Android rejected the route request")
+                routeRecoveryPending = true
+                DaemonLog.add(
+                    "wearable_audio: communication route request rejected; ${lastError ?: "unknown error"}; retry scheduled",
+                )
                 completePending(snapshot(context))
+                scheduleRouteRecovery(expectLegacy = false)
                 return
             }
             waitForRouteConfirmation(device.id, requestGeneration)
