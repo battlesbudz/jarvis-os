@@ -194,6 +194,10 @@ assert.match(
 );
 assert.match(
   insights,
+  /acquireAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)[\s\S]*?while \([\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)/,
+);
+assert.match(
+  insights,
   /const scheduleTalkModeRecordingStart[\s\S]*?!insightsFocusedRef\.current/,
 );
 assert.match(

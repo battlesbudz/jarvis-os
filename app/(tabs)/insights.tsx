@@ -1031,7 +1031,7 @@ export default function InsightsScreen() {
   const talkModeStartSeqRef = useRef(0);
   const outsideAppVoiceStateRef = useRef<string | null>(null);
   const insightsFocusedRef = useRef(false);
-  const nativeVoicePlaybackRouteSeqRef = useRef(0);
+  const nativeVoiceRouteSeqRef = useRef(0);
   const isStreamingRef = useRef(false);
   const nativeSpeechActiveRef = useRef(false);
   const nativeSpeechManualFinishRef = useRef(false);
@@ -1406,6 +1406,8 @@ export default function InsightsScreen() {
           soundRef.current = null;
         }
 
+        const captureRouteOwnerId = `speech-capture-${Date.now()}-${++nativeVoiceRouteSeqRef.current}`;
+        await acquireAndroidNativeVoicePlaybackRoute(captureRouteOwnerId).catch(() => {});
         nativeSpeechActiveRef.current = true;
         nativeSpeechManualFinishRef.current = false;
         nativeSpeechCancelledRef.current = false;
@@ -1499,6 +1501,7 @@ export default function InsightsScreen() {
           if (/cancelled/i.test(message)) return;
           Alert.alert('Voice input failed', message || 'Android on-device speech recognition could not start.');
         } finally {
+          releaseAndroidNativeVoicePlaybackRoute(captureRouteOwnerId).catch(() => {});
           nativeSpeechActiveRef.current = false;
           setIsRecording(false);
           setIsTranscribing(false);
@@ -1946,7 +1949,7 @@ export default function InsightsScreen() {
     const trimmedText = text.slice(0, 4000);
 
     if (Platform.OS === 'android') {
-      const playbackRouteOwnerId = `${Date.now()}-${++nativeVoicePlaybackRouteSeqRef.current}`;
+      const playbackRouteOwnerId = `${Date.now()}-${++nativeVoiceRouteSeqRef.current}`;
       try {
         await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
         await acquireAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
