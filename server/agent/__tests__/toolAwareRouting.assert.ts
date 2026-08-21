@@ -414,6 +414,8 @@ for (const [query, label] of [
   ["Save this conversation to memory", "current conversation saved to memory"],
   ["Store our chat in memory", "shared chat stored in memory"],
   ["Save that I'm allergic to peanuts to memory", "contracted personal fact saved to memory"],
+  ["Save that I speak Spanish to memory", "unlisted personal speech predicate save"],
+  ["Store that I study French in memory", "unlisted personal study predicate save"],
   ["Save my birthday to memory", "possessive birthday save"],
   ["Store my wife's birthday in memory", "relationship-possessive birthday save"],
   ["Commit my daughter's phone number to memory", "relationship-possessive phone save"],
@@ -451,6 +453,8 @@ for (const [query, label] of [
 for (const [query, label] of [
   ["Tell me what you remember about Sarah", "requested remembered-person summary"],
   ["Show me what you remember about my business", "requested remembered-business summary"],
+  ["What do you remember about our trip?", "direct remembered-trip lookup"],
+  ["What do you recall about Sarah?", "direct recalled-person lookup"],
   ["Search your memory for Sarah", "search Jarvis memory"],
   ["Read your memories about my business", "read Jarvis memories"],
   ["Do you have any memories of Sarah?", "existential person-memory lookup"],
