@@ -36,7 +36,14 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { getApiUrl } from '@/lib/query-client';
 import { authFetch } from '@/lib/auth-context';
-import { cancelAndroidNativeSpeechRecognition, recognizeAndroidSpeechOnce } from '@/lib/android-daemon-native';
+import {
+  acquireAndroidNativeVoicePlaybackRoute,
+  cancelAndroidNativeSpeechRecognition,
+  getAndroidDaemonStatus,
+  handoffAndroidOutsideAppVoiceCapture,
+  recognizeAndroidSpeechOnce,
+  releaseAndroidNativeVoicePlaybackRoute,
+} from '@/lib/android-daemon-native';
 
 type SpeechModule = {
   stop: () => Promise<void>;
@@ -275,6 +282,10 @@ export default function VoiceRealtimeScreen() {
     web: { mimeType: 'audio/webm', bitsPerSecond: 48000 },
   });
   const currentAssistantTextRef = useRef('');
+  const codexTurnAbortRef = useRef<AbortController | null>(null);
+  const outsideAppCaptureBorrowedRef = useRef(false);
+  const wearableRouteOwnerRef = useRef<string | null>(null);
+  const wearableRouteSeqRef = useRef(0);
 
   // Metering loop for native mic amplitude
   const meterLoopRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -438,38 +449,46 @@ export default function VoiceRealtimeScreen() {
   }, [muted]);
 
   const sendCodexVoiceTurn = useCallback(async (payload: { audioBase64?: string; mimeType?: string; text?: string }) => {
+    const abortController = new AbortController();
+    codexTurnAbortRef.current?.abort();
+    codexTurnAbortRef.current = abortController;
     const url = new URL('/api/voice/codex-turn', getApiUrl());
-    const res = await authFetch(url.toString(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...payload,
-        sdkSessionId: codexSessionIdRef.current,
-      }),
-    });
-    const data = await res.json().catch(() => ({})) as CodexVoiceTurnResponse;
-    if (!res.ok) {
-      throw new Error(data.error || data.code || `Voice turn failed: ${res.status}`);
-    }
-
-    const userText = (data.transcript || '').trim();
-    const reply = (data.reply || '').trim();
-    if (!reply) throw new Error('Jarvis returned an empty voice reply.');
-
-    if (data.sdkSessionId) setCodexSessionId(data.sdkSessionId);
-    if (userText) setTranscript(prev => [...prev, { role: 'user', text: userText }]);
-
-    currentAssistantTextRef.current = reply;
-    setCurrentSpeech(reply);
-    setState('speaking');
     try {
-      await speakCodexReply(reply);
+      const res = await authFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...payload,
+          sdkSessionId: codexSessionIdRef.current,
+        }),
+        signal: abortController.signal,
+      });
+      const data = await res.json().catch(() => ({})) as CodexVoiceTurnResponse;
+      if (!res.ok) {
+        throw new Error(data.error || data.code || `Voice turn failed: ${res.status}`);
+      }
+
+      const userText = (data.transcript || '').trim();
+      const reply = (data.reply || '').trim();
+      if (!reply) throw new Error('Jarvis returned an empty voice reply.');
+
+      if (data.sdkSessionId) setCodexSessionId(data.sdkSessionId);
+      if (userText) setTranscript(prev => [...prev, { role: 'user', text: userText }]);
+
+      currentAssistantTextRef.current = reply;
+      setCurrentSpeech(reply);
+      setState('speaking');
+      try {
+        await speakCodexReply(reply);
+      } finally {
+        setTranscript(prev => [...prev, { role: 'assistant', text: reply }]);
+        currentAssistantTextRef.current = '';
+        setCurrentSpeech('');
+        ampRef.current = 0;
+        setState('idle');
+      }
     } finally {
-      setTranscript(prev => [...prev, { role: 'assistant', text: reply }]);
-      currentAssistantTextRef.current = '';
-      setCurrentSpeech('');
-      ampRef.current = 0;
-      setState('idle');
+      if (codexTurnAbortRef.current === abortController) codexTurnAbortRef.current = null;
     }
   }, [speakCodexReply]);
 
@@ -547,24 +566,43 @@ export default function VoiceRealtimeScreen() {
     }
 
     setState('listening');
-    let result: Awaited<ReturnType<typeof recognizeAndroidSpeechOnce>>;
+    const restoreOutsideAppCapture = (
+      await getAndroidDaemonStatus().catch(() => null)
+    )?.voiceSessionActive === true;
+    outsideAppCaptureBorrowedRef.current = restoreOutsideAppCapture;
+    const wearableRouteOwnerId = `codex-turn-${Date.now()}-${++wearableRouteSeqRef.current}`;
+    wearableRouteOwnerRef.current = wearableRouteOwnerId;
+    acquireAndroidNativeVoicePlaybackRoute(wearableRouteOwnerId).catch(() => {});
     try {
-      result = await recognizeAndroidSpeechOnce({
-        interimResults: true,
-        timeoutMs: CODEX_VOICE_TURN_RECORDING_MS + 20_000,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/cancelled/i.test(message)) return;
-      throw error;
-    }
-    const text = result.text.trim();
-    if (!text) {
-      throw new Error('No speech was detected. Please try again and speak clearly.');
-    }
+      let result: Awaited<ReturnType<typeof recognizeAndroidSpeechOnce>>;
+      try {
+        result = await recognizeAndroidSpeechOnce({
+          interimResults: true,
+          timeoutMs: CODEX_VOICE_TURN_RECORDING_MS + 20_000,
+          takeInAppCapture: restoreOutsideAppCapture,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/cancelled/i.test(message)) return;
+        throw error;
+      }
+      const text = result.text.trim();
+      if (!text) {
+        throw new Error('No speech was detected. Please try again and speak clearly.');
+      }
 
-    setState('thinking');
-    await sendCodexVoiceTurn({ text });
+      setState('thinking');
+      await sendCodexVoiceTurn({ text });
+    } finally {
+      if (wearableRouteOwnerRef.current === wearableRouteOwnerId) {
+        wearableRouteOwnerRef.current = null;
+        await releaseAndroidNativeVoicePlaybackRoute(wearableRouteOwnerId).catch(() => {});
+      }
+      if (outsideAppCaptureBorrowedRef.current) {
+        outsideAppCaptureBorrowedRef.current = false;
+        await handoffAndroidOutsideAppVoiceCapture().catch(() => {});
+      }
+    }
   }, [sendCodexVoiceTurn]);
 
   const startCodexTurn = useCallback(async () => {
@@ -585,6 +623,7 @@ export default function VoiceRealtimeScreen() {
         await recordNativeCodexTurn();
       }
     } catch (error) {
+      if (error instanceof Error && (error.name === 'AbortError' || /aborted/i.test(error.message))) return;
       console.error('[voice] Codex turn failed:', error);
       Alert.alert('Voice turn failed', error instanceof Error ? error.message : 'Could not complete the voice turn.');
       currentAssistantTextRef.current = '';
@@ -608,9 +647,20 @@ export default function VoiceRealtimeScreen() {
   }, [stopWebAmpMeter]);
 
   const cleanupNativeSession = useCallback(async () => {
+    codexTurnAbortRef.current?.abort();
+    codexTurnAbortRef.current = null;
+    const wearableRouteOwnerId = wearableRouteOwnerRef.current;
+    wearableRouteOwnerRef.current = null;
+    if (wearableRouteOwnerId) {
+      await releaseAndroidNativeVoicePlaybackRoute(wearableRouteOwnerId).catch(() => {});
+    }
     stopNativeMeterLoop();
     if (Platform.OS === 'android') {
       await cancelAndroidNativeSpeechRecognition().catch(() => {});
+      if (outsideAppCaptureBorrowedRef.current) {
+        outsideAppCaptureBorrowedRef.current = false;
+        await handoffAndroidOutsideAppVoiceCapture().catch(() => {});
+      }
     }
     if (nativeRecorder.isRecording) {
       await nativeRecorder.stop().catch(() => {});
@@ -703,9 +753,20 @@ export default function VoiceRealtimeScreen() {
       if (Platform.OS === 'web') {
         cleanupWebSession();
       } else {
+        codexTurnAbortRef.current?.abort();
+        codexTurnAbortRef.current = null;
+        const wearableRouteOwnerId = wearableRouteOwnerRef.current;
+        wearableRouteOwnerRef.current = null;
+        if (wearableRouteOwnerId) {
+          releaseAndroidNativeVoicePlaybackRoute(wearableRouteOwnerId).catch(() => {});
+        }
         stopNativeMeterLoop();
         if (Platform.OS === 'android') {
           cancelAndroidNativeSpeechRecognition().catch(() => {});
+          if (outsideAppCaptureBorrowedRef.current) {
+            outsideAppCaptureBorrowedRef.current = false;
+            handoffAndroidOutsideAppVoiceCapture().catch(() => {});
+          }
         }
         if (nativeRecorder.isRecording) nativeRecorder.stop().catch(() => {});
         Speech.stop();

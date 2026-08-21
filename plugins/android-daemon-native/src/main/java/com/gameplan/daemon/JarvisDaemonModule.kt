@@ -19,9 +19,11 @@ class JarvisDaemonModule(
     private val reactApplicationContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactApplicationContext) {
     private val nativeSpeechRecognitionBridge = NativeSpeechRecognitionBridge(reactApplicationContext)
+    private val nativeVoicePlaybackOwners = linkedSetOf<String>()
 
     companion object {
         private const val VOICE_SESSION_CONTROL_EVENT = "JarvisVoiceSessionControl"
+        private const val IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX = "in_app_voice_playback:"
 
         @Volatile private var activeReactContext: ReactApplicationContext? = null
 
@@ -52,6 +54,8 @@ class JarvisDaemonModule(
 
     override fun invalidate() {
         nativeSpeechRecognitionBridge.destroy()
+        nativeVoicePlaybackOwners.forEach(WearableAudioRouteManager::release)
+        nativeVoicePlaybackOwners.clear()
         if (activeReactContext === reactApplicationContext) activeReactContext = null
         super.invalidate()
     }
@@ -128,6 +132,17 @@ class JarvisDaemonModule(
     @ReactMethod
     fun startOutsideAppVoiceSession(promise: Promise) {
         val intent = OutsideAppVoiceSessionService.startIntent(reactApplicationContext)
+        if (!startVoiceSessionServiceCompat(intent, promise)) return
+        promise.resolve(buildStatusMap())
+    }
+
+    @ReactMethod
+    fun handoffOutsideAppVoiceCapture(promise: Promise) {
+        nativeSpeechRecognitionBridge.cancelForOutsideAppHandoff()
+        val intent = OutsideAppVoiceSessionService.controlIntent(
+            reactApplicationContext,
+            OutsideAppVoiceSessionService.ACTION_TAKE_CAPTURE,
+        )
         if (!startVoiceSessionServiceCompat(intent, promise)) return
         promise.resolve(buildStatusMap())
     }
@@ -288,6 +303,24 @@ class JarvisDaemonModule(
     @ReactMethod
     fun cancelNativeSpeechRecognition(promise: Promise) {
         nativeSpeechRecognitionBridge.cancel(promise)
+    }
+
+    @ReactMethod
+    fun acquireNativeVoicePlaybackRoute(ownerId: String, promise: Promise) {
+        val owner = IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX + ownerId
+        nativeVoicePlaybackOwners.add(owner)
+        WearableAudioRouteManager.acquire(
+            reactApplicationContext,
+            owner,
+        ) { promise.resolve(null) }
+    }
+
+    @ReactMethod
+    fun releaseNativeVoicePlaybackRoute(ownerId: String, promise: Promise) {
+        val owner = IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX + ownerId
+        nativeVoicePlaybackOwners.remove(owner)
+        WearableAudioRouteManager.release(owner)
+        promise.resolve(null)
     }
 
     @ReactMethod

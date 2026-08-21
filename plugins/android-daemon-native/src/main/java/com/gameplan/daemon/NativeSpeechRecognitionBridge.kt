@@ -24,14 +24,21 @@ class NativeSpeechRecognitionBridge(
     companion object {
         const val EVENT_NAME = "JarvisNativeSpeechRecognition"
         private const val DEFAULT_TIMEOUT_MS = 60_000L
+        private const val WEARABLE_AUDIO_OWNER = "native_speech"
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var speechRecognizer: SpeechRecognizer? = null
     private var listening = false
     private var generation = 0
+    private var pendingStartPromise: Promise? = null
+    private var pendingStartGeneration: Int? = null
 
     fun getStatus(localeTag: String?): WritableMap = buildStatusMap(localeTag)
+
+    fun cancelForOutsideAppHandoff() {
+        runOnMain { cancelRecognizer(emitCancelled = false) }
+    }
 
     fun start(options: JSONObject, promise: Promise) {
         runOnMain {
@@ -39,6 +46,7 @@ class NativeSpeechRecognitionBridge(
                 val localeTag = options.optString("locale", "")
                 val interimResults = options.optBoolean("interimResults", true)
                 val timeoutMs = options.optLong("timeoutMs", DEFAULT_TIMEOUT_MS).coerceAtLeast(5_000L)
+                val takeInAppCapture = options.optBoolean("takeInAppCapture", false)
 
                 if (!hasRecordAudioPermission()) {
                     promise.reject(
@@ -63,97 +71,147 @@ class NativeSpeechRecognitionBridge(
                 }
 
                 cancelRecognizer(emitCancelled = false)
-                val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(reactContext)
-                speechRecognizer = recognizer
                 listening = true
                 val startGeneration = ++generation
-
-                recognizer.setRecognitionListener(object : RecognitionListener {
-                    override fun onReadyForSpeech(params: Bundle?) {
-                        if (!isCurrent(startGeneration)) return
-                        emit("ready") {
-                            putString("locale", resolveLocaleTag(localeTag))
-                        }
-                    }
-
-                    override fun onBeginningOfSpeech() {
-                        if (!isCurrent(startGeneration)) return
-                        emit("speech_start")
-                    }
-
-                    override fun onRmsChanged(rmsdB: Float) {
-                        if (!isCurrent(startGeneration)) return
-                        emit("rms") {
-                            putDouble("rmsDb", rmsdB.toDouble())
-                        }
-                    }
-
-                    override fun onBufferReceived(buffer: ByteArray?) = Unit
-
-                    override fun onEndOfSpeech() {
-                        if (!isCurrent(startGeneration)) return
-                        emit("speech_end")
-                    }
-
-                    override fun onError(error: Int) {
-                        if (!isCurrent(startGeneration)) return
-                        val name = errorName(error)
-                        cleanupRecognizer(startGeneration)
-                        emit("error") {
-                            putInt("errorCode", error)
-                            putString("error", name)
-                            putString("message", errorMessage(error))
-                            putBoolean("recoverable", isRecoverableError(error))
-                        }
-                    }
-
-                    override fun onResults(results: Bundle?) {
-                        if (!isCurrent(startGeneration)) return
-                        val best = bestResult(results)
-                        val alternatives = resultAlternatives(results)
-                        cleanupRecognizer(startGeneration)
-                        emit("final") {
-                            putString("text", best)
-                            putArray("alternatives", alternatives)
-                        }
-                    }
-
-                    override fun onPartialResults(partialResults: Bundle?) {
-                        if (!isCurrent(startGeneration)) return
-                        val best = bestResult(partialResults)
-                        if (best.isBlank()) return
-                        emit("partial") {
-                            putString("text", best)
-                            putArray("alternatives", resultAlternatives(partialResults))
-                        }
-                    }
-
-                    override fun onEvent(eventType: Int, params: Bundle?) = Unit
-                })
-
-                recognizer.startListening(buildRecognizerIntent(localeTag, interimResults))
-                mainHandler.postDelayed({
-                    if (!isCurrent(startGeneration) || !listening) return@postDelayed
-                    speechRecognizer?.stopListening()
-                }, timeoutMs)
-
-                promise.resolve(buildStatusMap(localeTag).apply {
-                    putBoolean("listening", true)
-                })
+                pendingStartPromise = promise
+                pendingStartGeneration = startGeneration
+                WearableAudioRouteManager.acquire(reactContext, WEARABLE_AUDIO_OWNER) { wearableRoute ->
+                    if (!isCurrent(startGeneration)) return@acquire
+                    if (takeInAppCapture) OutsideAppVoiceSessionService.prepareForInAppCapture()
+                    startRecognizer(
+                        localeTag = localeTag,
+                        interimResults = interimResults,
+                        timeoutMs = timeoutMs,
+                        startGeneration = startGeneration,
+                        wearableRoute = wearableRoute,
+                    )
+                }
             } catch (err: Throwable) {
-                cancelRecognizer(emitCancelled = false)
-                promise.reject(
+                val rejectedPending = rejectPendingStart(
                     "E_NATIVE_STT_START",
                     "Could not start Android on-device speech recognition. ${err.message ?: ""}".trim(),
                     err,
                 )
+                cancelRecognizer(emitCancelled = false)
+                if (!rejectedPending) {
+                    promise.reject(
+                        "E_NATIVE_STT_START",
+                        "Could not start Android on-device speech recognition. ${err.message ?: ""}".trim(),
+                        err,
+                    )
+                }
             }
+        }
+    }
+
+    private fun startRecognizer(
+        localeTag: String,
+        interimResults: Boolean,
+        timeoutMs: Long,
+        startGeneration: Int,
+        wearableRoute: WearableAudioRouteSnapshot,
+    ) {
+        try {
+            val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(reactContext)
+            speechRecognizer = recognizer
+            recognizer.setRecognitionListener(object : RecognitionListener {
+                override fun onReadyForSpeech(params: Bundle?) {
+                    if (!isCurrent(startGeneration)) return
+                    emit("ready") {
+                        putString("locale", resolveLocaleTag(localeTag))
+                        putBoolean("wearableAudioActive", wearableRoute.active)
+                        putString("wearableAudioDeviceName", wearableRoute.deviceName)
+                    }
+                }
+
+                override fun onBeginningOfSpeech() {
+                    if (!isCurrent(startGeneration)) return
+                    emit("speech_start")
+                }
+
+                override fun onRmsChanged(rmsdB: Float) {
+                    if (!isCurrent(startGeneration)) return
+                    emit("rms") {
+                        putDouble("rmsDb", rmsdB.toDouble())
+                    }
+                }
+
+                override fun onBufferReceived(buffer: ByteArray?) = Unit
+
+                override fun onEndOfSpeech() {
+                    if (!isCurrent(startGeneration)) return
+                    emit("speech_end")
+                }
+
+                override fun onError(error: Int) {
+                    if (!isCurrent(startGeneration)) return
+                    val name = errorName(error)
+                    cleanupRecognizer(startGeneration)
+                    emit("error") {
+                        putInt("errorCode", error)
+                        putString("error", name)
+                        putString("message", errorMessage(error))
+                        putBoolean("recoverable", isRecoverableError(error))
+                    }
+                }
+
+                override fun onResults(results: Bundle?) {
+                    if (!isCurrent(startGeneration)) return
+                    val best = bestResult(results)
+                    val alternatives = resultAlternatives(results)
+                    cleanupRecognizer(startGeneration)
+                    emit("final") {
+                        putString("text", best)
+                        putArray("alternatives", alternatives)
+                    }
+                }
+
+                override fun onPartialResults(partialResults: Bundle?) {
+                    if (!isCurrent(startGeneration)) return
+                    val best = bestResult(partialResults)
+                    if (best.isBlank()) return
+                    emit("partial") {
+                        putString("text", best)
+                        putArray("alternatives", resultAlternatives(partialResults))
+                    }
+                }
+
+                override fun onEvent(eventType: Int, params: Bundle?) = Unit
+            })
+
+            recognizer.startListening(buildRecognizerIntent(localeTag, interimResults))
+            mainHandler.postDelayed({
+                if (!isCurrent(startGeneration) || !listening) return@postDelayed
+                speechRecognizer?.stopListening()
+            }, timeoutMs)
+
+            resolvePendingStart(
+                startGeneration,
+                buildStatusMap(localeTag).apply {
+                    putBoolean("listening", true)
+                },
+            )
+        } catch (err: Throwable) {
+            rejectPendingStart(
+                "E_NATIVE_STT_START",
+                "Could not start Android on-device speech recognition. ${err.message ?: ""}".trim(),
+                err,
+                expectedGeneration = startGeneration,
+            )
+            cancelRecognizer(emitCancelled = false)
         }
     }
 
     fun stop(promise: Promise) {
         runOnMain {
             try {
+                if (pendingStartPromise != null && speechRecognizer == null) {
+                    cancelRecognizer(emitCancelled = false)
+                    promise.resolve(buildStatusMap(null).apply {
+                        putString("status", "cancelled")
+                    })
+                    return@runOnMain
+                }
                 if (!listening) {
                     promise.resolve(buildStatusMap(null))
                     return@runOnMain
@@ -255,6 +313,7 @@ class NativeSpeechRecognitionBridge(
         map.putBoolean("ttsAvailable", true)
         map.putString("ttsProvider", "android-system")
         map.putString("locale", resolveLocaleTag(localeTag))
+        putWearableAudioStatus(map, WearableAudioRouteManager.snapshot(reactContext))
         map.putString(
             "status",
             when {
@@ -319,9 +378,14 @@ class NativeSpeechRecognitionBridge(
         }
         speechRecognizer = null
         listening = false
+        WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
     }
 
     private fun cancelRecognizer(emitCancelled: Boolean) {
+        rejectPendingStart(
+            "E_NATIVE_STT_CANCELLED",
+            "Android speech recognition was cancelled before startup completed.",
+        )
         generation += 1
         listening = false
         try {
@@ -333,7 +397,30 @@ class NativeSpeechRecognitionBridge(
         } catch (_: Throwable) {
         }
         speechRecognizer = null
+        WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
         if (emitCancelled) emit("cancelled")
+    }
+
+    private fun resolvePendingStart(startGeneration: Int, status: WritableMap) {
+        if (pendingStartGeneration != startGeneration) return
+        val promise = pendingStartPromise ?: return
+        pendingStartPromise = null
+        pendingStartGeneration = null
+        promise.resolve(status)
+    }
+
+    private fun rejectPendingStart(
+        code: String,
+        message: String,
+        error: Throwable? = null,
+        expectedGeneration: Int? = null,
+    ): Boolean {
+        if (expectedGeneration != null && pendingStartGeneration != expectedGeneration) return false
+        val promise = pendingStartPromise ?: return false
+        pendingStartPromise = null
+        pendingStartGeneration = null
+        if (error == null) promise.reject(code, message) else promise.reject(code, message, error)
+        return true
     }
 
     private fun isCurrent(startGeneration: Int): Boolean =
@@ -361,6 +448,17 @@ class NativeSpeechRecognitionBridge(
         val trimmed = localeTag?.trim().orEmpty()
         if (trimmed.isBlank()) return Locale.getDefault().toLanguageTag()
         return Locale.forLanguageTag(trimmed).toLanguageTag()
+    }
+
+    private fun putWearableAudioStatus(map: WritableMap, route: WearableAudioRouteSnapshot) {
+        map.putBoolean("wearableAudioSupported", route.supported)
+        map.putBoolean("wearableAudioAvailable", route.available)
+        map.putBoolean("wearableAudioActive", route.active)
+        map.putString("wearableAudioStatus", route.state)
+        map.putString("wearableAudioDeviceName", route.deviceName)
+        map.putString("wearableAudioDeviceType", route.deviceType)
+        map.putString("wearableAudioMessage", route.message)
+        map.putString("wearableAudioLastError", route.lastError)
     }
 
     private fun isRecoverableError(error: Int): Boolean {

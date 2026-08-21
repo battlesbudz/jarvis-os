@@ -71,10 +71,13 @@ import { authFetch, getAuthToken } from '@/lib/auth-context';
 import { useWakeWord } from '@/lib/wake-word-context';
 import {
   addAndroidOutsideAppVoiceControlListener,
+  acquireAndroidNativeVoicePlaybackRoute,
   cancelAndroidNativeSpeechRecognition,
   endAndroidOutsideAppVoiceSession,
   getAndroidDaemonStatus,
+  handoffAndroidOutsideAppVoiceCapture,
   recognizeAndroidSpeechOnce,
+  releaseAndroidNativeVoicePlaybackRoute,
   setAndroidOutsideAppVoiceApproval,
   setAndroidOutsideAppVoiceSessionState,
   startAndroidOutsideAppVoiceSession,
@@ -1027,6 +1030,8 @@ export default function InsightsScreen() {
   const talkModeRef = useRef(false);
   const talkModeStartSeqRef = useRef(0);
   const outsideAppVoiceStateRef = useRef<string | null>(null);
+  const insightsFocusedRef = useRef(false);
+  const nativeVoiceRouteSeqRef = useRef(0);
   const isStreamingRef = useRef(false);
   const nativeSpeechActiveRef = useRef(false);
   const nativeSpeechManualFinishRef = useRef(false);
@@ -1334,6 +1339,7 @@ export default function InsightsScreen() {
     const shouldCancelTalkModeStart = () =>
       startedForTalkMode && (
         !talkModeRef.current ||
+        !insightsFocusedRef.current ||
         talkModeStartSeqRef.current !== talkModeStartSeq ||
         isStreamingRef.current ||
         isSpeakingRef.current ||
@@ -1400,6 +1406,12 @@ export default function InsightsScreen() {
           soundRef.current = null;
         }
 
+        const captureRouteOwnerId = `speech-capture-${Date.now()}-${++nativeVoiceRouteSeqRef.current}`;
+        await acquireAndroidNativeVoicePlaybackRoute(captureRouteOwnerId).catch(() => {});
+        if (shouldCancelTalkModeStart()) {
+          releaseAndroidNativeVoicePlaybackRoute(captureRouteOwnerId).catch(() => {});
+          return;
+        }
         nativeSpeechActiveRef.current = true;
         nativeSpeechManualFinishRef.current = false;
         nativeSpeechCancelledRef.current = false;
@@ -1438,6 +1450,7 @@ export default function InsightsScreen() {
                 locale: 'en-US',
                 interimResults: true,
                 timeoutMs: 60_000,
+                takeInAppCapture: true,
                 onEvent: (event) => {
                   if (!listeningForContinuation) return;
                   if (event.type === 'ready' && nativeSpeechManualFinishRef.current) {
@@ -1493,6 +1506,7 @@ export default function InsightsScreen() {
           if (/cancelled/i.test(message)) return;
           Alert.alert('Voice input failed', message || 'Android on-device speech recognition could not start.');
         } finally {
+          releaseAndroidNativeVoicePlaybackRoute(captureRouteOwnerId).catch(() => {});
           nativeSpeechActiveRef.current = false;
           setIsRecording(false);
           setIsTranscribing(false);
@@ -1768,6 +1782,7 @@ export default function InsightsScreen() {
     setTimeout(() => {
       if (
         !talkModeRef.current ||
+        !insightsFocusedRef.current ||
         talkModeStartSeqRef.current !== startSeq ||
         outsideAppVoiceStateRef.current === 'paused' ||
         isStreamingRef.current ||
@@ -1939,36 +1954,43 @@ export default function InsightsScreen() {
     const trimmedText = text.slice(0, 4000);
 
     if (Platform.OS === 'android') {
+      const playbackRouteOwnerId = `${Date.now()}-${++nativeVoiceRouteSeqRef.current}`;
       try {
         await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+        await acquireAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
         setIsTTSLoading(false);
-        await new Promise<void>((resolve) => {
-          let settled = false;
-          const finish = (result: 'done' | 'stopped' | 'error') => {
-            if (settled) return;
-            settled = true;
-            abortController.signal.removeEventListener('abort', abortHandler);
-            if (result === 'done' && isSpeakingRef.current) {
-              onPlaybackEnd();
-            } else if (result === 'error' && isSpeakingRef.current) {
-              onError();
-            }
-            resolve();
-          };
-          const abortHandler = () => {
+        try {
+          if (abortController.signal.aborted) return;
+          await new Promise<void>((resolve) => {
+            let settled = false;
+            const finish = (result: 'done' | 'stopped' | 'error') => {
+              if (settled) return;
+              settled = true;
+              abortController.signal.removeEventListener('abort', abortHandler);
+              if (result === 'done' && isSpeakingRef.current) {
+                onPlaybackEnd();
+              } else if (result === 'error' && isSpeakingRef.current) {
+                onError();
+              }
+              resolve();
+            };
+            const abortHandler = () => {
+              Speech.stop().catch(() => {});
+              finish('stopped');
+            };
+            abortController.signal.addEventListener('abort', abortHandler);
             Speech.stop().catch(() => {});
-            finish('stopped');
-          };
-          abortController.signal.addEventListener('abort', abortHandler);
-          Speech.stop().catch(() => {});
-          Speech.speak(trimmedText, {
-            rate: 0.96,
-            pitch: 1,
-            onDone: () => finish('done'),
-            onStopped: () => finish('stopped'),
-            onError: () => finish('error'),
+            Speech.speak(trimmedText, {
+              rate: 0.96,
+              pitch: 1,
+              onDone: () => finish('done'),
+              onStopped: () => finish('stopped'),
+              onError: () => finish('error'),
+            });
           });
-        });
+        } finally {
+          releaseAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
+        }
       } catch (error) {
         console.error('[speakText] Android device TTS failed:', error);
         onError();
@@ -2671,6 +2693,7 @@ export default function InsightsScreen() {
   useEffect(() => { loadAll(); }, [loadAll]);
 
   useFocusEffect(useCallback(() => {
+    insightsFocusedRef.current = true;
     getGoals().then(setGoals);
     getStats().then(setStats);
     if (initialLoadCompleteRef.current) {
@@ -2689,14 +2712,19 @@ export default function InsightsScreen() {
 
     // Cleanup on blur: cancel queued Talk Mode starts and stop any active in-app capture.
     return () => {
+      insightsFocusedRef.current = false;
       talkModeStartSeqRef.current += 1;
       if (silencePollRef.current) {
         clearInterval(silencePollRef.current);
         silencePollRef.current = null;
       }
-      if (talkModeRef.current && isRecordingRef.current) {
-        stopRecordingSilentlyRef.current().catch(() => {});
-      }
+      const shouldHandoff = talkModeRef.current;
+      stopRecordingSilentlyRef.current().finally(() => {
+        if (!shouldHandoff) return;
+        return handoffAndroidOutsideAppVoiceCapture().catch((err) => {
+          console.warn('[voice] outside-app microphone handoff failed:', err);
+        });
+      }).catch(() => {});
     };
   }, [refreshPendingCoachResponse]));
 
