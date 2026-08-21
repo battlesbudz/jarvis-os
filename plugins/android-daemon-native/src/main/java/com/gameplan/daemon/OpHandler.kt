@@ -1608,6 +1608,12 @@ object OpHandler {
 
             val mediaPlayer = android.media.MediaPlayer()
             player = mediaPlayer
+            mediaPlayer.setAudioAttributes(
+                android.media.AudioAttributes.Builder()
+                    .setUsage(android.media.AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+            )
             mediaPlayer.setDataSource(playbackFile.absolutePath)
             mediaPlayer.prepare()
             if (!OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()) {
