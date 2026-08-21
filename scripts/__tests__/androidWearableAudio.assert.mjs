@@ -173,6 +173,12 @@ assert.match(talkMode, /microphone ownership returned to the in-app recognizer/)
 assert.match(outsideVoice, /ACTION_TAKE_CAPTURE/);
 assert.match(outsideVoice, /ownsVoiceCapture/);
 assert.match(outsideVoice, /fun prepareForInAppCapture\(\)/);
+assert.match(
+  outsideVoice,
+  /fun resumeWakeCaptureAfterPlayback\(\): Boolean[\s\S]*?!service\.ownsVoiceCapture[\s\S]*?return false[\s\S]*?WakeWordService\.onTtsFinished\(\)/,
+);
+assert.doesNotMatch(playback, /private fun handleTtsFinished\(\): OpResult \{\s+WakeWordService\.onTtsFinished\(\)/);
+assert.match(playback, /OutsideAppVoiceSessionService\.resumeWakeCaptureAfterPlayback\(\)/);
 assert.match(daemonModule, /fun handoffOutsideAppVoiceCapture\(promise: Promise\)/);
 assert.match(daemonModule, /fun acquireNativeVoicePlaybackRoute\(ownerId: String, promise: Promise\)/);
 assert.match(daemonModule, /fun releaseNativeVoicePlaybackRoute\(ownerId: String, promise: Promise\)/);
