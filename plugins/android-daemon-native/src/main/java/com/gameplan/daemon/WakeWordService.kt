@@ -162,6 +162,7 @@ class WakeWordService : Service() {
     private var restartRunnable: Runnable? = null
     private var nonTalkCooldownRunnable: Runnable? = null
     private var localInferenceRecoveryRunnable: Runnable? = null
+    private var wakeStartGeneration = 0
     @Volatile private var localInferencePaused = false
     /** True when Talk Mode is on and we are waiting to capture the user's utterance after a wake word */
     @Volatile private var capturingUtterance = false
@@ -228,8 +229,10 @@ class WakeWordService : Service() {
 
     private fun startListening() {
         if (!listeningRequested || active || localInferencePaused) return
+        val startGeneration = wakeStartGeneration
         if (talkModeEnabled) {
             WearableAudioRouteManager.acquire(this, WEARABLE_AUDIO_OWNER) { route ->
+                if (startGeneration != wakeStartGeneration) return@acquire
                 if (!listeningRequested || localInferencePaused || !talkModeEnabled) {
                     WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
                     return@acquire
@@ -238,14 +241,14 @@ class WakeWordService : Service() {
                 DaemonLog.add(
                     "wearable_audio: talk route=${route.state} device=${route.deviceName ?: "none"} type=${route.deviceType ?: "none"}",
                 )
-                startListeningWithCurrentRoute()
+                startListeningWithCurrentRoute(startGeneration)
             }
             return
         }
-        startListeningWithCurrentRoute()
+        startListeningWithCurrentRoute(startGeneration)
     }
 
-    private fun startListeningWithCurrentRoute() {
+    private fun startListeningWithCurrentRoute(startGeneration: Int) {
         if (!listeningRequested || active || localInferencePaused) return
         cancelPendingRestart()
         cancelNonTalkCooldownRestart()
@@ -266,6 +269,7 @@ class WakeWordService : Service() {
             return
         }
         mainHandler.post {
+            if (startGeneration != wakeStartGeneration) return@post
             if (!listeningRequested || localInferencePaused) {
                 WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
                 return@post
@@ -288,6 +292,7 @@ class WakeWordService : Service() {
     }
 
     private fun stopListening() {
+        wakeStartGeneration += 1
         active = false
         cancelPendingRestart()
         cancelNonTalkCooldownRestart()
@@ -512,6 +517,7 @@ class WakeWordService : Service() {
      */
     private fun handlePauseForPlayback() {
         if (!talkModeEnabled) return
+        wakeStartGeneration += 1
         DaemonLog.add("wake: pausing mic for TTS playback")
         // Set active=false so startListening() in handleTtsFinished() is not a no-op
         active = false
@@ -522,6 +528,7 @@ class WakeWordService : Service() {
 
     private fun handlePauseForUserControl() {
         if (!talkModeEnabled) return
+        wakeStartGeneration += 1
         DaemonLog.add("wake: pausing user capture")
         capturingUtterance = false
         active = false
@@ -540,6 +547,7 @@ class WakeWordService : Service() {
 
     private fun handlePauseForResponse() {
         if (!talkModeEnabled) return
+        wakeStartGeneration += 1
         capturingUtterance = false
         active = false
         cancelPendingRestart()
@@ -549,6 +557,7 @@ class WakeWordService : Service() {
 
     private fun handlePauseForInAppCapture() {
         if (!talkModeEnabled) return
+        wakeStartGeneration += 1
         capturingUtterance = false
         active = false
         cancelPendingRestart()
@@ -662,6 +671,7 @@ class WakeWordService : Service() {
 
     private fun handleEndTalkModeForUserControl() {
         if (!talkModeEnabled && !capturingUtterance) return
+        wakeStartGeneration += 1
         DaemonLog.add("wake: ending talk mode capture")
         talkModeEnabled = false
         WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
