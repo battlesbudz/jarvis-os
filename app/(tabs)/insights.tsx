@@ -1947,6 +1947,7 @@ export default function InsightsScreen() {
         await acquireAndroidNativeVoicePlaybackRoute().catch(() => {});
         setIsTTSLoading(false);
         try {
+          if (abortController.signal.aborted) return;
           await new Promise<void>((resolve) => {
             let settled = false;
             const finish = (result: 'done' | 'stopped' | 'error') => {
