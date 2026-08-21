@@ -36,7 +36,12 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { getApiUrl } from '@/lib/query-client';
 import { authFetch } from '@/lib/auth-context';
-import { cancelAndroidNativeSpeechRecognition, recognizeAndroidSpeechOnce } from '@/lib/android-daemon-native';
+import {
+  cancelAndroidNativeSpeechRecognition,
+  getAndroidDaemonStatus,
+  handoffAndroidOutsideAppVoiceCapture,
+  recognizeAndroidSpeechOnce,
+} from '@/lib/android-daemon-native';
 
 type SpeechModule = {
   stop: () => Promise<void>;
@@ -547,16 +552,24 @@ export default function VoiceRealtimeScreen() {
     }
 
     setState('listening');
+    const restoreOutsideAppCapture = (
+      await getAndroidDaemonStatus().catch(() => null)
+    )?.voiceSessionActive === true;
     let result: Awaited<ReturnType<typeof recognizeAndroidSpeechOnce>>;
     try {
       result = await recognizeAndroidSpeechOnce({
         interimResults: true,
         timeoutMs: CODEX_VOICE_TURN_RECORDING_MS + 20_000,
+        takeInAppCapture: restoreOutsideAppCapture,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/cancelled/i.test(message)) return;
       throw error;
+    } finally {
+      if (restoreOutsideAppCapture) {
+        await handoffAndroidOutsideAppVoiceCapture().catch(() => {});
+      }
     }
     const text = result.text.trim();
     if (!text) {

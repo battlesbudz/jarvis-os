@@ -1450,6 +1450,7 @@ export default function InsightsScreen() {
                 locale: 'en-US',
                 interimResults: true,
                 timeoutMs: 60_000,
+                takeInAppCapture: true,
                 onEvent: (event) => {
                   if (!listeningForContinuation) return;
                   if (event.type === 'ready' && nativeSpeechManualFinishRef.current) {

@@ -90,6 +90,7 @@ export type AndroidNativeSpeechRecognitionOptions = {
   locale?: string;
   interimResults?: boolean;
   timeoutMs?: number;
+  takeInAppCapture?: boolean;
   onEvent?: (event: AndroidNativeSpeechRecognitionEvent) => void;
 };
 

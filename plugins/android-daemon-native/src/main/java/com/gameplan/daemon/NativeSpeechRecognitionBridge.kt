@@ -46,6 +46,7 @@ class NativeSpeechRecognitionBridge(
                 val localeTag = options.optString("locale", "")
                 val interimResults = options.optBoolean("interimResults", true)
                 val timeoutMs = options.optLong("timeoutMs", DEFAULT_TIMEOUT_MS).coerceAtLeast(5_000L)
+                val takeInAppCapture = options.optBoolean("takeInAppCapture", false)
 
                 if (!hasRecordAudioPermission()) {
                     promise.reject(
@@ -76,7 +77,7 @@ class NativeSpeechRecognitionBridge(
                 pendingStartGeneration = startGeneration
                 WearableAudioRouteManager.acquire(reactContext, WEARABLE_AUDIO_OWNER) { wearableRoute ->
                     if (!isCurrent(startGeneration)) return@acquire
-                    OutsideAppVoiceSessionService.prepareForInAppCapture()
+                    if (takeInAppCapture) OutsideAppVoiceSessionService.prepareForInAppCapture()
                     startRecognizer(
                         localeTag = localeTag,
                         interimResults = interimResults,

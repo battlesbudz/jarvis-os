@@ -26,6 +26,7 @@ const daemonModule = fs.readFileSync(
   "utf8",
 );
 const insights = fs.readFileSync("app/(tabs)/insights.tsx", "utf8");
+const voiceRealtime = fs.readFileSync("app/voice-realtime.tsx", "utf8");
 const androidDaemonNative = fs.readFileSync("lib/android-daemon-native.ts", "utf8");
 const pluginSourceRoot = "plugins/android-daemon-native/src/main/java/com/gameplan/daemon";
 const pluginRouteManager = fs.readFileSync(`${pluginSourceRoot}/WearableAudioRouteManager.kt`, "utf8");
@@ -136,7 +137,7 @@ assert.doesNotMatch(routeManager, /BluetoothLeScanner|startScan\(/);
 assert.match(nativeSpeech, /WearableAudioRouteManager\.acquire\(reactContext, WEARABLE_AUDIO_OWNER\)/);
 assert.match(
   nativeSpeech,
-  /WearableAudioRouteManager\.acquire\(reactContext, WEARABLE_AUDIO_OWNER\)[\s\S]*?OutsideAppVoiceSessionService\.prepareForInAppCapture\(\)[\s\S]*?startRecognizer\(/,
+  /WearableAudioRouteManager\.acquire\(reactContext, WEARABLE_AUDIO_OWNER\)[\s\S]*?if \(takeInAppCapture\) OutsideAppVoiceSessionService\.prepareForInAppCapture\(\)[\s\S]*?startRecognizer\(/,
 );
 assert.match(nativeSpeech, /fun cancelForOutsideAppHandoff\(\)/);
 assert.match(nativeSpeech, /WearableAudioRouteManager\.release\(WEARABLE_AUDIO_OWNER\)/);
@@ -194,7 +195,7 @@ assert.match(
 );
 assert.match(
   insights,
-  /acquireAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)[\s\S]*?shouldCancelTalkModeStart\(\)[\s\S]*?releaseAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)[\s\S]*?while \([\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)/,
+  /acquireAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)[\s\S]*?shouldCancelTalkModeStart\(\)[\s\S]*?releaseAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)[\s\S]*?while \([\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?takeInAppCapture: true[\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)/,
 );
 assert.match(
   insights,
@@ -207,6 +208,10 @@ assert.match(
 assert.match(
   insights,
   /Cleanup on blur[\s\S]*stopRecordingSilentlyRef\.current\(\)\.finally\([\s\S]*handoffAndroidOutsideAppVoiceCapture\(\)/,
+);
+assert.match(
+  voiceRealtime,
+  /getAndroidDaemonStatus\(\)[\s\S]*?voiceSessionActive === true[\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?takeInAppCapture: restoreOutsideAppCapture[\s\S]*?finally \{[\s\S]*?handoffAndroidOutsideAppVoiceCapture\(\)/,
 );
 
 assert.equal(pluginRouteManager, routeManager, "Expo prebuild route manager must match the app source");
