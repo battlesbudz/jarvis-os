@@ -69,6 +69,8 @@ assert.match(telegramRoutes, /statusObservationId,\s+metadata: \{ originChannelI
 assert.doesNotMatch(telegramRoutes, /observeStatusCheck/);
 const discordSlashCommands = fs.readFileSync("server/discord/slashCommands.ts", "utf8");
 assert.match(discordSlashCommands, /statusObservationId: String\(interaction\.id/);
+const baselineMetrics = fs.readFileSync("server/liveActions/baselineMetrics.ts", "utf8");
+assert.match(baselineMetrics, /for \(const \[key, mismatch\] of firstSeen\)[\s\S]*?nowMs - mismatch\.lastSeenAt > MAX_MISMATCH_HEARTBEAT_GAP_MS/);
 
 resetLiveActionBaselinesForTests();
 recordStatusCheckFollowUp({ userId: "surface-aliases", message: "Status update?", surface: "appchat" });

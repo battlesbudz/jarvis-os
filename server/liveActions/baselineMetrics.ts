@@ -277,6 +277,9 @@ export function observeTerminalStateDrift(input: {
   const clientFingerprint = fingerprintRepresentation(input.userId, input.kind, input.clientId);
   const prefix = `${input.kind}:${surface}:${clientFingerprint}:`;
   const firstSeen = terminalMismatchFirstSeen.get(input.userId) ?? new Map<string, { firstSeenAt: number; lastSeenAt: number }>();
+  for (const [key, mismatch] of firstSeen) {
+    if (nowMs - mismatch.lastSeenAt > MAX_MISMATCH_HEARTBEAT_GAP_MS) firstSeen.delete(key);
+  }
   const observedKeys = new Set<string>();
   let persistentDriftCount = 0;
   let pendingMismatchCount = 0;
