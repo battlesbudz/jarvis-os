@@ -31,6 +31,7 @@ import { resolvePhoneRuntimeRequestText } from "../agent/phoneRuntimeRouting";
 import { ANDROID_PHONE_RUNTIME_TOOL_NAMES } from "../agent/androidPhoneRuntimeToolNames";
 import { getCoachAgentSessionAgentId } from "./coachAgentSession";
 import { listPendingPersonalCommitments } from "../commitments/dbCommitmentRepository";
+import { recordStatusCheckFollowUp } from "../liveActions/baselineMetrics";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
 
@@ -187,6 +188,8 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   const channelLower = channelName.toLowerCase();
   const telegramE2eProbeId = channelName === "Telegram" ? getTelegramE2eProbeId(userText) : null;
   const telegramE2eLogSuffix = telegramE2eProbeId ? ` e2e=${telegramE2eProbeId}` : "";
+
+  recordStatusCheckFollowUp({ userId, message: userText, surface: channelLower });
 
   if (
     channelName === "Telegram" &&

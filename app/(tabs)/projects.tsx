@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect } from "react";
 import {
   View,
   Text,
@@ -945,7 +945,16 @@ export default function ProjectsScreen() {
   const insets = useSafeAreaInsets();
   const [showNew, setShowNew] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const { data: projects, isLoading, refetch } = useProjects();
+  const { data: projects, dataUpdatedAt: projectsUpdatedAt, isLoading, refetch } = useProjects();
+  useEffect(() => {
+    if (!projects) return;
+    const renderedProjects = selectedId ? [] : projects.slice(0, 100);
+    void apiRequest("POST", "/api/live-actions/baseline/representations", {
+      kind: "project",
+      surface: "projects",
+      representations: renderedProjects.map((project) => ({ id: project.id, status: project.status })),
+    }).catch(() => {});
+  }, [projects, projectsUpdatedAt, selectedId]);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const botPad = Platform.OS === "web" ? 34 : insets.bottom;

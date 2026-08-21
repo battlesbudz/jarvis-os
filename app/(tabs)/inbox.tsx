@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,7 @@ import {
   KeyboardAvoidingView,
   Linking,
   Share,
+  AppState,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
@@ -447,7 +448,12 @@ export default function InboxScreen() {
 
   const [autoHandledExpanded, setAutoHandledExpanded] = useState(false);
 
-  const { data: activeJobs = [], refetch: refetchActiveJobs } = useQuery<AgentJob[]>({
+  const {
+    data: activeJobs = [],
+    dataUpdatedAt: activeJobsUpdatedAt,
+    isFetchedAfterMount: activeJobsFetchedAfterMount,
+    refetch: refetchActiveJobs,
+  } = useQuery<AgentJob[]>({
     queryKey: ['/api/agent-jobs/active'],
     refetchInterval: (query) => {
       const jobs = query.state.data ?? [];
@@ -455,10 +461,55 @@ export default function InboxScreen() {
     },
   });
 
-  const { data: failedJobs = [], refetch: refetchFailedJobs } = useQuery<AgentJob[]>({
+  const baselineHydrationStartedAt = useRef(Date.now());
+  useEffect(() => {
+    if (!activeJobsFetchedAfterMount || activeJobsUpdatedAt <= 0 || baselineHydrationStartedAt.current <= 0) return;
+    const startedAt = baselineHydrationStartedAt.current;
+    baselineHydrationStartedAt.current = 0;
+    void apiRequest('POST', '/api/live-actions/baseline', {
+      metric: 'reconnect_restoration_ms',
+      surface: 'inbox',
+      value: Math.max(0, Date.now() - startedAt),
+    }).catch(() => {});
+  }, [activeJobsFetchedAfterMount, activeJobsUpdatedAt]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active') return;
+      baselineHydrationStartedAt.current = Date.now();
+      void refetchActiveJobs();
+    });
+    return () => subscription.remove();
+  }, [refetchActiveJobs]);
+
+  const baselineVisibleJobIds = useRef(new Set<string>());
+  useEffect(() => {
+    for (const job of activeJobs) {
+      if (baselineVisibleJobIds.current.has(job.id)) continue;
+      baselineVisibleJobIds.current.add(job.id);
+      const createdAtMs = new Date(job.createdAt).getTime();
+      if (!Number.isFinite(createdAtMs)) continue;
+      void apiRequest('POST', '/api/live-actions/baseline', {
+        metric: 'acknowledgement_visible_latency_ms',
+        surface: 'inbox',
+        value: Math.max(0, Date.now() - createdAtMs),
+      }).catch(() => {});
+    }
+  }, [activeJobs]);
+
+  const { data: failedJobs = [], dataUpdatedAt: failedJobsUpdatedAt, refetch: refetchFailedJobs } = useQuery<AgentJob[]>({
     queryKey: ['/api/agent-jobs?status=failed&limit=10'],
     refetchInterval: 60000,
   });
+
+  useEffect(() => {
+    const renderedJobs = [...activeJobs, ...failedJobs];
+    void apiRequest('POST', '/api/live-actions/baseline/representations', {
+      kind: 'agent_job',
+      surface: 'inbox',
+      representations: renderedJobs.map((job) => ({ id: job.id, status: job.status })),
+    }).catch(() => {});
+  }, [activeJobs, activeJobsUpdatedAt, failedJobs, failedJobsUpdatedAt]);
 
   const { data: dailyCommand, refetch: refetchDailyCommand } = useQuery<DailyCommandSnapshot>({
     queryKey: ['/api/daily-command/today'],

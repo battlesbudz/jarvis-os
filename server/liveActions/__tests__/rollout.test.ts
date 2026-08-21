@@ -1,0 +1,144 @@
+import assert from "node:assert/strict";
+import {
+  getLiveActionBaselineReport,
+  getLiveActionAggregateReport,
+  isClientSubmittedLiveActionBaselineMetric,
+  observeTerminalStateDrift,
+  recordLiveActionBaseline,
+  recordRenderedRepresentationSnapshot,
+  recordStatusCheckFollowUp,
+  resetLiveActionBaselinesForTests,
+} from "../baselineMetrics";
+import { getLiveActionFeatureFlags } from "../rollout";
+
+const disabled = getLiveActionFeatureFlags({});
+assert.deepEqual(disabled, { projectCapsule: false, projector: false, ui: false, stream: false });
+
+const names = ["JARVIS_PROJECT_CAPSULE", "JARVIS_LIVE_ACTIONS_PROJECTOR", "JARVIS_LIVE_ACTIONS_UI", "JARVIS_LIVE_ACTIONS_STREAM"];
+for (const name of names) {
+  const flags = getLiveActionFeatureFlags({ [name]: "1" });
+  assert.equal(Object.values(flags).filter(Boolean).length, 1, `${name} must enable independently`);
+}
+
+assert.deepEqual(getLiveActionFeatureFlags({
+  JARVIS_PROJECT_CAPSULE: "true",
+  JARVIS_LIVE_ACTIONS_PROJECTOR: "TRUE",
+  JARVIS_LIVE_ACTIONS_UI: "1",
+  JARVIS_LIVE_ACTIONS_STREAM: "false",
+}), { projectCapsule: true, projector: true, ui: true, stream: false });
+assert.equal(isClientSubmittedLiveActionBaselineMetric("reconnect_restoration_ms"), true);
+assert.equal(isClientSubmittedLiveActionBaselineMetric("acknowledgement_visible_latency_ms"), true);
+assert.equal(isClientSubmittedLiveActionBaselineMetric("terminal_state_drift_count"), false);
+assert.equal(isClientSubmittedLiveActionBaselineMetric("duplicate_representation_count"), false);
+
+resetLiveActionBaselinesForTests();
+assert.equal(recordStatusCheckFollowUp({ userId: "user-a", message: "Is it still running?", surface: "chat" }), true);
+assert.equal(recordStatusCheckFollowUp({ userId: "user-a", message: "Tell me about basil.", surface: "chat" }), false);
+recordLiveActionBaseline({
+  userId: "user-a",
+  metric: "acknowledgement_visible_latency_ms",
+  surface: "not-a-real-surface",
+  value: 125,
+  now: new Date("2026-08-16T12:00:00.000Z"),
+});
+recordLiveActionBaseline({
+  userId: "user-a",
+  metric: "reconnect_restoration_ms",
+  surface: "inbox",
+  value: 250,
+});
+assert.deepEqual(recordRenderedRepresentationSnapshot({
+  userId: "user-a",
+  kind: "agent_job",
+  surface: "inbox",
+  identities: ["job-1", "job-1", "job-2"],
+  nowMs: 1_250,
+}), { duplicateCount: 1, representationCount: 3 });
+assert.deepEqual(recordRenderedRepresentationSnapshot({
+  userId: "user-a",
+  kind: "agent_job",
+  surface: "mission_control",
+  identities: ["job-1"],
+  nowMs: 1_300,
+}), { duplicateCount: 2, representationCount: 4 });
+assert.deepEqual(observeTerminalStateDrift({
+  userId: "user-a",
+  kind: "project",
+  surface: "projects",
+  entries: [{ id: "project-1", status: "building" }],
+  canonicalStatuses: new Map([["project-1", "complete"]]),
+  terminalStatuses: new Set(["complete", "failed"]),
+  nowMs: 1_000,
+}), { persistentDriftCount: 0, pendingMismatchCount: 1 });
+for (const nowMs of [61_000, 121_000, 181_000, 241_000]) {
+  assert.deepEqual(observeTerminalStateDrift({
+    userId: "user-a",
+    kind: "project",
+    surface: "projects",
+    entries: [{ id: "project-1", status: "building" }],
+    canonicalStatuses: new Map([["project-1", "complete"]]),
+    terminalStatuses: new Set(["complete", "failed"]),
+    nowMs,
+  }), { persistentDriftCount: 0, pendingMismatchCount: 1 });
+}
+assert.deepEqual(observeTerminalStateDrift({
+  userId: "user-a",
+  kind: "project",
+  surface: "projects",
+  entries: [{ id: "project-1", status: "building" }],
+  canonicalStatuses: new Map([["project-1", "complete"]]),
+  terminalStatuses: new Set(["complete", "failed"]),
+  nowMs: 301_000,
+}), { persistentDriftCount: 1, pendingMismatchCount: 0 });
+assert.deepEqual(observeTerminalStateDrift({
+  userId: "user-a",
+  kind: "project",
+  surface: "projects",
+  entries: [{ id: "project-1", status: "complete" }],
+  canonicalStatuses: new Map([["project-1", "complete"]]),
+  terminalStatuses: new Set(["complete", "failed"]),
+  nowMs: 302_000,
+}), { persistentDriftCount: 0, pendingMismatchCount: 0 });
+observeTerminalStateDrift({
+  userId: "user-b",
+  kind: "agent_job",
+  surface: "inbox",
+  entries: [{ id: "job-gap", status: "running" }],
+  canonicalStatuses: new Map([["job-gap", "complete"]]),
+  terminalStatuses: new Set(["complete", "delivered", "failed", "cancelled"]),
+  nowMs: 1_000,
+});
+assert.deepEqual(observeTerminalStateDrift({
+  userId: "user-b",
+  kind: "agent_job",
+  surface: "inbox",
+  entries: [{ id: "job-gap", status: "running" }],
+  canonicalStatuses: new Map([["job-gap", "complete"]]),
+  terminalStatuses: new Set(["complete", "delivered", "failed", "cancelled"]),
+  nowMs: 301_001,
+}), { persistentDriftCount: 0, pendingMismatchCount: 1 });
+const report = getLiveActionBaselineReport("user-a");
+assert.equal(report.metrics["status_check_follow_up:chat"].count, 1);
+assert.equal(report.metrics["acknowledgement_visible_latency_ms:unknown"].average, 125);
+assert.equal(report.metrics["acknowledgement_visible_latency_ms:unknown"].p95, 250);
+assert.equal(report.metrics["acknowledgement_visible_latency_ms:unknown"].histogram?.reduce((sum, bucket) => sum + bucket.count, 0), 1);
+assert.equal(report.metrics["acknowledgement_visible_latency_ms:unknown"].histogram?.some((bucket) => bucket.upperBoundMs === 1_500), true);
+assert.equal(report.metrics["acknowledgement_visible_latency_ms:unknown"].histogram?.some((bucket) => bucket.upperBoundMs === 3_000), true);
+assert.equal(report.metrics["reconnect_restoration_ms:inbox"].average, 250);
+assert.equal(report.metrics["duplicate_representation_count:inbox"].average, 1);
+assert.equal(report.metrics["duplicate_representation_count:mission_control"].average, 2);
+assert.equal(report.metrics["rendered_representation_count:mission_control"].sum, 4);
+assert.deepEqual(report.privacy, {
+  contentStored: false,
+  identifiersStoredInMetrics: false,
+  allowedDimensions: ["metric", "surface"],
+});
+const aggregate = getLiveActionAggregateReport();
+assert.equal(aggregate.scope, "deployment");
+assert.equal(aggregate.userCount, 1);
+assert.equal(aggregate.metrics["status_check_follow_up:chat"].count, 1);
+assert.equal(aggregate.metrics["acknowledgement_visible_latency_ms:unknown"], undefined);
+assert.equal(aggregate.metrics["duplicate_representation_count:inbox"], undefined);
+assert.equal(aggregate.metrics["terminal_state_drift_count:projects"], undefined);
+
+console.log("OK: live-action rollout flags and privacy-safe baselines are independent and bounded");

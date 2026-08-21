@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -406,10 +406,18 @@ export default function TasksScreen() {
     queryKey: ['/api/jarvis/scheduled-tasks'],
     refetchInterval: 30000,
   });
-  const { data: queuePanel, isLoading: queuePanelLoading } = useQuery<QueuePanelData>({
+  const { data: queuePanel, dataUpdatedAt: queuePanelUpdatedAt, isLoading: queuePanelLoading } = useQuery<QueuePanelData>({
     queryKey: ['/api/mission-control/queue-panel'],
     refetchInterval: 15000,
   });
+  useEffect(() => {
+    const renderedJobs = queuePanel?.activeJobs ?? [];
+    void apiRequest('POST', '/api/live-actions/baseline/representations', {
+      kind: 'agent_job',
+      surface: 'mission_control',
+      representations: renderedJobs.map((job) => ({ id: job.id, status: job.status })),
+    }).catch(() => {});
+  }, [queuePanel?.activeJobs, queuePanelUpdatedAt]);
 
   if (isLoading) {
     return (

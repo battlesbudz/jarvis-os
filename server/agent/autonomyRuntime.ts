@@ -902,6 +902,14 @@ export async function handlePrimeInput(
 ): Promise<PrimeRuntimeResult> {
   const startedAt = Date.now();
   const finish = async (result: PrimeRuntimeResult): Promise<PrimeRuntimeResult> => {
+    if (result.handled && input.userId) {
+      const { recordStatusCheckFollowUp } = await import("../liveActions/baselineMetrics");
+      recordStatusCheckFollowUp({
+        userId: input.userId,
+        message: input.message,
+        surface: input.channel,
+      });
+    }
     await observePrimeRuntimeDecision(deps, input, result, startedAt);
     return result;
   };

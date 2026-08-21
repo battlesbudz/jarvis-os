@@ -4,12 +4,37 @@ import {
   handlePrimeInput,
   type PrimeRuntimeMindTraceObservation,
 } from "../autonomyRuntime";
+import { getLiveActionBaselineReport, resetLiveActionBaselinesForTests } from "../../liveActions/baselineMetrics";
 
 async function main(): Promise<void> {
   const previousPrime = process.env.ENABLE_PRIME_RUNTIME;
 
   try {
     process.env.ENABLE_PRIME_RUNTIME = "true";
+    resetLiveActionBaselinesForTests();
+
+    {
+      const result = await handlePrimeInput(
+        {
+          userId: "user-prime-status",
+          channel: "telegram",
+          message: "Is it still running?",
+        },
+        {
+          runAgentSdkReminderWorkflow: async () => ({
+            handled: true,
+            status: "complete",
+            runId: "sdk-status-run-1",
+            reply: "It is still running.",
+          }),
+          observePrimeDecision: async () => {},
+        },
+      );
+
+      assert.equal(result.handled, true);
+      assert.equal(getLiveActionBaselineReport("user-prime-status").metrics["status_check_follow_up:telegram"].count, 1);
+      console.log("OK: handled PRIME channel turns record status-check follow-ups");
+    }
 
     {
       const observations: PrimeRuntimeMindTraceObservation[] = [];
