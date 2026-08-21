@@ -135,8 +135,8 @@ const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
       startNativeSpeechRecognition?(optionsJson: string): Promise<AndroidNativeSpeechStatus>;
       stopNativeSpeechRecognition?(): Promise<AndroidNativeSpeechStatus>;
       cancelNativeSpeechRecognition?(): Promise<AndroidNativeSpeechStatus>;
-      acquireNativeVoicePlaybackRoute?(): Promise<void>;
-      releaseNativeVoicePlaybackRoute?(): Promise<void>;
+      acquireNativeVoicePlaybackRoute?(ownerId: string): Promise<void>;
+      releaseNativeVoicePlaybackRoute?(ownerId: string): Promise<void>;
       triggerNativeSpeechModelDownload?(locale: string): Promise<AndroidNativeSpeechStatus>;
     }
   | undefined;
@@ -268,12 +268,12 @@ export async function cancelAndroidNativeSpeechRecognition(): Promise<AndroidNat
   return NativeJarvisDaemon.cancelNativeSpeechRecognition();
 }
 
-export async function acquireAndroidNativeVoicePlaybackRoute(): Promise<void> {
-  await NativeJarvisDaemon?.acquireNativeVoicePlaybackRoute?.();
+export async function acquireAndroidNativeVoicePlaybackRoute(ownerId: string): Promise<void> {
+  await NativeJarvisDaemon?.acquireNativeVoicePlaybackRoute?.(ownerId);
 }
 
-export async function releaseAndroidNativeVoicePlaybackRoute(): Promise<void> {
-  await NativeJarvisDaemon?.releaseNativeVoicePlaybackRoute?.();
+export async function releaseAndroidNativeVoicePlaybackRoute(ownerId: string): Promise<void> {
+  await NativeJarvisDaemon?.releaseNativeVoicePlaybackRoute?.(ownerId);
 }
 
 export async function triggerAndroidNativeSpeechModelDownload(locale = ""): Promise<AndroidNativeSpeechStatus | null> {
