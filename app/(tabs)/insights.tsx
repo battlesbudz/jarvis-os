@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 60470)
-Total output lines: 6178
-
 import React, { useState, useCallback, useRef, useEffect, useContext } from 'react';
 import {
   StyleSheet,
@@ -1929,7 +1926,1955 @@ export default function InsightsScreen() {
       setIsSpeaking(false);
       setIsTTSLoading(false);
       apiRequest('POST', '/api/voice/tts-done').catch(() => {});
-      if (talkModeRef.current && outsideAppVoiceStateRef.current !== 'paused'…20470 tokens truncated…ave expired.';
+      if (talkModeRef.current && outsideAppVoiceStateRef.current !== 'paused') {
+        scheduleTalkModeRecordingStart(400);
+      }
+    };
+
+    const onError = () => {
+      isSpeakingRef.current = false;
+      speakingTextRef.current = null;
+      speakingAssistantIdRef.current = null;
+      setIsSpeaking(false);
+      setIsTTSLoading(false);
+    };
+
+    const trimmedText = text.slice(0, 4000);
+
+    if (Platform.OS === 'android') {
+      try {
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+        await acquireAndroidNativeVoicePlaybackRoute().catch(() => {});
+        setIsTTSLoading(false);
+        try {
+          await new Promise<void>((resolve) => {
+            let settled = false;
+            const finish = (result: 'done' | 'stopped' | 'error') => {
+              if (settled) return;
+              settled = true;
+              abortController.signal.removeEventListener('abort', abortHandler);
+              if (result === 'done' && isSpeakingRef.current) {
+                onPlaybackEnd();
+              } else if (result === 'error' && isSpeakingRef.current) {
+                onError();
+              }
+              resolve();
+            };
+            const abortHandler = () => {
+              Speech.stop().catch(() => {});
+              finish('stopped');
+            };
+            abortController.signal.addEventListener('abort', abortHandler);
+            Speech.stop().catch(() => {});
+            Speech.speak(trimmedText, {
+              rate: 0.96,
+              pitch: 1,
+              onDone: () => finish('done'),
+              onStopped: () => finish('stopped'),
+              onError: () => finish('error'),
+            });
+          });
+        } finally {
+          releaseAndroidNativeVoicePlaybackRoute().catch(() => {});
+        }
+      } catch (error) {
+        console.error('[speakText] Android device TTS failed:', error);
+        onError();
+      }
+      return;
+    }
+
+    const uint8ToBase64 = (bytes: Uint8Array): string => {
+      const chunkSize = 8192;
+      let b64 = '';
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        b64 += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunkSize, bytes.length)));
+      }
+      return btoa(b64);
+    };
+
+    let streamingAttempted = false;
+
+    try {
+      streamingAttempted = true;
+      const streamUrl = new URL('/api/tts/stream', getApiUrl()).toString();
+      const ttsToken = await getAuthToken();
+      const ttsHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (ttsToken) ttsHeaders['Authorization'] = `Bearer ${ttsToken}`;
+      const res = await expoFetch(streamUrl, {
+        method: 'POST',
+        headers: ttsHeaders,
+        body: JSON.stringify({ text: trimmedText }),
+        signal: abortController.signal,
+      });
+
+      if (!res.ok || !res.body) throw new Error(`Stream ${res.status}`);
+      if (!isSpeakingRef.current) return;
+
+      const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+      const decoder = new TextDecoder();
+      let lineBuffer = '';
+
+      const parseLines = (rawText: string): { type: string; data?: string; sampleRate?: number; message?: string }[] => {
+        lineBuffer += rawText;
+        const parsed: { type: string; data?: string; sampleRate?: number; message?: string }[] = [];
+        const lines = lineBuffer.split('\n');
+        lineBuffer = lines.pop() ?? '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          try { parsed.push(JSON.parse(trimmed)); } catch { /* skip malformed */ }
+        }
+        return parsed;
+      };
+
+      if (Platform.OS === 'web') {
+        const WinAudioContext = (window as unknown as Record<string, unknown>).AudioContext ?? (window as unknown as Record<string, unknown>).webkitAudioContext;
+        if (!WinAudioContext) throw new Error('Web Audio API not available');
+        const audioCtx = new (WinAudioContext as typeof AudioContext)({ sampleRate: 24000 });
+        webAudioCtxRef.current = audioCtx;
+        let scheduledTime = audioCtx.currentTime + 0.1;
+
+        // Carry-over byte to handle odd-length PCM chunks (PCM16 requires 2-byte alignment)
+        let webCarryByte: number | null = null;
+
+        // Counter-based completion tracking — avoids lastSource.onended race condition
+        // where very short audio finishes before the handler is attached.
+        let webScheduledCount = 0;
+        let webEndedCount = 0;
+        let webStreamDone = false;
+
+        const checkWebDone = () => {
+          if (webStreamDone && webEndedCount === webScheduledCount) {
+            if (isSpeakingRef.current) onPlaybackEnd();
+            audioCtx.close().catch(() => {});
+            webAudioCtxRef.current = null;
+          }
+        };
+
+        const scheduleChunk = (base64Data: string, sr = 24000) => {
+          const binaryStr = atob(base64Data);
+          let raw = new Uint8Array(binaryStr.length);
+          for (let i = 0; i < binaryStr.length; i++) raw[i] = binaryStr.charCodeAt(i);
+
+          // Prepend any carry-over byte from the previous chunk
+          let aligned: Uint8Array;
+          if (webCarryByte !== null) {
+            aligned = new Uint8Array(1 + raw.length);
+            aligned[0] = webCarryByte;
+            aligned.set(raw, 1);
+            webCarryByte = null;
+          } else {
+            aligned = raw;
+          }
+          // If still odd-length, save last byte for next chunk
+          if (aligned.length % 2 !== 0) {
+            webCarryByte = aligned[aligned.length - 1];
+            aligned = aligned.subarray(0, aligned.length - 1);
+          }
+          if (aligned.length === 0) return;
+
+          const pcm16 = new Int16Array(aligned.buffer, aligned.byteOffset, aligned.byteLength / 2);
+          const float32 = new Float32Array(pcm16.length);
+          for (let i = 0; i < pcm16.length; i++) float32[i] = pcm16[i] / 32768;
+          const buf = audioCtx.createBuffer(1, float32.length, sr);
+          buf.getChannelData(0).set(float32);
+          const src = audioCtx.createBufferSource();
+          src.buffer = buf;
+          src.connect(audioCtx.destination);
+          const startAt = Math.max(audioCtx.currentTime + 0.001, scheduledTime);
+          src.start(startAt);
+          scheduledTime = startAt + buf.duration;
+          webScheduledCount++;
+          // Attach handler at scheduling time to avoid race on short clips
+          src.onended = () => {
+            webEndedCount++;
+            checkWebDone();
+          };
+        };
+
+        setIsTTSLoading(false);
+        let done = false;
+        while (!done && !abortController.signal.aborted && isSpeakingRef.current) {
+          const { done: readDone, value } = await reader.read();
+          if (readDone) break;
+          for (const msg of parseLines(decoder.decode(value, { stream: true }))) {
+            if (msg.type === 'chunk' && msg.data) {
+              scheduleChunk(msg.data, msg.sampleRate ?? 24000);
+            } else if (msg.type === 'done') {
+              done = true;
+            } else if (msg.type === 'error') {
+              throw new Error(msg.message ?? 'Stream error');
+            }
+          }
+        }
+
+        if (webScheduledCount === 0) {
+          audioCtx.close().catch(() => {});
+          webAudioCtxRef.current = null;
+          // Throw so the outer catch triggers the full-file fallback (matches native behavior)
+          throw new Error('No audio chunks received');
+        } else {
+          // Mark stream complete and check if all sources already ended
+          webStreamDone = true;
+          checkWebDone();
+        }
+      } else {
+        // ── Native: rolling segment pipeline ──────────────────────────────────
+        // Splits the PCM16 stream into ~500ms WAV segments and plays them
+        // sequentially. Playback begins as soon as the first segment is ready
+        // (concurrent with streaming — audio starts before generation ends).
+        //
+        // Why not single WAV: expo-av requires the complete file before play.
+        // Why not PCM streaming: no public React Native API for raw PCM append.
+        const SEGMENT_BYTES = 24000; // 24000 hz × 2 bytes × 0.5 s = 24000 bytes ≈ 500ms
+
+        const buildWavBytes = (chunks: Uint8Array[], totalLen: number): Uint8Array => {
+          const sr = 24000;
+          const h = new ArrayBuffer(44); const dv = new DataView(h);
+          dv.setUint8(0,0x52);dv.setUint8(1,0x49);dv.setUint8(2,0x46);dv.setUint8(3,0x46);
+          dv.setUint32(4, 36 + totalLen, true);
+          dv.setUint8(8,0x57);dv.setUint8(9,0x41);dv.setUint8(10,0x56);dv.setUint8(11,0x45);
+          dv.setUint8(12,0x66);dv.setUint8(13,0x6d);dv.setUint8(14,0x74);dv.setUint8(15,0x20);
+          dv.setUint32(16,16,true);dv.setUint16(20,1,true);dv.setUint16(22,1,true);
+          dv.setUint32(24,sr,true);dv.setUint32(28,sr*2,true);
+          dv.setUint16(32,2,true);dv.setUint16(34,16,true);
+          dv.setUint8(36,0x64);dv.setUint8(37,0x61);dv.setUint8(38,0x74);dv.setUint8(39,0x61);
+          dv.setUint32(40, totalLen, true);
+          const wav = new Uint8Array(44 + totalLen);
+          wav.set(new Uint8Array(h), 0);
+          let off = 44; for (const c of chunks) { wav.set(c, off); off += c.length; }
+          return wav;
+        };
+
+        // segWritePromises[i] resolves when segment i WAV is written to segUris[i]
+        const segUris: string[] = [];
+        const segWritePromises: Promise<void>[] = [];
+        let segIdx = 0;
+        let pendingBuf: Uint8Array[] = [];
+        let pendingLen = 0;
+        let nativeFirstChunk = false;
+        let streamDone = false;
+        // Carry-over byte across PCM16 chunk boundaries — same as web path
+        let nativeCarryByte: number | null = null;
+        // Per-utterance unique prefix to avoid cross-session segment filename collisions
+        const segPrefix = Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+        const cleanupSegFiles = () => {
+          for (const uri of segUris) {
+            FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+          }
+        };
+
+        const enqueueSegment = (chunks: Uint8Array[], len: number) => {
+          const idx = segIdx++;
+          const uri = `${FileSystem.cacheDirectory ?? ''}jarvis_tts_${segPrefix}_${idx}.wav`;
+          segUris[idx] = uri;
+          segWritePromises[idx] = (async () => {
+            const wav = buildWavBytes(chunks, len);
+            await FileSystem.writeAsStringAsync(uri, uint8ToBase64(wav), { encoding: FileSystem.EncodingType.Base64 });
+          })();
+        };
+
+        // Playback loop runs concurrently with streaming
+        const playbackDone = (async () => {
+          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+          let playIdx = 0;
+          while (!abortController.signal.aborted && isSpeakingRef.current) {
+            if (playIdx < segWritePromises.length) {
+              await segWritePromises[playIdx]; // Wait until this segment is written
+              if (!isSpeakingRef.current || abortController.signal.aborted) break;
+              const sound = createAudioPlayer({ uri: segUris[playIdx] });
+              soundRef.current = sound;
+              const segUri = segUris[playIdx];
+              playIdx++;
+              sound.play();
+              await new Promise<void>((resolve) => {
+                let started = false;
+                sound.addListener('playbackStatusUpdate', (status) => {
+                  if (status.isLoaded && status.playing) started = true;
+                  if (status.didJustFinish) {
+                    sound.remove();
+                    FileSystem.deleteAsync(segUri, { idempotent: true }).catch(() => {});
+                    resolve();
+                  } else if (started && status.isLoaded && !status.playing) {
+                    // Sound was stopped externally (abort/stop) — resolve to unblock loop
+                    sound.remove();
+                    FileSystem.deleteAsync(segUri, { idempotent: true }).catch(() => {});
+                    resolve();
+                  }
+                });
+              });
+            } else if (streamDone) {
+              break; // All segments played
+            } else {
+              await new Promise(r => setTimeout(r, 30)); // Wait for next segment
+            }
+          }
+          // Clean up any remaining unplayed segments on abort/stop
+          cleanupSegFiles();
+          if (isSpeakingRef.current) onPlaybackEnd();
+        })();
+
+        // Streaming loop — enqueues segments as chunks arrive
+        let done = false;
+        while (!done && !abortController.signal.aborted && isSpeakingRef.current) {
+          const { done: readDone, value } = await reader.read();
+          if (readDone) break;
+          for (const msg of parseLines(decoder.decode(value, { stream: true }))) {
+            if (msg.type === 'chunk' && msg.data) {
+              if (!nativeFirstChunk) { nativeFirstChunk = true; setIsTTSLoading(false); }
+              const binaryStr = atob(msg.data);
+              let raw = new Uint8Array(binaryStr.length);
+              for (let i = 0; i < binaryStr.length; i++) raw[i] = binaryStr.charCodeAt(i);
+
+              // PCM16 byte-alignment carry-over (same logic as web path)
+              let aligned: Uint8Array;
+              if (nativeCarryByte !== null) {
+                aligned = new Uint8Array(1 + raw.length);
+                aligned[0] = nativeCarryByte;
+                aligned.set(raw, 1);
+                nativeCarryByte = null;
+              } else {
+                aligned = raw;
+              }
+              if (aligned.length % 2 !== 0) {
+                nativeCarryByte = aligned[aligned.length - 1];
+                aligned = aligned.subarray(0, aligned.length - 1);
+              }
+              if (aligned.length > 0) {
+                pendingBuf.push(aligned);
+                pendingLen += aligned.length;
+              }
+              if (pendingLen >= SEGMENT_BYTES) {
+                enqueueSegment([...pendingBuf], pendingLen);
+                pendingBuf = []; pendingLen = 0;
+              }
+            } else if (msg.type === 'done') {
+              done = true;
+            } else if (msg.type === 'error') {
+              throw new Error(msg.message ?? 'Stream error');
+            }
+          }
+        }
+
+        // Flush any remaining PCM as final segment (PCM16-aligned via carry-over above)
+        if (pendingLen > 0 && isSpeakingRef.current) {
+          enqueueSegment([...pendingBuf], pendingLen);
+        }
+        if (!nativeFirstChunk) setIsTTSLoading(false);
+        streamDone = true;
+
+        if (!isSpeakingRef.current || abortController.signal.aborted) {
+          cleanupSegFiles();
+          return;
+        }
+        if (segIdx === 0) throw new Error('No audio data received');
+
+        await playbackDone;
+      }
+    } catch (error: unknown) {
+      if (error instanceof Error && error.name === 'AbortError') return;
+      console.warn('[speakText] Streaming failed, falling back:', error);
+
+      if (streamingAttempted && !isSpeakingRef.current) return;
+
+      try {
+        const url = new URL('/api/coach/speak', getApiUrl());
+        const res = await authFetch(url.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: trimmedText }),
+          signal: abortController.signal,
+        });
+        if (!isSpeakingRef.current) return;
+        const data = await res.json();
+        setIsTTSLoading(false);
+        if (!data.audio || !isSpeakingRef.current) { onError(); return; }
+
+        if (Platform.OS === 'web') {
+          const audioEl = new window.Audio(`data:audio/mp3;base64,${data.audio}`);
+          webAudioRef.current = audioEl;
+          audioEl.onended = () => { onPlaybackEnd(); };
+          audioEl.onerror = () => { onError(); };
+          await audioEl.play();
+        } else {
+          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+          const tmpUri = (FileSystem.cacheDirectory ?? '') + 'coach_speech.mp3';
+          await FileSystem.writeAsStringAsync(tmpUri, data.audio, { encoding: FileSystem.EncodingType.Base64 });
+          const sound = createAudioPlayer({ uri: tmpUri });
+          soundRef.current = sound;
+          sound.addListener('playbackStatusUpdate', (status) => {
+            if (status.didJustFinish) { onPlaybackEnd(); }
+          });
+          sound.play();
+        }
+      } catch (fallbackErr: unknown) {
+        if (fallbackErr instanceof Error && fallbackErr.name === 'AbortError') return;
+        console.error('[speakText] Fallback also failed:', fallbackErr);
+        onError();
+      }
+    }
+  }, [interruptSpeakingAndListen, isSpeaking, scheduleTalkModeRecordingStart, stopSpeaking]);
+
+  speakTextRef.current = speakText;
+
+  const scanForTasks = useCallback(async (currentGoals: Goal[]) => {
+    if (currentGoals.length === 0) return;
+    setScanLoading(true);
+    try {
+      const url = new URL('/api/gmail/scan-for-tasks', getApiUrl());
+      const res = await authFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ goals: currentGoals }),
+      });
+      const data = await res.json();
+      if (data.suggestions && Array.isArray(data.suggestions)) {
+        setEmailSuggestions(data.suggestions);
+        setAddedSuggestions({});
+        if (!initialScanDoneRef.current) {
+          initialScanDoneRef.current = true;
+          if (hasScrolledRef.current) {
+            setInboxCollapsed(true);
+          }
+        }
+      }
+    } catch {}
+    setScanLoading(false);
+  }, []);
+
+  const handleAddEmailSuggestion = useCallback(async (suggestion: EmailSuggestion, index: number) => {
+    if (addedSuggestions[index]) return;
+    setAddedSuggestions(prev => ({ ...prev, [index]: true }));
+    try {
+      const loadedGoals = await getGoals();
+      const plan = await getTodayPlan(loadedGoals);
+      const matchedGoal = loadedGoals.find(g => g.title === suggestion.goalTitle);
+      const validCats = ['fitness', 'finance', 'career', 'personal', 'social'];
+      const category = matchedGoal && validCats.includes(matchedGoal.category)
+        ? matchedGoal.category
+        : 'personal';
+      const newTask = {
+        id: generateId(),
+        title: suggestion.title,
+        category: category as any,
+        completed: false,
+        priority: 'medium' as any,
+        description: suggestion.reason,
+        goalId: matchedGoal?.id,
+      };
+      const updated = { ...plan, tasks: [...plan.tasks, newTask] };
+      await savePlan(updated);
+    } catch {}
+  }, [addedSuggestions]);
+
+  const fetchCommitments = useCallback(async () => {
+    try {
+      const url = new URL('/api/commitments', getApiUrl());
+      const res = await authFetch(url.toString());
+      const data = await res.json();
+      if (data.commitments && Array.isArray(data.commitments)) {
+        setCommitments(data.commitments);
+      }
+    } catch {}
+  }, []);
+
+  const checkAccountabilityOnMount = useCallback(async (loadedHistory: any[], loadedCommitments: Commitment[], loadedGoals: Goal[], loadedStats: UserStats, loadedLifeContext: LifeContext | null) => {
+    if (proactiveCheckedRef.current) return;
+    proactiveCheckedRef.current = true;
+
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayKey = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+
+    const yesterdayIncomplete = loadedHistory.filter((h: any) => !h.completed && h.date === yesterdayKey);
+    const today = getTodayKey();
+    const overdueCommitments = loadedCommitments.filter(c => c.dueDate && c.dueDate < today && c.status === 'pending');
+
+    if (yesterdayIncomplete.length === 0 && overdueCommitments.length === 0) return;
+
+    const parts: string[] = [];
+    if (yesterdayIncomplete.length > 0) {
+      parts.push(`User left ${yesterdayIncomplete.length} task(s) incomplete yesterday: ${yesterdayIncomplete.slice(0, 5).map((h: any) => h.title).join(', ')}.`);
+    }
+    if (overdueCommitments.length > 0) {
+      parts.push(`User has ${overdueCommitments.length} overdue commitment(s): ${overdueCommitments.slice(0, 5).map(c => `"${c.content}" (due ${c.dueDate})`).join(', ')}.`);
+    }
+    const context = parts.join(' ');
+
+    try {
+      const proactiveId = generateId();
+      const url = new URL('/api/coach/proactive', getApiUrl());
+      const token = await getAuthToken();
+      const streamHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) streamHeaders['Authorization'] = `Bearer ${token}`;
+
+      const response = await expoFetch(url.toString(), {
+        method: 'POST',
+        headers: streamHeaders,
+        body: JSON.stringify({
+          context,
+          goals: loadedGoals,
+          stats: loadedStats,
+          history: loadedHistory,
+          lifeContext: loadedLifeContext,
+          commitments: loadedCommitments,
+          coachingMode: coachingModeRef.current,
+        }),
+      });
+
+      if (!response.body) return;
+
+      const proactiveMsg: ChatMessage = { id: proactiveId, role: 'assistant', content: '' };
+      setMessages(prev => [proactiveMsg, ...prev]);
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = '';
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed.content) {
+                fullContent += parsed.content;
+                const captured = fullContent;
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const idx = updated.findIndex(m => m.id === proactiveId);
+                  if (idx !== -1) updated[idx] = { ...updated[idx], content: captured };
+                  return updated;
+                });
+              }
+            } catch {}
+          }
+        }
+      }
+
+      setMessages(prev => {
+        const updated = [...prev];
+        const idx = updated.findIndex(m => m.id === proactiveId);
+        if (idx !== -1) updated[idx] = { ...updated[idx], content: fullContent };
+        persistChatHistory(updated);
+        return updated;
+      });
+    } catch {}
+  }, []);
+
+  const refreshPendingCoachResponse = useCallback(async () => {
+    try {
+      const pendingUrl = new URL('/api/coach/pending-response', getApiUrl());
+      const pendingRes = await authFetch(pendingUrl.toString());
+      const pendingData = await pendingRes.json();
+      if ((pendingData.text && pendingData.id) || pendingData.clearPendingConfirmationToken) {
+        setMessages(prev => {
+          const clearToken = typeof pendingData.clearPendingConfirmationToken === 'string'
+            ? pendingData.clearPendingConfirmationToken
+            : null;
+          const executedAction = pendingData.executedAction && typeof pendingData.executedAction === 'object'
+            ? pendingData.executedAction as ExecutedAction
+            : null;
+          const voiceRestore = pendingData.voiceRestore && typeof pendingData.voiceRestore === 'object'
+            ? pendingData.voiceRestore as PendingVoiceRestore
+            : null;
+          let matchedConfirmation = false;
+          let changed = false;
+          let next = prev;
+
+          if (clearToken) {
+            next = next.map(message => {
+              if (message.pendingConfirm?.token !== clearToken) return message;
+              matchedConfirmation = true;
+              changed = true;
+              return {
+                ...message,
+                pendingConfirm: undefined,
+                content: pendingData.text || 'That action was already handled outside the app.',
+                ...(executedAction ? { executedActions: [executedAction] } : {}),
+              };
+            });
+          }
+
+          // Already in chat? Skip
+          if (pendingData.text && pendingData.id && !matchedConfirmation && !next.some(m => m.id === pendingData.id)) {
+            const pendingMsg: ChatMessage = {
+              id: pendingData.id,
+              role: 'assistant',
+              content: pendingData.text,
+              // If the task that triggered this pending response took a screenshot,
+              // include it as an executedAction so the image renders inline.
+              ...(pendingData.screenshotUrl ? {
+                executedActions: [{ tool: 'daemon_action', result: 'success', label: 'Temporary screen capture', screenshotUrl: pendingData.screenshotUrl }]
+              } : {}),
+              ...(voiceRestore ? { pendingVoiceRestore: voiceRestore } : {}),
+            };
+            next = [pendingMsg, ...next];
+            changed = true;
+          }
+
+          if (!changed) return prev;
+          persistChatHistory(next);
+          return next;
+        });
+      }
+    } catch {}
+  }, []);
+
+  const loadAll = useCallback(async () => {
+    setIsBaseLoading(true);
+    setIsEmailLoading(true);
+
+    let loadedGoals: Goal[] = [];
+    let loadedHistory: any[] = [];
+    let loadedStats: UserStats = { streak: 0, totalCompleted: 0, bestStreak: 0, xp: 0, badges: [], claimedRewards: [], dailyXpEarned: { date: new Date().toISOString().slice(0, 10), xp: 0 } };
+    let loadedLifeContext: LifeContext | null = null;
+    let loadedCommitments: Commitment[] = [];
+    try {
+      const [lg, ls, lh, savedMessages, lc, savedSessionId] = await Promise.all([
+        getGoals(),
+        getStats(),
+        getCompletionHistory(),
+        getChatHistory(),
+        getLifeContext(),
+        getCoachSessionId(),
+      ]);
+      loadedGoals = lg;
+      loadedStats = ls;
+      loadedHistory = lh;
+      loadedLifeContext = lc;
+      setGoals(lg);
+      setStats(ls);
+      setHistory(lh);
+      setMessages(savedMessages);
+      setLifeContext(lc);
+      coachingModeRef.current = DEFAULT_RUNTIME_MODE;
+      sdkSessionIdRef.current = savedSessionId;
+
+      // Fetch commitments
+      try {
+        const commUrl = new URL('/api/commitments', getApiUrl());
+        const commRes = await authFetch(commUrl.toString());
+        const commData = await commRes.json();
+        if (commData.commitments && Array.isArray(commData.commitments)) {
+          loadedCommitments = commData.commitments;
+          setCommitments(commData.commitments);
+        }
+      } catch {}
+    } finally {
+      setIsBaseLoading(false);
+    }
+
+    // Schedule accountability notifications
+    try {
+      const todayPlan = await getTodayPlan(loadedGoals);
+      scheduleEveningAccountability(todayPlan.tasks, loadedCommitments).catch(() => {});
+      scheduleMidDayNudge().catch(() => {});
+      scheduleCommitmentDueDateReminder(loadedCommitments).catch(() => {});
+      scheduleWeeklyReview().catch(() => {});
+    } catch {}
+
+    // Morning brief — fetch the single canonical brief generated by the
+    // proactive scheduler (same text already sent to Telegram + daemon).
+    // Only inject it if not already present in the chat history for today.
+    try {
+      const today = getTodayKey();
+      const briefId = `morning-brief-${today}`;
+      const briefUrl = new URL('/api/coach/morning-brief', getApiUrl());
+      const briefRes = await authFetch(briefUrl.toString());
+      const briefData = await briefRes.json();
+      if (briefData.text) {
+        setMessages(prev => {
+          // If the brief is already in history (e.g. from a previous app open today), skip
+          if (prev.some(m => m.id === briefId)) return prev;
+          const briefMsg: ChatMessage = {
+            id: briefId,
+            role: 'assistant',
+            content: briefData.text,
+          };
+          // Prepend so it appears at the top of the chat (most recent)
+          const updated = [briefMsg, ...prev];
+          persistChatHistory(updated);
+          return updated;
+        });
+      }
+    } catch {}
+
+    // Pending daemon response — fetch any Jarvis response that was saved server-side
+    // because the SSE connection dropped while the user was in another app (e.g. camera).
+    // The server stores the response in userPreferences and clears it on first fetch.
+    await refreshPendingCoachResponse();
+    initialLoadCompleteRef.current = true;
+
+    // Check accountability on mount (proactive Jarvis message for overdue items)
+    checkAccountabilityOnMount(loadedHistory, loadedCommitments, loadedGoals, loadedStats, loadedLifeContext).catch(() => {});
+
+    let isGmailConnected = false;
+    try {
+      const today = getTodayKey();
+      const calEvts: { title: string; time: string }[] = [];
+      const base = getApiUrl();
+
+      const fetchSource = async (source: 'google' | 'outlook') => {
+        const url = new URL(`/api/calendar/${source}/events`, base);
+        url.searchParams.set('date', today);
+        const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
+        const data = await res.json();
+        if (data.connected && data.events?.length) {
+          data.events.forEach((e: any) => {
+            calEvts.push({ title: e.title || e.summary || '', time: e.time || e.start || '' });
+          });
+        }
+      };
+
+      const fetchGmail = async () => {
+        const url = new URL('/api/gmail/commitments', base);
+        const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
+        const data = await res.json();
+        isGmailConnected = !!data.connected;
+        setGmailConnected(isGmailConnected);
+        if (data.connected && data.items?.length) {
+          setGmailItems(data.items);
+        }
+      };
+
+      const fetchSlack = async () => {
+        const url = new URL('/api/slack/messages', base);
+        const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
+        const data = await res.json();
+        setSlackConnected(!!data.connected);
+        setSlackMessages(data.connected && data.messages?.length ? data.messages : []);
+      };
+
+      const fetchTelegram = async () => {
+        const url = new URL('/api/telegram/messages', base);
+        const res = await authFetch(url.toString(), { cache: 'no-store' } as RequestInit);
+        const data = await res.json();
+        setTelegramConnected(!!data.connected);
+        setTelegramMessages(data.connected && data.messages?.length ? data.messages : []);
+      };
+
+      await Promise.allSettled([fetchSource('google'), fetchSource('outlook'), fetchGmail(), fetchSlack(), fetchTelegram()]);
+      setCalendarEvents(calEvts);
+    } catch {
+    } finally {
+      setIsEmailLoading(false);
+    }
+
+    if (isGmailConnected && loadedGoals.length > 0) {
+      scanForTasks(loadedGoals);
+    }
+  }, [refreshPendingCoachResponse, scanForTasks]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
+
+  useFocusEffect(useCallback(() => {
+    getGoals().then(setGoals);
+    getStats().then(setStats);
+    if (initialLoadCompleteRef.current) {
+      refreshPendingCoachResponse().catch(() => {});
+    }
+    apiRequest('GET', '/api/voice/wake-settings').then(r => r.json()).then(d => {
+      const enabled = d?.talkModeEnabled ?? false;
+      setTalkModeEnabled(enabled);
+      talkModeRef.current = enabled;
+      if (Platform.OS === 'android' && enabled) {
+        startAndroidOutsideAppVoiceSession().catch((err) => {
+          console.warn('[voice] outside-app session restore failed:', err);
+        });
+      }
+    }).catch(() => {});
+
+    // Cleanup on blur: cancel queued Talk Mode starts and stop any active in-app capture.
+    return () => {
+      talkModeStartSeqRef.current += 1;
+      if (silencePollRef.current) {
+        clearInterval(silencePollRef.current);
+        silencePollRef.current = null;
+      }
+      const shouldHandoff = talkModeRef.current;
+      stopRecordingSilentlyRef.current().finally(() => {
+        if (!shouldHandoff) return;
+        return handoffAndroidOutsideAppVoiceCapture().catch((err) => {
+          console.warn('[voice] outside-app microphone handoff failed:', err);
+        });
+      }).catch(() => {});
+    };
+  }, [refreshPendingCoachResponse]));
+
+  const fetchMcpPrompts = useCallback(async () => {
+    setMcpPromptsLoading(true);
+    try {
+      const url = new URL('/api/mcp-servers/prompts', getApiUrl());
+      const res = await authFetch(url.toString());
+      const data = await res.json();
+      setMcpPrompts(data.prompts || []);
+    } catch {
+      setMcpPrompts([]);
+    }
+    setMcpPromptsLoading(false);
+  }, []);
+
+  const openMcpSheet = useCallback(() => {
+    setShowMcpSheet(true);
+    fetchMcpPrompts();
+  }, [fetchMcpPrompts]);
+
+  const selectMcpPrompt = useCallback(async (prompt: { serverId: string; name: string; arguments?: { name: string; required?: boolean }[] }) => {
+    setShowMcpSheet(false);
+    // If all arguments are optional or absent, try to resolve the prompt immediately
+    const hasRequiredArgs = prompt.arguments?.some(a => a.required) ?? false;
+    if (!hasRequiredArgs) {
+      try {
+        const url = new URL('/api/mcp-servers/prompts/resolve', getApiUrl());
+        const res = await authFetch(url.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ serverId: prompt.serverId, name: prompt.name }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.resolvedText) {
+            setInput(data.resolvedText);
+            return;
+          }
+        }
+      } catch { /* fall through to name-only */ }
+    }
+    // For prompts with required arguments, insert the name so user can fill them in
+    const argHints = prompt.arguments?.filter(a => a.required).map(a => `[${a.name}]`).join(' ') ?? '';
+    setInput(prompt.name + (argHints ? ' ' + argHints : ''));
+  }, []);
+
+  const getDiagnosticRecords = useCallback((): DiagnosticTurnRecord[] => {
+    const records = messagesRef.current
+      .filter((message) => message.role === 'assistant' && !!message.diagnostics)
+      .map((message) => {
+        const bundle = message.diagnostics!;
+        return {
+          turnId: bundle.turnId,
+          source: bundle.source,
+          channel: bundle.channel ?? 'appchat',
+          channelTurnId: message.id,
+          createdAt: bundle.createdAt,
+          bundle,
+        };
+      });
+    return getActionableDiagnosticRecords(records);
+  }, []);
+
+  const copyDiagnosticBundleToClipboard = useCallback(async (
+    bundle: TurnDiagnosticBundle,
+    copyTarget: unknown,
+    opts?: { alert?: boolean },
+  ) => {
+    const copiedPayload = {
+      copiedAt: new Date().toISOString(),
+      copyTarget,
+      bundle,
+    };
+    await Clipboard.setStringAsync(JSON.stringify(copiedPayload, null, 2));
+    if (opts?.alert !== false) {
+      Alert.alert('Copied details', 'Diagnostic details were copied to your clipboard.');
+    }
+  }, []);
+
+  const sendMessage = useCallback(async (text: string, origin: SendMessageOrigin = { source: 'in_app' }) => {
+    if (!text.trim() || isStreaming) return;
+    // Intercept /mcp command to open MCP prompt browser
+    if (text.trim().toLowerCase().startsWith('/mcp')) {
+      setInput('');
+      openMcpSheet();
+      return;
+    }
+    const userMsg: ChatMessage = { id: generateId(), role: 'user', content: text.trim() };
+    const assistantId = generateId();
+    const diagnosticStartedAt = new Date();
+    const diagnosticStreamEvents: { type: string; at: string; payload?: unknown }[] = [];
+    const diagnosticModelErrors: unknown[] = [];
+    const diagnosticRawToolCalls: unknown[] = [];
+    const diagnosticWorkingEvents: { message: string; at: string }[] = [];
+    let acceptedVoiceRestore: PendingVoiceRestore | null = null;
+    const clearAcceptedVoiceRestore = () => {
+      if (!acceptedVoiceRestore) return;
+      setMessages(prev => {
+        const updated = prev.map((message) => message.pendingVoiceRestore
+          ? { ...message, pendingVoiceRestore: undefined }
+          : message);
+        persistChatHistory(updated);
+        return updated;
+      });
+      acceptedVoiceRestore = null;
+    };
+    const retainAcceptedVoiceRestoreForRetry = () => {
+      if (!acceptedVoiceRestore) return;
+      const restore = acceptedVoiceRestore;
+      setMessages(prev => {
+        const retryTargetId = prev.some((message) => message.id === assistantId)
+          ? assistantId
+          : prev[0]?.id;
+        const updated = prev.map((message) => ({
+          ...message,
+          pendingVoiceRestore: message.id === retryTargetId ? restore : undefined,
+        }));
+        persistChatHistory(updated);
+        return updated;
+      });
+    };
+    hasScrolledRef.current = false;
+
+    const pendingVoiceConfirmMessage = origin.source === 'voice'
+      ? messagesRef.current.find((message) => message.role === 'assistant' && !!message.pendingConfirm)
+      : undefined;
+    if (pendingVoiceConfirmMessage?.pendingConfirm) {
+      const reply = normalizeVoiceApprovalReply(userMsg.content);
+      setMessages(prev => {
+        const updated = [userMsg, ...prev];
+        persistChatHistory(updated);
+        return updated;
+      });
+      setInput('');
+      setIntegrationError(null);
+      setConfirmClear(false);
+
+      if (reply.intent === 'approve' || reply.intent === 'deny') {
+        setVoiceApprovalPrompt(null);
+        setVoiceApprovalToken(null);
+        setAndroidOutsideAppVoiceSessionState(reply.intent === 'approve' ? 'working' : 'listening').catch(() => {});
+        await confirmActionRef.current(pendingVoiceConfirmMessage.id, reply.intent === 'approve', origin);
+        return;
+      }
+
+      const prompt = buildVoiceApprovalPrompt({
+        tool: pendingVoiceConfirmMessage.pendingConfirm.tool,
+        preview: pendingVoiceConfirmMessage.pendingConfirm.preview,
+      });
+      const clarification = voiceApprovalClarificationPrompt();
+      setVoiceApprovalPrompt(prompt);
+      setVoiceApprovalToken(pendingVoiceConfirmMessage.pendingConfirm.token);
+      const finishedAt = new Date();
+      const assistantMsg: ChatMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: clarification,
+        diagnostics: buildTurnDiagnosticBundle({
+          turnId: assistantId,
+          source: 'voice',
+          channel: 'voice',
+          requestText: userMsg.content,
+          responseText: clarification,
+          selected: {
+            mode: coachingModeRef.current,
+            model: 'local-runtime',
+            profile: 'voice-approval',
+          },
+          runtimeIntent: 'voice_approval',
+          contextPacket: {
+            pendingConfirm: pendingVoiceConfirmMessage.pendingConfirm,
+            voiceApprovalReply: reply,
+          },
+          offeredTools: [pendingVoiceConfirmMessage.pendingConfirm.tool],
+          rawToolCalls: [{ pendingConfirm: pendingVoiceConfirmMessage.pendingConfirm }],
+          timing: {
+            startedAt: diagnosticStartedAt.toISOString(),
+            finishedAt: finishedAt.toISOString(),
+            durationMs: finishedAt.getTime() - diagnosticStartedAt.getTime(),
+          },
+          androidState: { voiceApprovalPrompt: prompt },
+          recentTurnHistory: messagesRef.current.slice(0, 8).map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
+          voiceTrace: origin.source === 'voice' ? origin.voiceTrace : undefined,
+        }),
+      };
+      setMessages(prev => {
+        const updated = [assistantMsg, ...prev];
+        persistChatHistory(updated);
+        return updated;
+      });
+      speakTextRef.current(clarification, assistantId);
+      return;
+    }
+
+    const pendingVoiceRestoreMessage = messagesRef.current.find((message) => message.role === 'assistant' && !!message.pendingVoiceRestore);
+    if (pendingVoiceRestoreMessage?.pendingVoiceRestore) {
+      const voiceRestore = pendingVoiceRestoreMessage.pendingVoiceRestore;
+      const pendingVoiceRestoreIsFresh = isPendingVoiceRestoreFresh(voiceRestore);
+      const pendingVoiceRestoreIsLatest = pendingVoiceRestoreIsFresh && messagesRef.current[0]?.id === pendingVoiceRestoreMessage.id;
+      if (!pendingVoiceRestoreIsFresh) {
+        const clearedMessages = messagesRef.current.map((message) => message.id === pendingVoiceRestoreMessage.id
+          ? { ...message, pendingVoiceRestore: undefined }
+          : message);
+        messagesRef.current = clearedMessages;
+        setMessages(clearedMessages);
+        persistChatHistory(clearedMessages);
+        const staleReply = normalizeVoiceRestoreReply(userMsg.content, { allowGenericReply: true });
+        if (staleReply.intent !== 'unrelated') {
+          const assistantText = 'That interrupted voice context expired, so I started fresh. What would you like to do next?';
+          const finishedAt = new Date();
+          const assistantMsg: ChatMessage = {
+            id: assistantId,
+            role: 'assistant',
+            content: assistantText,
+            diagnostics: buildTurnDiagnosticBundle({
+              turnId: assistantId,
+              source: origin.source === 'voice' ? 'voice' : 'in_app',
+              channel: origin.source === 'voice' ? 'voice' : 'app',
+              requestText: userMsg.content,
+              responseText: assistantText,
+              selected: {
+                mode: coachingModeRef.current,
+                model: 'local-runtime',
+                profile: 'voice-restore-expired',
+              },
+              runtimeIntent: 'voice_restore',
+              contextPacket: {
+                pendingVoiceRestore: voiceRestore,
+                voiceRestoreReply: staleReply,
+                cleared: true,
+                expired: true,
+              },
+              timing: {
+                startedAt: diagnosticStartedAt.toISOString(),
+                finishedAt: finishedAt.toISOString(),
+                durationMs: finishedAt.getTime() - diagnosticStartedAt.getTime(),
+              },
+              androidState: {
+                micAutoResumed: false,
+              },
+              recentTurnHistory: clearedMessages.slice(0, 8).map((message) => ({
+                role: message.role,
+                content: message.content,
+              })),
+              voiceTrace: origin.source === 'voice' ? origin.voiceTrace : undefined,
+            }),
+          };
+          setMessages([assistantMsg, userMsg, ...clearedMessages]);
+          persistChatHistory([assistantMsg, userMsg, ...clearedMessages]);
+          setInput('');
+          setIntegrationError(null);
+          setConfirmClear(false);
+          if (talkModeRef.current && assistantText.trim()) {
+            speakTextRef.current(assistantText, assistantId);
+          }
+          return;
+        }
+      }
+      const reply = normalizeVoiceRestoreReply(userMsg.content, { allowGenericReply: pendingVoiceRestoreIsLatest });
+      if (pendingVoiceRestoreIsFresh && reply.intent !== 'unrelated') {
+        if (reply.intent === 'restore') {
+          // The server owns the authoritative sdkSessionId history. Keep the
+          // one-shot marker until /api/coach/chat succeeds so a reply
+          // such as "yes, restore it and ask the next question" is answered
+          // with recovered context and transient failures remain retryable.
+          acceptedVoiceRestore = voiceRestore;
+        } else {
+          const shouldClearRestore = reply.intent === 'dismiss';
+          const assistantText = shouldClearRestore
+            ? "Okay, I won't restore that interrupted voice context."
+            : 'Do you want me to restore the interrupted voice context or start fresh?';
+          const finishedAt = new Date();
+          const assistantMsg: ChatMessage = {
+            id: assistantId,
+            role: 'assistant',
+            content: assistantText,
+            ...(shouldClearRestore ? {} : { pendingVoiceRestore: voiceRestore }),
+            diagnostics: buildTurnDiagnosticBundle({
+              turnId: assistantId,
+              source: origin.source === 'voice' ? 'voice' : 'in_app',
+              channel: origin.source === 'voice' ? 'voice' : 'app',
+              requestText: userMsg.content,
+              responseText: assistantText,
+              selected: {
+                mode: coachingModeRef.current,
+                model: 'local-runtime',
+                profile: 'voice-restore',
+              },
+              runtimeIntent: 'voice_restore',
+              contextPacket: {
+                pendingVoiceRestore: voiceRestore,
+                voiceRestoreReply: reply,
+                cleared: shouldClearRestore,
+              },
+              timing: {
+                startedAt: diagnosticStartedAt.toISOString(),
+                finishedAt: finishedAt.toISOString(),
+                durationMs: finishedAt.getTime() - diagnosticStartedAt.getTime(),
+              },
+              androidState: {
+                micAutoResumed: false,
+              },
+              recentTurnHistory: messagesRef.current.slice(0, 8).map((message) => ({
+                role: message.role,
+                content: message.content,
+              })),
+              voiceTrace: origin.source === 'voice' ? origin.voiceTrace : undefined,
+            }),
+          };
+          setMessages(prev => {
+            const cleared = shouldClearRestore
+              ? prev.map((message) => message.pendingVoiceRestore
+                ? { ...message, pendingVoiceRestore: undefined }
+                : message)
+              : prev;
+            const updated = [assistantMsg, userMsg, ...cleared];
+            persistChatHistory(updated);
+            return updated;
+          });
+          setInput('');
+          setIntegrationError(null);
+          setConfirmClear(false);
+          if (talkModeRef.current && assistantText.trim()) {
+            speakTextRef.current(assistantText, assistantId);
+          }
+          return;
+        }
+      }
+    }
+
+    const normalizedVoiceText = userMsg.content.toLowerCase();
+    const voiceDiagnosticFollowupTarget = origin.source === 'voice' && pendingVoiceDiagnosticCopyRef.current
+      ? resolveVoiceDiagnosticFollowupTarget(normalizedVoiceText)
+      : null;
+    const isVoiceDiagnosticFollowup = !!voiceDiagnosticFollowupTarget;
+    if (origin.source === 'voice' && pendingVoiceDiagnosticCopyRef.current && !isVoiceDiagnosticFollowup && !isDiagnosticCopyRequest(userMsg.content)) {
+      pendingVoiceDiagnosticCopyRef.current = false;
+    }
+    if (origin.source === 'voice' && (isDiagnosticCopyRequest(userMsg.content) || isVoiceDiagnosticFollowup)) {
+      const records = getDiagnosticRecords();
+      let assistantText = '';
+      let copiedTurnId: string | null = null;
+      let copyError: string | null = null;
+      let resolvedTarget = voiceDiagnosticFollowupTarget
+        ?? resolveDiagnosticCopyRequestTarget(userMsg.content)
+        ?? 'last turn';
+
+      if (records.length === 0) {
+        pendingVoiceDiagnosticCopyRef.current = false;
+        assistantText = "I don't have any diagnostic details to copy yet.";
+      } else if (!isVoiceDiagnosticFollowup && shouldClarifyVoiceDiagnosticTarget(userMsg.content, records)) {
+        pendingVoiceDiagnosticCopyRef.current = true;
+        assistantText = 'The last failed action, or the last turn?';
+      } else {
+        pendingVoiceDiagnosticCopyRef.current = false;
+        const targetText = resolvedTarget === 'last failed action'
+          ? 'copy last failed details'
+          : 'copy last turn details';
+        const resolution = resolveDiagnosticTargetFromText(records, targetText);
+        if (resolution.ok) {
+          try {
+            copiedTurnId = resolution.record.turnId;
+            await copyDiagnosticBundleToClipboard(
+              resolution.record.bundle,
+              { reason: 'voice_command', requestText: userMsg.content, resolvedTarget },
+              { alert: false },
+            );
+            assistantText = resolvedTarget === 'last failed action'
+              ? 'Copied the last failed action details to your clipboard.'
+              : 'Copied the last turn details to your clipboard.';
+          } catch (error) {
+            copyError = error instanceof Error ? error.message : String(error);
+            assistantText = 'I found the details, but I could not copy them to the clipboard.';
+          }
+        } else {
+          resolvedTarget = resolvedTarget === 'last failed action' ? 'last failed action' : 'last turn';
+          assistantText = resolvedTarget === 'last failed action'
+            ? "I don't have a recent failed action to copy."
+            : "I couldn't find recent diagnostic details to copy.";
+        }
+      }
+
+      const finishedAt = new Date();
+      const assistantMsg: ChatMessage = {
+        id: assistantId,
+        role: 'assistant',
+        content: assistantText,
+        diagnostics: buildTurnDiagnosticBundle({
+          turnId: assistantId,
+          source: 'voice',
+          channel: 'voice',
+          requestText: userMsg.content,
+          responseText: assistantText,
+          selected: {
+            mode: coachingModeRef.current,
+            model: 'local-runtime',
+            profile: 'diagnostic-copy',
+          },
+          runtimeIntent: 'diagnostic_copy',
+          contextPacket: {
+            command: 'voice_copy_details',
+            resolvedTarget,
+            copiedTurnId,
+            copyError,
+            availableDiagnosticTurns: records.map((record) => ({
+              turnId: record.turnId,
+              channelTurnId: record.channelTurnId,
+              createdAt: record.createdAt,
+            })),
+          },
+          toolResults: [{
+            tool: 'clipboard.copy',
+            result: copiedTurnId && !copyError ? 'success' : 'none',
+            copiedTurnId,
+            error: copyError,
+          }],
+          modelErrors: copyError ? [{ message: copyError }] : [],
+          timing: {
+            startedAt: diagnosticStartedAt.toISOString(),
+            finishedAt: finishedAt.toISOString(),
+            durationMs: finishedAt.getTime() - diagnosticStartedAt.getTime(),
+          },
+          androidState: null,
+          recentTurnHistory: messagesRef.current.slice(0, 8).map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
+          voiceTrace: origin.voiceTrace,
+        }),
+      };
+      setMessages(prev => {
+        const updated = [assistantMsg, userMsg, ...prev];
+        persistChatHistory(updated);
+        return updated;
+      });
+      setInput('');
+      setIntegrationError(null);
+      setConfirmClear(false);
+      if (talkModeRef.current && assistantText.trim()) {
+        speakTextRef.current(assistantText, assistantId);
+      }
+      return;
+    }
+
+    setMessages(prev => {
+      const updated = [userMsg, ...prev];
+      persistChatHistory(updated);
+      return updated;
+    });
+    setInput('');
+    setIntegrationError(null);
+    setShowTyping(true);
+    setIsStreaming(true);
+    setConfirmClear(false);
+
+    const fetchAbort = new AbortController();
+    chatAbortControllerRef.current = fetchAbort;
+    chatRunIdRef.current = null;
+
+    const contextMessages = [userMsg, ...messagesRef.current].slice(0, CONTEXT_WINDOW);
+    const apiMessages = buildDiagnosticConversationMessages(contextMessages).reverse();
+    let serverContextTrace: ServerContextTrace | null = null;
+    let selectedToolNames: string[] = [];
+    const buildDiagnostics = (params: {
+      responseText?: string;
+      executedActions?: ExecutedAction[];
+      modelErrors?: unknown[];
+      androidState?: unknown;
+    }): TurnDiagnosticBundle => {
+      const finishedAt = new Date();
+      return buildTurnDiagnosticBundle({
+        turnId: assistantId,
+        source: origin.source === 'voice' ? 'voice' : 'in_app',
+        channel: origin.source === 'voice' ? 'voice' : 'appchat',
+        requestText: userMsg.content,
+        responseText: params.responseText,
+        selected: {
+          mode: coachingModeRef.current,
+          model: 'server-selected',
+          profile: 'server-selected',
+        },
+        runtimeIntent: inferRuntimeIntent(userMsg.content),
+        contextPacket: {
+          appSubmittedMessages: apiMessages,
+          serverContextTrace,
+          sdkSessionId: sdkSessionIdRef.current,
+          goals: goalsRef.current,
+          stats: statsRef.current,
+          commitments: commitmentsRef.current,
+          coachingMode: coachingModeRef.current,
+          streamEvents: diagnosticStreamEvents.slice(),
+        },
+        offeredTools: serverContextTrace?.offeredToolNames ?? [],
+        selectedTools: selectedToolNames.slice(),
+        executedTools: Array.from(new Set((params.executedActions ?? []).map((action) => action.tool))),
+        rawToolCalls: diagnosticRawToolCalls.slice(),
+        normalizedToolCalls: (params.executedActions ?? []).map((action) => ({
+          tool: action.tool,
+          operation: action.operation,
+          operationArgs: action.operationArgs,
+          toolCallId: action.toolCallId,
+          durationMs: action.durationMs,
+          verification: action.verification,
+          result: action.result,
+          label: action.label,
+          detail: action.detail,
+        })),
+        toolResults: params.executedActions ?? [],
+        modelErrors: params.modelErrors ?? diagnosticModelErrors.slice(),
+        timing: {
+          startedAt: diagnosticStartedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+          durationMs: finishedAt.getTime() - diagnosticStartedAt.getTime(),
+        },
+        androidState: params.androidState ?? {
+          workingEvents: diagnosticWorkingEvents.slice(),
+          lastWorkingMessage: diagnosticWorkingEvents.length > 0
+            ? diagnosticWorkingEvents[diagnosticWorkingEvents.length - 1].message
+            : null,
+        },
+        recentTurnHistory: buildDiagnosticConversationMessages(contextMessages.slice(0, 8)),
+        voiceTrace: origin.source === 'voice' ? origin.voiceTrace : undefined,
+      });
+    };
+
+    try {
+      const url = new URL('/api/coach/chat', getApiUrl());
+      const token = await getAuthToken();
+      const streamHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) streamHeaders['Authorization'] = `Bearer ${token}`;
+      const response = await expoFetch(url.toString(), {
+        method: 'POST',
+        headers: streamHeaders,
+        body: JSON.stringify({
+          messages: apiMessages,
+          goals: goalsRef.current,
+          stats: statsRef.current,
+          history: historyRef.current,
+          calendarEvents: calendarEventsRef.current,
+          lifeContext: lifeContextRef.current,
+          gmailItems: gmailItemsRef.current,
+          gmailConnected: gmailConnectedRef.current,
+          slackMessages: slackMessagesRef.current,
+          slackConnected: slackConnectedRef.current,
+          telegramMessages: telegramMessagesRef.current,
+          telegramConnected: telegramConnectedRef.current,
+          commitments: commitmentsRef.current,
+          coachingMode: coachingModeRef.current,
+          sdkSessionId: sdkSessionIdRef.current || undefined,
+          originChannel: origin.source === 'voice' ? 'voice' : 'appchat',
+          originPlatform: Platform.OS,
+        }),
+        signal: fetchAbort.signal,
+      });
+
+      const serverRunId = response.headers.get('X-Run-Id');
+      if (serverRunId) chatRunIdRef.current = serverRunId;
+
+      if (!response.ok) {
+        const rawError = await response.text().catch(() => '');
+        let message = `Chat request failed (${response.status})`;
+        try {
+          const parsed = JSON.parse(rawError);
+          if (parsed?.error) message = String(parsed.error);
+        } catch {
+          if (rawError.trim()) message = rawError.trim().slice(0, 240);
+        }
+        if (response.status === 401) {
+          message = 'You are not signed in. Please sign in again, then try chat.';
+        }
+        throw new Error(message);
+      }
+
+      setShowTyping(false);
+      const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' };
+      streamingAssistantIdRef.current = assistantId;
+
+      setMessages(prev => {
+        const updated = [assistantMsg, ...prev];
+        return updated;
+      });
+
+      if (!response.body) throw new Error('No response body');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = '';
+      let buffer = '';
+      let executedActions: ExecutedAction[] = [];
+      let gotConfirmRequired = false;
+      let streamAborted = false;
+      let streamErrorMessage = '';
+
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') continue;
+            try {
+              const parsed = JSON.parse(data);
+              diagnosticStreamEvents.push({
+                type: String(parsed.type || (parsed.content ? 'content' : 'unknown')),
+                at: new Date().toISOString(),
+                payload: parsed,
+              });
+              if (parsed.type === 'session_init' && parsed.sdkSessionId) {
+                sdkSessionIdRef.current = parsed.sdkSessionId;
+                saveCoachSessionId(parsed.sdkSessionId).catch(() => {});
+              } else if (parsed.type === 'context_trace') {
+                serverContextTrace = normalizeServerContextTrace(parsed);
+              } else if (parsed.type === 'aborted') {
+                streamAborted = true;
+                break outer;
+              } else if (parsed.type === 'error' || parsed.error) {
+                streamErrorMessage = String(parsed.message || parsed.error || 'Jarvis hit a model provider error.');
+                diagnosticModelErrors.push(parsed);
+                fullContent = `Error: ${streamErrorMessage}`;
+                setIsSearchingWeb(false);
+                setIsWorkingOnPhone(false);
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const idx = updated.findIndex(m => m.id === assistantId);
+                  if (idx !== -1) {
+                    updated[idx] = {
+                      ...updated[idx],
+                      content: fullContent,
+                      diagnostics: buildDiagnostics({
+                        responseText: fullContent,
+                        executedActions,
+                        modelErrors: diagnosticModelErrors,
+                      }),
+                    };
+                  }
+                  persistChatHistory(updated);
+                  return updated;
+                });
+                break outer;
+              } else if (parsed.type === 'confirm_required') {
+                gotConfirmRequired = true;
+                if (typeof parsed.tool === 'string') {
+                  selectedToolNames = Array.from(new Set([...selectedToolNames, parsed.tool]));
+                }
+                const pendingConfirm: PendingConfirm = {
+                  token: parsed.token,
+                  tool: parsed.tool,
+                  preview: parsed.preview,
+                };
+                const approvalDecision = classifyVoiceApprovalRisk({
+                  tool: pendingConfirm.tool,
+                  requestText: userMsg.content,
+                  preview: pendingConfirm.preview,
+                });
+                const approvalPrompt = approvalDecision.prompt || buildVoiceApprovalPrompt({
+                  tool: pendingConfirm.tool,
+                  preview: pendingConfirm.preview,
+                });
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const idx = updated.findIndex(m => m.id === assistantId);
+                  if (idx !== -1) {
+                    updated[idx] = {
+                      ...updated[idx],
+                      content: talkModeRef.current ? approvalPrompt : updated[idx].content,
+                      pendingConfirm,
+                      diagnostics: buildDiagnostics({
+                        responseText: talkModeRef.current ? approvalPrompt : updated[idx].content,
+                        executedActions,
+                      }),
+                    };
+                  }
+                  persistChatHistory(updated);
+                  return updated;
+                });
+                if (talkModeRef.current) {
+                  setVoiceApprovalPrompt(approvalPrompt);
+                  setVoiceApprovalToken(pendingConfirm.token);
+                  setAndroidOutsideAppVoiceApproval(approvalPrompt, pendingConfirm.token).catch(() => {});
+                  speakTextRef.current(approvalPrompt, assistantId);
+                }
+              } else if (parsed.type === 'searching') {
+                setIsSearchingWeb(true);
+              } else if (parsed.type === 'mcp_progress') {
+                const progressMsg = String(parsed.message || '');
+                if (progressMsg) {
+                  diagnosticWorkingEvents.push({ message: progressMsg, at: new Date().toISOString() });
+                  setIsWorkingOnPhone(true);
+                  setPhoneWorkingMessage(progressMsg);
+                }
+              } else if (parsed.type === 'progress') {
+                const progressMsg = String(parsed.message || '');
+                if (progressMsg) {
+                  diagnosticWorkingEvents.push({ message: progressMsg, at: new Date().toISOString() });
+                  setIsWorkingOnPhone(true);
+                  setPhoneWorkingMessage(progressMsg);
+                }
+              } else if (parsed.type === 'working') {
+                const progressMsg = String(parsed.message || 'Working on your phone...');
+                diagnosticWorkingEvents.push({ message: progressMsg, at: new Date().toISOString() });
+                setIsWorkingOnPhone(true);
+                setPhoneWorkingMessage(progressMsg);
+              } else if (parsed.type === 'background_job' && parsed.jobId) {
+                const jobId = String(parsed.jobId);
+                const agentType = String(parsed.agentType || 'background');
+                const jobAction: ExecutedAction = {
+                  tool: 'queue_background_job',
+                  result: 'success',
+                  label: `${agentType} job queued (${jobId.slice(0, 8)})`,
+                  buttonLabel: 'Open Inbox',
+                  url: 'app://inbox',
+                };
+                executedActions = [
+                  ...executedActions.filter((action) => action.tool !== 'queue_background_job' || action.label !== jobAction.label),
+                  jobAction,
+                ];
+                selectedToolNames = Array.from(new Set([...selectedToolNames, jobAction.tool]));
+                queryClient.invalidateQueries({ queryKey: ['/api/agent-jobs/active'] });
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const idx = updated.findIndex(m => m.id === assistantId);
+                  if (idx !== -1) {
+                    updated[idx] = { ...updated[idx], executedActions };
+                    persistChatHistory(updated);
+                  }
+                  return updated;
+                });
+              } else if (parsed.type === 'integration_error' && parsed.integration) {
+                setIntegrationError({ integration: parsed.integration });
+              } else if (parsed.type === 'actions' && (Array.isArray(parsed.actions) || Array.isArray(parsed.executedActions) || Array.isArray(parsed.attachments))) {
+                const nextActions = parsed.actions ?? parsed.executedActions ?? [];
+                diagnosticRawToolCalls.push({ event: 'actions', actions: nextActions, attachments: parsed.attachments });
+                executedActions = nextActions;
+                selectedToolNames = Array.from(new Set([
+                  ...selectedToolNames,
+                  ...nextActions.map((action: ExecutedAction) => action.tool),
+                ]));
+                const parsedAtts = Array.isArray(parsed.attachments) ? parsed.attachments as import('@/lib/storage').McpAttachment[] : undefined;
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const idx = updated.findIndex(m => m.id === assistantId);
+                  if (idx !== -1) {
+                    const update: Partial<import('@/lib/storage').ChatMessage> = { executedActions };
+                    if (parsedAtts && parsedAtts.length > 0) {
+                      const existing = updated[idx].mcpAttachments ?? [];
+                      update.mcpAttachments = [...existing, ...parsedAtts];
+                    }
+                    updated[idx] = { ...updated[idx], ...update };
+                    persistChatHistory(updated);
+                  }
+                  return updated;
+                });
+                queryClient.invalidateQueries({ queryKey: ['/api/data/plans'] });
+                queryClient.invalidateQueries({ queryKey: ['/api/data/goals'] });
+                queryClient.invalidateQueries({ queryKey: ['/api/data/brain-dump-inbox'] });
+                queryClient.invalidateQueries({ queryKey: ['/api/data/life-context'] });
+              } else if (parsed.content) {
+                setIsSearchingWeb(false);
+                setIsWorkingOnPhone(false);
+                fullContent += parsed.content;
+                const captured = fullContent;
+                setMessages(prev => {
+                  const updated = [...prev];
+                  const idx = updated.findIndex(m => m.id === assistantId);
+                  if (idx !== -1) updated[idx] = { ...updated[idx], content: captured };
+                  return updated;
+                });
+              }
+            } catch {}
+          }
+        }
+      }
+
+      chatAbortControllerRef.current = null;
+      chatRunIdRef.current = null;
+      streamingAssistantIdRef.current = null;
+      setIsStreaming(false);
+      setIsSearchingWeb(false);
+      setIsWorkingOnPhone(false);
+
+      if (streamAborted) {
+        if (fullContent.length > 0) {
+          setMessages(prev => {
+            const idx = prev.findIndex(m => m.id === assistantId);
+            if (idx !== -1) {
+              const updated = [...prev];
+              updated[idx] = {
+                ...updated[idx],
+                stopped: true,
+                diagnostics: buildDiagnostics({
+                  responseText: fullContent,
+                  executedActions,
+                  modelErrors: diagnosticModelErrors,
+                }),
+              };
+              persistChatHistory(updated);
+              return updated;
+            }
+            return prev;
+          });
+        }
+        retainAcceptedVoiceRestoreForRetry();
+        return;
+      }
+
+      if (gotConfirmRequired) {
+        clearAcceptedVoiceRestore();
+        return;
+      }
+
+      if (streamErrorMessage) {
+        retainAcceptedVoiceRestoreForRetry();
+        return;
+      }
+
+      const finalContent = fullContent.trim().length > 0
+        ? fullContent
+        : 'Error: Jarvis did not return a final response. Please retry; if this repeats, check the selected model provider runtime.';
+      const finalActions = executedActions;
+      setMessages(prev => {
+        const updated = [...prev];
+        const idx = updated.findIndex(m => m.id === assistantId);
+        if (idx !== -1) {
+          updated[idx] = {
+            ...updated[idx],
+            content: finalContent,
+            executedActions: finalActions.length > 0 ? finalActions : undefined,
+            diagnostics: buildDiagnostics({
+              responseText: finalContent,
+              executedActions: finalActions,
+              modelErrors: diagnosticModelErrors,
+            }),
+          };
+        }
+        persistChatHistory(updated);
+        return updated;
+      });
+      if (fullContent.trim().length > 0 || finalActions.length > 0) {
+        clearAcceptedVoiceRestore();
+      } else {
+        retainAcceptedVoiceRestoreForRetry();
+      }
+
+      // Auto-speak the reply in Talk Mode once streaming finishes.
+      if (talkModeRef.current && outsideAppVoiceStateRef.current !== 'paused' && finalContent.trim()) {
+        speakTextRef.current(finalContent, assistantId);
+      }
+
+      // If Jarvis just sent a channel connect link, start polling for connection.
+      // When the channel connects, a confirmation message is injected into the chat.
+      const connectAction = finalActions.find(
+        a => a.tool === 'connect_channel' && a.result === 'success' && a.channel
+      );
+      if (connectAction?.channel) {
+        startChannelConnectPoll(connectAction.channel, assistantId);
+      }
+
+      try {
+        const suggestUrl = new URL('/api/coach/suggestions', getApiUrl());
+        const suggestRes = await authFetch(suggestUrl.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            lastAssistantMessage: finalContent,
+            lastUserMessage: userMsg.content,
+            goals: goalsRef.current,
+            coachingMode: coachingModeRef.current,
+          }),
+        });
+        const suggestData = await suggestRes.json();
+        const actions: CoachAction[] = suggestData.actions || [];
+        const followups: string[] = suggestData.followups || [];
+
+        setMessages(prev => {
+          const updated = [...prev];
+          const idx = updated.findIndex(m => m.id === assistantId);
+          if (idx !== -1) updated[idx] = { ...updated[idx], actions, followups };
+          persistChatHistory(updated);
+          return updated;
+        });
+      } catch {}
+
+      try {
+        const extractUrl = new URL('/api/commitments/extract', getApiUrl());
+        authFetch(extractUrl.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text.trim() }),
+        }).then(async (r) => {
+          const data = await r.json();
+          if (data.hasCommitment) {
+            fetchCommitments();
+          }
+        }).catch(() => {});
+      } catch {}
+
+
+      const recentMessages = [userMsg, ...messagesRef.current].slice(0, 6);
+      const extractMessages = recentMessages.map(m => ({ role: m.role, content: m.content })).reverse();
+      authFetch(new URL('/api/memories/extract', getApiUrl()).toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: extractMessages }),
+      }).catch(() => {});
+
+    } catch (error) {
+      chatAbortControllerRef.current = null;
+      chatRunIdRef.current = null;
+      setShowTyping(false);
+      setIsStreaming(false);
+      setIsSearchingWeb(false);
+      setIsWorkingOnPhone(false);
+      if (error instanceof Error && (error.name === 'AbortError' || error.message?.includes('aborted'))) {
+        streamingAssistantIdRef.current = null;
+        setMessages(prev => {
+          const idx = prev.findIndex(m => m.id === assistantId);
+          if (idx !== -1 && prev[idx].content.length > 0) {
+            const updated = [...prev];
+            updated[idx] = {
+              ...updated[idx],
+              stopped: true,
+              diagnostics: updated[idx].diagnostics ?? buildDiagnostics({
+                responseText: updated[idx].content,
+                modelErrors: [error instanceof Error ? { message: error.message, name: error.name } : String(error)],
+              }),
+            };
+            persistChatHistory(updated);
+            return updated;
+          }
+          return prev;
+        });
+        retainAcceptedVoiceRestoreForRetry();
+        return;
+      }
+      // If Jarvis already sent partial content (e.g. a multi-step phone task that completed
+      // but whose SSE stream was cut by a network hiccup), keep that content rather than
+      // replacing the whole message with a generic error. Only show the error string when
+      // nothing was received at all.
+      setMessages(prev => {
+        const existing = prev.find(m => m.id === assistantId);
+        const alreadyHasContent = existing && existing.content && existing.content.length > 0;
+        if (alreadyHasContent) {
+          // Keep whatever partial content arrived — the task mostly worked
+          const updated = prev.map((message) => message.id === assistantId
+            ? {
+                ...message,
+                diagnostics: message.diagnostics ?? buildDiagnostics({
+                  responseText: message.content,
+                  modelErrors: [error instanceof Error ? { message: error.message, name: error.name } : String(error)],
+                }),
+              }
+            : message);
+          persistChatHistory(updated);
+          return updated;
+        }
+        // If phone actions were underway when the stream dropped, the task likely
+        // completed (the notification arrived) but the response text was lost when
+        // you switched apps. Show a contextual message instead of a generic error.
+        const errContent = isWorkingOnPhone
+          ? "Your phone task finished — the connection dropped when you switched apps. If you got a notification, it completed successfully. Ask me to recap what I did and I'll tell you."
+          : error instanceof Error && error.message
+            ? error.message
+            : 'Sorry, I had trouble connecting. Please try again.';
+        const errMsg: ChatMessage = {
+          id: assistantId,
+          role: 'assistant',
+          content: errContent,
+          diagnostics: buildDiagnostics({
+            responseText: errContent,
+            modelErrors: [error instanceof Error ? { message: error.message, name: error.name } : String(error)],
+          }),
+        };
+        const updated = [errMsg, ...prev.filter(m => m.id !== assistantId)];
+        persistChatHistory(updated);
+        return updated;
+      });
+      retainAcceptedVoiceRestoreForRetry();
+    }
+  }, [copyDiagnosticBundleToClipboard, getDiagnosticRecords, isStreaming, openMcpSheet]);
+
+  useEffect(() => {
+    sendMessageRef.current = sendMessage;
+  }, [sendMessage]);
+
+  const handleCopyDiagnostics = useCallback(async (
+    message: ChatMessage,
+    target?: { reason: 'message' | 'action'; actionIndex?: number; action?: ExecutedAction },
+  ) => {
+    const fallbackBundle = message.diagnostics ?? buildTurnDiagnosticBundle({
+      turnId: message.id,
+      source: 'in_app',
+      channel: 'appchat',
+      requestText: messagesRef.current.find((candidate) => candidate.role === 'user')?.content,
+      responseText: message.content,
+      selected: {
+        mode: coachingModeRef.current,
+        model: 'unknown',
+        profile: 'unknown',
+      },
+      runtimeIntent: inferRuntimeIntent(message.content),
+      contextPacket: {
+        message,
+        recentMessages: messagesRef.current.slice(0, 8).map((candidate) => ({
+          role: candidate.role,
+          content: candidate.content,
+        })),
+      },
+      // Older persisted messages did not record the server's offered tool set.
+      // Keep that unknown instead of relabeling executed actions as offered.
+      offeredTools: [],
+      selectedTools: message.executedActions?.map((action) => action.tool) ?? [],
+      executedTools: message.executedActions?.map((action) => action.tool) ?? [],
+      normalizedToolCalls: message.executedActions ?? [],
+      toolResults: message.executedActions ?? [],
+      modelErrors: message.content.trim().toLowerCase().startsWith('error:') ? [{ message: message.content }] : [],
+      timing: { startedAt: new Date().toISOString() },
+      androidState: null,
+      recentTurnHistory: messagesRef.current.slice(0, 8).map((candidate) => ({
+        role: candidate.role,
+        content: candidate.content,
+      })),
+    });
+    await copyDiagnosticBundleToClipboard(fallbackBundle, target ?? { reason: 'message' });
+  }, [copyDiagnosticBundleToClipboard]);
+
+  const handleStop = useCallback(async () => {
+    await abortActiveChatTurn();
+  }, [abortActiveChatTurn]);
+
+  const setVoiceConfirmationExecutionState = useCallback((executing: boolean) => {
+    voiceConfirmationExecutingRef.current = executing;
+    setVoiceConfirmationExecuting(executing);
+    if (Platform.OS !== 'android' || !talkModeRef.current || outsideAppVoiceStateRef.current === 'paused') return;
+    nativeVoiceStateSyncHeldRef.current = false;
+    const nextState = executing ? 'working' : isSpeakingRef.current ? 'speaking' : 'listening';
+    outsideAppVoiceStateRef.current = nextState;
+    setAndroidOutsideAppVoiceSessionState(nextState).catch((err) => {
+      console.warn('[voice] outside-app confirmation execution state sync failed:', err);
+    });
+  }, []);
+
+  const handleConfirmAction = useCallback(async (msgId: string, confirmed: boolean, origin: SendMessageOrigin = { source: 'in_app' }) => {
+    const msg = messagesRef.current.find(m => m.id === msgId);
+    if (!msg?.pendingConfirm) return;
+    const { token, tool } = msg.pendingConfirm;
+    const isVoiceOrigin = origin.source === 'voice';
+    const speakConfirmationResult = (content: string) => {
+      if (isVoiceOrigin && talkModeRef.current && content.trim()) {
+        speakTextRef.current(content, msgId);
+      }
+    };
+    setVoiceApprovalPrompt(null);
+    setVoiceApprovalToken(null);
+    const confirmStartedAt = new Date();
+    const buildConfirmedActionDiagnostics = (input: {
+      responseText: string;
+      executedActions: ExecutedAction[];
+      modelErrors?: unknown[];
+      apiResult?: unknown;
+    }): TurnDiagnosticBundle => {
+      const finishedAt = new Date();
+      const recentMessages = messagesRef.current.slice(0, 8).map((candidate) => ({
+        role: candidate.role,
+        content: candidate.content,
+      }));
+      const requestText = messagesRef.current.find((candidate) => candidate.role === 'user')?.content ?? msg.content;
+      return buildTurnDiagnosticBundle({
+        turnId: msgId,
+        source: isVoiceOrigin ? 'voice' : 'in_app',
+        channel: isVoiceOrigin ? 'voice' : 'appchat',
+        requestText,
+        responseText: input.responseText,
+        selected: {
+          mode: coachingModeRef.current,
+          model: 'server-selected',
+          profile: 'confirmed-action',
+        },
+        runtimeIntent: inferRuntimeIntent(requestText),
+        contextPacket: {
+          pendingConfirm: msg.pendingConfirm,
+          apiResult: input.apiResult ?? null,
+          recentMessages,
+        },
+        offeredTools: [tool],
+        rawToolCalls: [{ token, tool, preview: msg.pendingConfirm?.preview }],
+        normalizedToolCalls: input.executedActions.map((action) => ({
+          tool: action.tool,
+          operation: action.operation,
+          operationArgs: action.operationArgs,
+          toolCallId: action.toolCallId,
+          durationMs: action.durationMs,
+          verification: action.verification,
+          result: action.result,
+          label: action.label,
+          detail: action.detail,
+        })),
+        toolResults: input.executedActions,
+        modelErrors: input.modelErrors ?? [],
+        timing: {
+          startedAt: confirmStartedAt.toISOString(),
+          finishedAt: finishedAt.toISOString(),
+          durationMs: finishedAt.getTime() - confirmStartedAt.getTime(),
+        },
+        androidState: null,
+        recentTurnHistory: recentMessages,
+      });
+    };
+
+    if (!confirmed) {
+      const declinedContent = "Got it - I'll leave that for now.";
+      setMessages(prev => {
+        const updated = [...prev];
+        const idx = updated.findIndex(m => m.id === msgId);
+        if (idx !== -1) {
+          updated[idx] = {
+            ...updated[idx],
+            pendingConfirm: undefined,
+            content: declinedContent,
+          };
+        }
+        persistChatHistory(updated);
+        return updated;
+      });
+      speakConfirmationResult(declinedContent);
+      try {
+        const declineUrl = new URL('/api/coach/decline-action', getApiUrl());
+        const res = await authFetch(declineUrl.toString(), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.content) {
+            setMessages(prev => {
+              const updated = [...prev];
+              const idx = updated.findIndex(m => m.id === msgId);
+              if (idx !== -1) updated[idx] = { ...updated[idx], content: data.content };
+              persistChatHistory(updated);
+              return updated;
+            });
+            speakConfirmationResult(String(data.content));
+          }
+        }
+      } catch {}
+      return;
+    }
+
+    setVoiceConfirmationExecutionState(true);
+    try {
+      const url = new URL('/api/coach/execute-confirmed', getApiUrl());
+      const res = await authFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const failureContent = data.error || 'Could not execute that action. The confirmation may have expired.';
         const execAction: ExecutedAction = {
           tool,
           result: 'error',
