@@ -74,6 +74,7 @@ import {
   cancelAndroidNativeSpeechRecognition,
   endAndroidOutsideAppVoiceSession,
   getAndroidDaemonStatus,
+  handoffAndroidOutsideAppVoiceCapture,
   recognizeAndroidSpeechOnce,
   setAndroidOutsideAppVoiceApproval,
   setAndroidOutsideAppVoiceSessionState,
@@ -2694,9 +2695,13 @@ export default function InsightsScreen() {
         clearInterval(silencePollRef.current);
         silencePollRef.current = null;
       }
-      if (talkModeRef.current && isRecordingRef.current) {
-        stopRecordingSilentlyRef.current().catch(() => {});
-      }
+      const shouldHandoff = talkModeRef.current;
+      stopRecordingSilentlyRef.current().finally(() => {
+        if (!shouldHandoff) return;
+        return handoffAndroidOutsideAppVoiceCapture().catch((err) => {
+          console.warn('[voice] outside-app microphone handoff failed:', err);
+        });
+      }).catch(() => {});
     };
   }, [refreshPendingCoachResponse]));
 
