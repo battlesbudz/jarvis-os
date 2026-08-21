@@ -230,7 +230,11 @@ class WakeWordService : Service() {
         if (!listeningRequested || active || localInferencePaused) return
         if (talkModeEnabled) {
             WearableAudioRouteManager.acquire(this, WEARABLE_AUDIO_OWNER) { route ->
-                if (!listeningRequested || active || localInferencePaused || !talkModeEnabled) return@acquire
+                if (!listeningRequested || localInferencePaused || !talkModeEnabled) {
+                    WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
+                    return@acquire
+                }
+                if (active) return@acquire
                 DaemonLog.add(
                     "wearable_audio: talk route=${route.state} device=${route.deviceName ?: "none"} type=${route.deviceType ?: "none"}",
                 )
@@ -247,6 +251,7 @@ class WakeWordService : Service() {
         cancelNonTalkCooldownRestart()
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             DaemonLog.add("wake: SpeechRecognizer not available on this device")
+            WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
             return
         }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M &&
@@ -257,10 +262,15 @@ class WakeWordService : Service() {
             val intent = Intent("com.gameplan.daemon.WAKE_WORD_PERMISSION_DENIED")
             intent.setPackage(packageName)
             sendBroadcast(intent)
+            WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
             return
         }
         mainHandler.post {
-            if (!listeningRequested || active || localInferencePaused) return@post
+            if (!listeningRequested || localInferencePaused) {
+                WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
+                return@post
+            }
+            if (active) return@post
             try {
                 destroyRecognizer()
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this@WakeWordService)
@@ -269,6 +279,8 @@ class WakeWordService : Service() {
                 active = true
                 DaemonLog.add("wake: listening started — phrases: [${wakeWords.joinToString()}]")
             } catch (e: Exception) {
+                destroyRecognizer()
+                WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
                 Log.e(TAG, "startListening failed", e)
                 DaemonLog.add("wake: startListening error: ${e.message}")
             }
