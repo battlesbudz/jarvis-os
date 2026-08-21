@@ -26,6 +26,7 @@ const daemonModule = fs.readFileSync(
   "utf8",
 );
 const insights = fs.readFileSync("app/(tabs)/insights.tsx", "utf8");
+const androidDaemonNative = fs.readFileSync("lib/android-daemon-native.ts", "utf8");
 const pluginSourceRoot = "plugins/android-daemon-native/src/main/java/com/gameplan/daemon";
 const pluginRouteManager = fs.readFileSync(`${pluginSourceRoot}/WearableAudioRouteManager.kt`, "utf8");
 const pluginNativeSpeech = fs.readFileSync(`${pluginSourceRoot}/NativeSpeechRecognitionBridge.kt`, "utf8");
@@ -159,11 +160,32 @@ assert.match(
 assert.match(playback, /USAGE_VOICE_COMMUNICATION/);
 assert.match(playback, /CONTENT_TYPE_SPEECH/);
 assert.match(talkMode, /fun pauseForInAppCapture\(\)/);
+assert.match(talkMode, /wakeStartGeneration/);
+assert.match(
+  talkMode,
+  /private fun handlePauseForInAppCapture\(\)[\s\S]*?wakeStartGeneration \+= 1/,
+);
+assert.match(
+  talkMode,
+  /if \(startGeneration != wakeStartGeneration\) return@post/,
+);
 assert.match(talkMode, /microphone ownership returned to the in-app recognizer/);
 assert.match(outsideVoice, /ACTION_TAKE_CAPTURE/);
 assert.match(outsideVoice, /ownsVoiceCapture/);
 assert.match(outsideVoice, /fun prepareForInAppCapture\(\)/);
 assert.match(daemonModule, /fun handoffOutsideAppVoiceCapture\(promise: Promise\)/);
+assert.match(daemonModule, /fun acquireNativeVoicePlaybackRoute\(promise: Promise\)/);
+assert.match(daemonModule, /fun releaseNativeVoicePlaybackRoute\(promise: Promise\)/);
+assert.match(
+  daemonModule,
+  /override fun invalidate\(\)[\s\S]*?WearableAudioRouteManager\.release\(IN_APP_VOICE_PLAYBACK_AUDIO_OWNER\)/,
+);
+assert.match(androidDaemonNative, /acquireAndroidNativeVoicePlaybackRoute/);
+assert.match(androidDaemonNative, /releaseAndroidNativeVoicePlaybackRoute/);
+assert.match(
+  insights,
+  /acquireAndroidNativeVoicePlaybackRoute\(\)[\s\S]*?Speech\.speak\([\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(\)/,
+);
 assert.match(
   insights,
   /Cleanup on blur[\s\S]*stopRecordingSilentlyRef\.current\(\)\.finally\([\s\S]*handoffAndroidOutsideAppVoiceCapture\(\)/,
