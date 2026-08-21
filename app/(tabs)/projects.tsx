@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import type { ComponentProps } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useIsFocused } from "@react-navigation/native";
 import { useColors } from "@/hooks/useColors";
 import { apiRequest } from "@/lib/query-client";
 
@@ -945,7 +946,21 @@ export default function ProjectsScreen() {
   const insets = useSafeAreaInsets();
   const [showNew, setShowNew] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const { data: projects, isLoading, refetch } = useProjects();
+  const isFocused = useIsFocused();
+  const representationClientId = useRef(`${Date.now()}-${Math.random()}`);
+  const representationSequence = useRef(0);
+  const { data: projects, dataUpdatedAt: projectsUpdatedAt, isLoading, refetch } = useProjects();
+  useEffect(() => {
+    if (!projects) return;
+    const renderedProjects = !isFocused || selectedId ? [] : projects.slice(0, 100);
+    void apiRequest("POST", "/api/live-actions/baseline/representations", {
+      kind: "project",
+      surface: "projects",
+      clientId: representationClientId.current,
+      sequence: ++representationSequence.current,
+      representations: renderedProjects.map((project) => ({ id: project.id, status: project.status })),
+    }).catch(() => {});
+  }, [isFocused, projects, projectsUpdatedAt, selectedId]);
 
   const topPad = Platform.OS === "web" ? 67 : insets.top;
   const botPad = Platform.OS === "web" ? 34 : insets.bottom;

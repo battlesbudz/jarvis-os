@@ -8,6 +8,7 @@ export async function tryHandleDiscordChatWithPrime(
     message: string;
     originChannelId?: string;
     guildId?: string;
+    statusObservationId?: string;
   },
   handlePrime?: PrimeRuntimeChatHandler,
 ): Promise<string | null> {
@@ -16,6 +17,7 @@ export async function tryHandleDiscordChatWithPrime(
     userId: input.userId,
     channel: "discord",
     message: input.message,
+    statusObservationId: input.statusObservationId,
     metadata: {
       originChannelId: input.originChannelId,
       discordGuildId: input.guildId,

@@ -48,6 +48,7 @@ import {
   cancelTelegramCoachMessageBatches,
   enqueueTelegramCoachMessageBatch,
 } from "./telegramMessageBatcher";
+import { recordStatusCheckFollowUp } from "./liveActions/baselineMetrics";
 import { shouldTryTelegramAgentSdkWorkflow } from "./telegramWorkflowIntent";
 import {
   TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS,
@@ -1985,6 +1986,13 @@ async function processUpdate(update: any): Promise<void> {
       }
 
       const userId = link[0].userId;
+      const statusObservationId = String(update.update_id ?? message.message_id ?? "") || undefined;
+      recordStatusCheckFollowUp({
+        userId,
+        message: rawUserText || text,
+        surface: "telegram",
+        observationId: statusObservationId,
+      });
 
       // ── "Needs You" plain-message routing ────────────────────────────────
       // If the user has tasks flagged as needsAttention and their message did
@@ -2045,6 +2053,7 @@ async function processUpdate(update: any): Promise<void> {
           userId,
           channel: "telegram",
           message: rawUserText,
+          statusObservationId,
           metadata: { originChannelId: chatId },
         });
         if (primeResult.handled) {

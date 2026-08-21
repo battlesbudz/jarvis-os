@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 import { apiRequest } from '@/lib/query-client';
+import { useIsFocused } from '@react-navigation/native';
 
 interface LastShellResult {
   exitCode: number;
@@ -402,14 +403,36 @@ function Section({ label, color, tasks, collapsible = false, emptyText }: Sectio
 }
 
 export default function TasksScreen() {
+  const isFocused = useIsFocused();
+  const representationClientId = useRef(`${Date.now()}-${Math.random()}`);
+  const representationSequence = useRef(0);
   const { data, isLoading, error } = useQuery<ScheduledTask[]>({
     queryKey: ['/api/jarvis/scheduled-tasks'],
     refetchInterval: 30000,
   });
-  const { data: queuePanel, isLoading: queuePanelLoading } = useQuery<QueuePanelData>({
+  const { data: queuePanel, dataUpdatedAt: queuePanelUpdatedAt, isLoading: queuePanelLoading } = useQuery<QueuePanelData>({
     queryKey: ['/api/mission-control/queue-panel'],
     refetchInterval: 15000,
   });
+  useEffect(() => {
+    const renderedJobs = isFocused ? queuePanel?.activeJobs ?? [] : [];
+    void apiRequest('POST', '/api/live-actions/baseline/representations', {
+      kind: 'agent_job',
+      surface: 'mission_control',
+      clientId: representationClientId.current,
+      sequence: ++representationSequence.current,
+      representations: renderedJobs.map((job) => ({ id: job.id, status: job.status })),
+    }).catch(() => {});
+  }, [isFocused, queuePanel?.activeJobs, queuePanelUpdatedAt]);
+  useEffect(() => () => {
+    void apiRequest('POST', '/api/live-actions/baseline/representations', {
+      kind: 'agent_job',
+      surface: 'mission_control',
+      clientId: representationClientId.current,
+      sequence: ++representationSequence.current,
+      representations: [],
+    }).catch(() => {});
+  }, []);
 
   if (isLoading) {
     return (

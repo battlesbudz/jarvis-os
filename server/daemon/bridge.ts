@@ -397,6 +397,7 @@ async function processDaemonUtterance(userId: string, utterance: string): Promis
         userText: utterance,
         channelName: "Voice",
         sdkSessionId: storedSessionId,
+        observeStatusCheck: true,
       });
       if (isDaemonVoiceTurnCancelled(userId, voiceTurnGeneration)) return;
       if (result.sdkSessionId) {

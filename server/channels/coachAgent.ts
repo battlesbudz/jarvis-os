@@ -31,6 +31,7 @@ import { resolvePhoneRuntimeRequestText } from "../agent/phoneRuntimeRouting";
 import { ANDROID_PHONE_RUNTIME_TOOL_NAMES } from "../agent/androidPhoneRuntimeToolNames";
 import { getCoachAgentSessionAgentId } from "./coachAgentSession";
 import { listPendingPersonalCommitments } from "../commitments/dbCommitmentRepository";
+import { recordStatusCheckFollowUp } from "../liveActions/baselineMetrics";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
 
@@ -49,6 +50,10 @@ export interface CoachReplyInput {
   onProgressMessage?: (message: string) => void;
   /** Current external chat/channel ID when the caller has one (Telegram chat ID, Discord channel ID, etc.). */
   originChannelId?: string;
+  /** Stable inbound turn ID used to avoid double-counting transport retries. */
+  statusObservationId?: string;
+  /** True only when this invocation comes directly from a user inbound boundary. */
+  observeStatusCheck?: boolean;
   /** Discord guild (server) ID — set when the request originates from a Discord guild channel.
    *  Surfaced in ToolContext so Discord-specific tools (e.g. deleteDiscordChannel) can
    *  identify the server without requiring a pre-configured workspace. */
@@ -185,8 +190,18 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   const destinationScopedConversation = channelName === "Slack" || channelName.startsWith("Discord");
   const coachSessionAgentId = getCoachAgentSessionAgentId(userId);
   const channelLower = channelName.toLowerCase();
+  const statusSurface = channelName.startsWith("Discord") ? "discord" : channelLower;
   const telegramE2eProbeId = channelName === "Telegram" ? getTelegramE2eProbeId(userText) : null;
   const telegramE2eLogSuffix = telegramE2eProbeId ? ` e2e=${telegramE2eProbeId}` : "";
+
+  if (input.observeStatusCheck) {
+    recordStatusCheckFollowUp({
+      userId,
+      message: userText,
+      surface: statusSurface,
+      observationId: input.statusObservationId,
+    });
+  }
 
   if (
     channelName === "Telegram" &&

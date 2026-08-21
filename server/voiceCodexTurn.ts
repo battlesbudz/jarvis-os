@@ -142,6 +142,7 @@ export async function runCodexVoiceTurn(
     userText: transcript,
     channelName: "Voice",
     sdkSessionId,
+    observeStatusCheck: true,
   });
 
   return {

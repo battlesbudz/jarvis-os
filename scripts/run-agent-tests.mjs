@@ -27,6 +27,7 @@ const tests = [
   { file: "server/boot/__tests__/schemaBootOrdering.assert.ts" },
   { file: "server/diagnostics/__tests__/osReadiness.test.ts" },
   { file: "server/diagnostics/__tests__/memoryEmbeddingHealthRouting.assert.ts" },
+  { file: "server/liveActions/__tests__/rollout.test.ts" },
   { file: "server/agent/__tests__/autonomyPolicy.test.ts" },
   { file: "server/agent/__tests__/autonomyRuntime.test.ts" },
   { file: "server/agent/__tests__/primeRuntimeMindTrace.test.ts" },

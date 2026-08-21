@@ -1455,6 +1455,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return;
         }
 
+        const { recordStatusCheckFollowUp } = await import("./liveActions/baselineMetrics");
+        recordStatusCheckFollowUp({
+          userId,
+          message: String(latestUserMessage),
+          surface: originChannel === "appchat" ? "chat" : originChannel,
+        });
+
         if (!primeRuntimeEnabled) {
 
         const { runAgentSdkEmailWorkflow, runAgentSdkReminderWorkflow } = await import("../src/agent/agentRunner");

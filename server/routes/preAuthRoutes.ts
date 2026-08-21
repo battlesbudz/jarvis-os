@@ -14,6 +14,7 @@ import { registerPublicCoachRuntimeRoutes } from "./coachRuntimeRoutes";
 import { registerDiscordInteractionRoutes } from "./discordInteractionRoutes";
 import { registerPublicOpenAIProviderAuthCallbackRoutes } from "./openaiProviderAuthRoutes";
 import { registerPlatformRoutes, registerVoiceRedirectRoute } from "./platformRoutes";
+import { registerLiveActionBaselineOperationsRoutes } from "./liveActionBaselineRoutes";
 import { registerTranscriptDiagnoseRoutes } from "./transcriptDiagnoseRoutes";
 import { registerPublicWebchatInviteRoutes } from "./webchatInviteRoutes";
 
@@ -25,6 +26,19 @@ function requireAdminSecret(req: Request, res: Response): boolean {
   }
   if (req.headers["x-admin-secret"] !== secret) {
     res.status(401).json({ error: "Invalid admin secret." });
+    return false;
+  }
+  return true;
+}
+
+function requireOperationsExportSecret(req: Request, res: Response): boolean {
+  const secret = process.env.JARVIS_OPERATIONS_EXPORT_SECRET;
+  if (!secret) {
+    res.status(503).json({ error: "Operations export secret not configured on this server." });
+    return false;
+  }
+  if (req.headers["x-operations-secret"] !== secret) {
+    res.status(401).json({ error: "Invalid operations export secret." });
     return false;
   }
   return true;
@@ -44,6 +58,7 @@ export function registerPreAuthRoutes(app: Express): void {
 
   registerAdminSkillsRoutes(app, requireAdminSecret);
   registerAdminHealthRoutes(app, requireAdminSecret);
+  registerLiveActionBaselineOperationsRoutes(app, requireOperationsExportSecret);
 
   registerTranscriptDiagnoseRoutes(app, authMiddleware);
   registerAdminSearchRegistryRoutes(app, requireAdminSecret);

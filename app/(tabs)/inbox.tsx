@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -15,10 +15,12 @@ import {
   KeyboardAvoidingView,
   Linking,
   Share,
+  AppState,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useIsFocused } from '@react-navigation/native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
@@ -323,6 +325,7 @@ const SUPPORTED_ACTION_TYPES = new Set([
 ]);
 
 export default function InboxScreen() {
+  const isFocused = useIsFocused();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
@@ -447,7 +450,12 @@ export default function InboxScreen() {
 
   const [autoHandledExpanded, setAutoHandledExpanded] = useState(false);
 
-  const { data: activeJobs = [], refetch: refetchActiveJobs } = useQuery<AgentJob[]>({
+  const {
+    data: activeJobs = [],
+    dataUpdatedAt: activeJobsUpdatedAt,
+    isFetchedAfterMount: activeJobsFetchedAfterMount,
+    refetch: refetchActiveJobs,
+  } = useQuery<AgentJob[]>({
     queryKey: ['/api/agent-jobs/active'],
     refetchInterval: (query) => {
       const jobs = query.state.data ?? [];
@@ -455,10 +463,66 @@ export default function InboxScreen() {
     },
   });
 
-  const { data: failedJobs = [], refetch: refetchFailedJobs } = useQuery<AgentJob[]>({
+  const baselineHydrationStartedAt = useRef(isFocused ? Date.now() : 0);
+  useEffect(() => {
+    if (!isFocused || !activeJobsFetchedAfterMount || activeJobsUpdatedAt <= 0 || baselineHydrationStartedAt.current <= 0) return;
+    const startedAt = baselineHydrationStartedAt.current;
+    baselineHydrationStartedAt.current = 0;
+    void apiRequest('POST', '/api/live-actions/baseline', {
+      metric: 'reconnect_restoration_ms',
+      surface: 'inbox',
+      value: Math.max(0, Date.now() - startedAt),
+    }).catch(() => {});
+  }, [activeJobsFetchedAfterMount, activeJobsUpdatedAt, isFocused]);
+
+  useEffect(() => {
+    if (!isFocused) {
+      baselineHydrationStartedAt.current = 0;
+    }
+  }, [isFocused]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state !== 'active' || !isFocused) return;
+      baselineHydrationStartedAt.current = Date.now();
+      void refetchActiveJobs();
+    });
+    return () => subscription.remove();
+  }, [isFocused, refetchActiveJobs]);
+
+  const baselineVisibleJobIds = useRef(new Set<string>());
+  const representationClientId = useRef(`${Date.now()}-${Math.random()}`);
+  const representationSequence = useRef(0);
+  useEffect(() => {
+    if (!isFocused) return;
+    for (const job of activeJobs) {
+      if (baselineVisibleJobIds.current.has(job.id)) continue;
+      baselineVisibleJobIds.current.add(job.id);
+      const createdAtMs = new Date(job.createdAt).getTime();
+      if (!Number.isFinite(createdAtMs)) continue;
+      void apiRequest('POST', '/api/live-actions/baseline', {
+        metric: 'acknowledgement_visible_latency_ms',
+        surface: 'inbox',
+        value: Math.max(0, Date.now() - createdAtMs),
+      }).catch(() => {});
+    }
+  }, [activeJobs, isFocused]);
+
+  const { data: failedJobs = [], dataUpdatedAt: failedJobsUpdatedAt, refetch: refetchFailedJobs } = useQuery<AgentJob[]>({
     queryKey: ['/api/agent-jobs?status=failed&limit=10'],
     refetchInterval: 60000,
   });
+
+  useEffect(() => {
+    const renderedJobs = isFocused ? [...activeJobs, ...failedJobs] : [];
+    void apiRequest('POST', '/api/live-actions/baseline/representations', {
+      kind: 'agent_job',
+      surface: 'inbox',
+      clientId: representationClientId.current,
+      sequence: ++representationSequence.current,
+      representations: renderedJobs.map((job) => ({ id: job.id, status: job.status })),
+    }).catch(() => {});
+  }, [activeJobs, activeJobsUpdatedAt, failedJobs, failedJobsUpdatedAt, isFocused]);
 
   const { data: dailyCommand, refetch: refetchDailyCommand } = useQuery<DailyCommandSnapshot>({
     queryKey: ['/api/daily-command/today'],
