@@ -144,6 +144,16 @@ class OutsideAppVoiceSessionService : Service() {
             instance?.setStateFromAnyThread(OutsideAppVoiceState.LISTENING)
         }
 
+        fun resumeWakeCaptureAfterPlayback(): Boolean {
+            val service = instance
+            if (service != null && !service.ownsVoiceCapture) {
+                DaemonLog.add("outside_app_voice: playback rearm skipped; capture belongs to the app")
+                return false
+            }
+            WakeWordService.onTtsFinished()
+            return true
+        }
+
         fun currentApprovalPrompt(): String = instance?.approvalPrompt ?: ""
 
         fun currentApprovalToken(): String = instance?.approvalToken ?: ""
