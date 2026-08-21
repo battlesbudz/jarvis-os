@@ -127,7 +127,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?remember\b(?!\s+(?:(?:not|never)\s+)?to\b)/i,
       new RegExp(String.raw`\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?recall\b(?!\s+(?:(?:not|never)\s+)?to\b)(?=[^.!?\n]{1,120}${RECALL_PERSONAL_CUE_PATTERN})`, "i"),
       /\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?recall\b(?!\s+(?:(?:not|never)\s+)?to\b)(?=[^.!?\n]{1,120}\b(?:anything|something)\b)/i,
-      new RegExp(String.raw`\b(?:[Dd]o|[Cc]an|[Cc]ould|[Ww]ill|[Ww]ould)\s+[Yy]ou\s+(?:[Pp]lease\s+)?[Rr]ecall\b(?!\s+(?:(?:[Nn]ot|[Nn]ever)\s+)?[Tt]o\b)(?=[^.!?\n]{1,120}${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN})`),
+      new RegExp(String.raw`\b(?:[Dd]o|[Cc]an|[Cc]ould|[Ww]ill|[Ww]ould)\s+[Yy]ou\s+(?:[Pp]lease\s+)?[Rr]ecall\s+${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}\s*\??\s*$`),
       /\b(?:remember|recall)\s+(?:my|what i|what i've|what i have)\b/i,
       /\b(?:my|our)\s+(?:(?:saved|stored)\s+)?(?:memory|memories|preferences?)\b/i,
       /\bwhat\s+(?:personal\s+)?preferences?\s+do\s+you\s+have\s+(?:saved|stored)\s+for\s+me\b/i,
