@@ -133,6 +133,17 @@ class JarvisDaemonModule(
     }
 
     @ReactMethod
+    fun handoffOutsideAppVoiceCapture(promise: Promise) {
+        nativeSpeechRecognitionBridge.cancelForOutsideAppHandoff()
+        val intent = OutsideAppVoiceSessionService.controlIntent(
+            reactApplicationContext,
+            OutsideAppVoiceSessionService.ACTION_TAKE_CAPTURE,
+        )
+        if (!startVoiceSessionServiceCompat(intent, promise)) return
+        promise.resolve(buildStatusMap())
+    }
+
+    @ReactMethod
     fun pauseOutsideAppVoiceSession(promise: Promise) {
         val intent = OutsideAppVoiceSessionService.controlIntent(
             reactApplicationContext,
