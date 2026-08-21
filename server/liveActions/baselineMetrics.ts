@@ -269,15 +269,15 @@ export function observeTerminalStateDrift(input: {
     const key = `${prefix}${fingerprintRepresentation(input.userId, input.kind, entry.id)}`;
     observedKeys.add(key);
     const canonicalStatus = input.canonicalStatuses.get(entry.id);
-    if (!canonicalStatus || input.terminalStatuses.has(canonicalStatus) || input.terminalStatuses.has(entry.status ?? "")) {
-      terminalRepresentationCount += 1;
-    }
     const mismatched = !canonicalStatus || (
       (input.terminalStatuses.has(canonicalStatus) || input.terminalStatuses.has(entry.status ?? ""))
       && canonicalStatus !== entry.status
     );
     if (!mismatched) {
       firstSeen.delete(key);
+      if ((canonicalStatus && input.terminalStatuses.has(canonicalStatus)) || input.terminalStatuses.has(entry.status ?? "")) {
+        terminalRepresentationCount += 1;
+      }
       continue;
     }
     const previous = firstSeen.get(key);
@@ -285,8 +285,12 @@ export function observeTerminalStateDrift(input: {
       ? previous.firstSeenAt
       : nowMs;
     firstSeen.set(key, { firstSeenAt: mismatchStartedAt, lastSeenAt: nowMs });
-    if (nowMs - mismatchStartedAt >= TERMINAL_RECONCILIATION_WINDOW_MS) persistentDriftCount += 1;
-    else pendingMismatchCount += 1;
+    if (nowMs - mismatchStartedAt >= TERMINAL_RECONCILIATION_WINDOW_MS) {
+      persistentDriftCount += 1;
+      terminalRepresentationCount += 1;
+    } else {
+      pendingMismatchCount += 1;
+    }
   }
   for (const key of firstSeen.keys()) {
     if (key.startsWith(prefix) && !observedKeys.has(key)) firstSeen.delete(key);

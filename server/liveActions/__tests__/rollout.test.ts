@@ -115,6 +115,7 @@ for (const nowMs of [61_000, 121_000, 181_000, 241_000]) {
     nowMs,
   }), { persistentDriftCount: 0, pendingMismatchCount: 1 });
 }
+assert.equal(getLiveActionBaselineReport("user-a").metrics["terminal_representation_count:projects"].sum, 0);
 assert.deepEqual(observeTerminalStateDrift({
   userId: "user-a",
   kind: "project",
@@ -162,7 +163,7 @@ assert.equal(report.metrics["reconnect_restoration_ms:inbox"].average, 250);
 assert.equal(report.metrics["duplicate_representation_count:inbox"].average, 1);
 assert.equal(report.metrics["duplicate_representation_count:mission_control"].average, 2);
 assert.equal(report.metrics["rendered_representation_count:mission_control"].sum, 4);
-assert.equal(report.metrics["terminal_representation_count:projects"].sum, 7);
+assert.equal(report.metrics["terminal_representation_count:projects"].sum, 2);
 assert.deepEqual(report.privacy, {
   contentStored: false,
   identifiersStoredInMetrics: false,

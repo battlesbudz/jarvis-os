@@ -463,7 +463,7 @@ export default function InboxScreen() {
     },
   });
 
-  const baselineHydrationStartedAt = useRef(Date.now());
+  const baselineHydrationStartedAt = useRef(isFocused ? Date.now() : 0);
   useEffect(() => {
     if (!isFocused || !activeJobsFetchedAfterMount || activeJobsUpdatedAt <= 0 || baselineHydrationStartedAt.current <= 0) return;
     const startedAt = baselineHydrationStartedAt.current;
@@ -478,11 +478,8 @@ export default function InboxScreen() {
   useEffect(() => {
     if (!isFocused) {
       baselineHydrationStartedAt.current = 0;
-      return;
     }
-    baselineHydrationStartedAt.current = Date.now();
-    void refetchActiveJobs();
-  }, [isFocused, refetchActiveJobs]);
+  }, [isFocused]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
