@@ -280,6 +280,8 @@ export default function VoiceRealtimeScreen() {
     web: { mimeType: 'audio/webm', bitsPerSecond: 48000 },
   });
   const currentAssistantTextRef = useRef('');
+  const codexTurnAbortRef = useRef<AbortController | null>(null);
+  const outsideAppCaptureBorrowedRef = useRef(false);
 
   // Metering loop for native mic amplitude
   const meterLoopRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -443,38 +445,46 @@ export default function VoiceRealtimeScreen() {
   }, [muted]);
 
   const sendCodexVoiceTurn = useCallback(async (payload: { audioBase64?: string; mimeType?: string; text?: string }) => {
+    const abortController = new AbortController();
+    codexTurnAbortRef.current?.abort();
+    codexTurnAbortRef.current = abortController;
     const url = new URL('/api/voice/codex-turn', getApiUrl());
-    const res = await authFetch(url.toString(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        ...payload,
-        sdkSessionId: codexSessionIdRef.current,
-      }),
-    });
-    const data = await res.json().catch(() => ({})) as CodexVoiceTurnResponse;
-    if (!res.ok) {
-      throw new Error(data.error || data.code || `Voice turn failed: ${res.status}`);
-    }
-
-    const userText = (data.transcript || '').trim();
-    const reply = (data.reply || '').trim();
-    if (!reply) throw new Error('Jarvis returned an empty voice reply.');
-
-    if (data.sdkSessionId) setCodexSessionId(data.sdkSessionId);
-    if (userText) setTranscript(prev => [...prev, { role: 'user', text: userText }]);
-
-    currentAssistantTextRef.current = reply;
-    setCurrentSpeech(reply);
-    setState('speaking');
     try {
-      await speakCodexReply(reply);
+      const res = await authFetch(url.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...payload,
+          sdkSessionId: codexSessionIdRef.current,
+        }),
+        signal: abortController.signal,
+      });
+      const data = await res.json().catch(() => ({})) as CodexVoiceTurnResponse;
+      if (!res.ok) {
+        throw new Error(data.error || data.code || `Voice turn failed: ${res.status}`);
+      }
+
+      const userText = (data.transcript || '').trim();
+      const reply = (data.reply || '').trim();
+      if (!reply) throw new Error('Jarvis returned an empty voice reply.');
+
+      if (data.sdkSessionId) setCodexSessionId(data.sdkSessionId);
+      if (userText) setTranscript(prev => [...prev, { role: 'user', text: userText }]);
+
+      currentAssistantTextRef.current = reply;
+      setCurrentSpeech(reply);
+      setState('speaking');
+      try {
+        await speakCodexReply(reply);
+      } finally {
+        setTranscript(prev => [...prev, { role: 'assistant', text: reply }]);
+        currentAssistantTextRef.current = '';
+        setCurrentSpeech('');
+        ampRef.current = 0;
+        setState('idle');
+      }
     } finally {
-      setTranscript(prev => [...prev, { role: 'assistant', text: reply }]);
-      currentAssistantTextRef.current = '';
-      setCurrentSpeech('');
-      ampRef.current = 0;
-      setState('idle');
+      if (codexTurnAbortRef.current === abortController) codexTurnAbortRef.current = null;
     }
   }, [speakCodexReply]);
 
@@ -555,6 +565,7 @@ export default function VoiceRealtimeScreen() {
     const restoreOutsideAppCapture = (
       await getAndroidDaemonStatus().catch(() => null)
     )?.voiceSessionActive === true;
+    outsideAppCaptureBorrowedRef.current = restoreOutsideAppCapture;
     try {
       let result: Awaited<ReturnType<typeof recognizeAndroidSpeechOnce>>;
       try {
@@ -576,13 +587,9 @@ export default function VoiceRealtimeScreen() {
       setState('thinking');
       await sendCodexVoiceTurn({ text });
     } finally {
-      if (restoreOutsideAppCapture) {
-        const outsideAppSessionStillActive = (
-          await getAndroidDaemonStatus().catch(() => null)
-        )?.voiceSessionActive === true;
-        if (outsideAppSessionStillActive) {
-          await handoffAndroidOutsideAppVoiceCapture().catch(() => {});
-        }
+      if (outsideAppCaptureBorrowedRef.current) {
+        outsideAppCaptureBorrowedRef.current = false;
+        await handoffAndroidOutsideAppVoiceCapture().catch(() => {});
       }
     }
   }, [sendCodexVoiceTurn]);
@@ -628,9 +635,15 @@ export default function VoiceRealtimeScreen() {
   }, [stopWebAmpMeter]);
 
   const cleanupNativeSession = useCallback(async () => {
+    codexTurnAbortRef.current?.abort();
+    codexTurnAbortRef.current = null;
     stopNativeMeterLoop();
     if (Platform.OS === 'android') {
       await cancelAndroidNativeSpeechRecognition().catch(() => {});
+      if (outsideAppCaptureBorrowedRef.current) {
+        outsideAppCaptureBorrowedRef.current = false;
+        await handoffAndroidOutsideAppVoiceCapture().catch(() => {});
+      }
     }
     if (nativeRecorder.isRecording) {
       await nativeRecorder.stop().catch(() => {});
@@ -723,9 +736,15 @@ export default function VoiceRealtimeScreen() {
       if (Platform.OS === 'web') {
         cleanupWebSession();
       } else {
+        codexTurnAbortRef.current?.abort();
+        codexTurnAbortRef.current = null;
         stopNativeMeterLoop();
         if (Platform.OS === 'android') {
           cancelAndroidNativeSpeechRecognition().catch(() => {});
+          if (outsideAppCaptureBorrowedRef.current) {
+            outsideAppCaptureBorrowedRef.current = false;
+            handoffAndroidOutsideAppVoiceCapture().catch(() => {});
+          }
         }
         if (nativeRecorder.isRecording) nativeRecorder.stop().catch(() => {});
         Speech.stop();

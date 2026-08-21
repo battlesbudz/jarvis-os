@@ -211,7 +211,15 @@ assert.match(
 );
 assert.match(
   voiceRealtime,
-  /getAndroidDaemonStatus\(\)[\s\S]*?voiceSessionActive === true[\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?takeInAppCapture: restoreOutsideAppCapture[\s\S]*?sendCodexVoiceTurn\([\s\S]*?finally \{[\s\S]*?getAndroidDaemonStatus\(\)[\s\S]*?outsideAppSessionStillActive[\s\S]*?handoffAndroidOutsideAppVoiceCapture\(\)/,
+  /getAndroidDaemonStatus\(\)[\s\S]*?voiceSessionActive === true[\s\S]*?outsideAppCaptureBorrowedRef\.current = restoreOutsideAppCapture[\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?takeInAppCapture: restoreOutsideAppCapture[\s\S]*?sendCodexVoiceTurn\([\s\S]*?finally \{[\s\S]*?outsideAppCaptureBorrowedRef\.current = false[\s\S]*?handoffAndroidOutsideAppVoiceCapture\(\)/,
+);
+assert.match(
+  voiceRealtime,
+  /codexTurnAbortRef\.current\?\.abort\(\)[\s\S]*?cancelAndroidNativeSpeechRecognition\(\)[\s\S]*?outsideAppCaptureBorrowedRef\.current = false[\s\S]*?handoffAndroidOutsideAppVoiceCapture\(\)/,
+);
+assert.match(
+  outsideVoice,
+  /ACTION_TAKE_CAPTURE -> \{\s+if \(!sessionActive\) \{[\s\S]*?stopSelf\(startId\)[\s\S]*?return START_NOT_STICKY/,
 );
 
 assert.equal(pluginRouteManager, routeManager, "Expo prebuild route manager must match the app source");

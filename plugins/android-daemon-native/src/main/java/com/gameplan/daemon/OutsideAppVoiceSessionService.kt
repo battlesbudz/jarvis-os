@@ -262,7 +262,11 @@ class OutsideAppVoiceSessionService : Service() {
                 setState(OutsideAppVoiceState.LISTENING)
             }
             ACTION_TAKE_CAPTURE -> {
-                if (!sessionActive) sessionActive = true
+                if (!sessionActive) {
+                    DaemonLog.add("outside_app_voice: ignored capture handoff for inactive session")
+                    stopSelf(startId)
+                    return START_NOT_STICKY
+                }
                 ownsVoiceCapture = true
                 if (state == OutsideAppVoiceState.LISTENING || state == OutsideAppVoiceState.APPROVAL) {
                     resumeWakeCapture()
