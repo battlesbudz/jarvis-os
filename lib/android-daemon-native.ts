@@ -60,6 +60,14 @@ export type AndroidNativeSpeechStatus = {
   listening?: boolean;
   modelDownloadComplete?: boolean;
   modelDownloadScheduled?: boolean;
+  wearableAudioSupported?: boolean;
+  wearableAudioAvailable?: boolean;
+  wearableAudioActive?: boolean;
+  wearableAudioStatus?: "idle" | "not_connected" | "available" | "requesting" | "active" | "failed" | "unsupported";
+  wearableAudioDeviceName?: string | null;
+  wearableAudioDeviceType?: string | null;
+  wearableAudioMessage?: string;
+  wearableAudioLastError?: string | null;
 };
 
 export type AndroidNativeSpeechRecognitionEvent = {
@@ -74,6 +82,8 @@ export type AndroidNativeSpeechRecognitionEvent = {
   locale?: string;
   rmsDb?: number;
   completedPercent?: number;
+  wearableAudioActive?: boolean;
+  wearableAudioDeviceName?: string | null;
 };
 
 export type AndroidNativeSpeechRecognitionOptions = {
@@ -106,6 +116,7 @@ const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
       openAssistantSettings(): Promise<void>;
       refreshAssistantStatus(): Promise<AndroidDaemonStatus>;
       startOutsideAppVoiceSession?(): Promise<AndroidDaemonStatus>;
+      handoffOutsideAppVoiceCapture?(): Promise<AndroidDaemonStatus>;
       pauseOutsideAppVoiceSession?(): Promise<AndroidDaemonStatus>;
       resumeOutsideAppVoiceSession?(): Promise<AndroidDaemonStatus>;
       endOutsideAppVoiceSession?(): Promise<AndroidDaemonStatus>;
@@ -181,6 +192,13 @@ export async function startAndroidOutsideAppVoiceSession(): Promise<AndroidDaemo
     return null;
   }
   return NativeJarvisDaemon.startOutsideAppVoiceSession();
+}
+
+export async function handoffAndroidOutsideAppVoiceCapture(): Promise<AndroidDaemonStatus | null> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.handoffOutsideAppVoiceCapture) {
+    return null;
+  }
+  return NativeJarvisDaemon.handoffOutsideAppVoiceCapture();
 }
 
 export async function endAndroidOutsideAppVoiceSession(): Promise<AndroidDaemonStatus | null> {
