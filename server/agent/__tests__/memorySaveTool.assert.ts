@@ -135,6 +135,14 @@ assert.ok(
 );
 
 assert.ok(
+  /db\.transaction\(async \(tx\)/.test(memorySearchSource) &&
+    /supersededResult[\s\S]*plan\.supersedeMemoryIds\.length/.test(memorySearchSource) &&
+    /throw new MemoryCorrectionConflictError/.test(memorySearchSource) &&
+    /err instanceof MemoryCorrectionConflictError/.test(memorySearchSource),
+  "fresh active corrections should insert and supersede atomically or report a conflict",
+);
+
+assert.ok(
   /refreshApprovedMemoryDerivedContext/.test(profileMemoryRoutesSource) &&
     /projectApprovedMemories\(userId,\s*\{[\s\S]*memoryIds/.test(profileMemoryRoutesSource) &&
     /JARVIS_BRAIN_PROJECTION === "1"/.test(profileMemoryRoutesSource) &&

@@ -63,6 +63,8 @@ interface MemorySaveDeps {
   projectApprovedMemories: (userId: string, options?: number | { limit?: number; memoryIds?: string[] }) => Promise<unknown>;
 }
 
+class MemoryCorrectionConflictError extends Error {}
+
 function normalizeForDedup(text: string): string {
   return text.toLowerCase().replace(/\s+/g, " ").trim();
 }
@@ -317,7 +319,8 @@ async function executeMemorySave(
       console.warn("[MemorySave] embedding failed; saving without embedding:", err);
     }
 
-    const [inserted] = await db.insert(userMemories).values({
+    const [inserted] = await db.transaction(async (tx) => {
+      const insertedRows = await tx.insert(userMemories).values({
       userId: ctx.userId,
       content: plan.record.content,
       category: plan.record.category,
@@ -335,6 +338,23 @@ async function executeMemorySave(
       sensitivity: plan.record.sensitivity,
       provenance: plan.record.provenance,
     }).onConflictDoNothing().returning({ id: userMemories.id });
+      const insertedRow = insertedRows[0];
+      if (insertedRow && !plan.record.pendingReview && plan.supersedeMemoryIds.length > 0) {
+        const supersededResult = await tx.execute<{ id: string }>(sql`
+          UPDATE user_memories
+          SET review_status = 'superseded',
+              corrected_by_memory_id = ${insertedRow.id}
+          WHERE user_id = ${ctx.userId}
+            AND id = ANY(${plan.supersedeMemoryIds}::varchar[])
+            AND review_status IN ('active', 'kept', 'edited')
+          RETURNING id
+        `);
+        if ((supersededResult.rows ?? []).length !== plan.supersedeMemoryIds.length) {
+          throw new MemoryCorrectionConflictError();
+        }
+      }
+      return insertedRows;
+    });
 
     if (!inserted && plan.record.pendingReview && plan.record.supersedesMemoryId) {
       const existingPendingResult = await db.execute<{ id: string; content: string; review_status: string }>(sql`
@@ -385,9 +405,6 @@ async function executeMemorySave(
     );
 
     if (!plan.record.pendingReview) {
-      if (inserted?.id && plan.supersedeMemoryIds.length > 0) {
-        await defaultMemoryWriteDeps.markMemoriesSuperseded(ctx.userId, plan.supersedeMemoryIds, inserted.id);
-      }
       deps.markSoulStale(ctx.userId).catch(() => {});
       if (process.env.JARVIS_BRAIN_PROJECTION === "1") {
         deps.projectApprovedMemories(ctx.userId, {
@@ -414,6 +431,13 @@ async function executeMemorySave(
       },
     };
   } catch (err) {
+    if (err instanceof MemoryCorrectionConflictError) {
+      return {
+        ok: false,
+        content: "The memory being corrected changed before the correction could be applied. Search memory again and retry.",
+        label: "Memory correction conflict",
+      };
+    }
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, content: `Memory save failed: ${msg}`, label: "Memory save error" };
   }

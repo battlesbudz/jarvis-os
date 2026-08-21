@@ -457,6 +457,8 @@ for (const [query, label] of [
   ["What do you recall about Sarah?", "direct recalled-person lookup"],
   ["Do you recall anything about Sarah?", "indefinite recalled-person lookup"],
   ["Can you recall Sarah?", "named recall lookup"],
+  ["Can you recall Sarah's birthday?", "named recall property lookup"],
+  ["Can you recall Sarah from accounting?", "named recall relationship lookup"],
   ["What personal preferences do you have saved for me?", "saved personal-preference lookup"],
   ["Show me the preferences I saved", "user-saved preference lookup"],
   ["What are my saved preferences?", "possessive saved-preference lookup"],

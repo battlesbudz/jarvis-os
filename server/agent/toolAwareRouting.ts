@@ -127,7 +127,136 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?remember\b(?!\s+(?:(?:not|never)\s+)?to\b)/i,
       new RegExp(String.raw`\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?recall\b(?!\s+(?:(?:not|never)\s+)?to\b)(?=[^.!?\n]{1,120}${RECALL_PERSONAL_CUE_PATTERN})`, "i"),
       /\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?recall\b(?!\s+(?:(?:not|never)\s+)?to\b)(?=[^.!?\n]{1,120}\b(?:anything|something)\b)/i,
-      new RegExp(String.raw`\b(?:[Dd]o|[Cc]an|[Cc]ould|[Ww]ill|[Ww]ould)\s+[Yy]ou\s+(?:[Pp]lease\s+)?[Rr]ecall\s+${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}\s*\??\s*$`),
+      new RegExp(String.raw`\b(?:[Dd]o|[Cc]an|[Cc]ould|[Ww]ill|[Ww]ould)\s+[Yy]ou\s+(?:[Pp]lease\s+)?[Rr]ecall\s+${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}(?:['\u2019]s\s+(?:[Bb]irthday|[Aa]ddress|[Ee]mail|[Pp]hone(?:\s+[Nn]umber)?|[Jj]ob|[Ss]chedule|[Pp]reference|[Ff]avorite)|\s+from\s+(?:accounting|work|school))?\s*\??\s*import type { ToolGroup } from "./tools/index";
+import {
+  classifyActionOntology,
+  isConversationInspectionQuestion,
+  type ActionActor,
+  type ActionType,
+} from "./actionOntology";
+import { resolveToolsForAction } from "./toolResolver";
+
+export type ToolAwareIntent =
+  | "weather"
+  | "calendar"
+  | "email"
+  | "reminder"
+  | "memory"
+  | "research"
+  | "browser"
+  | "github"
+  | "railway"
+  | "project"
+  | "code"
+  | "diagnostics";
+
+export interface ToolAwareRoutePlan {
+  intents: ToolAwareIntent[];
+  capabilityIds: string[];
+  toolGroups: ToolGroup[];
+  priorityToolNames: string[];
+  blockedToolNames: string[];
+  guidance: string;
+  shouldPreferTool: boolean;
+  actionType: ActionType;
+  actor: ActionActor;
+  approvalRequired: boolean;
+  actionReason: string;
+}
+
+interface ToolAwareRule {
+  intent: ToolAwareIntent;
+  patterns: RegExp[];
+  capabilityIds: string[];
+  toolGroups: ToolGroup[];
+  priorityToolNames: string[];
+  guidance: string;
+}
+
+const PUBLIC_RESEARCH_SUBJECT_PATTERN = String.raw`(?:the\s+)?(?:[$][A-Za-z]{1,8}|s&p\s*500|nasdaq(?:\s+composite)?|dow(?:\s+jones)?(?:\s+industrial\s+average)?|russell\s*2000|tsla|aapl|nvda|msft|amzn|meta|googl?|nflx|spy|qqq|spx|btc(?:\/usd)?|eth(?:\/usd)?|sol|xrp|doge|ada|openai|anthropic|nvidia|tesla|microsoft|apple|amazon|google|netflix|nintendo(?:\s+switch)?|boeing|spacex|disney|trump|ukraine|russia|israel|iran|china|congress|senate|supreme\s+court|white\s+house|fed|federal\s+reserve|lakers|warriors|yankees|dodgers|chiefs|eagles|presidents?|ceos?|cfos?|ctos?|coos?|chief\s+executives?|chief\s+executive\s+officers?|founders?|owners?|leaders?|mayors?|governors?|senators?|representatives?|directors?|chairs?|chairmen|chairwomen|chairpersons?|heads?|ministers?|secretar(?:y|ies)|generals?)`;
+const GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN = String.raw`(?!(?:[Ii]|[Mm]e|[Yy]ou|[Ww]e|[Uu]s|[Tt]hey|[Tt]hem|[Hh]e|[Ss]he|[Ii]t|[Mm]y|[Oo]ur|[Yy]our|[Tt]heir|[Mm]om|[Mm]um|[Dd]ad|[Mm]other|[Ff]ather|[Bb]rother|[Ss]ister|[Ss]on|[Dd]aughter|[Hh]usband|[Ww]ife|[Pp]artner|[Ff]riend)\b)(?:[Tt]he\s+)?(?:[$A-Z][A-Za-z0-9&.'\u2019/-]*(?:\s+[A-Z][A-Za-z0-9&.'\u2019/-]*){0,5})`;
+const PUBLIC_OPEN_STATUS_PLACE_PATTERN = String.raw`(?:starbucks|walmart|mcdonald['\u2019]?s|post\s+offices?|banks?|stores?|shops?|restaurants?|libraries|pharmacies|malls?|courthouses?|dmv|government\s+offices?)`;
+const PERSONAL_TODAY_SUBJECT_PATTERN = String.raw`(?:[Pp]lans?|[Ss]chedule|[Cc]alendar|[Aa]genda|[Tt]asks?|[Tt]o-?dos?|[Rr]eminders?|[Aa]ppointments?|[Mm]eetings?|[Ww]ork|[Ss]chool|[Hh]ome|[Ll]ife|[Rr]outines?|[Gg]oals?|[Cc]ommitments?|[Pp]rojects?|[Dd]inner|[Ll]unch|[Bb]reakfast|[Mm]eals?|[Nn]otes?|[Mm]essages?|[Ee]mails?|[Ii]nbox|[Rr]epl(?:y|ies)|[Rr]esponses?|[Rr]eports?|[Dd]rafts?|[Dd]ocuments?|[Cc]onversations?|[Ww]eather|[Dd]ate|[Tt]ime|[Ss]tats?)`;
+const PRIVATE_SPORTS_SUBJECT_PATTERN = String.raw`(?:i|me|you|we|us|he|him|she|her|it|they|them|this|that|these|those|my|mine|our|ours|your|yours|his|hers|its|their|theirs|someone|somebody|anyone|anybody|everyone|everybody|nobody|none|(?:the\s+)?(?:mom|mum|dad|mother|father|brother|sister|son|daughter|kids?|child|children|husband|wife|partner|friends?|team|group|club))`;
+const PRIVATE_STATUS_SHORTHAND_SUBJECT_PATTERN = String.raw`(?:is|are|am|was|were|will|would|can|could|should|do|does|did|leave|keep|make|check|tell|be|${PRIVATE_SPORTS_SUBJECT_PATTERN}|${PERSONAL_TODAY_SUBJECT_PATTERN}|(?:the\s+)?(?:garage|door|window|office|home|house|room|lights?|appliances?|car|vehicle))`;
+const PRIVATE_LOCAL_STATUS_SUBJECT_PATTERN = String.raw`(?:[Tt]he\s+)?(?:[$\w.\/&,'\u2019.-]+\s+){0,5}(?:[Gg]arage|[Dd]oors?|[Ww]indows?|[Oo]ffice|[Hh]ome|[Hh]ouse|[Rr]ooms?|[Ll]ights?|[Aa]ppliances?|[Cc]ars?|[Vv]ehicles?)`;
+const PRIVATE_TIME_LOCATION_SUBJECT_PATTERN = String.raw`(?:i|me|you|we|us|they|them|he|him|she|her|it|this|that|my|our|your|their|here|there|now|right\s+now|today|tonight|please|home|work|office|device|phone|watch|computer|system|app)`;
+const PUBLIC_SHOWTIME_PATTERN = String.raw`(?:movie\s+showtimes?|showtimes?|movie\s+times?|screening\s+times?)`;
+const PUBLIC_EVENT_CATEGORY_PATTERN = String.raw`(?:concerts?|shows?|performances?|festivals?|exhibitions?|exhibits?|plays?|musicals?|comedy\s+shows?|open\s+mics?|meetups?|fairs?|markets?|parades?|screenings?|movies?|sports\s+events?|tournaments?|classes?|workshops?|${PUBLIC_SHOWTIME_PATTERN})`;
+const PUBLIC_INCIDENT_NOUN_PATTERN = String.raw`(?:cases?|outages?|incidents?|alerts?|warnings?|closures?|restrictions?|advisories?)`;
+const BARE_LIVE_DATA_NOUN_PATTERN = String.raw`(?:scores?|prices?|polls?|standings?|rankings?|odds|rates?|results?|games?|matches?|fixtures?|traffic|air\s+quality|delays?|cancellations?|cancelations?|availability|population|counts?|totals?|${PUBLIC_SHOWTIME_PATTERN}|${PUBLIC_INCIDENT_NOUN_PATTERN})`;
+const FIAT_CURRENCY_CODE_PATTERN = String.raw`(?:usd|eur|gbp|jpy|cad|aud|chf|cny|hkd|nzd|sek|nok|dkk|inr|brl|mxn|zar|sgd|krw|pln|try)`;
+const FIAT_CURRENCY_PAIR_PATTERN = String.raw`${FIAT_CURRENCY_CODE_PATTERN}\s*[\/.-]\s*${FIAT_CURRENCY_CODE_PATTERN}`;
+const PUBLIC_MATCHUP_SUBJECT_PATTERN = String.raw`(?:[$\w.\/&,'\u2019.-]+\s+){0,4}[$\w.\/&,'\u2019.-]+`;
+const PERSONAL_MEMORY_CONTENT_PATTERN = String.raw`(?:\bthat\s+(?:i|we)\b|\b(?:the\s+)?fact\s+that\b|\bwhat\s+(?:i|we)\s+(?:said|told\s+you)\b|\b(?:this|that|our)\s+(?:conversation|chat|exchange|discussion)\b|\b(?:i|we)\s+(?:am|are|was|were|live|lived|work|worked|prefer|preferred|like|liked|love|loved|hate|hated|want|wanted|need|needed|have|had|own|owned|use|used|choose|chose)\b|\b(?:i['\u2019](?:m|ve)|we['\u2019](?:re|ve))\b|\b(?:is|are|was|were)\s+(?:my|our)\s+(?:name|nickname|friend|partner|spouse|husband|wife|mother|father|mom|dad|parent|brother|sister|son|daughter|child|boss|coworker|colleague|business|company|job|work|school|home|address|birthday|preference|favorite)\b|\b(?:my|our)(?:\s+(?:(?:wife|husband|partner|spouse|mother|father|mom|dad|parent|brother|sister|son|daughter|child|children|kid|grandchild|grandchildren|grandkid|friend|boss|coworker|colleague|aunt|uncle|cousin|niece|nephew|grandmother|grandfather|grandma|grandpa)['\u2019]s|(?:wives|husbands|partners|spouses|mothers|fathers|moms|dads|parents|brothers|sisters|siblings|sons|daughters|kids|friends|bosses|coworkers|colleagues|aunts|uncles|cousins|nieces|nephews|grandmothers|grandfathers|grandmas|grandpas|grandparents|grandkids)['\u2019]))?\s+(?:names?|nicknames?|birthdays?|address(?:es)?|emails?|phone(?:\s+numbers?)?|allerg(?:y|ies)|medications?|preferences?|favorites?|jobs?|work|schools?|schedules?|routines?|goals?|projects?)\b)`;
+const RECALL_PERSONAL_CUE_PATTERN = String.raw`(?:${PERSONAL_MEMORY_CONTENT_PATTERN}|\b(?:i|we|me|us|my|our|mine|ours)\b)`;
+const TECHNICAL_MEMORY_CONTINUATION_PATTERN = String.raw`(?:address(?:es)?|allocation|allocator|buffer|cache|capacity|card|cell|chip|configuration|consumption|footprint|heap|layout|leaks?|limit|location|management|map|mapping|module|page|pool|pressure|profile|region|register|setting|simulator|size|slot|storage|usage)`;
+const MEMORY_REFERENCE_MODIFIER_PATTERN = String.raw`(?:specific|exact|particular|individual|old|new|existing|saved|stored|incorrect|wrong|inaccurate|outdated|previous|prior|original|current)`;
+const MEMORY_REFERENCE_MODIFIERS_PATTERN = String.raw`(?:${MEMORY_REFERENCE_MODIFIER_PATTERN}(?:\s*,\s*|\s+)){0,4}`;
+const REFERENTIAL_MEMORY_TARGET_PATTERN = String.raw`(?:the|that|this|these|those|my|your)\s+${MEMORY_REFERENCE_MODIFIERS_PATTERN}memor(?:y|ies)\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)`;
+const PERSONAL_MEMORY_CORRECTION_TARGET_PATTERN = String.raw`(?:${REFERENTIAL_MEMORY_TARGET_PATTERN}|one\s+of\s+(?:the|these|those|my|your|our)\s+${MEMORY_REFERENCE_MODIFIERS_PATTERN}memories\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)|(?:a|an)\s+${MEMORY_REFERENCE_MODIFIERS_PATTERN}memor(?:y|ies)\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)\s+(?:about|of|for)\s+(?:me|my|our)\b)`;
+const MEMORY_CORRECTION_PREDICATE_PATTERN = String.raw`(?:wrong|incorrect|inaccurate|outdated|false|mistaken|not\s+(?:quite\s+)?(?:right|correct|accurate|true))`;
+const MEMORY_CORRECTION_QUALIFIER_PATTERN = String.raw`(?:\s+(?:about|of|for)\s+[^.!?\n]{1,60}?)?`;
+
+const TOOL_AWARE_RULES: ToolAwareRule[] = [
+  {
+    intent: "weather",
+    patterns: [
+      /\b(weather|forecast|temperature|temp|rain|snow|storm|wind|humidity|umbrella)\b/i,
+      /\b(is it going to|will it)\s+(rain|snow|storm)\b/i,
+    ],
+    capabilityIds: ["research"],
+    toolGroups: ["research"],
+    priorityToolNames: ["weather_lookup"],
+    guidance: "For weather or forecast requests, call weather_lookup before answering. Ask for city/state only if the location is missing.",
+  },
+  {
+    intent: "calendar",
+    patterns: [
+      /\b(calendar|meetings?|events?|appointments?|schedule)\b/i,
+      /\b(am i|are we)\s+free\b/i,
+      /\b(block|book|schedule|reschedule|cancel)\s+.*\b(meeting|event|appointment|call|calendar)\b/i,
+    ],
+    capabilityIds: ["calendar"],
+    toolGroups: ["calendar"],
+    priorityToolNames: ["connected_accounts_list", "connected_accounts_search_tools", "connected_accounts_get_tool_schema", "connected_accounts_execute"],
+    guidance: "For calendar questions or changes, use Composio connected account tools only: list connected accounts, search tools, read the selected tool schema, then execute with approval when needed. Do not use legacy Google/Microsoft calendar tools in this route.",
+  },
+  {
+    intent: "email",
+    patterns: [
+      /\b(gmail|email|emails|inbox|mail|unread)\b/i,
+      /\b(reply|respond|draft|compose|send|check|read|review|summari[sz]e)\s+.*\b(email|message|gmail)\b/i,
+    ],
+    capabilityIds: ["email"],
+    toolGroups: ["email"],
+    priorityToolNames: ["connected_accounts_list", "connected_accounts_search_tools", "connected_accounts_get_tool_schema", "connected_accounts_execute"],
+    guidance: "For Gmail, Outlook, inbox, or email action requests, use Composio connected account tools only: list connected accounts, search tools, read the selected tool schema, then execute with approval when needed. Do not use legacy Gmail, Outlook, fetch_emails, create_gmail_draft, or send_email tools in this route.",
+  },
+  {
+    intent: "reminder",
+    patterns: [
+      /\b(remind\s+me|set\s+(a\s+)?reminder|reminder)\b/i,
+      /\b(do|tell|ping|notify)\s+me\b.{0,80}\b(in|at|on|tomorrow|today|tonight|morning|afternoon|evening|hour|minute|week)\b/i,
+      /\b(call|text|email|message|follow\s+up)\b.{0,80}\b(in|at|on|tomorrow|today|tonight|morning|afternoon|evening|hour|minute|week)\b/i,
+    ],
+    capabilityIds: ["coaching"],
+    toolGroups: ["coaching", "scheduling"],
+    priorityToolNames: ["schedule_jarvis_task"],
+    guidance: "For reminders, personal to-dos, habits, or future follow-ups the user must do themselves, call schedule_jarvis_task as a non-executable user_task when the user gives a clear time or recurrence. Do not schedule physical or user-owned work as a Jarvis autonomous action. For future work Jarvis can actually perform with tools, use explicit cron/job tooling instead.",
+  },
+  {
+    intent: "memory",
+    patterns: [
+      /\b(what do you know about me|what have i told you|living context)\b/i,
+      /\b(?:what|which)\s+(?:personal\s+)?memories?\s+(?:do|can|have|are)\s+you\b/i,
+      new RegExp(String.raw`\b(?:(?:do|did)\s+you\s+have|have\s+you\s+got)\s+(?:(?:any|a|some)\s+)?(?:(?:saved|stored|personal)\s+)?memor(?:y|ies)\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)(?:\s+(?:about|of|for)\b)?`, "i"),
+      /\b(?:tell|show)\s+me\s+what\s+you\s+(?:remember|recall)\b/i,
+      /\bwhat\s+do\s+you\s+(?:remember|recall)\s+(?:about|of)\b/i,
+      /\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?remember\b(?!\s+(?:(?:not|never)\s+)?to\b)/i,
+      new RegExp(String.raw`\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?recall\b(?!\s+(?:(?:not|never)\s+)?to\b)(?=[^.!?\n]{1,120}${RECALL_PERSONAL_CUE_PATTERN})`, "i"),
+      /\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?recall\b(?!\s+(?:(?:not|never)\s+)?to\b)(?=[^.!?\n]{1,120}\b(?:anything|something)\b)/i,
+),
       /\b(?:remember|recall)\s+(?:my|what i|what i've|what i have)\b/i,
       /\b(?:my|our)\s+(?:(?:saved|stored)\s+)?(?:memory|memories|preferences?)\b/i,
       /\bwhat\s+(?:personal\s+)?preferences?\s+do\s+you\s+have\s+(?:saved|stored)\s+for\s+me\b/i,
