@@ -126,11 +126,11 @@ assert.ok(
 
 assert.ok(
   /const inserted = await db\.transaction/.test(memorySearchSource) &&
+    /SET review_status = 'discarded'[\s\S]*supersedes_memory_id = ANY\(\$\{plan\.supersedeMemoryIds\}::varchar\[\]\)[\s\S]*pending_review = TRUE[\s\S]*review_status = 'pending'/.test(memorySearchSource) &&
     /UPDATE user_memories[\s\S]*corrected_by_memory_id = \$\{created\.id\}/.test(memorySearchSource) &&
     /superseded\.rows[\s\S]*plan\.supersedeMemoryIds\.length[\s\S]*throw new MemoryCorrectionConflictError/.test(memorySearchSource) &&
-    /supersedes_memory_id = ANY\(\$\{plan\.supersedeMemoryIds\}::varchar\[\]\)[\s\S]*pending_review = TRUE[\s\S]*review_status = 'pending'/.test(memorySearchSource) &&
     /err instanceof MemoryCorrectionConflictError/.test(memorySearchSource),
-  "fresh immediate corrections should atomically supersede the source, retire pending proposals, or report a conflict",
+  "fresh immediate corrections should retire pending proposals, insert, and supersede atomically or report a conflict",
 );
 
 assert.ok(

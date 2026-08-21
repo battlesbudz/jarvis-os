@@ -340,6 +340,14 @@ async function executeMemorySave(
       }).onConflictDoNothing().returning({ id: userMemories.id });
 
       if (created && !plan.record.pendingReview && plan.supersedeMemoryIds.length > 0) {
+        await tx.execute(sql`
+          UPDATE user_memories
+          SET review_status = 'discarded'
+          WHERE user_id = ${ctx.userId}
+            AND supersedes_memory_id = ANY(${plan.supersedeMemoryIds}::varchar[])
+            AND pending_review = TRUE
+            AND review_status = 'pending'
+        `);
         const superseded = await tx.execute<{ id: string }>(sql`
           UPDATE user_memories
           SET review_status = 'superseded',
@@ -353,14 +361,6 @@ async function executeMemorySave(
         if ((superseded.rows ?? []).length !== plan.supersedeMemoryIds.length) {
           throw new MemoryCorrectionConflictError();
         }
-        await tx.execute(sql`
-          UPDATE user_memories
-          SET review_status = 'discarded'
-          WHERE user_id = ${ctx.userId}
-            AND supersedes_memory_id = ANY(${plan.supersedeMemoryIds}::varchar[])
-            AND pending_review = TRUE
-            AND review_status = 'pending'
-        `);
       }
 
       return created;
