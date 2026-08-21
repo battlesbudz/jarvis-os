@@ -334,9 +334,44 @@ async function executeMemorySave(
       supersedesMemoryId: plan.record.supersedesMemoryId,
       sensitivity: plan.record.sensitivity,
       provenance: plan.record.provenance,
-    }).returning({ id: userMemories.id });
+    }).onConflictDoNothing().returning({ id: userMemories.id });
 
-    if (embedding && inserted?.id) {
+    if (!inserted && plan.record.pendingReview && plan.record.supersedesMemoryId) {
+      const existingPendingResult = await db.execute<{ id: string; review_status: string }>(sql`
+        SELECT id, review_status
+        FROM user_memories
+        WHERE user_id = ${ctx.userId}
+          AND supersedes_memory_id = ${plan.record.supersedesMemoryId}
+          AND pending_review = TRUE
+          AND review_status = 'pending'
+        LIMIT 1
+      `);
+      const existingPending = existingPendingResult.rows?.[0];
+      if (existingPending) {
+        return {
+          ok: true,
+          content: `A correction for this memory is already awaiting review.`,
+          label: "Memory correction awaiting review",
+          detail: existingPending.id,
+          metadata: {
+            memoryWriteStatus: "pending_review",
+            reviewStatus: existingPending.review_status,
+            pendingReview: true,
+            supersedesMemoryId: plan.record.supersedesMemoryId,
+          },
+        };
+      }
+    }
+
+    if (!inserted) {
+      return {
+        ok: false,
+        content: "The memory changed before it could be saved. Retry the request.",
+        label: "Memory save conflict",
+      };
+    }
+
+    if (embedding && inserted.id) {
       deps.upsertMemoryEmbedding(inserted.id, embedding).catch((err) =>
         console.warn("[MemorySave] embedding vector write failed:", err),
       );

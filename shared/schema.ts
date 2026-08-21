@@ -266,6 +266,9 @@ export const userMemories = pgTable("user_memories", {
 }, (table) => [
   index("user_memories_user_review_idx").on(table.userId, table.reviewStatus),
   index("user_memories_user_sensitivity_idx").on(table.userId, table.sensitivity),
+  uniqueIndex("user_memories_pending_correction_source_uidx")
+    .on(table.userId, table.supersedesMemoryId)
+    .where(sql`${table.pendingReview} = TRUE AND ${table.reviewStatus} = 'pending' AND ${table.supersedesMemoryId} IS NOT NULL`),
 ]);
 
 // Biomimetic memory tiers — mirrors human memory architecture.

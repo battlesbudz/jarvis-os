@@ -19,6 +19,8 @@ const profileMemoryRoutesSource = fs.readFileSync(
   path.join(root, "server/routes/profileMemoryRoutes.ts"),
   "utf8",
 );
+const databaseSource = fs.readFileSync(path.join(root, "server/db.ts"), "utf8");
+const schemaSource = fs.readFileSync(path.join(root, "shared/schema.ts"), "utf8");
 
 assert.ok(
   /memorySaveTool/.test(memoryCapabilitySource),
@@ -112,6 +114,20 @@ assert.ok(
     /memoryWriteStatus: "pending_review"/.test(memorySearchSource) &&
     /pendingReview: true/.test(memorySearchSource),
   "pending correction retries should preserve the review item and report that it is awaiting approval",
+);
+
+assert.ok(
+  /onConflictDoNothing\\(\\)/.test(memorySearchSource) &&
+    /existingPendingResult/.test(memorySearchSource) &&
+    /A correction for this memory is already awaiting review/.test(memorySearchSource),
+  "concurrent pending corrections should reuse the correction enforced by the database",
+);
+
+assert.ok(
+  /user_memories_pending_correction_source_uidx/.test(databaseSource) &&
+    /ranked_pending_corrections/.test(databaseSource) &&
+    /user_memories_pending_correction_source_uidx/.test(schemaSource),
+  "pending correction uniqueness should be enforced while safely cleaning pre-fix duplicates",
 );
 
 assert.ok(
