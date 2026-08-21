@@ -90,6 +90,11 @@ assert.ok(
 );
 
 assert.ok(
+  /WHEN supersedes_memory_id = \$\{supersedesMemoryId \|\| null\} THEN 0/.test(memorySearchSource),
+  "duplicate lookup should prioritize a pending correction for the requested source memory",
+);
+
+assert.ok(
   /refreshApprovedMemoryDerivedContext/.test(profileMemoryRoutesSource) &&
     /projectApprovedMemories\(userId,\s*\{[\s\S]*memoryIds/.test(profileMemoryRoutesSource) &&
     /JARVIS_BRAIN_PROJECTION === "1"/.test(profileMemoryRoutesSource) &&

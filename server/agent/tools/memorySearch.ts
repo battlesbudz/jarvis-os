@@ -169,9 +169,10 @@ async function executeMemorySave(
         AND (expires_at IS NULL OR expires_at >= NOW())
         ${duplicateLifecycleFilter}
       ORDER BY CASE
+        WHEN supersedes_memory_id = ${supersedesMemoryId || null} THEN 0
         WHEN (pending_review = FALSE OR pending_review IS NULL)
-          AND review_status IN ('active', 'kept', 'edited') THEN 0
-        ELSE 1
+          AND review_status IN ('active', 'kept', 'edited') THEN 1
+        ELSE 2
       END
       LIMIT 1
     `);
