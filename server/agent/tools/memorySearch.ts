@@ -156,23 +156,75 @@ async function executeMemorySave(
         AND (pending_review = FALSE OR pending_review IS NULL)
         AND review_status IN ('active', 'kept', 'edited')
       `;
-    const duplicateResult = await db.execute<{ id: string }>(sql`
-      SELECT id
+    const duplicateResult = await db.execute<{
+      id: string;
+      pending_review: boolean;
+      review_status: string;
+    }>(sql`
+      SELECT id, pending_review, review_status
       FROM user_memories
       WHERE user_id = ${ctx.userId}
         AND LOWER(REGEXP_REPLACE(TRIM(content), '\\s+', ' ', 'g')) = ${normalized}
         AND (expires_at IS NULL OR expires_at >= NOW())
         ${duplicateLifecycleFilter}
+      ORDER BY CASE
+        WHEN (pending_review = FALSE OR pending_review IS NULL)
+          AND review_status IN ('active', 'kept', 'edited') THEN 0
+        ELSE 1
+      END
       LIMIT 1
     `);
-    const duplicateId = duplicateResult.rows?.[0]?.id;
+    const duplicate = duplicateResult.rows?.[0];
+    const duplicateId = duplicate?.id;
     if (duplicateId) {
-      return {
-        ok: true,
-        content: `Memory already saved: ${content}`,
-        label: "Memory save: duplicate",
-        detail: duplicateId,
-      };
+      const duplicateIsApproved = !duplicate.pending_review &&
+        ["active", "kept", "edited"].includes(duplicate.review_status);
+      const correctionTargets = plan.supersedeMemoryIds.filter((id) => id !== duplicateId);
+      if (duplicateIsApproved && correctionTargets.length > 0) {
+        const supersededCount = await defaultMemoryWriteDeps.markMemoriesSuperseded(
+          ctx.userId,
+          correctionTargets,
+          duplicateId,
+        );
+        if (supersededCount !== correctionTargets.length) {
+          return {
+            ok: false,
+            content: "The memory being corrected changed before the correction could be applied. Search memory again and retry.",
+            label: "Memory correction conflict",
+          };
+        }
+        deps.markSoulStale(ctx.userId).catch(() => {});
+        if (process.env.JARVIS_BRAIN_PROJECTION === "1") {
+          deps.projectApprovedMemories(ctx.userId, {
+            memoryIds: [duplicateId, ...correctionTargets],
+          }).catch(() => {});
+        }
+        return {
+          ok: true,
+          content: `Memory corrected using the existing saved fact: ${content}`,
+          label: "Memory correction applied",
+          detail: duplicateId,
+          metadata: {
+            memoryWriteStatus: "duplicate_correction",
+            reviewStatus: duplicate.review_status,
+            pendingReview: false,
+            supersedesMemoryId: plan.record.supersedesMemoryId,
+            supersededMemoryIds: correctionTargets,
+          },
+        };
+      }
+
+      const correctionNeedsReview = plan.record.pendingReview &&
+        plan.supersedeMemoryIds.length > 0 &&
+        !plan.supersedeMemoryIds.includes(duplicateId);
+      if (!correctionNeedsReview) {
+        return {
+          ok: true,
+          content: `Memory already saved: ${content}`,
+          label: "Memory save: duplicate",
+          detail: duplicateId,
+        };
+      }
     }
 
     let embedding: number[] | null = null;

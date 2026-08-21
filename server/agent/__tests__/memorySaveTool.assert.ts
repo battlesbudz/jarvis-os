@@ -75,6 +75,14 @@ assert.ok(
 );
 
 assert.ok(
+  /duplicateIsApproved/.test(memorySearchSource) &&
+    /correctionTargets = plan\.supersedeMemoryIds\.filter/.test(memorySearchSource) &&
+    /markMemoriesSuperseded\([\s\S]*ctx\.userId,[\s\S]*correctionTargets,[\s\S]*duplicateId/.test(memorySearchSource) &&
+    /supersededMemoryIds: correctionTargets/.test(memorySearchSource),
+  "an approved duplicate should complete the requested supersession instead of leaving the incorrect memory active",
+);
+
+assert.ok(
   /refreshApprovedMemoryDerivedContext/.test(profileMemoryRoutesSource) &&
     /projectApprovedMemories\(userId,\s*\{[\s\S]*memoryIds/.test(profileMemoryRoutesSource) &&
     /JARVIS_BRAIN_PROJECTION === "1"/.test(profileMemoryRoutesSource) &&

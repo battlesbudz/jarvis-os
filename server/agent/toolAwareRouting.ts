@@ -128,6 +128,8 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       new RegExp(String.raw`\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?recall\b(?!\s+(?:(?:not|never)\s+)?to\b)(?=[^.!?\n]{1,120}${RECALL_PERSONAL_CUE_PATTERN})`, "i"),
       /\b(?:remember|recall)\s+(?:my|what i|what i've|what i have)\b/i,
       /\b(?:my|our)\s+(?:memory|memories|preferences?)\b/i,
+      /\bwhat\s+(?:personal\s+)?preferences?\s+do\s+you\s+have\s+(?:saved|stored)\s+for\s+me\b/i,
+      /\b(?:show|list|search|find|read|get)\s+me\s+(?:the\s+)?preferences?\s+(?:i|we)\s+(?:saved|stored)\b/i,
       /\b(?:memory|memories)\s+(?:about|for|of)\s+me\b/i,
       /\b(?:show|list|search|find|read|get)\b.{0,40}\b(?:my|your|saved|personal)\s+memor(?:y|ies)\b/i,
       /^\s*(?:could|would|can|will)\s+you\s+(?:please\s+)?remember\b/i,
