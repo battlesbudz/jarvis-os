@@ -354,7 +354,7 @@ async function deliverCoachText(
   }
 }
 
-async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
+async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string, statusObservationId?: string): Promise<void> {
   const runGuard = createTelegramRunGuard(userId);
   const turnStartedAtMs = Date.now();
 
@@ -567,6 +567,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         onToken,
         onProgressMessage,
         signal: runGuard.signal,
+        statusObservationId,
         observeStatusCheck: true,
       }),
       TELEGRAM_REPLY_TIMEOUT_MS,
@@ -2092,8 +2093,8 @@ async function processUpdate(update: any): Promise<void> {
       }
 
       enqueueTelegramCoachMessageBatch(
-        { userId, chatId, text, imageUrl },
-        (batch) => handleCoachReply(batch.userId, batch.chatId, batch.text, batch.imageUrl),
+        { userId, chatId, text, imageUrl, observationId: String(update.update_id ?? message.message_id ?? "") || undefined },
+        (batch) => handleCoachReply(batch.userId, batch.chatId, batch.text, batch.imageUrl, batch.observationId),
       );
     } catch (err) {
       console.error("Error handling Telegram message:", err);

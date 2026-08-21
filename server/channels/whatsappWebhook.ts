@@ -86,6 +86,7 @@ export function registerWhatsAppWebhook(app: Express): void {
     }
     const from = String(req.body?.From || ""); // e.g. "whatsapp:+1234567890"
     const text = String(req.body?.Body || "").trim();
+    const statusObservationId = String(req.body?.MessageSid || "") || undefined;
     res.type("text/xml").status(200).send("<Response/>"); // ack immediately
 
     if (!from) return;
@@ -115,7 +116,7 @@ export function registerWhatsAppWebhook(app: Express): void {
 
     try {
       const storedSessionId = await getSession(userId, "WhatsApp");
-      const { reply, sdkSessionId } = await runCoachAgent({ userId, userText: text, channelName: "WhatsApp", sdkSessionId: storedSessionId, observeStatusCheck: true });
+      const { reply, sdkSessionId } = await runCoachAgent({ userId, userText: text, channelName: "WhatsApp", sdkSessionId: storedSessionId, statusObservationId, observeStatusCheck: true });
       if (sdkSessionId) {
         setSession(userId, "WhatsApp", sdkSessionId);
       }

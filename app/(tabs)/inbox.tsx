@@ -491,7 +491,8 @@ export default function InboxScreen() {
   }, [isFocused, refetchActiveJobs]);
 
   const baselineVisibleJobIds = useRef(new Set<string>());
-  const representationSequence = useRef(Date.now() * 1000);
+  const representationClientId = useRef(`${Date.now()}-${Math.random()}`);
+  const representationSequence = useRef(0);
   useEffect(() => {
     if (!isFocused) return;
     for (const job of activeJobs) {
@@ -517,6 +518,7 @@ export default function InboxScreen() {
     void apiRequest('POST', '/api/live-actions/baseline/representations', {
       kind: 'agent_job',
       surface: 'inbox',
+      clientId: representationClientId.current,
       sequence: ++representationSequence.current,
       representations: renderedJobs.map((job) => ({ id: job.id, status: job.status })),
     }).catch(() => {});

@@ -36,13 +36,18 @@ assert.equal(isClientSubmittedLiveActionBaselineMetric("duplicate_representation
 const tasksScreen = fs.readFileSync("components/missionControl/TasksScreen.tsx", "utf8");
 assert.match(tasksScreen, /const isFocused = useIsFocused\(\)/);
 assert.match(tasksScreen, /const renderedJobs = isFocused \?/);
+assert.match(tasksScreen, /useEffect, useRef, useState/);
+assert.match(tasksScreen, /clientId: representationClientId\.current/);
 assert.match(tasksScreen, /sequence: \+\+representationSequence\.current/);
 assert.match(tasksScreen, /useEffect\(\(\) => \(\) => \{[\s\S]*?surface: 'mission_control',[\s\S]*?representations: \[\]/);
 const projectsScreen = fs.readFileSync("app/(tabs)/projects.tsx", "utf8");
 assert.match(projectsScreen, /!isFocused \|\| selectedId \? \[\]/);
+assert.match(projectsScreen, /useState, useCallback, useEffect, useRef/);
+assert.match(projectsScreen, /clientId: representationClientId\.current/);
 assert.match(projectsScreen, /sequence: \+\+representationSequence\.current/);
 const inboxScreen = fs.readFileSync("app/(tabs)/inbox.tsx", "utf8");
 assert.match(inboxScreen, /const renderedJobs = isFocused \?/);
+assert.match(inboxScreen, /clientId: representationClientId\.current/);
 assert.match(inboxScreen, /sequence: \+\+representationSequence\.current/);
 const discordManager = fs.readFileSync("server/discord/manager.ts", "utf8");
 assert.equal(discordManager.match(/statusObservationId: message\.id/g)?.length, 2);
@@ -53,6 +58,14 @@ const scheduler = fs.readFileSync("server/scheduler.ts", "utf8");
 assert.doesNotMatch(scheduler, /observeStatusCheck/);
 const slackWebhook = fs.readFileSync("server/channels/slackWebhook.ts", "utf8");
 assert.match(slackWebhook, /arg \? `What's the status of \$\{arg\}\?`/);
+assert.match(slackWebhook, /statusObservationId: String\(body\.event_id/);
+assert.match(slackWebhook, /const statusObservationId = String\(req\.body\.trigger_id/);
+const whatsappWebhook = fs.readFileSync("server/channels/whatsappWebhook.ts", "utf8");
+assert.match(whatsappWebhook, /statusObservationId = String\(req\.body\?\.MessageSid/);
+const telegramRoutes = fs.readFileSync("server/telegramRoutes.ts", "utf8");
+assert.match(telegramRoutes, /observationId: String\(update\.update_id \?\? message\.message_id/);
+const discordSlashCommands = fs.readFileSync("server/discord/slashCommands.ts", "utf8");
+assert.match(discordSlashCommands, /statusObservationId: String\(interaction\.id/);
 
 resetLiveActionBaselinesForTests();
 recordStatusCheckFollowUp({ userId: "surface-aliases", message: "Status update?", surface: "appchat" });
@@ -101,6 +114,7 @@ assert.deepEqual(recordRenderedRepresentationSnapshot({
   userId: "user-a",
   kind: "agent_job",
   surface: "inbox",
+  clientId: "client-a",
   identities: ["job-1", "job-1", "job-2"],
   sequence: 1,
   nowMs: 1_250,
@@ -109,6 +123,7 @@ assert.deepEqual(recordRenderedRepresentationSnapshot({
   userId: "user-a",
   kind: "agent_job",
   surface: "mission_control",
+  clientId: "client-a",
   identities: ["job-1"],
   sequence: 1,
   nowMs: 1_300,
@@ -117,6 +132,7 @@ assert.deepEqual(recordRenderedRepresentationSnapshot({
   userId: "stale-snapshot-user",
   kind: "agent_job",
   surface: "inbox",
+  clientId: "client-a",
   identities: [],
   sequence: 2,
   nowMs: 1_400,
@@ -125,15 +141,26 @@ assert.equal(recordRenderedRepresentationSnapshot({
   userId: "stale-snapshot-user",
   kind: "agent_job",
   surface: "inbox",
+  clientId: "client-a",
   identities: ["job-stale"],
   sequence: 1,
   nowMs: 1_500,
 }), null);
 assert.equal(getLiveActionBaselineReport("stale-snapshot-user").metrics["rendered_representation_count:inbox"].sum, 0);
+assert.deepEqual(recordRenderedRepresentationSnapshot({
+  userId: "stale-snapshot-user",
+  kind: "agent_job",
+  surface: "inbox",
+  clientId: "client-b",
+  identities: ["job-current"],
+  sequence: 1,
+  nowMs: 1_600,
+}), { duplicateCount: 0, representationCount: 1 });
 assert.deepEqual(observeTerminalStateDrift({
   userId: "user-a",
   kind: "project",
   surface: "projects",
+  clientId: "client-a",
   entries: [{ id: "project-1", status: "building" }],
   canonicalStatuses: new Map([["project-1", "complete"]]),
   terminalStatuses: new Set(["complete", "failed"]),
@@ -144,6 +171,7 @@ for (const nowMs of [61_000, 121_000, 181_000, 241_000]) {
     userId: "user-a",
     kind: "project",
     surface: "projects",
+    clientId: "client-a",
     entries: [{ id: "project-1", status: "building" }],
     canonicalStatuses: new Map([["project-1", "complete"]]),
     terminalStatuses: new Set(["complete", "failed"]),
@@ -155,6 +183,7 @@ assert.deepEqual(observeTerminalStateDrift({
   userId: "user-a",
   kind: "project",
   surface: "projects",
+  clientId: "client-a",
   entries: [{ id: "project-1", status: "building" }],
   canonicalStatuses: new Map([["project-1", "complete"]]),
   terminalStatuses: new Set(["complete", "failed"]),
@@ -164,6 +193,7 @@ assert.deepEqual(observeTerminalStateDrift({
   userId: "user-a",
   kind: "project",
   surface: "projects",
+  clientId: "client-a",
   entries: [{ id: "project-1", status: "complete" }],
   canonicalStatuses: new Map([["project-1", "complete"]]),
   terminalStatuses: new Set(["complete", "failed"]),
@@ -173,6 +203,7 @@ observeTerminalStateDrift({
   userId: "user-b",
   kind: "agent_job",
   surface: "inbox",
+  clientId: "client-a",
   entries: [{ id: "job-gap", status: "running" }],
   canonicalStatuses: new Map([["job-gap", "complete"]]),
   terminalStatuses: new Set(["complete", "delivered", "failed", "cancelled"]),
@@ -182,6 +213,7 @@ assert.deepEqual(observeTerminalStateDrift({
   userId: "user-b",
   kind: "agent_job",
   surface: "inbox",
+  clientId: "client-a",
   entries: [{ id: "job-gap", status: "running" }],
   canonicalStatuses: new Map([["job-gap", "complete"]]),
   terminalStatuses: new Set(["complete", "delivered", "failed", "cancelled"]),

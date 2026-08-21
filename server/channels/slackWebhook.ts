@@ -120,6 +120,7 @@ export function registerSlackWebhook(app: Express): void {
           channelName: "Slack",
           originChannelId: slackDestination,
           sdkSessionId: storedSessionId,
+          statusObservationId: String(body.event_id || ev.client_msg_id || ev.ts || "") || undefined,
           observeStatusCheck: true,
         });
         if (sdkSessionId) {
@@ -152,6 +153,7 @@ export function registerSlackWebhook(app: Express): void {
       const text = String(req.body.text || "").trim();
       const responseUrl = String(req.body.response_url || "");
       const slackSessionChannel = `Slack:${teamId}:slash:${String(req.body.channel_id || "")}`;
+      const statusObservationId = String(req.body.trigger_id || "") || undefined;
 
       const userId = await findUserBySlackId(teamId, slackUserId);
       if (!userId) {
@@ -186,12 +188,12 @@ export function registerSlackWebhook(app: Express): void {
         } else if (subcommand === "brain-dump" || subcommand === "braindump") {
           if (!arg) { await respond("Add the thought after the command, e.g. `/jarvis brain-dump finish Q3 deck`."); return; }
           const braindumpSession = await getSession(userId, slackSessionChannel);
-          const braindumpResult = await runCoachAgent({ userId, userText: `Brain dump: ${arg}`, channelName: "Slack", sdkSessionId: braindumpSession, observeStatusCheck: true });
+          const braindumpResult = await runCoachAgent({ userId, userText: `Brain dump: ${arg}`, channelName: "Slack", sdkSessionId: braindumpSession, statusObservationId, observeStatusCheck: true });
           if (braindumpResult.sdkSessionId) setSession(userId, slackSessionChannel, braindumpResult.sdkSessionId);
           await respond(braindumpResult.reply);
         } else if (subcommand === "status") {
           const statusSession = await getSession(userId, slackSessionChannel);
-          const statusResult = await runCoachAgent({ userId, userText: arg ? `What's the status of ${arg}?` : "What's the status of my day?", channelName: "Slack", sdkSessionId: statusSession, observeStatusCheck: true });
+          const statusResult = await runCoachAgent({ userId, userText: arg ? `What's the status of ${arg}?` : "What's the status of my day?", channelName: "Slack", sdkSessionId: statusSession, statusObservationId, observeStatusCheck: true });
           if (statusResult.sdkSessionId) setSession(userId, slackSessionChannel, statusResult.sdkSessionId);
           await respond(statusResult.reply);
         } else {

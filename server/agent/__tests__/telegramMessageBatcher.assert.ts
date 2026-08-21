@@ -17,18 +17,23 @@ async function main() {
   );
   console.log("OK: single Telegram messages stay unchanged");
 
-  const batches: { userId: string; chatId: string; text: string; imageUrl?: string }[] = [];
-  const handler = (batch: { userId: string; chatId: string; text: string; imageUrl?: string }) => {
+  const batches: { userId: string; chatId: string; text: string; imageUrl?: string; observationId?: string }[] = [];
+  const handler = (batch: { userId: string; chatId: string; text: string; imageUrl?: string; observationId?: string }) => {
     batches.push(batch);
   };
 
   enqueueTelegramCoachMessageBatch(
-    { userId: "user-1", chatId: "chat-1", text: "Can you help me send an email?" },
+    { userId: "user-1", chatId: "chat-1", text: "Can you help me send an email?", observationId: "update-2" },
     handler,
     10,
   );
   enqueueTelegramCoachMessageBatch(
-    { userId: "user-1", chatId: "chat-1", text: "Actually send it to Sam about tomorrow" },
+    { userId: "user-1", chatId: "chat-1", text: "Actually send it to Sam about tomorrow", observationId: "update-1" },
+    handler,
+    10,
+  );
+  enqueueTelegramCoachMessageBatch(
+    { userId: "user-1", chatId: "chat-1", text: "duplicate delivery", observationId: "update-1" },
     handler,
     10,
   );
@@ -40,6 +45,7 @@ async function main() {
   assert.match(batches[0].text, /The user sent 2 Telegram messages close together/);
   assert.match(batches[0].text, /1\. Can you help me send an email\?/);
   assert.match(batches[0].text, /2\. Actually send it to Sam about tomorrow/);
+  assert.equal(batches[0].observationId, "update-1,update-2");
   console.log("OK: quick Telegram follow-ups become one context-rich coach turn");
 
   const separated: string[] = [];

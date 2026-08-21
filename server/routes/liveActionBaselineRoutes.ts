@@ -58,11 +58,15 @@ export function registerLiveActionBaselineRoutes(app: Express): void {
     if (!userId) return res.status(401).json({ error: "Not authenticated" });
     const kind = req.body?.kind;
     const surface = typeof req.body?.surface === "string" ? req.body.surface : "unknown";
+    const clientId = req.body?.clientId;
     const representations = req.body?.representations;
     const sequence = req.body?.sequence;
     if ((kind !== "agent_job" && kind !== "project") || !Array.isArray(representations) || representations.length > 100
       || !Number.isSafeInteger(sequence) || sequence < 0) {
       return res.status(400).json({ error: "Invalid representation snapshot" });
+    }
+    if (typeof clientId !== "string" || clientId.length < 1 || clientId.length > 100) {
+      return res.status(400).json({ error: "Invalid representation client" });
     }
     if (representations.some((item: unknown) => {
       if (!item || typeof item !== "object") return true;
@@ -102,6 +106,7 @@ export function registerLiveActionBaselineRoutes(app: Express): void {
       userId,
       kind,
       surface,
+      clientId,
       identities: entries.map((item) => item.id),
       sequence,
     });
@@ -110,6 +115,7 @@ export function registerLiveActionBaselineRoutes(app: Express): void {
       userId,
       kind,
       surface,
+      clientId,
       entries,
       canonicalStatuses,
       terminalStatuses,

@@ -202,6 +202,7 @@ export function recordRenderedRepresentationSnapshot(input: {
   userId: string;
   kind: "agent_job" | "project";
   surface: string;
+  clientId: string;
   identities: string[];
   sequence: number;
   nowMs?: number;
@@ -209,7 +210,11 @@ export function recordRenderedRepresentationSnapshot(input: {
   const nowMs = input.nowMs ?? Date.now();
   const surface = sanitizeSurface(input.surface);
   const userSnapshots = representationSnapshots.get(input.userId) ?? new Map();
-  const snapshotKey = `${input.kind}:${surface}`;
+  for (const [key, snapshot] of userSnapshots) {
+    if (nowMs - snapshot.observedAt > REPRESENTATION_TTL_MS) userSnapshots.delete(key);
+  }
+  const clientFingerprint = fingerprintRepresentation(input.userId, input.kind, input.clientId);
+  const snapshotKey = `${input.kind}:${surface}:${clientFingerprint}`;
   if ((userSnapshots.get(snapshotKey)?.sequence ?? -1) >= input.sequence) return null;
   const counts = new Map<string, number>();
   for (const identity of input.identities.slice(0, 100)) {
@@ -261,6 +266,7 @@ export function observeTerminalStateDrift(input: {
   userId: string;
   kind: "agent_job" | "project";
   surface: string;
+  clientId: string;
   entries: Array<{ id: string; status?: string }>;
   canonicalStatuses: ReadonlyMap<string, string>;
   terminalStatuses: ReadonlySet<string>;
@@ -268,7 +274,8 @@ export function observeTerminalStateDrift(input: {
 }): { persistentDriftCount: number; pendingMismatchCount: number } {
   const nowMs = input.nowMs ?? Date.now();
   const surface = sanitizeSurface(input.surface);
-  const prefix = `${input.kind}:${surface}:`;
+  const clientFingerprint = fingerprintRepresentation(input.userId, input.kind, input.clientId);
+  const prefix = `${input.kind}:${surface}:${clientFingerprint}:`;
   const firstSeen = terminalMismatchFirstSeen.get(input.userId) ?? new Map<string, { firstSeenAt: number; lastSeenAt: number }>();
   const observedKeys = new Set<string>();
   let persistentDriftCount = 0;
