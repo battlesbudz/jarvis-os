@@ -30,12 +30,21 @@ assert.deepEqual(getLiveActionFeatureFlags({
 assert.equal(isClientSubmittedLiveActionBaselineMetric("reconnect_restoration_ms"), true);
 assert.equal(isClientSubmittedLiveActionBaselineMetric("acknowledgement_visible_latency_ms"), true);
 assert.equal(isClientSubmittedLiveActionBaselineMetric("terminal_state_drift_count"), false);
+assert.equal(isClientSubmittedLiveActionBaselineMetric("terminal_representation_count"), false);
 assert.equal(isClientSubmittedLiveActionBaselineMetric("duplicate_representation_count"), false);
 
 const tasksScreen = fs.readFileSync("components/missionControl/TasksScreen.tsx", "utf8");
+assert.match(tasksScreen, /const isFocused = useIsFocused\(\)/);
+assert.match(tasksScreen, /const renderedJobs = isFocused \?/);
 assert.match(tasksScreen, /useEffect\(\(\) => \(\) => \{[\s\S]*?surface: 'mission_control',[\s\S]*?representations: \[\]/);
+const projectsScreen = fs.readFileSync("app/(tabs)/projects.tsx", "utf8");
+assert.match(projectsScreen, /!isFocused \|\| selectedId \? \[\]/);
+const inboxScreen = fs.readFileSync("app/(tabs)/inbox.tsx", "utf8");
+assert.match(inboxScreen, /const renderedJobs = isFocused \?/);
 const discordManager = fs.readFileSync("server/discord/manager.ts", "utf8");
 assert.equal(discordManager.match(/statusObservationId: message\.id/g)?.length, 2);
+const coachAgent = fs.readFileSync("server/channels/coachAgent.ts", "utf8");
+assert.match(coachAgent, /channelName\.startsWith\("Discord"\) \? "discord" : channelLower/);
 
 resetLiveActionBaselinesForTests();
 assert.equal(recordStatusCheckFollowUp({ userId: "status-phrases", message: "What's the status?", surface: "slack" }), true);
@@ -153,6 +162,7 @@ assert.equal(report.metrics["reconnect_restoration_ms:inbox"].average, 250);
 assert.equal(report.metrics["duplicate_representation_count:inbox"].average, 1);
 assert.equal(report.metrics["duplicate_representation_count:mission_control"].average, 2);
 assert.equal(report.metrics["rendered_representation_count:mission_control"].sum, 4);
+assert.equal(report.metrics["terminal_representation_count:projects"].sum, 7);
 assert.deepEqual(report.privacy, {
   contentStored: false,
   identifiersStoredInMetrics: false,
@@ -165,5 +175,6 @@ assert.equal(aggregate.metrics["status_check_follow_up:chat"].count, 1);
 assert.equal(aggregate.metrics["acknowledgement_visible_latency_ms:unknown"], undefined);
 assert.equal(aggregate.metrics["duplicate_representation_count:inbox"], undefined);
 assert.equal(aggregate.metrics["terminal_state_drift_count:projects"], undefined);
+assert.equal(aggregate.metrics["terminal_representation_count:projects"], undefined);
 
 console.log("OK: live-action rollout flags and privacy-safe baselines are independent and bounded");

@@ -188,13 +188,14 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   const destinationScopedConversation = channelName === "Slack" || channelName.startsWith("Discord");
   const coachSessionAgentId = getCoachAgentSessionAgentId(userId);
   const channelLower = channelName.toLowerCase();
+  const statusSurface = channelName.startsWith("Discord") ? "discord" : channelLower;
   const telegramE2eProbeId = channelName === "Telegram" ? getTelegramE2eProbeId(userText) : null;
   const telegramE2eLogSuffix = telegramE2eProbeId ? ` e2e=${telegramE2eProbeId}` : "";
 
   recordStatusCheckFollowUp({
     userId,
     message: userText,
-    surface: channelLower,
+    surface: statusSurface,
     observationId: input.statusObservationId,
   });
 

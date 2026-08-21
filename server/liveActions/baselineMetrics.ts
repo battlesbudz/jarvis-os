@@ -7,6 +7,7 @@ export const LIVE_ACTION_BASELINE_METRICS = [
   "duplicate_representation_count",
   "rendered_representation_count",
   "terminal_state_drift_count",
+  "terminal_representation_count",
   "acknowledgement_visible_latency_ms",
   "baseline_value_overflow_count",
 ] as const;
@@ -262,11 +263,15 @@ export function observeTerminalStateDrift(input: {
   const observedKeys = new Set<string>();
   let persistentDriftCount = 0;
   let pendingMismatchCount = 0;
+  let terminalRepresentationCount = 0;
 
   for (const entry of input.entries) {
     const key = `${prefix}${fingerprintRepresentation(input.userId, input.kind, entry.id)}`;
     observedKeys.add(key);
     const canonicalStatus = input.canonicalStatuses.get(entry.id);
+    if (!canonicalStatus || input.terminalStatuses.has(canonicalStatus) || input.terminalStatuses.has(entry.status ?? "")) {
+      terminalRepresentationCount += 1;
+    }
     const mismatched = !canonicalStatus || (
       (input.terminalStatuses.has(canonicalStatus) || input.terminalStatuses.has(entry.status ?? ""))
       && canonicalStatus !== entry.status
@@ -292,6 +297,12 @@ export function observeTerminalStateDrift(input: {
     metric: "terminal_state_drift_count",
     surface,
     value: persistentDriftCount,
+  });
+  recordLiveActionBaseline({
+    userId: input.userId,
+    metric: "terminal_representation_count",
+    surface,
+    value: terminalRepresentationCount,
   });
   return { persistentDriftCount, pendingMismatchCount };
 }

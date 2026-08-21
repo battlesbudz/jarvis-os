@@ -20,6 +20,7 @@ import {
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useIsFocused } from '@react-navigation/native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
@@ -324,6 +325,7 @@ const SUPPORTED_ACTION_TYPES = new Set([
 ]);
 
 export default function InboxScreen() {
+  const isFocused = useIsFocused();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const isWeb = Platform.OS === 'web';
@@ -463,7 +465,7 @@ export default function InboxScreen() {
 
   const baselineHydrationStartedAt = useRef(Date.now());
   useEffect(() => {
-    if (!activeJobsFetchedAfterMount || activeJobsUpdatedAt <= 0 || baselineHydrationStartedAt.current <= 0) return;
+    if (!isFocused || !activeJobsFetchedAfterMount || activeJobsUpdatedAt <= 0 || baselineHydrationStartedAt.current <= 0) return;
     const startedAt = baselineHydrationStartedAt.current;
     baselineHydrationStartedAt.current = 0;
     void apiRequest('POST', '/api/live-actions/baseline', {
@@ -471,19 +473,29 @@ export default function InboxScreen() {
       surface: 'inbox',
       value: Math.max(0, Date.now() - startedAt),
     }).catch(() => {});
-  }, [activeJobsFetchedAfterMount, activeJobsUpdatedAt]);
+  }, [activeJobsFetchedAfterMount, activeJobsUpdatedAt, isFocused]);
+
+  useEffect(() => {
+    if (!isFocused) {
+      baselineHydrationStartedAt.current = 0;
+      return;
+    }
+    baselineHydrationStartedAt.current = Date.now();
+    void refetchActiveJobs();
+  }, [isFocused, refetchActiveJobs]);
 
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
-      if (state !== 'active') return;
+      if (state !== 'active' || !isFocused) return;
       baselineHydrationStartedAt.current = Date.now();
       void refetchActiveJobs();
     });
     return () => subscription.remove();
-  }, [refetchActiveJobs]);
+  }, [isFocused, refetchActiveJobs]);
 
   const baselineVisibleJobIds = useRef(new Set<string>());
   useEffect(() => {
+    if (!isFocused) return;
     for (const job of activeJobs) {
       if (baselineVisibleJobIds.current.has(job.id)) continue;
       baselineVisibleJobIds.current.add(job.id);
@@ -495,7 +507,7 @@ export default function InboxScreen() {
         value: Math.max(0, Date.now() - createdAtMs),
       }).catch(() => {});
     }
-  }, [activeJobs]);
+  }, [activeJobs, isFocused]);
 
   const { data: failedJobs = [], dataUpdatedAt: failedJobsUpdatedAt, refetch: refetchFailedJobs } = useQuery<AgentJob[]>({
     queryKey: ['/api/agent-jobs?status=failed&limit=10'],
@@ -503,13 +515,13 @@ export default function InboxScreen() {
   });
 
   useEffect(() => {
-    const renderedJobs = [...activeJobs, ...failedJobs];
+    const renderedJobs = isFocused ? [...activeJobs, ...failedJobs] : [];
     void apiRequest('POST', '/api/live-actions/baseline/representations', {
       kind: 'agent_job',
       surface: 'inbox',
       representations: renderedJobs.map((job) => ({ id: job.id, status: job.status })),
     }).catch(() => {});
-  }, [activeJobs, activeJobsUpdatedAt, failedJobs, failedJobsUpdatedAt]);
+  }, [activeJobs, activeJobsUpdatedAt, failedJobs, failedJobsUpdatedAt, isFocused]);
 
   const { data: dailyCommand, refetch: refetchDailyCommand } = useQuery<DailyCommandSnapshot>({
     queryKey: ['/api/daily-command/today'],

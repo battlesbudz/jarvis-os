@@ -13,6 +13,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Ionicons } from '@expo/vector-icons';
 import Colors from '@/constants/colors';
 import { apiRequest } from '@/lib/query-client';
+import { useIsFocused } from '@react-navigation/native';
 
 interface LastShellResult {
   exitCode: number;
@@ -402,6 +403,7 @@ function Section({ label, color, tasks, collapsible = false, emptyText }: Sectio
 }
 
 export default function TasksScreen() {
+  const isFocused = useIsFocused();
   const { data, isLoading, error } = useQuery<ScheduledTask[]>({
     queryKey: ['/api/jarvis/scheduled-tasks'],
     refetchInterval: 30000,
@@ -411,13 +413,13 @@ export default function TasksScreen() {
     refetchInterval: 15000,
   });
   useEffect(() => {
-    const renderedJobs = queuePanel?.activeJobs ?? [];
+    const renderedJobs = isFocused ? queuePanel?.activeJobs ?? [] : [];
     void apiRequest('POST', '/api/live-actions/baseline/representations', {
       kind: 'agent_job',
       surface: 'mission_control',
       representations: renderedJobs.map((job) => ({ id: job.id, status: job.status })),
     }).catch(() => {});
-  }, [queuePanel?.activeJobs, queuePanelUpdatedAt]);
+  }, [isFocused, queuePanel?.activeJobs, queuePanelUpdatedAt]);
   useEffect(() => () => {
     void apiRequest('POST', '/api/live-actions/baseline/representations', {
       kind: 'agent_job',
