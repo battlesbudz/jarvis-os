@@ -126,7 +126,10 @@ assert.doesNotMatch(
 assert.doesNotMatch(routeManager, /BluetoothLeScanner|startScan\(/);
 
 assert.match(nativeSpeech, /WearableAudioRouteManager\.acquire\(reactContext, WEARABLE_AUDIO_OWNER\)/);
-assert.match(nativeSpeech, /OutsideAppVoiceSessionService\.prepareForInAppCapture\(\)/);
+assert.match(
+  nativeSpeech,
+  /WearableAudioRouteManager\.acquire\(reactContext, WEARABLE_AUDIO_OWNER\)[\s\S]*?OutsideAppVoiceSessionService\.prepareForInAppCapture\(\)[\s\S]*?startRecognizer\(/,
+);
 assert.match(nativeSpeech, /fun cancelForOutsideAppHandoff\(\)/);
 assert.match(nativeSpeech, /WearableAudioRouteManager\.release\(WEARABLE_AUDIO_OWNER\)/);
 assert.match(nativeSpeech, /pendingStartPromise: Promise\?/);
