@@ -555,29 +555,36 @@ export default function VoiceRealtimeScreen() {
     const restoreOutsideAppCapture = (
       await getAndroidDaemonStatus().catch(() => null)
     )?.voiceSessionActive === true;
-    let result: Awaited<ReturnType<typeof recognizeAndroidSpeechOnce>>;
     try {
-      result = await recognizeAndroidSpeechOnce({
-        interimResults: true,
-        timeoutMs: CODEX_VOICE_TURN_RECORDING_MS + 20_000,
-        takeInAppCapture: restoreOutsideAppCapture,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (/cancelled/i.test(message)) return;
-      throw error;
+      let result: Awaited<ReturnType<typeof recognizeAndroidSpeechOnce>>;
+      try {
+        result = await recognizeAndroidSpeechOnce({
+          interimResults: true,
+          timeoutMs: CODEX_VOICE_TURN_RECORDING_MS + 20_000,
+          takeInAppCapture: restoreOutsideAppCapture,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/cancelled/i.test(message)) return;
+        throw error;
+      }
+      const text = result.text.trim();
+      if (!text) {
+        throw new Error('No speech was detected. Please try again and speak clearly.');
+      }
+
+      setState('thinking');
+      await sendCodexVoiceTurn({ text });
     } finally {
       if (restoreOutsideAppCapture) {
-        await handoffAndroidOutsideAppVoiceCapture().catch(() => {});
+        const outsideAppSessionStillActive = (
+          await getAndroidDaemonStatus().catch(() => null)
+        )?.voiceSessionActive === true;
+        if (outsideAppSessionStillActive) {
+          await handoffAndroidOutsideAppVoiceCapture().catch(() => {});
+        }
       }
     }
-    const text = result.text.trim();
-    if (!text) {
-      throw new Error('No speech was detected. Please try again and speak clearly.');
-    }
-
-    setState('thinking');
-    await sendCodexVoiceTurn({ text });
   }, [sendCodexVoiceTurn]);
 
   const startCodexTurn = useCallback(async () => {

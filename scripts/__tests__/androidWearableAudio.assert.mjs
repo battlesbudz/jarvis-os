@@ -211,7 +211,7 @@ assert.match(
 );
 assert.match(
   voiceRealtime,
-  /getAndroidDaemonStatus\(\)[\s\S]*?voiceSessionActive === true[\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?takeInAppCapture: restoreOutsideAppCapture[\s\S]*?finally \{[\s\S]*?handoffAndroidOutsideAppVoiceCapture\(\)/,
+  /getAndroidDaemonStatus\(\)[\s\S]*?voiceSessionActive === true[\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?takeInAppCapture: restoreOutsideAppCapture[\s\S]*?sendCodexVoiceTurn\([\s\S]*?finally \{[\s\S]*?getAndroidDaemonStatus\(\)[\s\S]*?outsideAppSessionStillActive[\s\S]*?handoffAndroidOutsideAppVoiceCapture\(\)/,
 );
 
 assert.equal(pluginRouteManager, routeManager, "Expo prebuild route manager must match the app source");
