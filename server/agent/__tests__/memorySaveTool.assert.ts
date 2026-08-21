@@ -117,18 +117,19 @@ assert.ok(
 );
 
 assert.ok(
-  /onConflictDoNothing\\(\\)/.test(memorySearchSource) &&
+  /onConflictDoNothing\(\)/.test(memorySearchSource) &&
     /existingPendingResult/.test(memorySearchSource) &&
-    /A correction for this memory is already awaiting review/.test(memorySearchSource),
+    /normalizeForDedup\(existingPending\.content\) === normalized/.test(memorySearchSource) &&
+    /A different correction for this memory is already awaiting review/.test(memorySearchSource),
   "concurrent pending corrections should reuse the correction enforced by the database",
 );
 
 assert.ok(
   /user_memories_pending_correction_source_uidx/.test(databaseSource) &&
     /LOCK TABLE user_memories IN SHARE ROW EXCLUSIVE MODE/.test(databaseSource) &&
-    /user_memories\\.pending_review = TRUE/.test(databaseSource) &&
-    /user_memories\\.review_status = 'pending'/.test(databaseSource) &&
-    /source_memory\\.corrected_by_memory_id <> user_memories\\.id/.test(databaseSource) &&
+    /user_memories\.pending_review = TRUE/.test(databaseSource) &&
+    /user_memories\.review_status = 'pending'/.test(databaseSource) &&
+    /source_memory\.corrected_by_memory_id <> user_memories\.id/.test(databaseSource) &&
     /user_memories_pending_correction_source_uidx/.test(schemaSource),
   "pending correction uniqueness should be enforced while safely cleaning pre-fix duplicates",
 );

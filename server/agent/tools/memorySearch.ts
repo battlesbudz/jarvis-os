@@ -337,8 +337,8 @@ async function executeMemorySave(
     }).onConflictDoNothing().returning({ id: userMemories.id });
 
     if (!inserted && plan.record.pendingReview && plan.record.supersedesMemoryId) {
-      const existingPendingResult = await db.execute<{ id: string; review_status: string }>(sql`
-        SELECT id, review_status
+      const existingPendingResult = await db.execute<{ id: string; content: string; review_status: string }>(sql`
+        SELECT id, content, review_status
         FROM user_memories
         WHERE user_id = ${ctx.userId}
           AND supersedes_memory_id = ${plan.record.supersedesMemoryId}
@@ -348,13 +348,16 @@ async function executeMemorySave(
       `);
       const existingPending = existingPendingResult.rows?.[0];
       if (existingPending) {
+        const sameCorrection = normalizeForDedup(existingPending.content) === normalized;
         return {
-          ok: true,
-          content: `A correction for this memory is already awaiting review.`,
-          label: "Memory correction awaiting review",
+          ok: sameCorrection,
+          content: sameCorrection
+            ? "A correction for this memory is already awaiting review."
+            : "A different correction for this memory is already awaiting review. Review or discard it before submitting another.",
+          label: sameCorrection ? "Memory correction awaiting review" : "Memory correction conflict",
           detail: existingPending.id,
           metadata: {
-            memoryWriteStatus: "pending_review",
+            memoryWriteStatus: sameCorrection ? "pending_review" : "conflict",
             reviewStatus: existingPending.review_status,
             pendingReview: true,
             supersedesMemoryId: plan.record.supersedesMemoryId,

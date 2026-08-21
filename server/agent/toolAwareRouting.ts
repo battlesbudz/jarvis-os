@@ -125,7 +125,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
       /\b(?:tell|show)\s+me\s+what\s+you\s+(?:remember|recall)\b/i,
       /\bwhat\s+do\s+you\s+(?:remember|recall)\s+(?:about|of)\b/i,
       /\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?remember\b(?!\s+(?:(?:not|never)\s+)?to\b)/i,
-      new RegExp(String.raw`\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?recall\b(?!\s+(?:(?:not|never)\s+)?to\b)(?=[^.!?\n]{1,120}${RECALL_PERSONAL_CUE_PATTERN})`, "i"),
+      new RegExp(String.raw`\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?recall\b(?!\s+(?:(?:not|never)\s+)?to\b)(?=[^.!?\n]{1,120}(?:${RECALL_PERSONAL_CUE_PATTERN}|\b(?:anything|something)\b|${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}))`, "i"),
       /\b(?:remember|recall)\s+(?:my|what i|what i've|what i have)\b/i,
       /\b(?:my|our)\s+(?:(?:saved|stored)\s+)?(?:memory|memories|preferences?)\b/i,
       /\bwhat\s+(?:personal\s+)?preferences?\s+do\s+you\s+have\s+(?:saved|stored)\s+for\s+me\b/i,
