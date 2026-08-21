@@ -82,6 +82,7 @@ internal data class WearableAudioRouteSnapshot(
 internal object WearableAudioRouteManager {
     private const val ROUTE_CONFIRM_TIMEOUT_MS = 3_000L
     private const val ROUTE_RETRY_DELAY_MS = 500L
+    private const val ROUTE_RETRY_MAX_DELAY_MS = 30_000L
     private const val LEGACY_SCO_TEARDOWN_TIMEOUT_MS = 1_500L
     private const val LEGACY_SCO_STALE_DISCONNECT_GRACE_MS = 1_500L
 
@@ -104,7 +105,8 @@ internal object WearableAudioRouteManager {
     private var legacyScoTeardownPending = false
     private var legacyScoTeardownWaitElapsed = false
     private var legacyScoTeardownGeneration = 0
-    private var legacyRouteRecoveryScheduled = false
+    private var routeRecoveryScheduled = false
+    private var routeRetryAttempt = 0
 
     private val audioDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
@@ -244,8 +246,10 @@ internal object WearableAudioRouteManager {
             } catch (error: Throwable) {
                 routeState = "failed"
                 lastError = error.message ?: error.javaClass.simpleName
-                finishRouteRecovery(success = false, lastError ?: "Bluetooth SCO startup failed")
+                routeRecoveryPending = true
+                DaemonLog.add("wearable_audio: legacy SCO startup failed; ${lastError ?: "unknown error"}; retry scheduled")
                 completePending(snapshot(context))
+                scheduleRouteRecovery(expectLegacy = true)
             }
         }
     }
@@ -272,8 +276,10 @@ internal object WearableAudioRouteManager {
                 if (System.currentTimeMillis() >= deadline) {
                     routeState = "failed"
                     lastError = "Android did not confirm the Bluetooth audio route within ${ROUTE_CONFIRM_TIMEOUT_MS / 1_000} seconds."
-                    finishRouteRecovery(success = false, lastError ?: "route confirmation timed out")
+                    routeRecoveryPending = true
+                    DaemonLog.add("wearable_audio: communication route confirmation timed out; retry scheduled")
                     completePending(snapshot(context))
+                    scheduleRouteRecovery(expectLegacy = false)
                     return
                 }
                 mainHandler.postDelayed(this, 100L)
@@ -287,13 +293,11 @@ internal object WearableAudioRouteManager {
             if (requestGeneration != routeGeneration || owners.isEmpty() || routeState != "requesting") {
                 return@postDelayed
             }
-            failLegacyScoRequest(
-                "Android did not connect Bluetooth SCO within ${ROUTE_CONFIRM_TIMEOUT_MS / 1_000} seconds.",
-            )
-            finishRouteRecovery(
-                success = false,
-                "Android did not connect Bluetooth SCO within ${ROUTE_CONFIRM_TIMEOUT_MS / 1_000} seconds",
-            )
+            val error = "Android did not connect Bluetooth SCO within ${ROUTE_CONFIRM_TIMEOUT_MS / 1_000} seconds."
+            routeRecoveryPending = true
+            DaemonLog.add("wearable_audio: legacy SCO confirmation timed out; retry scheduled")
+            failLegacyScoRequest(error)
+            waitForLegacyScoTeardown(teardownSettled = false)
         }, ROUTE_CONFIRM_TIMEOUT_MS)
     }
 
@@ -354,14 +358,12 @@ internal object WearableAudioRouteManager {
     }
 
     private fun handleLegacyScoTerminalState(error: String, teardownSettled: Boolean) {
-        val shouldRetry = routeState == "active" && owners.isNotEmpty()
-        val failedRecoveryAttempt = routeState == "requesting" && routeRecoveryPending
+        val shouldRetry = owners.isNotEmpty()
         if (shouldRetry) {
             routeRecoveryPending = true
             DaemonLog.add("wearable_audio: legacy SCO route lost; $error; retry scheduled")
         }
         failLegacyScoRequest(error)
-        if (failedRecoveryAttempt) finishRouteRecovery(success = false, error)
         if (!shouldRetry) return
         waitForLegacyScoTeardown(teardownSettled)
     }
@@ -454,17 +456,21 @@ internal object WearableAudioRouteManager {
     private fun finishRouteRecovery(success: Boolean, detail: String) {
         if (!routeRecoveryPending) return
         routeRecoveryPending = false
+        routeRetryAttempt = 0
         val outcome = if (success) "succeeded" else "failed"
         DaemonLog.add("wearable_audio: route recovery $outcome; $detail")
     }
 
     private fun scheduleRouteRecovery(expectLegacy: Boolean) {
-        if (expectLegacy) {
-            if (legacyRouteRecoveryScheduled) return
-            legacyRouteRecoveryScheduled = true
-        }
+        if (routeRecoveryScheduled) return
+        routeRecoveryScheduled = true
+        val retryDelayMs = minOf(
+            ROUTE_RETRY_MAX_DELAY_MS,
+            ROUTE_RETRY_DELAY_MS * (1L shl routeRetryAttempt.coerceAtMost(6)),
+        )
+        routeRetryAttempt += 1
         mainHandler.postDelayed({
-            if (expectLegacy) legacyRouteRecoveryScheduled = false
+            routeRecoveryScheduled = false
             if (
                 owners.isNotEmpty() &&
                 routeState == "failed" &&
@@ -472,7 +478,7 @@ internal object WearableAudioRouteManager {
             ) {
                 activateBestRoute()
             }
-        }, ROUTE_RETRY_DELAY_MS)
+        }, retryDelayMs)
     }
 
     private fun failLegacyScoRequest(error: String) {
@@ -513,7 +519,8 @@ internal object WearableAudioRouteManager {
                 routeRecoveryPending = false
                 DaemonLog.add("wearable_audio: route recovery cancelled; voice session ended")
             }
-            legacyRouteRecoveryScheduled = false
+            routeRecoveryScheduled = false
+            routeRetryAttempt = 0
             previousAudioMode?.let { previousMode ->
                 if (manager.mode == AudioManager.MODE_IN_COMMUNICATION) {
                     manager.mode = previousMode
