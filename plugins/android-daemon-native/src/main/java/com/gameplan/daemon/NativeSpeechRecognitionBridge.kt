@@ -69,7 +69,6 @@ class NativeSpeechRecognitionBridge(
                     return@runOnMain
                 }
 
-                OutsideAppVoiceSessionService.prepareForInAppCapture()
                 cancelRecognizer(emitCancelled = false)
                 listening = true
                 val startGeneration = ++generation
@@ -77,6 +76,7 @@ class NativeSpeechRecognitionBridge(
                 pendingStartGeneration = startGeneration
                 WearableAudioRouteManager.acquire(reactContext, WEARABLE_AUDIO_OWNER) { wearableRoute ->
                     if (!isCurrent(startGeneration)) return@acquire
+                    OutsideAppVoiceSessionService.prepareForInAppCapture()
                     startRecognizer(
                         localeTag = localeTag,
                         interimResults = interimResults,
