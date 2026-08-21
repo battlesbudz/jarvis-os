@@ -98,6 +98,10 @@ assert.match(
   /if \(manager\.mode == AudioManager\.MODE_IN_COMMUNICATION\) \{\s+manager\.mode = previousMode/,
 );
 assert.match(routeManager, /ROUTE_RETRY_DELAY_MS/);
+assert.match(
+  routeManager,
+  /if \(!accepted\) \{[\s\S]*routeRecoveryPending = true[\s\S]*scheduleRouteRecovery\(expectLegacy = false\)/,
+);
 assert.doesNotMatch(
   routeManager,
   /startBluetoothSco\(\)[\s\S]{0,160}routeState = "active"/,
@@ -113,6 +117,14 @@ assert.match(nativeSpeech, /E_NATIVE_STT_CANCELLED/);
 assert.match(nativeSpeech, /rejectPendingStart\(/);
 assert.match(talkMode, /WearableAudioRouteManager\.acquire\(this, WEARABLE_AUDIO_OWNER\)/);
 assert.match(talkMode, /WearableAudioRouteManager\.release\(WEARABLE_AUDIO_OWNER\)/);
+assert.match(
+  talkMode,
+  /SpeechRecognizer not available[\s\S]{0,160}WearableAudioRouteManager\.release\(WEARABLE_AUDIO_OWNER\)/,
+);
+assert.match(
+  talkMode,
+  /RECORD_AUDIO permission not granted[\s\S]{0,320}WearableAudioRouteManager\.release\(WEARABLE_AUDIO_OWNER\)/,
+);
 assert.match(
   talkMode,
   /private fun handlePauseForUserControl\(\)[\s\S]*?WearableAudioRouteManager\.release\(WEARABLE_AUDIO_OWNER\)[\s\S]*?private fun handlePauseForResponse/,
