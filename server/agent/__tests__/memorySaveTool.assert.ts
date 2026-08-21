@@ -102,8 +102,8 @@ assert.ok(
 );
 
 assert.ok(
-  /WHEN supersedes_memory_id = \$\{supersedesMemoryId \|\| null\} THEN 0/.test(memorySearchSource),
-  "duplicate lookup should prioritize a pending correction for the requested source memory",
+  /WHEN supersedes_memory_id = \$\{supersedesMemoryId \|\| null\}[\s\S]*review_status IN \('active', 'kept', 'edited'\) THEN 0[\s\S]*WHEN supersedes_memory_id = \$\{supersedesMemoryId \|\| null\}[\s\S]*review_status = 'pending' THEN 1/.test(memorySearchSource),
+  "duplicate lookup should prioritize a completed correction, then a pending correction for the requested source",
 );
 
 assert.ok(
