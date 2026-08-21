@@ -90,9 +90,8 @@ assert.ok(
 );
 
 assert.ok(
-  /corrected_by_memory_id = \$\{duplicateId\}/.test(memorySearchSource) &&
-    /completedResult\.rows/.test(memorySearchSource),
-  "a retry of an immediate duplicate correction should accept the existing source-to-canonical linkage",
+  /const correctionTargets[\s\S]*if \(duplicateIsApproved && correctionTargets\.length > 0\)[\s\S]*corrected_by_memory_id = \$\{duplicateId\}[\s\S]*Memory correction already applied[\s\S]*if \(!plan\.record\.pendingReview && duplicateIsApproved/.test(memorySearchSource),
+  "a completed immediate duplicate correction should be reused before applying the current Memory Review setting",
 );
 
 assert.ok(

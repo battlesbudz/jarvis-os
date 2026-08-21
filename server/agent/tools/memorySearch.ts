@@ -201,6 +201,32 @@ async function executeMemorySave(
       }
 
       const correctionTargets = plan.supersedeMemoryIds.filter((id) => id !== duplicateId);
+      if (duplicateIsApproved && correctionTargets.length > 0) {
+        const completedResult = await db.execute<{ id: string }>(sql`
+          SELECT id
+          FROM user_memories
+          WHERE user_id = ${ctx.userId}
+            AND id = ANY(${correctionTargets}::varchar[])
+            AND review_status = 'superseded'
+            AND corrected_by_memory_id = ${duplicateId}
+        `);
+        if ((completedResult.rows ?? []).length === correctionTargets.length) {
+          return {
+            ok: true,
+            content: `Memory correction already applied: ${content}`,
+            label: "Memory correction applied",
+            detail: duplicateId,
+            metadata: {
+              memoryWriteStatus: "duplicate_correction",
+              reviewStatus: duplicate.review_status,
+              pendingReview: false,
+              supersedesMemoryId: plan.record.supersedesMemoryId,
+              supersededMemoryIds: correctionTargets,
+            },
+          };
+        }
+      }
+
       if (!plan.record.pendingReview && duplicateIsApproved && correctionTargets.length > 0) {
         const supersededCount = await defaultMemoryWriteDeps.markMemoriesSuperseded(
           ctx.userId,
