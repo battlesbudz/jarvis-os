@@ -72,8 +72,15 @@ assert.match(routeManager, /routeRetryAttempt\.coerceAtMost\(6\)/);
 assert.match(routeManager, /legacy SCO teardown confirmation timed out/);
 assert.match(routeManager, /LEGACY_SCO_STALE_DISCONNECT_GRACE_MS/);
 assert.match(routeManager, /preserveLegacyScoTeardownGuardAfterConnection\(\)/);
-assert.match(routeManager, /replacementStillRouted[\s\S]*audioManager\?\.isBluetoothScoOn == true/);
-assert.match(routeManager, /ignored stale legacy SCO teardown after replacement connected/);
+assert.match(
+  routeManager,
+  /replacementRequestInFlight[\s\S]*routeState == "requesting"/,
+);
+assert.doesNotMatch(
+  routeManager,
+  /replacementRequestInFlight[\s\S]{0,160}routeState == "active"/,
+);
+assert.match(routeManager, /ignored stale legacy SCO teardown while replacement request was in flight/);
 assert.match(routeManager, /legacy SCO stale teardown guard expired after replacement connected/);
 assert.match(
   routeManager,
