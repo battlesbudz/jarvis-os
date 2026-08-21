@@ -179,6 +179,12 @@ export function AndroidDeviceControlCard({
       enabled: nativeSpeechStatus?.available,
     },
     {
+      key: "wearable-voice",
+      label: "Wearable Voice",
+      detail: nativeSpeechStatus?.wearableAudioMessage ?? "Bluetooth glasses and headset routing for Jarvis voice sessions.",
+      enabled: nativeSpeechStatus?.wearableAudioAvailable,
+    },
+    {
       key: "voice-overlay",
       label: "Voice Overlay",
       detail: "Floating mic while JARVIS listens outside the app.",
@@ -195,6 +201,8 @@ export function AndroidDeviceControlCard({
     nativeSpeechStatus?.available,
     nativeSpeechStatus?.message,
     healthy,
+    nativeSpeechStatus?.wearableAudioAvailable,
+    nativeSpeechStatus?.wearableAudioMessage,
     status?.accessibilityEnabled,
     status?.notificationListenerActive,
     status?.notificationPermissionGranted,
