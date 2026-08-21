@@ -1408,6 +1408,10 @@ export default function InsightsScreen() {
 
         const captureRouteOwnerId = `speech-capture-${Date.now()}-${++nativeVoiceRouteSeqRef.current}`;
         await acquireAndroidNativeVoicePlaybackRoute(captureRouteOwnerId).catch(() => {});
+        if (shouldCancelTalkModeStart()) {
+          releaseAndroidNativeVoicePlaybackRoute(captureRouteOwnerId).catch(() => {});
+          return;
+        }
         nativeSpeechActiveRef.current = true;
         nativeSpeechManualFinishRef.current = false;
         nativeSpeechCancelledRef.current = false;

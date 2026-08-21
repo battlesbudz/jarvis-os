@@ -194,7 +194,7 @@ assert.match(
 );
 assert.match(
   insights,
-  /acquireAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)[\s\S]*?while \([\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)/,
+  /acquireAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)[\s\S]*?shouldCancelTalkModeStart\(\)[\s\S]*?releaseAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)[\s\S]*?while \([\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)/,
 );
 assert.match(
   insights,
