@@ -125,6 +125,14 @@ assert.ok(
 );
 
 assert.ok(
+  /const inserted = await db\.transaction/.test(memorySearchSource) &&
+    /UPDATE user_memories[\s\S]*corrected_by_memory_id = \$\{created\.id\}/.test(memorySearchSource) &&
+    /superseded\.rows[\s\S]*plan\.supersedeMemoryIds\.length[\s\S]*throw new MemoryCorrectionConflictError/.test(memorySearchSource) &&
+    /err instanceof MemoryCorrectionConflictError/.test(memorySearchSource),
+  "fresh immediate corrections should insert and supersede atomically or report a conflict",
+);
+
+assert.ok(
   /user_memories_pending_correction_source_uidx/.test(databaseSource) &&
     /LOCK TABLE user_memories IN SHARE ROW EXCLUSIVE MODE/.test(databaseSource) &&
     /user_memories\.pending_review = TRUE/.test(databaseSource) &&
@@ -132,14 +140,6 @@ assert.ok(
     /source_memory\.corrected_by_memory_id <> user_memories\.id/.test(databaseSource) &&
     /user_memories_pending_correction_source_uidx/.test(schemaSource),
   "pending correction uniqueness should be enforced while safely cleaning pre-fix duplicates",
-);
-
-assert.ok(
-  /db\.transaction\(async \(tx\)/.test(memorySearchSource) &&
-    /supersededResult[\s\S]*plan\.supersedeMemoryIds\.length/.test(memorySearchSource) &&
-    /throw new MemoryCorrectionConflictError/.test(memorySearchSource) &&
-    /err instanceof MemoryCorrectionConflictError/.test(memorySearchSource),
-  "fresh active corrections should insert and supersede atomically or report a conflict",
 );
 
 assert.ok(

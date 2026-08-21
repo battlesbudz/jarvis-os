@@ -319,41 +319,43 @@ async function executeMemorySave(
       console.warn("[MemorySave] embedding failed; saving without embedding:", err);
     }
 
-    const [inserted] = await db.transaction(async (tx) => {
-      const insertedRows = await tx.insert(userMemories).values({
-      userId: ctx.userId,
-      content: plan.record.content,
-      category: plan.record.category,
-      confidence: plan.record.confidence,
-      relevanceScore: 75,
-      sourceType: plan.record.sourceType,
-      sourceRef: plan.record.sourceRef,
-      embedding: embedding ?? undefined,
-      tier: plan.record.tier,
-      memoryType: plan.record.memoryType,
-      expiresAt: plan.record.expiresAt ?? undefined,
-      pendingReview: plan.record.pendingReview,
-      reviewStatus: plan.record.reviewStatus,
-      supersedesMemoryId: plan.record.supersedesMemoryId,
-      sensitivity: plan.record.sensitivity,
-      provenance: plan.record.provenance,
-    }).onConflictDoNothing().returning({ id: userMemories.id });
-      const insertedRow = insertedRows[0];
-      if (insertedRow && !plan.record.pendingReview && plan.supersedeMemoryIds.length > 0) {
-        const supersededResult = await tx.execute<{ id: string }>(sql`
+    const inserted = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(userMemories).values({
+        userId: ctx.userId,
+        content: plan.record.content,
+        category: plan.record.category,
+        confidence: plan.record.confidence,
+        relevanceScore: 75,
+        sourceType: plan.record.sourceType,
+        sourceRef: plan.record.sourceRef,
+        embedding: embedding ?? undefined,
+        tier: plan.record.tier,
+        memoryType: plan.record.memoryType,
+        expiresAt: plan.record.expiresAt ?? undefined,
+        pendingReview: plan.record.pendingReview,
+        reviewStatus: plan.record.reviewStatus,
+        supersedesMemoryId: plan.record.supersedesMemoryId,
+        sensitivity: plan.record.sensitivity,
+        provenance: plan.record.provenance,
+      }).onConflictDoNothing().returning({ id: userMemories.id });
+
+      if (created && !plan.record.pendingReview && plan.supersedeMemoryIds.length > 0) {
+        const superseded = await tx.execute<{ id: string }>(sql`
           UPDATE user_memories
           SET review_status = 'superseded',
-              corrected_by_memory_id = ${insertedRow.id}
+              corrected_by_memory_id = ${created.id}
           WHERE user_id = ${ctx.userId}
             AND id = ANY(${plan.supersedeMemoryIds}::varchar[])
+            AND (pending_review = FALSE OR pending_review IS NULL)
             AND review_status IN ('active', 'kept', 'edited')
           RETURNING id
         `);
-        if ((supersededResult.rows ?? []).length !== plan.supersedeMemoryIds.length) {
+        if ((superseded.rows ?? []).length !== plan.supersedeMemoryIds.length) {
           throw new MemoryCorrectionConflictError();
         }
       }
-      return insertedRows;
+
+      return created;
     });
 
     if (!inserted && plan.record.pendingReview && plan.record.supersedesMemoryId) {
