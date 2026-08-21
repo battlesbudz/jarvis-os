@@ -69,8 +69,10 @@ assert.match(telegramRoutes, /statusObservationId,\s+metadata: \{ originChannelI
 assert.doesNotMatch(telegramRoutes, /observeStatusCheck/);
 const discordSlashCommands = fs.readFileSync("server/discord/slashCommands.ts", "utf8");
 assert.match(discordSlashCommands, /statusObservationId: String\(interaction\.id/);
-const baselineMetrics = fs.readFileSync("server/liveActions/baselineMetrics.ts", "utf8");
-assert.match(baselineMetrics, /for \(const \[key, mismatch\] of firstSeen\)[\s\S]*?nowMs - mismatch\.lastSeenAt > MAX_MISMATCH_HEARTBEAT_GAP_MS/);
+const baselineMetricsSource = fs.readFileSync("server/liveActions/baselineMetrics.ts", "utf8");
+assert.match(baselineMetricsSource, /MAX_REPRESENTATION_SNAPSHOTS_PER_USER = 20/);
+assert.match(baselineMetricsSource, /setInterval\(pruneRepresentationState, MAX_MISMATCH_HEARTBEAT_GAP_MS\)/);
+assert.match(baselineMetricsSource, /representationPruneTimer\.unref\?\.\(\)/);
 
 resetLiveActionBaselinesForTests();
 recordStatusCheckFollowUp({ userId: "surface-aliases", message: "Status update?", surface: "appchat" });
@@ -161,6 +163,26 @@ assert.deepEqual(recordRenderedRepresentationSnapshot({
   sequence: 1,
   nowMs: 1_600,
 }), { duplicateCount: 0, representationCount: 1 });
+for (let index = 0; index < 21; index += 1) {
+  recordRenderedRepresentationSnapshot({
+    userId: "bounded-snapshot-user",
+    kind: "agent_job",
+    surface: "inbox",
+    clientId: `client-${index}`,
+    identities: [`job-${index}`],
+    sequence: 1,
+    nowMs: 2_000 + index,
+  });
+}
+assert.deepEqual(recordRenderedRepresentationSnapshot({
+  userId: "bounded-snapshot-user",
+  kind: "agent_job",
+  surface: "inbox",
+  clientId: "client-0",
+  identities: ["job-current"],
+  sequence: 1,
+  nowMs: 2_100,
+}), { duplicateCount: 0, representationCount: 20 });
 assert.deepEqual(observeTerminalStateDrift({
   userId: "user-a",
   kind: "project",

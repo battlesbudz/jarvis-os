@@ -35,6 +35,7 @@ const ALLOWED_SURFACES = new Set([
   "unknown",
 ]);
 const MAX_USERS = 500;
+const MAX_REPRESENTATION_SNAPSHOTS_PER_USER = 20;
 const REPRESENTATION_TTL_MS = 5 * 60 * 1_000;
 const representationFingerprintKey = randomBytes(32);
 const LATENCY_BUCKETS_MS = [100, 250, 500, 1_000, 1_500, 2_000, 3_000, 5_000, 10_000, 30_000, 60_000, 300_000, 3_600_000, 86_400_000, 31_536_000_000] as const;
@@ -84,6 +85,35 @@ const representationSnapshots = new Map<string, Map<string, {
 }>>();
 const terminalMismatchFirstSeen = new Map<string, Map<string, { firstSeenAt: number; lastSeenAt: number }>>();
 const statusObservationIds = new Map<string, number>();
+
+function deleteTerminalMismatchesWithPrefix(userId: string, prefix: string): void {
+  const mismatches = terminalMismatchFirstSeen.get(userId);
+  if (!mismatches) return;
+  for (const key of mismatches.keys()) {
+    if (key.startsWith(prefix)) mismatches.delete(key);
+  }
+  if (mismatches.size === 0) terminalMismatchFirstSeen.delete(userId);
+}
+
+function pruneRepresentationState(nowMs = Date.now()): void {
+  for (const [userId, snapshots] of representationSnapshots) {
+    for (const [key, snapshot] of snapshots) {
+      if (nowMs - snapshot.observedAt <= REPRESENTATION_TTL_MS) continue;
+      snapshots.delete(key);
+      deleteTerminalMismatchesWithPrefix(userId, `${key}:`);
+    }
+    if (snapshots.size === 0) representationSnapshots.delete(userId);
+  }
+  for (const [userId, mismatches] of terminalMismatchFirstSeen) {
+    for (const [key, mismatch] of mismatches) {
+      if (nowMs - mismatch.lastSeenAt > MAX_MISMATCH_HEARTBEAT_GAP_MS) mismatches.delete(key);
+    }
+    if (mismatches.size === 0) terminalMismatchFirstSeen.delete(userId);
+  }
+}
+
+const representationPruneTimer = setInterval(pruneRepresentationState, MAX_MISMATCH_HEARTBEAT_GAP_MS);
+representationPruneTimer.unref?.();
 
 function fingerprintRepresentation(userId: string, kind: "agent_job" | "project", identity: string): string {
   return createHmac("sha256", representationFingerprintKey)
@@ -209,13 +239,24 @@ export function recordRenderedRepresentationSnapshot(input: {
 }): { duplicateCount: number; representationCount: number } | null {
   const nowMs = input.nowMs ?? Date.now();
   const surface = sanitizeSurface(input.surface);
+  pruneRepresentationState(nowMs);
   const userSnapshots = representationSnapshots.get(input.userId) ?? new Map();
-  for (const [key, snapshot] of userSnapshots) {
-    if (nowMs - snapshot.observedAt > REPRESENTATION_TTL_MS) userSnapshots.delete(key);
-  }
   const clientFingerprint = fingerprintRepresentation(input.userId, input.kind, input.clientId);
   const snapshotKey = `${input.kind}:${surface}:${clientFingerprint}`;
   if ((userSnapshots.get(snapshotKey)?.sequence ?? -1) >= input.sequence) return null;
+  if (!userSnapshots.has(snapshotKey) && userSnapshots.size >= MAX_REPRESENTATION_SNAPSHOTS_PER_USER) {
+    let oldestKey: string | undefined;
+    let oldestObservedAt = Number.POSITIVE_INFINITY;
+    for (const [key, snapshot] of userSnapshots) {
+      if (snapshot.observedAt >= oldestObservedAt) continue;
+      oldestKey = key;
+      oldestObservedAt = snapshot.observedAt;
+    }
+    if (oldestKey) {
+      userSnapshots.delete(oldestKey);
+      deleteTerminalMismatchesWithPrefix(input.userId, `${oldestKey}:`);
+    }
+  }
   const counts = new Map<string, number>();
   for (const identity of input.identities.slice(0, 100)) {
     if (!identity) continue;
@@ -273,13 +314,11 @@ export function observeTerminalStateDrift(input: {
   nowMs?: number;
 }): { persistentDriftCount: number; pendingMismatchCount: number } {
   const nowMs = input.nowMs ?? Date.now();
+  pruneRepresentationState(nowMs);
   const surface = sanitizeSurface(input.surface);
   const clientFingerprint = fingerprintRepresentation(input.userId, input.kind, input.clientId);
   const prefix = `${input.kind}:${surface}:${clientFingerprint}:`;
   const firstSeen = terminalMismatchFirstSeen.get(input.userId) ?? new Map<string, { firstSeenAt: number; lastSeenAt: number }>();
-  for (const [key, mismatch] of firstSeen) {
-    if (nowMs - mismatch.lastSeenAt > MAX_MISMATCH_HEARTBEAT_GAP_MS) firstSeen.delete(key);
-  }
   const observedKeys = new Set<string>();
   let persistentDriftCount = 0;
   let pendingMismatchCount = 0;
