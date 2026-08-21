@@ -64,7 +64,9 @@ assert.match(routeManager, /waitForLegacyScoTeardown\(teardownSettled\)/);
 assert.match(routeManager, /legacyScoTeardownPending/);
 assert.match(routeManager, /legacyScoTeardownWaitElapsed/);
 assert.match(routeManager, /legacyScoTeardownGeneration/);
-assert.match(routeManager, /legacyRouteRecoveryScheduled/);
+assert.match(routeManager, /routeRecoveryScheduled/);
+assert.match(routeManager, /ROUTE_RETRY_MAX_DELAY_MS/);
+assert.match(routeManager, /routeRetryAttempt\.coerceAtMost\(6\)/);
 assert.match(routeManager, /legacy SCO teardown confirmation timed out/);
 assert.match(routeManager, /LEGACY_SCO_STALE_DISCONNECT_GRACE_MS/);
 assert.match(routeManager, /preserveLegacyScoTeardownGuardAfterConnection\(\)/);
@@ -101,6 +103,14 @@ assert.match(routeManager, /ROUTE_RETRY_DELAY_MS/);
 assert.match(
   routeManager,
   /if \(!accepted\) \{[\s\S]*routeRecoveryPending = true[\s\S]*scheduleRouteRecovery\(expectLegacy = false\)/,
+);
+assert.match(
+  routeManager,
+  /communication route confirmation timed out[\s\S]*scheduleRouteRecovery\(expectLegacy = false\)/,
+);
+assert.match(
+  routeManager,
+  /legacy SCO startup failed[\s\S]*scheduleRouteRecovery\(expectLegacy = true\)/,
 );
 assert.doesNotMatch(
   routeManager,
