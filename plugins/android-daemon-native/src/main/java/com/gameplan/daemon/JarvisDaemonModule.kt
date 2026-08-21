@@ -22,6 +22,7 @@ class JarvisDaemonModule(
 
     companion object {
         private const val VOICE_SESSION_CONTROL_EVENT = "JarvisVoiceSessionControl"
+        private const val IN_APP_VOICE_PLAYBACK_AUDIO_OWNER = "in_app_voice_playback"
 
         @Volatile private var activeReactContext: ReactApplicationContext? = null
 
@@ -52,6 +53,7 @@ class JarvisDaemonModule(
 
     override fun invalidate() {
         nativeSpeechRecognitionBridge.destroy()
+        WearableAudioRouteManager.release(IN_APP_VOICE_PLAYBACK_AUDIO_OWNER)
         if (activeReactContext === reactApplicationContext) activeReactContext = null
         super.invalidate()
     }
@@ -299,6 +301,20 @@ class JarvisDaemonModule(
     @ReactMethod
     fun cancelNativeSpeechRecognition(promise: Promise) {
         nativeSpeechRecognitionBridge.cancel(promise)
+    }
+
+    @ReactMethod
+    fun acquireNativeVoicePlaybackRoute(promise: Promise) {
+        WearableAudioRouteManager.acquire(
+            reactApplicationContext,
+            IN_APP_VOICE_PLAYBACK_AUDIO_OWNER,
+        ) { promise.resolve(null) }
+    }
+
+    @ReactMethod
+    fun releaseNativeVoicePlaybackRoute(promise: Promise) {
+        WearableAudioRouteManager.release(IN_APP_VOICE_PLAYBACK_AUDIO_OWNER)
+        promise.resolve(null)
     }
 
     @ReactMethod
