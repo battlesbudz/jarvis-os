@@ -83,6 +83,13 @@ assert.ok(
 );
 
 assert.ok(
+  /SELECT id, pending_review, review_status, supersedes_memory_id/.test(memorySearchSource) &&
+    /duplicateIsSamePendingCorrection/.test(memorySearchSource) &&
+    /plan\.supersedeMemoryIds\.includes\(duplicate\.supersedes_memory_id!\)/.test(memorySearchSource),
+  "a retried pending correction should reuse the existing review item for the same target",
+);
+
+assert.ok(
   /refreshApprovedMemoryDerivedContext/.test(profileMemoryRoutesSource) &&
     /projectApprovedMemories\(userId,\s*\{[\s\S]*memoryIds/.test(profileMemoryRoutesSource) &&
     /JARVIS_BRAIN_PROJECTION === "1"/.test(profileMemoryRoutesSource) &&

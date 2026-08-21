@@ -160,8 +160,9 @@ async function executeMemorySave(
       id: string;
       pending_review: boolean;
       review_status: string;
+      supersedes_memory_id: string | null;
     }>(sql`
-      SELECT id, pending_review, review_status
+      SELECT id, pending_review, review_status, supersedes_memory_id
       FROM user_memories
       WHERE user_id = ${ctx.userId}
         AND LOWER(REGEXP_REPLACE(TRIM(content), '\\s+', ' ', 'g')) = ${normalized}
@@ -214,9 +215,13 @@ async function executeMemorySave(
         };
       }
 
+      const duplicateIsSamePendingCorrection = duplicate.pending_review &&
+        Boolean(duplicate.supersedes_memory_id) &&
+        plan.supersedeMemoryIds.includes(duplicate.supersedes_memory_id!);
       const correctionNeedsReview = plan.record.pendingReview &&
         plan.supersedeMemoryIds.length > 0 &&
-        !plan.supersedeMemoryIds.includes(duplicateId);
+        !plan.supersedeMemoryIds.includes(duplicateId) &&
+        !duplicateIsSamePendingCorrection;
       if (!correctionNeedsReview) {
         return {
           ok: true,
