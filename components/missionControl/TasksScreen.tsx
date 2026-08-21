@@ -418,6 +418,13 @@ export default function TasksScreen() {
       representations: renderedJobs.map((job) => ({ id: job.id, status: job.status })),
     }).catch(() => {});
   }, [queuePanel?.activeJobs, queuePanelUpdatedAt]);
+  useEffect(() => () => {
+    void apiRequest('POST', '/api/live-actions/baseline/representations', {
+      kind: 'agent_job',
+      surface: 'mission_control',
+      representations: [],
+    }).catch(() => {});
+  }, []);
 
   if (isLoading) {
     return (

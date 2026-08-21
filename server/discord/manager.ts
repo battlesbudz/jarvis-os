@@ -918,6 +918,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           discordGuildId,
           discordChannelId,
           sdkSessionId: storedSessionId,
+          statusObservationId: message.id,
         });
         // Only retry when streaming produced NO visible content at all.
         // If streamBuf has content the placeholder was already edited; a
@@ -948,6 +949,7 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           discordGuildId,
           discordChannelId,
           sdkSessionId: storedSessionId,
+          statusObservationId: message.id,
           onProgressMessage,
           // no onToken → forces non-streaming path
         });

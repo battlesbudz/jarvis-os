@@ -37,6 +37,7 @@ const representationFingerprintKey = randomBytes(32);
 const LATENCY_BUCKETS_MS = [100, 250, 500, 1_000, 1_500, 2_000, 3_000, 5_000, 10_000, 30_000, 60_000, 300_000, 3_600_000, 86_400_000, 31_536_000_000] as const;
 const TERMINAL_RECONCILIATION_WINDOW_MS = 5 * 60 * 1_000;
 const MAX_MISMATCH_HEARTBEAT_GAP_MS = 90 * 1_000;
+const STATUS_OBSERVATION_TTL_MS = 10 * 60 * 1_000;
 
 interface MetricAggregate {
   count: number;
@@ -78,6 +79,7 @@ const representationSnapshots = new Map<string, Map<string, {
   counts: Map<string, number>;
 }>>();
 const terminalMismatchFirstSeen = new Map<string, Map<string, { firstSeenAt: number; lastSeenAt: number }>>();
+const statusObservationIds = new Map<string, number>();
 
 function fingerprintRepresentation(userId: string, kind: "agent_job" | "project", identity: string): string {
   return createHmac("sha256", representationFingerprintKey)
@@ -157,9 +159,24 @@ export function recordStatusCheckFollowUp(input: {
   userId: string;
   message: string;
   surface?: string;
+  observationId?: string;
 }): boolean {
-  const isStatusCheck = /\b(?:is it|are you|is that|did it|did you|what(?:'s| is) the status|status update|still)\b[\s\S]{0,60}\b(?:running|working|done|finished|complete|completed|status|stuck)\b/i.test(input.message);
+  const isStatusCheck = /\b(?:what(?:'s| is) the status|status update)\b[^?\n]{0,60}\??\s*$/i.test(input.message)
+    || /\b(?:is it|are you|is that|did it|did you|still)\b[\s\S]{0,60}\b(?:running|working|done|finished|complete|completed|status|stuck)\b/i.test(input.message);
   if (isStatusCheck) {
+    if (input.observationId) {
+      const nowMs = Date.now();
+      for (const [key, observedAt] of statusObservationIds) {
+        if (nowMs - observedAt > STATUS_OBSERVATION_TTL_MS) statusObservationIds.delete(key);
+      }
+      const observationKey = createHmac("sha256", representationFingerprintKey)
+        .update(input.userId)
+        .update("\0")
+        .update(input.observationId)
+        .digest("base64url");
+      if (statusObservationIds.has(observationKey)) return true;
+      statusObservationIds.set(observationKey, nowMs);
+    }
     recordLiveActionBaseline({
       userId: input.userId,
       metric: "status_check_follow_up",
@@ -366,4 +383,5 @@ export function resetLiveActionBaselinesForTests(): void {
   baselines.clear();
   representationSnapshots.clear();
   terminalMismatchFirstSeen.clear();
+  statusObservationIds.clear();
 }

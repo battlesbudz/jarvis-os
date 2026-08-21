@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import {
   getLiveActionBaselineReport,
   getLiveActionAggregateReport,
@@ -31,6 +32,30 @@ assert.equal(isClientSubmittedLiveActionBaselineMetric("acknowledgement_visible_
 assert.equal(isClientSubmittedLiveActionBaselineMetric("terminal_state_drift_count"), false);
 assert.equal(isClientSubmittedLiveActionBaselineMetric("duplicate_representation_count"), false);
 
+const tasksScreen = fs.readFileSync("components/missionControl/TasksScreen.tsx", "utf8");
+assert.match(tasksScreen, /useEffect\(\(\) => \(\) => \{[\s\S]*?surface: 'mission_control',[\s\S]*?representations: \[\]/);
+const discordManager = fs.readFileSync("server/discord/manager.ts", "utf8");
+assert.equal(discordManager.match(/statusObservationId: message\.id/g)?.length, 2);
+
+resetLiveActionBaselinesForTests();
+assert.equal(recordStatusCheckFollowUp({ userId: "status-phrases", message: "What's the status?", surface: "slack" }), true);
+assert.equal(recordStatusCheckFollowUp({ userId: "status-phrases", message: "Status update?", surface: "slack" }), true);
+assert.equal(recordStatusCheckFollowUp({ userId: "status-phrases", message: "What's the status of my day?", surface: "slack" }), true);
+assert.equal(getLiveActionBaselineReport("status-phrases").metrics["status_check_follow_up:slack"].count, 3);
+resetLiveActionBaselinesForTests();
+assert.equal(recordStatusCheckFollowUp({
+  userId: "retry-user",
+  message: "What's the status?",
+  surface: "discord",
+  observationId: "discord-message-1",
+}), true);
+assert.equal(recordStatusCheckFollowUp({
+  userId: "retry-user",
+  message: "What's the status?",
+  surface: "discord",
+  observationId: "discord-message-1",
+}), true);
+assert.equal(getLiveActionBaselineReport("retry-user").metrics["status_check_follow_up:discord"].count, 1);
 resetLiveActionBaselinesForTests();
 assert.equal(recordStatusCheckFollowUp({ userId: "user-a", message: "Is it still running?", surface: "chat" }), true);
 assert.equal(recordStatusCheckFollowUp({ userId: "user-a", message: "Tell me about basil.", surface: "chat" }), false);

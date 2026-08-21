@@ -50,6 +50,8 @@ export interface CoachReplyInput {
   onProgressMessage?: (message: string) => void;
   /** Current external chat/channel ID when the caller has one (Telegram chat ID, Discord channel ID, etc.). */
   originChannelId?: string;
+  /** Stable inbound turn ID used to avoid double-counting transport retries. */
+  statusObservationId?: string;
   /** Discord guild (server) ID — set when the request originates from a Discord guild channel.
    *  Surfaced in ToolContext so Discord-specific tools (e.g. deleteDiscordChannel) can
    *  identify the server without requiring a pre-configured workspace. */
@@ -189,7 +191,12 @@ export async function runCoachAgent(input: CoachReplyInput): Promise<CoachReplyR
   const telegramE2eProbeId = channelName === "Telegram" ? getTelegramE2eProbeId(userText) : null;
   const telegramE2eLogSuffix = telegramE2eProbeId ? ` e2e=${telegramE2eProbeId}` : "";
 
-  recordStatusCheckFollowUp({ userId, message: userText, surface: channelLower });
+  recordStatusCheckFollowUp({
+    userId,
+    message: userText,
+    surface: channelLower,
+    observationId: input.statusObservationId,
+  });
 
   if (
     channelName === "Telegram" &&
