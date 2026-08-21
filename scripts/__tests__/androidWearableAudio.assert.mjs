@@ -174,17 +174,25 @@ assert.match(outsideVoice, /ACTION_TAKE_CAPTURE/);
 assert.match(outsideVoice, /ownsVoiceCapture/);
 assert.match(outsideVoice, /fun prepareForInAppCapture\(\)/);
 assert.match(daemonModule, /fun handoffOutsideAppVoiceCapture\(promise: Promise\)/);
-assert.match(daemonModule, /fun acquireNativeVoicePlaybackRoute\(promise: Promise\)/);
-assert.match(daemonModule, /fun releaseNativeVoicePlaybackRoute\(promise: Promise\)/);
+assert.match(daemonModule, /fun acquireNativeVoicePlaybackRoute\(ownerId: String, promise: Promise\)/);
+assert.match(daemonModule, /fun releaseNativeVoicePlaybackRoute\(ownerId: String, promise: Promise\)/);
 assert.match(
   daemonModule,
-  /override fun invalidate\(\)[\s\S]*?WearableAudioRouteManager\.release\(IN_APP_VOICE_PLAYBACK_AUDIO_OWNER\)/,
+  /override fun invalidate\(\)[\s\S]*?nativeVoicePlaybackOwners\.forEach\(WearableAudioRouteManager::release\)/,
 );
 assert.match(androidDaemonNative, /acquireAndroidNativeVoicePlaybackRoute/);
 assert.match(androidDaemonNative, /releaseAndroidNativeVoicePlaybackRoute/);
 assert.match(
   insights,
-  /acquireAndroidNativeVoicePlaybackRoute\(\)[\s\S]*?abortController\.signal\.aborted[\s\S]*?Speech\.speak\([\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(\)/,
+  /acquireAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)[\s\S]*?abortController\.signal\.aborted[\s\S]*?Speech\.speak\([\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)/,
+);
+assert.match(
+  insights,
+  /const scheduleTalkModeRecordingStart[\s\S]*?!insightsFocusedRef\.current/,
+);
+assert.match(
+  insights,
+  /useFocusEffect[\s\S]*?insightsFocusedRef\.current = true[\s\S]*?return \(\) => \{\s+insightsFocusedRef\.current = false/,
 );
 assert.match(
   insights,
