@@ -105,7 +105,7 @@ internal object WearableAudioRouteManager {
     private var legacyScoTeardownPending = false
     private var legacyScoTeardownWaitElapsed = false
     private var legacyScoTeardownGeneration = 0
-    private var routeRecoveryScheduled = false
+    private var routeRecoveryRunnable: Runnable? = null
     private var routeRetryAttempt = 0
 
     private val audioDeviceCallback = object : AudioDeviceCallback() {
@@ -456,21 +456,21 @@ internal object WearableAudioRouteManager {
     private fun finishRouteRecovery(success: Boolean, detail: String) {
         if (!routeRecoveryPending) return
         routeRecoveryPending = false
+        cancelScheduledRouteRecovery()
         routeRetryAttempt = 0
         val outcome = if (success) "succeeded" else "failed"
         DaemonLog.add("wearable_audio: route recovery $outcome; $detail")
     }
 
     private fun scheduleRouteRecovery(expectLegacy: Boolean) {
-        if (routeRecoveryScheduled) return
-        routeRecoveryScheduled = true
+        if (routeRecoveryRunnable != null) return
         val retryDelayMs = minOf(
             ROUTE_RETRY_MAX_DELAY_MS,
             ROUTE_RETRY_DELAY_MS * (1L shl routeRetryAttempt.coerceAtMost(6)),
         )
         routeRetryAttempt += 1
-        mainHandler.postDelayed({
-            routeRecoveryScheduled = false
+        val retry = Runnable {
+            routeRecoveryRunnable = null
             if (
                 owners.isNotEmpty() &&
                 routeState == "failed" &&
@@ -478,7 +478,14 @@ internal object WearableAudioRouteManager {
             ) {
                 activateBestRoute()
             }
-        }, retryDelayMs)
+        }
+        routeRecoveryRunnable = retry
+        mainHandler.postDelayed(retry, retryDelayMs)
+    }
+
+    private fun cancelScheduledRouteRecovery() {
+        routeRecoveryRunnable?.let { mainHandler.removeCallbacks(it) }
+        routeRecoveryRunnable = null
     }
 
     private fun failLegacyScoRequest(error: String) {
@@ -519,7 +526,7 @@ internal object WearableAudioRouteManager {
                 routeRecoveryPending = false
                 DaemonLog.add("wearable_audio: route recovery cancelled; voice session ended")
             }
-            routeRecoveryScheduled = false
+            cancelScheduledRouteRecovery()
             routeRetryAttempt = 0
             previousAudioMode?.let { previousMode ->
                 if (manager.mode == AudioManager.MODE_IN_COMMUNICATION) {
