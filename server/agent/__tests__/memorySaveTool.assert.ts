@@ -75,11 +75,18 @@ assert.ok(
 );
 
 assert.ok(
-  /duplicateIsApproved/.test(memorySearchSource) &&
+  /!plan\.record\.pendingReview && duplicateIsApproved/.test(memorySearchSource) &&
     /correctionTargets = plan\.supersedeMemoryIds\.filter/.test(memorySearchSource) &&
     /markMemoriesSuperseded\([\s\S]*ctx\.userId,[\s\S]*correctionTargets,[\s\S]*duplicateId/.test(memorySearchSource) &&
     /supersededMemoryIds: correctionTargets/.test(memorySearchSource),
-  "an approved duplicate should complete the requested supersession instead of leaving the incorrect memory active",
+  "an approved duplicate should complete an immediate correction without bypassing Memory Review",
+);
+
+assert.ok(
+  /duplicateAlreadyCompletedCorrection/.test(memorySearchSource) &&
+    /Memory correction already applied/.test(memorySearchSource) &&
+    /supersededMemoryIds: \[duplicate\.supersedes_memory_id\]/.test(memorySearchSource),
+  "a retry after correction approval should return the existing successful correction",
 );
 
 assert.ok(
