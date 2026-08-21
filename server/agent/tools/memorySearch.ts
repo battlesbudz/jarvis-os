@@ -238,28 +238,39 @@ async function executeMemorySave(
       }
 
       if (!plan.record.pendingReview && duplicateIsApproved && correctionTargets.length > 0) {
-        const supersededCount = await defaultMemoryWriteDeps.markMemoriesSuperseded(
-          ctx.userId,
-          correctionTargets,
-          duplicateId,
-        );
-        if (supersededCount !== correctionTargets.length) {
-          const completedResult = await db.execute<{ id: string }>(sql`
-            SELECT id
+        await db.transaction(async (tx) => {
+          const targetResult = await tx.execute<{ id: string; review_status: string; corrected_by_memory_id: string | null }>(sql`
+            SELECT id, review_status, corrected_by_memory_id
             FROM user_memories
             WHERE user_id = ${ctx.userId}
               AND id = ANY(${correctionTargets}::varchar[])
-              AND review_status = 'superseded'
-              AND corrected_by_memory_id = ${duplicateId}
+            FOR UPDATE
           `);
-          if ((completedResult.rows ?? []).length !== correctionTargets.length) {
-            return {
-              ok: false,
-              content: "The memory being corrected changed before the correction could be applied. Search memory again and retry.",
-              label: "Memory correction conflict",
-            };
+          const targets = targetResult.rows ?? [];
+          if (targets.length !== correctionTargets.length) throw new MemoryCorrectionConflictError();
+          if (targets.every((target) => target.review_status === "superseded" && target.corrected_by_memory_id === duplicateId)) return;
+          if (!targets.every((target) => ["active", "kept", "edited"].includes(target.review_status))) {
+            throw new MemoryCorrectionConflictError();
           }
-        }
+          await tx.execute(sql`
+            UPDATE user_memories
+            SET review_status = 'discarded'
+            WHERE user_id = ${ctx.userId}
+              AND supersedes_memory_id = ANY(${correctionTargets}::varchar[])
+              AND pending_review = TRUE
+              AND review_status = 'pending'
+          `);
+          const superseded = await tx.execute<{ id: string }>(sql`
+            UPDATE user_memories
+            SET review_status = 'superseded',
+                corrected_by_memory_id = ${duplicateId}
+            WHERE user_id = ${ctx.userId}
+              AND id = ANY(${correctionTargets}::varchar[])
+              AND review_status IN ('active', 'kept', 'edited')
+            RETURNING id
+          `);
+          if ((superseded.rows ?? []).length !== correctionTargets.length) throw new MemoryCorrectionConflictError();
+        });
         deps.markSoulStale(ctx.userId).catch(() => {});
         if (process.env.JARVIS_BRAIN_PROJECTION === "1") {
           deps.projectApprovedMemories(ctx.userId, {
@@ -320,6 +331,20 @@ async function executeMemorySave(
     }
 
     const inserted = await db.transaction(async (tx) => {
+      if (plan.supersedeMemoryIds.length > 0) {
+        const lockedTargets = await tx.execute<{ id: string }>(sql`
+          SELECT id
+          FROM user_memories
+          WHERE user_id = ${ctx.userId}
+            AND id = ANY(${plan.supersedeMemoryIds}::varchar[])
+            AND (pending_review = FALSE OR pending_review IS NULL)
+            AND review_status IN ('active', 'kept', 'edited')
+          FOR UPDATE
+        `);
+        if ((lockedTargets.rows ?? []).length !== plan.supersedeMemoryIds.length) {
+          throw new MemoryCorrectionConflictError();
+        }
+      }
       const [created] = await tx.insert(userMemories).values({
         userId: ctx.userId,
         content: plan.record.content,

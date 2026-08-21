@@ -144,6 +144,14 @@ assert.ok(
 );
 
 assert.ok(
+  /lockedTargets[\s\S]*FOR UPDATE/.test(memorySearchSource) &&
+    /targetResult[\s\S]*FOR UPDATE/.test(memorySearchSource) &&
+    /corrected_by_memory_id === duplicateId/.test(memorySearchSource) &&
+    /supersedes_memory_id = ANY\(\$\{correctionTargets\}::varchar\[\]\)[\s\S]*review_status = 'pending'/.test(memorySearchSource),
+  "pending and immediate corrections should serialize on the source and retire obsolete proposals in both paths",
+);
+
+assert.ok(
   /refreshApprovedMemoryDerivedContext/.test(profileMemoryRoutesSource) &&
     /projectApprovedMemories\(userId,\s*\{[\s\S]*memoryIds/.test(profileMemoryRoutesSource) &&
     /JARVIS_BRAIN_PROJECTION === "1"/.test(profileMemoryRoutesSource) &&
