@@ -66,6 +66,7 @@ class WakeWordService : Service() {
         private const val MIN_RECOGNIZER_RESTART_DELAY_MS = 1000L
         private const val RECOGNIZER_RESTART_FAILURE_DELAY_MS = 3000L
         private const val LOCAL_INFERENCE_TALK_MODE_RECOVERY_DELAY_MS = 10_000L
+        private const val WEARABLE_AUDIO_OWNER = "talk_mode"
 
         const val ACTION_START = "com.gameplan.daemon.WAKE_WORD_START"
         const val ACTION_STOP = "com.gameplan.daemon.WAKE_WORD_STOP"
@@ -95,6 +96,10 @@ class WakeWordService : Service() {
 
         fun pauseForResponse() {
             instance?.handlePauseForResponse()
+        }
+
+        fun pauseForInAppCapture() {
+            instance?.handlePauseForInAppCapture()
         }
 
         /**
@@ -182,13 +187,25 @@ class WakeWordService : Service() {
             ACTION_UPDATE -> {
                 val words = intent?.getStringArrayExtra(EXTRA_WAKE_WORDS)
                 if (!words.isNullOrEmpty()) wakeWords = words.map { it.lowercase(Locale.US) }
+                val previousTalkMode = talkModeEnabled
                 talkModeEnabled = intent?.getBooleanExtra(EXTRA_TALK_MODE, talkModeEnabled) ?: talkModeEnabled
                 listeningRequested = true
                 DaemonLog.add("wake: words updated to [${wakeWords.joinToString()}] talkMode=$talkModeEnabled")
-                if (!active) startListening()
+                if (previousTalkMode != talkModeEnabled) {
+                    active = false
+                    cancelPendingRestart()
+                    mainHandler.post {
+                        destroyRecognizer()
+                        if (!talkModeEnabled) WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
+                        startListening()
+                    }
+                } else if (!active) {
+                    startListening()
+                }
             }
             ACTION_STOP -> {
                 listeningRequested = false
+                WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
                 stopListening()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -202,6 +219,7 @@ class WakeWordService : Service() {
     override fun onDestroy() {
         instance = null
         listeningRequested = false
+        WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
         stopListening()
         super.onDestroy()
     }
@@ -209,6 +227,21 @@ class WakeWordService : Service() {
     // ── SpeechRecognizer ────────────────────────────────────────────────────
 
     private fun startListening() {
+        if (!listeningRequested || active || localInferencePaused) return
+        if (talkModeEnabled) {
+            WearableAudioRouteManager.acquire(this, WEARABLE_AUDIO_OWNER) { route ->
+                if (!listeningRequested || active || localInferencePaused || !talkModeEnabled) return@acquire
+                DaemonLog.add(
+                    "wearable_audio: talk route=${route.state} device=${route.deviceName ?: "none"} type=${route.deviceType ?: "none"}",
+                )
+                startListeningWithCurrentRoute()
+            }
+            return
+        }
+        startListeningWithCurrentRoute()
+    }
+
+    private fun startListeningWithCurrentRoute() {
         if (!listeningRequested || active || localInferencePaused) return
         cancelPendingRestart()
         cancelNonTalkCooldownRestart()
@@ -487,6 +520,8 @@ class WakeWordService : Service() {
                 destroyRecognizer()
             } catch (e: Exception) {
                 Log.e(TAG, "handlePauseForUserControl error", e)
+            } finally {
+                WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
             }
         }
     }
@@ -498,6 +533,24 @@ class WakeWordService : Service() {
         cancelPendingRestart()
         cancelLocalInferenceRecovery()
         mainHandler.post { destroyRecognizer() }
+    }
+
+    private fun handlePauseForInAppCapture() {
+        if (!talkModeEnabled) return
+        capturingUtterance = false
+        active = false
+        cancelPendingRestart()
+        cancelLocalInferenceRecovery()
+        val releaseCapture = Runnable {
+            destroyRecognizer()
+            WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
+            DaemonLog.add("talk: microphone ownership returned to the in-app recognizer")
+        }
+        if (Looper.myLooper() == mainHandler.looper) {
+            releaseCapture.run()
+        } else {
+            mainHandler.post(releaseCapture)
+        }
     }
 
     private fun handlePauseForLocalInference(): Boolean {
@@ -599,6 +652,7 @@ class WakeWordService : Service() {
         if (!talkModeEnabled && !capturingUtterance) return
         DaemonLog.add("wake: ending talk mode capture")
         talkModeEnabled = false
+        WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
         capturingUtterance = false
         active = false
         cancelPendingRestart()
