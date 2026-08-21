@@ -36,6 +36,7 @@ const ALLOWED_SURFACES = new Set([
 ]);
 const MAX_USERS = 500;
 const MAX_REPRESENTATION_SNAPSHOTS_PER_USER = 20;
+const MAX_STATUS_OBSERVATION_IDS = 10_000;
 const REPRESENTATION_TTL_MS = 5 * 60 * 1_000;
 const representationFingerprintKey = randomBytes(32);
 const LATENCY_BUCKETS_MS = [100, 250, 500, 1_000, 1_500, 2_000, 3_000, 5_000, 10_000, 30_000, 60_000, 300_000, 3_600_000, 86_400_000, 31_536_000_000] as const;
@@ -112,8 +113,20 @@ function pruneRepresentationState(nowMs = Date.now()): void {
   }
 }
 
-const representationPruneTimer = setInterval(pruneRepresentationState, MAX_MISMATCH_HEARTBEAT_GAP_MS);
-representationPruneTimer.unref?.();
+function pruneStatusObservationIds(nowMs = Date.now()): void {
+  for (const [key, observedAt] of statusObservationIds) {
+    if (nowMs - observedAt > STATUS_OBSERVATION_TTL_MS) statusObservationIds.delete(key);
+  }
+}
+
+function pruneBaselineState(): void {
+  const nowMs = Date.now();
+  pruneRepresentationState(nowMs);
+  pruneStatusObservationIds(nowMs);
+}
+
+const baselinePruneTimer = setInterval(pruneBaselineState, MAX_MISMATCH_HEARTBEAT_GAP_MS);
+baselinePruneTimer.unref?.();
 
 function fingerprintRepresentation(userId: string, kind: "agent_job" | "project", identity: string): string {
   return createHmac("sha256", representationFingerprintKey)
@@ -200,15 +213,17 @@ export function recordStatusCheckFollowUp(input: {
     || /\b(?:is it|are you|is that|did it|did you|still)\b[\s\S]{0,60}\b(?:running|working|done|finished|complete|completed|status|stuck)\b/i.test(input.message);
   if (input.observationId) {
     const nowMs = Date.now();
-    for (const [key, observedAt] of statusObservationIds) {
-      if (nowMs - observedAt > STATUS_OBSERVATION_TTL_MS) statusObservationIds.delete(key);
-    }
     const observationKey = createHmac("sha256", representationFingerprintKey)
       .update(input.userId)
       .update("\0")
       .update(input.observationId)
       .digest("base64url");
     if (statusObservationIds.has(observationKey)) return isStatusCheck;
+    // Bound memory; only events beyond this cap lose oldest-first retry deduplication.
+    if (statusObservationIds.size >= MAX_STATUS_OBSERVATION_IDS) {
+      const oldestKey = statusObservationIds.keys().next().value;
+      if (oldestKey) statusObservationIds.delete(oldestKey);
+    }
     statusObservationIds.set(observationKey, nowMs);
   }
   recordLiveActionBaseline({

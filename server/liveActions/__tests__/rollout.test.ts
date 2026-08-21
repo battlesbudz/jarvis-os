@@ -71,8 +71,9 @@ const discordSlashCommands = fs.readFileSync("server/discord/slashCommands.ts", 
 assert.match(discordSlashCommands, /statusObservationId: String\(interaction\.id/);
 const baselineMetricsSource = fs.readFileSync("server/liveActions/baselineMetrics.ts", "utf8");
 assert.match(baselineMetricsSource, /MAX_REPRESENTATION_SNAPSHOTS_PER_USER = 20/);
-assert.match(baselineMetricsSource, /setInterval\(pruneRepresentationState, MAX_MISMATCH_HEARTBEAT_GAP_MS\)/);
-assert.match(baselineMetricsSource, /representationPruneTimer\.unref\?\.\(\)/);
+assert.match(baselineMetricsSource, /MAX_STATUS_OBSERVATION_IDS = 10_000/);
+assert.match(baselineMetricsSource, /setInterval\(pruneBaselineState, MAX_MISMATCH_HEARTBEAT_GAP_MS\)/);
+assert.match(baselineMetricsSource, /baselinePruneTimer\.unref\?\.\(\)/);
 
 resetLiveActionBaselinesForTests();
 recordStatusCheckFollowUp({ userId: "surface-aliases", message: "Status update?", surface: "appchat" });
@@ -100,6 +101,22 @@ assert.equal(recordStatusCheckFollowUp({
 }), true);
 assert.equal(getLiveActionBaselineReport("retry-user").metrics["status_check_follow_up:discord"].count, 1);
 assert.equal(getLiveActionBaselineReport("retry-user").metrics["status_check_exposure_count:discord"].count, 1);
+resetLiveActionBaselinesForTests();
+for (let index = 0; index <= 10_000; index += 1) {
+  recordStatusCheckFollowUp({
+    userId: "bounded-status-user",
+    message: "Tell me about basil.",
+    surface: "slack",
+    observationId: `slack-event-${index}`,
+  });
+}
+recordStatusCheckFollowUp({
+  userId: "bounded-status-user",
+  message: "Tell me about basil.",
+  surface: "slack",
+  observationId: "slack-event-0",
+});
+assert.equal(getLiveActionBaselineReport("bounded-status-user").metrics["status_check_exposure_count:slack"].count, 10_002);
 resetLiveActionBaselinesForTests();
 assert.equal(recordStatusCheckFollowUp({ userId: "user-a", message: "Is it still running?", surface: "chat" }), true);
 assert.equal(recordStatusCheckFollowUp({ userId: "user-a", message: "Tell me about basil.", surface: "chat" }), false);
