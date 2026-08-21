@@ -36,11 +36,14 @@ assert.equal(isClientSubmittedLiveActionBaselineMetric("duplicate_representation
 const tasksScreen = fs.readFileSync("components/missionControl/TasksScreen.tsx", "utf8");
 assert.match(tasksScreen, /const isFocused = useIsFocused\(\)/);
 assert.match(tasksScreen, /const renderedJobs = isFocused \?/);
+assert.match(tasksScreen, /sequence: \+\+representationSequence\.current/);
 assert.match(tasksScreen, /useEffect\(\(\) => \(\) => \{[\s\S]*?surface: 'mission_control',[\s\S]*?representations: \[\]/);
 const projectsScreen = fs.readFileSync("app/(tabs)/projects.tsx", "utf8");
 assert.match(projectsScreen, /!isFocused \|\| selectedId \? \[\]/);
+assert.match(projectsScreen, /sequence: \+\+representationSequence\.current/);
 const inboxScreen = fs.readFileSync("app/(tabs)/inbox.tsx", "utf8");
 assert.match(inboxScreen, /const renderedJobs = isFocused \?/);
+assert.match(inboxScreen, /sequence: \+\+representationSequence\.current/);
 const discordManager = fs.readFileSync("server/discord/manager.ts", "utf8");
 assert.equal(discordManager.match(/statusObservationId: message\.id/g)?.length, 2);
 const coachAgent = fs.readFileSync("server/channels/coachAgent.ts", "utf8");
@@ -61,6 +64,7 @@ assert.equal(recordStatusCheckFollowUp({ userId: "status-phrases", message: "Wha
 assert.equal(recordStatusCheckFollowUp({ userId: "status-phrases", message: "Status update?", surface: "slack" }), true);
 assert.equal(recordStatusCheckFollowUp({ userId: "status-phrases", message: "What's the status of my day?", surface: "slack" }), true);
 assert.equal(getLiveActionBaselineReport("status-phrases").metrics["status_check_follow_up:slack"].count, 3);
+assert.equal(getLiveActionBaselineReport("status-phrases").metrics["status_check_exposure_count:slack"].count, 3);
 resetLiveActionBaselinesForTests();
 assert.equal(recordStatusCheckFollowUp({
   userId: "retry-user",
@@ -75,9 +79,11 @@ assert.equal(recordStatusCheckFollowUp({
   observationId: "discord-message-1",
 }), true);
 assert.equal(getLiveActionBaselineReport("retry-user").metrics["status_check_follow_up:discord"].count, 1);
+assert.equal(getLiveActionBaselineReport("retry-user").metrics["status_check_exposure_count:discord"].count, 1);
 resetLiveActionBaselinesForTests();
 assert.equal(recordStatusCheckFollowUp({ userId: "user-a", message: "Is it still running?", surface: "chat" }), true);
 assert.equal(recordStatusCheckFollowUp({ userId: "user-a", message: "Tell me about basil.", surface: "chat" }), false);
+assert.equal(getLiveActionBaselineReport("user-a").metrics["status_check_exposure_count:chat"].count, 2);
 recordLiveActionBaseline({
   userId: "user-a",
   metric: "acknowledgement_visible_latency_ms",
@@ -96,6 +102,7 @@ assert.deepEqual(recordRenderedRepresentationSnapshot({
   kind: "agent_job",
   surface: "inbox",
   identities: ["job-1", "job-1", "job-2"],
+  sequence: 1,
   nowMs: 1_250,
 }), { duplicateCount: 1, representationCount: 3 });
 assert.deepEqual(recordRenderedRepresentationSnapshot({
@@ -103,8 +110,26 @@ assert.deepEqual(recordRenderedRepresentationSnapshot({
   kind: "agent_job",
   surface: "mission_control",
   identities: ["job-1"],
+  sequence: 1,
   nowMs: 1_300,
 }), { duplicateCount: 2, representationCount: 4 });
+assert.deepEqual(recordRenderedRepresentationSnapshot({
+  userId: "stale-snapshot-user",
+  kind: "agent_job",
+  surface: "inbox",
+  identities: [],
+  sequence: 2,
+  nowMs: 1_400,
+}), { duplicateCount: 0, representationCount: 0 });
+assert.equal(recordRenderedRepresentationSnapshot({
+  userId: "stale-snapshot-user",
+  kind: "agent_job",
+  surface: "inbox",
+  identities: ["job-stale"],
+  sequence: 1,
+  nowMs: 1_500,
+}), null);
+assert.equal(getLiveActionBaselineReport("stale-snapshot-user").metrics["rendered_representation_count:inbox"].sum, 0);
 assert.deepEqual(observeTerminalStateDrift({
   userId: "user-a",
   kind: "project",
@@ -183,6 +208,7 @@ const aggregate = getLiveActionAggregateReport();
 assert.equal(aggregate.scope, "deployment");
 assert.equal(aggregate.userCount, 1);
 assert.equal(aggregate.metrics["status_check_follow_up:chat"].count, 1);
+assert.equal(aggregate.metrics["status_check_exposure_count:chat"].sum, 2);
 assert.equal(aggregate.metrics["acknowledgement_visible_latency_ms:unknown"], undefined);
 assert.equal(aggregate.metrics["duplicate_representation_count:inbox"], undefined);
 assert.equal(aggregate.metrics["terminal_state_drift_count:projects"], undefined);

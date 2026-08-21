@@ -947,6 +947,7 @@ export default function ProjectsScreen() {
   const [showNew, setShowNew] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const isFocused = useIsFocused();
+  const representationSequence = useRef(Date.now() * 1000);
   const { data: projects, dataUpdatedAt: projectsUpdatedAt, isLoading, refetch } = useProjects();
   useEffect(() => {
     if (!projects) return;
@@ -954,6 +955,7 @@ export default function ProjectsScreen() {
     void apiRequest("POST", "/api/live-actions/baseline/representations", {
       kind: "project",
       surface: "projects",
+      sequence: ++representationSequence.current,
       representations: renderedProjects.map((project) => ({ id: project.id, status: project.status })),
     }).catch(() => {});
   }, [isFocused, projects, projectsUpdatedAt, selectedId]);

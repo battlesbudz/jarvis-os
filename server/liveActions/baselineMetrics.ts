@@ -3,6 +3,7 @@ import { getLiveActionFeatureFlags, type LiveActionFeatureFlags } from "./rollou
 
 export const LIVE_ACTION_BASELINE_METRICS = [
   "status_check_follow_up",
+  "status_check_exposure_count",
   "reconnect_restoration_ms",
   "duplicate_representation_count",
   "rendered_representation_count",
@@ -78,6 +79,7 @@ export interface LiveActionBaselineReport {
 const baselines = new Map<string, UserBaseline>();
 const representationSnapshots = new Map<string, Map<string, {
   observedAt: number;
+  sequence: number;
   counts: Map<string, number>;
 }>>();
 const terminalMismatchFirstSeen = new Map<string, Map<string, { firstSeenAt: number; lastSeenAt: number }>>();
@@ -166,20 +168,26 @@ export function recordStatusCheckFollowUp(input: {
 }): boolean {
   const isStatusCheck = /\b(?:what(?:'s| is) the status|status update)\b[^?\n]{0,60}\??\s*$/i.test(input.message)
     || /\b(?:is it|are you|is that|did it|did you|still)\b[\s\S]{0,60}\b(?:running|working|done|finished|complete|completed|status|stuck)\b/i.test(input.message);
-  if (isStatusCheck) {
-    if (input.observationId) {
-      const nowMs = Date.now();
-      for (const [key, observedAt] of statusObservationIds) {
-        if (nowMs - observedAt > STATUS_OBSERVATION_TTL_MS) statusObservationIds.delete(key);
-      }
-      const observationKey = createHmac("sha256", representationFingerprintKey)
-        .update(input.userId)
-        .update("\0")
-        .update(input.observationId)
-        .digest("base64url");
-      if (statusObservationIds.has(observationKey)) return true;
-      statusObservationIds.set(observationKey, nowMs);
+  if (input.observationId) {
+    const nowMs = Date.now();
+    for (const [key, observedAt] of statusObservationIds) {
+      if (nowMs - observedAt > STATUS_OBSERVATION_TTL_MS) statusObservationIds.delete(key);
     }
+    const observationKey = createHmac("sha256", representationFingerprintKey)
+      .update(input.userId)
+      .update("\0")
+      .update(input.observationId)
+      .digest("base64url");
+    if (statusObservationIds.has(observationKey)) return isStatusCheck;
+    statusObservationIds.set(observationKey, nowMs);
+  }
+  recordLiveActionBaseline({
+    userId: input.userId,
+    metric: "status_check_exposure_count",
+    surface: input.surface,
+    includeInDeployment: true,
+  });
+  if (isStatusCheck) {
     recordLiveActionBaseline({
       userId: input.userId,
       metric: "status_check_follow_up",
@@ -195,27 +203,27 @@ export function recordRenderedRepresentationSnapshot(input: {
   kind: "agent_job" | "project";
   surface: string;
   identities: string[];
+  sequence: number;
   nowMs?: number;
-}): { duplicateCount: number; representationCount: number } {
+}): { duplicateCount: number; representationCount: number } | null {
   const nowMs = input.nowMs ?? Date.now();
   const surface = sanitizeSurface(input.surface);
   const userSnapshots = representationSnapshots.get(input.userId) ?? new Map();
-  for (const [key, snapshot] of userSnapshots) {
-    if (nowMs - snapshot.observedAt > REPRESENTATION_TTL_MS) userSnapshots.delete(key);
-  }
+  const snapshotKey = `${input.kind}:${surface}`;
+  if ((userSnapshots.get(snapshotKey)?.sequence ?? -1) >= input.sequence) return null;
   const counts = new Map<string, number>();
   for (const identity of input.identities.slice(0, 100)) {
     if (!identity) continue;
     const fingerprint = fingerprintRepresentation(input.userId, input.kind, identity);
     counts.set(fingerprint, (counts.get(fingerprint) ?? 0) + 1);
   }
-  userSnapshots.set(`${input.kind}:${surface}`, { observedAt: nowMs, counts });
+  userSnapshots.set(snapshotKey, { observedAt: nowMs, sequence: input.sequence, counts });
   representationSnapshots.set(input.userId, userSnapshots);
 
   let total = 0;
   const unique = new Set<string>();
   for (const [key, snapshot] of userSnapshots) {
-    if (!key.startsWith(`${input.kind}:`)) continue;
+    if (!key.startsWith(`${input.kind}:`) || nowMs - snapshot.observedAt > REPRESENTATION_TTL_MS) continue;
     for (const [fingerprint, count] of snapshot.counts) {
       total += count;
       unique.add(fingerprint);

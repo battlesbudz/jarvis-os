@@ -404,6 +404,7 @@ function Section({ label, color, tasks, collapsible = false, emptyText }: Sectio
 
 export default function TasksScreen() {
   const isFocused = useIsFocused();
+  const representationSequence = useRef(Date.now() * 1000);
   const { data, isLoading, error } = useQuery<ScheduledTask[]>({
     queryKey: ['/api/jarvis/scheduled-tasks'],
     refetchInterval: 30000,
@@ -417,6 +418,7 @@ export default function TasksScreen() {
     void apiRequest('POST', '/api/live-actions/baseline/representations', {
       kind: 'agent_job',
       surface: 'mission_control',
+      sequence: ++representationSequence.current,
       representations: renderedJobs.map((job) => ({ id: job.id, status: job.status })),
     }).catch(() => {});
   }, [isFocused, queuePanel?.activeJobs, queuePanelUpdatedAt]);
@@ -424,6 +426,7 @@ export default function TasksScreen() {
     void apiRequest('POST', '/api/live-actions/baseline/representations', {
       kind: 'agent_job',
       surface: 'mission_control',
+      sequence: ++representationSequence.current,
       representations: [],
     }).catch(() => {});
   }, []);

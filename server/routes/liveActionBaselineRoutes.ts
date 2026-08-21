@@ -59,7 +59,9 @@ export function registerLiveActionBaselineRoutes(app: Express): void {
     const kind = req.body?.kind;
     const surface = typeof req.body?.surface === "string" ? req.body.surface : "unknown";
     const representations = req.body?.representations;
-    if ((kind !== "agent_job" && kind !== "project") || !Array.isArray(representations) || representations.length > 100) {
+    const sequence = req.body?.sequence;
+    if ((kind !== "agent_job" && kind !== "project") || !Array.isArray(representations) || representations.length > 100
+      || !Number.isSafeInteger(sequence) || sequence < 0) {
       return res.status(400).json({ error: "Invalid representation snapshot" });
     }
     if (representations.some((item: unknown) => {
@@ -72,58 +74,46 @@ export function registerLiveActionBaselineRoutes(app: Express): void {
     }
 
     const entries = representations as Array<{ id: string; status?: string }>;
-    const representationCounts = recordRenderedRepresentationSnapshot({
-      userId,
-      kind,
-      surface,
-      identities: entries.map((item) => item.id),
-    });
-
     let terminalStateDriftCount = 0;
+    let canonicalStatuses = new Map<string, string>();
+    let terminalStatuses: ReadonlySet<string>;
     if (entries.length === 0) {
-      observeTerminalStateDrift({
-        userId,
-        kind,
-        surface,
-        entries,
-        canonicalStatuses: new Map(),
-        terminalStatuses: new Set(kind === "agent_job"
-          ? ["complete", "delivered", "failed", "cancelled"]
-          : ["complete", "failed"]),
-      });
+      terminalStatuses = new Set(kind === "agent_job"
+        ? ["complete", "delivered", "failed", "cancelled"]
+        : ["complete", "failed"]);
     } else if (kind === "agent_job") {
       const ids = [...new Set(entries.map((item) => item.id))];
       const canonical = await db
         .select({ id: schema.agentJobs.id, status: schema.agentJobs.status })
         .from(schema.agentJobs)
         .where(and(eq(schema.agentJobs.userId, userId), inArray(schema.agentJobs.id, ids)));
-      const canonicalStatuses = new Map(canonical.map((job) => [job.id, job.status]));
-      const terminal = new Set(["complete", "delivered", "failed", "cancelled"]);
-      terminalStateDriftCount = observeTerminalStateDrift({
-        userId,
-        kind,
-        surface,
-        entries,
-        canonicalStatuses,
-        terminalStatuses: terminal,
-      }).persistentDriftCount;
-    } else if (kind === "project") {
+      canonicalStatuses = new Map(canonical.map((job) => [job.id, job.status]));
+      terminalStatuses = new Set(["complete", "delivered", "failed", "cancelled"]);
+    } else {
       const ids = [...new Set(entries.map((item) => item.id))];
       const canonical = await db
         .select({ id: schema.jarvisProjects.id, status: schema.jarvisProjects.status })
         .from(schema.jarvisProjects)
         .where(and(eq(schema.jarvisProjects.userId, userId), inArray(schema.jarvisProjects.id, ids)));
-      const canonicalStatuses = new Map(canonical.map((project) => [project.id, project.status]));
-      const terminal = new Set(["complete", "failed"]);
-      terminalStateDriftCount = observeTerminalStateDrift({
-        userId,
-        kind,
-        surface,
-        entries,
-        canonicalStatuses,
-        terminalStatuses: terminal,
-      }).persistentDriftCount;
+      canonicalStatuses = new Map(canonical.map((project) => [project.id, project.status]));
+      terminalStatuses = new Set(["complete", "failed"]);
     }
+    const representationCounts = recordRenderedRepresentationSnapshot({
+      userId,
+      kind,
+      surface,
+      identities: entries.map((item) => item.id),
+      sequence,
+    });
+    if (!representationCounts) return res.status(202).json({ accepted: true, ignoredAsStale: true });
+    terminalStateDriftCount = observeTerminalStateDrift({
+      userId,
+      kind,
+      surface,
+      entries,
+      canonicalStatuses,
+      terminalStatuses,
+    }).persistentDriftCount;
     res.status(202).json({ accepted: true, ...representationCounts, terminalStateDriftCount });
   });
 }
