@@ -30,6 +30,7 @@ const ALLOWED_SURFACES = new Set([
   "slack",
   "whatsapp",
   "webchat",
+  "gateway",
   "unknown",
 ]);
 const MAX_USERS = 500;
@@ -94,6 +95,7 @@ function fingerprintRepresentation(userId: string, kind: "agent_job" | "project"
 
 function sanitizeSurface(surface: string | undefined): string {
   const normalized = surface?.trim().toLowerCase();
+  if (normalized === "appchat") return "chat";
   return normalized && ALLOWED_SURFACES.has(normalized) ? normalized : "unknown";
 }
 

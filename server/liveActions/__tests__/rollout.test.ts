@@ -48,7 +48,14 @@ assert.match(coachAgent, /channelName\.startsWith\("Discord"\) \? "discord" : ch
 assert.match(coachAgent, /if \(input\.observeStatusCheck\) \{\s+recordStatusCheckFollowUp/);
 const scheduler = fs.readFileSync("server/scheduler.ts", "utf8");
 assert.doesNotMatch(scheduler, /observeStatusCheck/);
+const slackWebhook = fs.readFileSync("server/channels/slackWebhook.ts", "utf8");
+assert.match(slackWebhook, /arg \? `What's the status of \$\{arg\}\?`/);
 
+resetLiveActionBaselinesForTests();
+recordStatusCheckFollowUp({ userId: "surface-aliases", message: "Status update?", surface: "appchat" });
+recordStatusCheckFollowUp({ userId: "surface-aliases", message: "Status update?", surface: "Gateway" });
+assert.equal(getLiveActionBaselineReport("surface-aliases").metrics["status_check_follow_up:chat"].count, 1);
+assert.equal(getLiveActionBaselineReport("surface-aliases").metrics["status_check_follow_up:gateway"].count, 1);
 resetLiveActionBaselinesForTests();
 assert.equal(recordStatusCheckFollowUp({ userId: "status-phrases", message: "What's the status?", surface: "slack" }), true);
 assert.equal(recordStatusCheckFollowUp({ userId: "status-phrases", message: "Status update?", surface: "slack" }), true);

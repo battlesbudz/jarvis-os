@@ -191,7 +191,7 @@ export function registerSlackWebhook(app: Express): void {
           await respond(braindumpResult.reply);
         } else if (subcommand === "status") {
           const statusSession = await getSession(userId, slackSessionChannel);
-          const statusResult = await runCoachAgent({ userId, userText: arg || "What's the status of my day?", channelName: "Slack", sdkSessionId: statusSession, observeStatusCheck: true });
+          const statusResult = await runCoachAgent({ userId, userText: arg ? `What's the status of ${arg}?` : "What's the status of my day?", channelName: "Slack", sdkSessionId: statusSession, observeStatusCheck: true });
           if (statusResult.sdkSessionId) setSession(userId, slackSessionChannel, statusResult.sdkSessionId);
           await respond(statusResult.reply);
         } else {
