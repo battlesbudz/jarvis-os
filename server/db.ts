@@ -409,30 +409,46 @@ export async function ensureTablesExist() {
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS corrected_by_memory_id VARCHAR`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS sensitivity VARCHAR NOT NULL DEFAULT 'normal'`).catch(handleSchemaStepError);
     await db.execute(sql`ALTER TABLE user_memories ADD COLUMN IF NOT EXISTS provenance JSONB NOT NULL DEFAULT '[]'::jsonb`).catch(handleSchemaStepError);
-    await db.execute(sql`
-      WITH ranked_pending_corrections AS (
-        SELECT id, ROW_NUMBER() OVER (
-          PARTITION BY user_id, supersedes_memory_id
-          ORDER BY extracted_at, id
-        ) AS row_number
-        FROM user_memories
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`LOCK TABLE user_memories IN SHARE ROW EXCLUSIVE MODE`);
+      await tx.execute(sql`
+        WITH ranked_pending_corrections AS (
+          SELECT id, ROW_NUMBER() OVER (
+            PARTITION BY user_id, supersedes_memory_id
+            ORDER BY extracted_at, id
+          ) AS row_number
+          FROM user_memories
+          WHERE pending_review = TRUE
+            AND review_status = 'pending'
+            AND supersedes_memory_id IS NOT NULL
+        )
+        UPDATE user_memories
+        SET review_status = 'discarded'
+        FROM ranked_pending_corrections
+        WHERE user_memories.id = ranked_pending_corrections.id
+          AND user_memories.pending_review = TRUE
+          AND user_memories.review_status = 'pending'
+          AND (
+            ranked_pending_corrections.row_number > 1
+            OR EXISTS (
+              SELECT 1
+              FROM user_memories AS source_memory
+              WHERE source_memory.id = user_memories.supersedes_memory_id
+                AND source_memory.user_id = user_memories.user_id
+                AND source_memory.review_status = 'superseded'
+                AND source_memory.corrected_by_memory_id IS NOT NULL
+                AND source_memory.corrected_by_memory_id <> user_memories.id
+            )
+          )
+      `);
+      await tx.execute(sql`
+        CREATE UNIQUE INDEX IF NOT EXISTS user_memories_pending_correction_source_uidx
+        ON user_memories(user_id, supersedes_memory_id)
         WHERE pending_review = TRUE
           AND review_status = 'pending'
           AND supersedes_memory_id IS NOT NULL
-      )
-      UPDATE user_memories
-      SET review_status = 'discarded'
-      FROM ranked_pending_corrections
-      WHERE user_memories.id = ranked_pending_corrections.id
-        AND ranked_pending_corrections.row_number > 1
-    `);
-    await db.execute(sql`
-      CREATE UNIQUE INDEX IF NOT EXISTS user_memories_pending_correction_source_uidx
-      ON user_memories(user_id, supersedes_memory_id)
-      WHERE pending_review = TRUE
-        AND review_status = 'pending'
-        AND supersedes_memory_id IS NOT NULL
-    `).catch(handleSchemaStepError);
+      `);
+    });
     await db.execute(sql`CREATE INDEX IF NOT EXISTS user_memories_user_review_idx ON user_memories(user_id, review_status)`).catch(handleSchemaStepError);
     await db.execute(sql`CREATE INDEX IF NOT EXISTS user_memories_user_sensitivity_idx ON user_memories(user_id, sensitivity)`).catch(handleSchemaStepError);
     await db.execute(sql`
