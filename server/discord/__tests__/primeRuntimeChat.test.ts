@@ -28,6 +28,7 @@ async function main(): Promise<void> {
         message: "Remind me to call Bill tomorrow.",
         originChannelId: "discord-channel-123",
         guildId: "discord-guild-456",
+        statusObservationId: "discord-interaction-789",
       },
       async (input) => {
         seen.push(input);
@@ -40,6 +41,7 @@ async function main(): Promise<void> {
     assert.equal(seen[0].userId, "user-discord-prime");
     assert.equal(seen[0].channel, "discord");
     assert.equal(seen[0].message, "Remind me to call Bill tomorrow.");
+    assert.equal(seen[0].statusObservationId, "discord-interaction-789");
     assert.equal(seen[0].metadata?.originChannelId, "discord-channel-123");
     assert.equal(seen[0].metadata?.discordGuildId, "discord-guild-456");
     console.log("OK: Discord chat adapter sends /jarvis chat input through PRIME runtime");

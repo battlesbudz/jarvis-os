@@ -5,7 +5,6 @@ export interface TelegramCoachMessageBatchInput {
   chatId: string;
   text: string;
   imageUrl?: string;
-  observationId?: string;
 }
 
 export interface TelegramCoachMessageBatch {
@@ -13,13 +12,12 @@ export interface TelegramCoachMessageBatch {
   chatId: string;
   text: string;
   imageUrl?: string;
-  observationId?: string;
 }
 
 type PendingTelegramCoachBatch = {
   userId: string;
   chatId: string;
-  messages: { text: string; imageUrl?: string; observationId?: string }[];
+  messages: { text: string; imageUrl?: string }[];
   timer: ReturnType<typeof setTimeout>;
   handler: (batch: TelegramCoachMessageBatch) => void | Promise<void>;
 };
@@ -55,9 +53,8 @@ export function enqueueTelegramCoachMessageBatch(
   const key = batchKey(input.userId, input.chatId);
   const existing = pendingBatches.get(key);
   if (existing) {
-    if (input.observationId && existing.messages.some((message) => message.observationId === input.observationId)) return;
     clearTimeout(existing.timer);
-    existing.messages.push({ text: input.text, imageUrl: input.imageUrl, observationId: input.observationId });
+    existing.messages.push({ text: input.text, imageUrl: input.imageUrl });
     existing.handler = handler;
     existing.timer = scheduleFlush(key, existing, delayMs);
     return;
@@ -66,7 +63,7 @@ export function enqueueTelegramCoachMessageBatch(
   const pending: PendingTelegramCoachBatch = {
     userId: input.userId,
     chatId: input.chatId,
-    messages: [{ text: input.text, imageUrl: input.imageUrl, observationId: input.observationId }],
+    messages: [{ text: input.text, imageUrl: input.imageUrl }],
     handler,
     timer: setTimeout(() => {}, 0),
   };
@@ -90,13 +87,11 @@ function scheduleFlush(key: string, pending: PendingTelegramCoachBatch, delayMs:
   const timer = setTimeout(() => {
     pendingBatches.delete(key);
     const imageUrl = [...pending.messages].reverse().find((message) => message.imageUrl)?.imageUrl;
-    const observationId = pending.messages.map((message) => message.observationId).filter(Boolean).sort().join(",") || undefined;
     Promise.resolve(pending.handler({
       userId: pending.userId,
       chatId: pending.chatId,
       text: buildTelegramCoachBatchText(pending.messages),
       imageUrl,
-      observationId,
     })).catch((error) => {
       console.error("[Telegram] message batch handler failed:", error);
     });

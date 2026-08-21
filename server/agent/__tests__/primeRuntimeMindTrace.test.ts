@@ -19,6 +19,7 @@ async function main(): Promise<void> {
           userId: "user-prime-status",
           channel: "telegram",
           message: "Is it still running?",
+          statusObservationId: "telegram-update-1",
         },
         {
           runAgentSdkReminderWorkflow: async () => ({
@@ -32,7 +33,20 @@ async function main(): Promise<void> {
       );
 
       assert.equal(result.handled, true);
+      await handlePrimeInput(
+        {
+          userId: "user-prime-status",
+          channel: "telegram",
+          message: "Is it still running?",
+          statusObservationId: "telegram-update-1",
+        },
+        {
+          runAgentSdkReminderWorkflow: async () => ({ handled: true, status: "complete", reply: "It is still running." }),
+          observePrimeDecision: async () => {},
+        },
+      );
       assert.equal(getLiveActionBaselineReport("user-prime-status").metrics["status_check_follow_up:telegram"].count, 1);
+      assert.equal(getLiveActionBaselineReport("user-prime-status").metrics["status_check_exposure_count:telegram"].count, 1);
       console.log("OK: handled PRIME channel turns record status-check follow-ups");
     }
 

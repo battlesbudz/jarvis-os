@@ -12,6 +12,7 @@ import { getUserTtsChannels, getUserTtsPrefs, speakToUser } from "../agent/tools
 import { getSession as getCoachSession, setSession as setCoachSession } from "../channels/sessionStore";
 import { attachmentToBuffer, collectMarkdownExtras, imageFilename } from "../channels/attachmentHelpers";
 import { outboundMiddleware } from "../channels/outboundMiddleware";
+import { recordStatusCheckFollowUp } from "../liveActions/baselineMetrics";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -614,6 +615,12 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
     }
 
     console.log(`[DiscordManager] processing message: "${userText.slice(0, 80)}…"`);
+    recordStatusCheckFollowUp({
+      userId,
+      message: userText,
+      surface: "discord",
+      observationId: message.id,
+    });
 
     // ── Text command: !assign-agent / !agent-status ──────────────────────
     // Handled before any agent routing so these control commands always work.
@@ -918,8 +925,6 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           discordGuildId,
           discordChannelId,
           sdkSessionId: storedSessionId,
-          statusObservationId: message.id,
-          observeStatusCheck: true,
         });
         // Only retry when streaming produced NO visible content at all.
         // If streamBuf has content the placeholder was already edited; a
@@ -950,8 +955,6 @@ function buildMessageHandler(botOwnerId: string, client: Client) {
           discordGuildId,
           discordChannelId,
           sdkSessionId: storedSessionId,
-          statusObservationId: message.id,
-          observeStatusCheck: true,
           onProgressMessage,
           // no onToken → forces non-streaming path
         });

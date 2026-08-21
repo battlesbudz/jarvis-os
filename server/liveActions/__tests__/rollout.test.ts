@@ -50,7 +50,8 @@ assert.match(inboxScreen, /const renderedJobs = isFocused \?/);
 assert.match(inboxScreen, /clientId: representationClientId\.current/);
 assert.match(inboxScreen, /sequence: \+\+representationSequence\.current/);
 const discordManager = fs.readFileSync("server/discord/manager.ts", "utf8");
-assert.equal(discordManager.match(/statusObservationId: message\.id/g)?.length, 2);
+assert.match(discordManager, /recordStatusCheckFollowUp\(\{[\s\S]*?observationId: message\.id/);
+assert.doesNotMatch(discordManager, /observeStatusCheck/);
 const coachAgent = fs.readFileSync("server/channels/coachAgent.ts", "utf8");
 assert.match(coachAgent, /channelName\.startsWith\("Discord"\) \? "discord" : channelLower/);
 assert.match(coachAgent, /if \(input\.observeStatusCheck\) \{\s+recordStatusCheckFollowUp/);
@@ -63,7 +64,9 @@ assert.match(slackWebhook, /const statusObservationId = String\(req\.body\.trigg
 const whatsappWebhook = fs.readFileSync("server/channels/whatsappWebhook.ts", "utf8");
 assert.match(whatsappWebhook, /statusObservationId = String\(req\.body\?\.MessageSid/);
 const telegramRoutes = fs.readFileSync("server/telegramRoutes.ts", "utf8");
-assert.match(telegramRoutes, /observationId: String\(update\.update_id \?\? message\.message_id/);
+assert.match(telegramRoutes, /recordStatusCheckFollowUp\(\{[\s\S]*?observationId: statusObservationId/);
+assert.match(telegramRoutes, /statusObservationId,\s+metadata: \{ originChannelId: chatId \}/);
+assert.doesNotMatch(telegramRoutes, /observeStatusCheck/);
 const discordSlashCommands = fs.readFileSync("server/discord/slashCommands.ts", "utf8");
 assert.match(discordSlashCommands, /statusObservationId: String\(interaction\.id/);
 

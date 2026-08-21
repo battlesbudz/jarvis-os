@@ -48,6 +48,7 @@ import {
   cancelTelegramCoachMessageBatches,
   enqueueTelegramCoachMessageBatch,
 } from "./telegramMessageBatcher";
+import { recordStatusCheckFollowUp } from "./liveActions/baselineMetrics";
 import { shouldTryTelegramAgentSdkWorkflow } from "./telegramWorkflowIntent";
 import {
   TELEGRAM_VISIBLE_PROGRESS_INTERVAL_MS,
@@ -354,7 +355,7 @@ async function deliverCoachText(
   }
 }
 
-async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string, statusObservationId?: string): Promise<void> {
+async function handleCoachReply(userId: string, chatId: string, userText: string, imageUrl?: string): Promise<void> {
   const runGuard = createTelegramRunGuard(userId);
   const turnStartedAtMs = Date.now();
 
@@ -567,8 +568,6 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         onToken,
         onProgressMessage,
         signal: runGuard.signal,
-        statusObservationId,
-        observeStatusCheck: true,
       }),
       TELEGRAM_REPLY_TIMEOUT_MS,
     );
@@ -1987,6 +1986,13 @@ async function processUpdate(update: any): Promise<void> {
       }
 
       const userId = link[0].userId;
+      const statusObservationId = String(update.update_id ?? message.message_id ?? "") || undefined;
+      recordStatusCheckFollowUp({
+        userId,
+        message: rawUserText || text,
+        surface: "telegram",
+        observationId: statusObservationId,
+      });
 
       // ── "Needs You" plain-message routing ────────────────────────────────
       // If the user has tasks flagged as needsAttention and their message did
@@ -2047,6 +2053,7 @@ async function processUpdate(update: any): Promise<void> {
           userId,
           channel: "telegram",
           message: rawUserText,
+          statusObservationId,
           metadata: { originChannelId: chatId },
         });
         if (primeResult.handled) {
@@ -2093,8 +2100,8 @@ async function processUpdate(update: any): Promise<void> {
       }
 
       enqueueTelegramCoachMessageBatch(
-        { userId, chatId, text, imageUrl, observationId: String(update.update_id ?? message.message_id ?? "") || undefined },
-        (batch) => handleCoachReply(batch.userId, batch.chatId, batch.text, batch.imageUrl, batch.observationId),
+        { userId, chatId, text, imageUrl },
+        (batch) => handleCoachReply(batch.userId, batch.chatId, batch.text, batch.imageUrl),
       );
     } catch (err) {
       console.error("Error handling Telegram message:", err);

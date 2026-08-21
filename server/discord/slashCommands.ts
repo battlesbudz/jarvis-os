@@ -540,6 +540,7 @@ async function handleChat(
         message,
         originChannelId: deliveryChannelId,
         guildId,
+        statusObservationId: String(interaction.id || "") || undefined,
       });
       if (primeReply) {
         const primeSessionId = await persistFastCoachExchange({

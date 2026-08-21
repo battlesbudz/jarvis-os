@@ -141,6 +141,7 @@ export interface PrimeRuntimeInput {
   userId?: string | null;
   channel: PrimeRuntimeChannel;
   message: string;
+  statusObservationId?: string;
   metadata?: {
     messages?: Array<{ role?: string; content?: unknown }>;
     conversationContext?: string;
@@ -908,6 +909,7 @@ export async function handlePrimeInput(
         userId: input.userId,
         message: input.message,
         surface: input.channel,
+        observationId: input.statusObservationId,
       });
     }
     await observePrimeRuntimeDecision(deps, input, result, startedAt);
