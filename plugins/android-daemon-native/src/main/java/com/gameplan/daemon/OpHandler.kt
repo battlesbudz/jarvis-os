@@ -55,7 +55,7 @@ object JarvisVoicePlaybackController {
         releasePlayer(player)
         file.delete()
         if (rearmTalkMode) {
-            WakeWordService.onTtsFinished()
+            OutsideAppVoiceSessionService.resumeWakeCaptureAfterPlayback()
             OutsideAppVoiceSessionService.markPlaybackListening()
         }
     }
@@ -72,7 +72,7 @@ object JarvisVoicePlaybackController {
         releasePlayer(player)
         file?.delete()
         if (rearmTalkMode) {
-            WakeWordService.onTtsFinished()
+            OutsideAppVoiceSessionService.resumeWakeCaptureAfterPlayback()
             OutsideAppVoiceSessionService.markPlaybackListening()
         }
         DaemonLog.add("voice_speak_audio: playback stopped")
@@ -1576,9 +1576,9 @@ object OpHandler {
      * Delegates to WakeWordService to re-arm the mic in Talk Mode.
      */
     private fun handleTtsFinished(): OpResult {
-        WakeWordService.onTtsFinished()
-        DaemonLog.add("voice_tts_finished: notified WakeWordService")
-        return OpResult(true, data = JSONObject().put("notified", true))
+        val notified = OutsideAppVoiceSessionService.resumeWakeCaptureAfterPlayback()
+        DaemonLog.add("voice_tts_finished: WakeWordService notified=$notified")
+        return OpResult(true, data = JSONObject().put("notified", notified))
     }
 
     /**
@@ -1647,7 +1647,7 @@ object OpHandler {
             runCatching { player?.release() }
             tmpFile?.delete()
             if (pausedForPlayback && OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()) {
-                WakeWordService.onTtsFinished()
+                OutsideAppVoiceSessionService.resumeWakeCaptureAfterPlayback()
                 OutsideAppVoiceSessionService.markPlaybackListening()
                 DaemonLog.add("voice_speak_audio: playback failed — talk mode re-armed")
             }
