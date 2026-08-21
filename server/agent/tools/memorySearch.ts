@@ -153,8 +153,11 @@ async function executeMemorySave(
     const duplicateLifecycleFilter = plan.record.pendingReview
       ? sql`AND review_status NOT IN ('discarded', 'rejected', 'superseded', 'stale', 'archived')`
       : sql`
-        AND (pending_review = FALSE OR pending_review IS NULL)
-        AND review_status IN ('active', 'kept', 'edited')
+        AND (
+          ((pending_review = FALSE OR pending_review IS NULL)
+            AND review_status IN ('active', 'kept', 'edited'))
+          OR (pending_review = TRUE AND supersedes_memory_id = ${supersedesMemoryId || null})
+        )
       `;
     const duplicateResult = await db.execute<{
       id: string;
@@ -274,10 +277,24 @@ async function executeMemorySave(
       const duplicateIsSamePendingCorrection = duplicate.pending_review &&
         Boolean(duplicate.supersedes_memory_id) &&
         plan.supersedeMemoryIds.includes(duplicate.supersedes_memory_id!);
+      if (duplicateIsSamePendingCorrection) {
+        return {
+          ok: true,
+          content: `Memory correction is already awaiting review: ${content}`,
+          label: "Memory correction awaiting review",
+          detail: duplicateId,
+          metadata: {
+            memoryWriteStatus: "pending_review",
+            reviewStatus: duplicate.review_status,
+            pendingReview: true,
+            supersedesMemoryId: duplicate.supersedes_memory_id,
+          },
+        };
+      }
+
       const correctionNeedsReview = plan.record.pendingReview &&
         plan.supersedeMemoryIds.length > 0 &&
-        !plan.supersedeMemoryIds.includes(duplicateId) &&
-        !duplicateIsSamePendingCorrection;
+        !plan.supersedeMemoryIds.includes(duplicateId);
       if (!correctionNeedsReview) {
         return {
           ok: true,

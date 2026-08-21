@@ -107,6 +107,14 @@ assert.ok(
 );
 
 assert.ok(
+  /pending_review = TRUE AND supersedes_memory_id = \\${supersedesMemoryId \\|\\| null}/.test(memorySearchSource) &&
+    /Memory correction is already awaiting review/.test(memorySearchSource) &&
+    /memoryWriteStatus: "pending_review"/.test(memorySearchSource) &&
+    /pendingReview: true/.test(memorySearchSource),
+  "pending correction retries should preserve the review item and report that it is awaiting approval",
+);
+
+assert.ok(
   /refreshApprovedMemoryDerivedContext/.test(profileMemoryRoutesSource) &&
     /projectApprovedMemories\(userId,\s*\{[\s\S]*memoryIds/.test(profileMemoryRoutesSource) &&
     /JARVIS_BRAIN_PROJECTION === "1"/.test(profileMemoryRoutesSource) &&
