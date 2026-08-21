@@ -152,6 +152,12 @@ assert.ok(
 );
 
 assert.ok(
+  /supersedes_memory_id = ANY\(\$\{correctionTargets\}::varchar\[\]\)[\s\S]*ORDER BY id[\s\S]*FOR UPDATE[\s\S]*targetResult/.test(memorySearchSource) &&
+    /supersedes_memory_id = ANY\(\$\{plan\.supersedeMemoryIds\}::varchar\[\]\)[\s\S]*ORDER BY id[\s\S]*FOR UPDATE[\s\S]*lockedTargets/.test(memorySearchSource),
+  "immediate correction paths should lock pending proposals before source rows in deterministic order",
+);
+
+assert.ok(
   /refreshApprovedMemoryDerivedContext/.test(profileMemoryRoutesSource) &&
     /projectApprovedMemories\(userId,\s*\{[\s\S]*memoryIds/.test(profileMemoryRoutesSource) &&
     /JARVIS_BRAIN_PROJECTION === "1"/.test(profileMemoryRoutesSource) &&

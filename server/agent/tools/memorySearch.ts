@@ -239,11 +239,22 @@ async function executeMemorySave(
 
       if (!plan.record.pendingReview && duplicateIsApproved && correctionTargets.length > 0) {
         await db.transaction(async (tx) => {
+          await tx.execute(sql`
+            SELECT id
+            FROM user_memories
+            WHERE user_id = ${ctx.userId}
+              AND supersedes_memory_id = ANY(${correctionTargets}::varchar[])
+              AND pending_review = TRUE
+              AND review_status = 'pending'
+            ORDER BY id
+            FOR UPDATE
+          `);
           const targetResult = await tx.execute<{ id: string; review_status: string; corrected_by_memory_id: string | null }>(sql`
             SELECT id, review_status, corrected_by_memory_id
             FROM user_memories
             WHERE user_id = ${ctx.userId}
               AND id = ANY(${correctionTargets}::varchar[])
+            ORDER BY id
             FOR UPDATE
           `);
           const targets = targetResult.rows ?? [];
@@ -332,6 +343,16 @@ async function executeMemorySave(
 
     const inserted = await db.transaction(async (tx) => {
       if (plan.supersedeMemoryIds.length > 0) {
+        await tx.execute(sql`
+          SELECT id
+          FROM user_memories
+          WHERE user_id = ${ctx.userId}
+            AND supersedes_memory_id = ANY(${plan.supersedeMemoryIds}::varchar[])
+            AND pending_review = TRUE
+            AND review_status = 'pending'
+          ORDER BY id
+          FOR UPDATE
+        `);
         const lockedTargets = await tx.execute<{ id: string }>(sql`
           SELECT id
           FROM user_memories
@@ -339,6 +360,7 @@ async function executeMemorySave(
             AND id = ANY(${plan.supersedeMemoryIds}::varchar[])
             AND (pending_review = FALSE OR pending_review IS NULL)
             AND review_status IN ('active', 'kept', 'edited')
+          ORDER BY id
           FOR UPDATE
         `);
         if ((lockedTargets.rows ?? []).length !== plan.supersedeMemoryIds.length) {
