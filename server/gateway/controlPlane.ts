@@ -625,6 +625,7 @@ async function chatSend(userId: string, params: RpcParams, events: RpcEvents = {
     userText: text,
     channelName: GATEWAY_CHAT_CHANNEL,
     sdkSessionId,
+    observeStatusCheck: true,
     ...streamCallbacks,
   });
 

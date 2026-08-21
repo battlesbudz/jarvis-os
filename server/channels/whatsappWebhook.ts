@@ -115,7 +115,7 @@ export function registerWhatsAppWebhook(app: Express): void {
 
     try {
       const storedSessionId = await getSession(userId, "WhatsApp");
-      const { reply, sdkSessionId } = await runCoachAgent({ userId, userText: text, channelName: "WhatsApp", sdkSessionId: storedSessionId });
+      const { reply, sdkSessionId } = await runCoachAgent({ userId, userText: text, channelName: "WhatsApp", sdkSessionId: storedSessionId, observeStatusCheck: true });
       if (sdkSessionId) {
         setSession(userId, "WhatsApp", sdkSessionId);
       }

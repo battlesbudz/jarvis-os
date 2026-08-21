@@ -49,6 +49,7 @@ async function main() {
       userText: "Can you help me plan today?",
       channelName: "Voice",
       sdkSessionId: "voice-session-1",
+      observeStatusCheck: true,
     },
   ]);
 }

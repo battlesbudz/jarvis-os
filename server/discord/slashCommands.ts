@@ -566,6 +566,7 @@ async function handleChat(
       originChannelId: deliveryChannelId,
       discordGuildId: guildId,
       sdkSessionId: storedSessionId,
+      observeStatusCheck: true,
     });
     if (result.sdkSessionId) setCoachSession(userId, sessionChannel, result.sdkSessionId);
     await editInteractionReply(

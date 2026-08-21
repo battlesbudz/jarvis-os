@@ -567,6 +567,7 @@ async function handleCoachReply(userId: string, chatId: string, userText: string
         onToken,
         onProgressMessage,
         signal: runGuard.signal,
+        observeStatusCheck: true,
       }),
       TELEGRAM_REPLY_TIMEOUT_MS,
     );

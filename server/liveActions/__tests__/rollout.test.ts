@@ -45,6 +45,9 @@ const discordManager = fs.readFileSync("server/discord/manager.ts", "utf8");
 assert.equal(discordManager.match(/statusObservationId: message\.id/g)?.length, 2);
 const coachAgent = fs.readFileSync("server/channels/coachAgent.ts", "utf8");
 assert.match(coachAgent, /channelName\.startsWith\("Discord"\) \? "discord" : channelLower/);
+assert.match(coachAgent, /if \(input\.observeStatusCheck\) \{\s+recordStatusCheckFollowUp/);
+const scheduler = fs.readFileSync("server/scheduler.ts", "utf8");
+assert.doesNotMatch(scheduler, /observeStatusCheck/);
 
 resetLiveActionBaselinesForTests();
 assert.equal(recordStatusCheckFollowUp({ userId: "status-phrases", message: "What's the status?", surface: "slack" }), true);

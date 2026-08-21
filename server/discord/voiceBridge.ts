@@ -274,6 +274,7 @@ async function processVoiceUtterance(
       userId,
       userText: transcript,
       channelName: "Discord Voice",
+      observeStatusCheck: true,
     });
     replyText = result.reply?.trim() || "I didn't have a response for that.";
   } catch (agentErr) {
