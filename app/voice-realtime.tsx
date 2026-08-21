@@ -37,10 +37,12 @@ import Colors from '@/constants/colors';
 import { getApiUrl } from '@/lib/query-client';
 import { authFetch } from '@/lib/auth-context';
 import {
+  acquireAndroidNativeVoicePlaybackRoute,
   cancelAndroidNativeSpeechRecognition,
   getAndroidDaemonStatus,
   handoffAndroidOutsideAppVoiceCapture,
   recognizeAndroidSpeechOnce,
+  releaseAndroidNativeVoicePlaybackRoute,
 } from '@/lib/android-daemon-native';
 
 type SpeechModule = {
@@ -282,6 +284,8 @@ export default function VoiceRealtimeScreen() {
   const currentAssistantTextRef = useRef('');
   const codexTurnAbortRef = useRef<AbortController | null>(null);
   const outsideAppCaptureBorrowedRef = useRef(false);
+  const wearableRouteOwnerRef = useRef<string | null>(null);
+  const wearableRouteSeqRef = useRef(0);
 
   // Metering loop for native mic amplitude
   const meterLoopRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -566,6 +570,9 @@ export default function VoiceRealtimeScreen() {
       await getAndroidDaemonStatus().catch(() => null)
     )?.voiceSessionActive === true;
     outsideAppCaptureBorrowedRef.current = restoreOutsideAppCapture;
+    const wearableRouteOwnerId = `codex-turn-${Date.now()}-${++wearableRouteSeqRef.current}`;
+    wearableRouteOwnerRef.current = wearableRouteOwnerId;
+    acquireAndroidNativeVoicePlaybackRoute(wearableRouteOwnerId).catch(() => {});
     try {
       let result: Awaited<ReturnType<typeof recognizeAndroidSpeechOnce>>;
       try {
@@ -587,6 +594,10 @@ export default function VoiceRealtimeScreen() {
       setState('thinking');
       await sendCodexVoiceTurn({ text });
     } finally {
+      if (wearableRouteOwnerRef.current === wearableRouteOwnerId) {
+        wearableRouteOwnerRef.current = null;
+        await releaseAndroidNativeVoicePlaybackRoute(wearableRouteOwnerId).catch(() => {});
+      }
       if (outsideAppCaptureBorrowedRef.current) {
         outsideAppCaptureBorrowedRef.current = false;
         await handoffAndroidOutsideAppVoiceCapture().catch(() => {});
@@ -612,6 +623,7 @@ export default function VoiceRealtimeScreen() {
         await recordNativeCodexTurn();
       }
     } catch (error) {
+      if (error instanceof Error && (error.name === 'AbortError' || /aborted/i.test(error.message))) return;
       console.error('[voice] Codex turn failed:', error);
       Alert.alert('Voice turn failed', error instanceof Error ? error.message : 'Could not complete the voice turn.');
       currentAssistantTextRef.current = '';
@@ -637,6 +649,11 @@ export default function VoiceRealtimeScreen() {
   const cleanupNativeSession = useCallback(async () => {
     codexTurnAbortRef.current?.abort();
     codexTurnAbortRef.current = null;
+    const wearableRouteOwnerId = wearableRouteOwnerRef.current;
+    wearableRouteOwnerRef.current = null;
+    if (wearableRouteOwnerId) {
+      await releaseAndroidNativeVoicePlaybackRoute(wearableRouteOwnerId).catch(() => {});
+    }
     stopNativeMeterLoop();
     if (Platform.OS === 'android') {
       await cancelAndroidNativeSpeechRecognition().catch(() => {});
@@ -738,6 +755,11 @@ export default function VoiceRealtimeScreen() {
       } else {
         codexTurnAbortRef.current?.abort();
         codexTurnAbortRef.current = null;
+        const wearableRouteOwnerId = wearableRouteOwnerRef.current;
+        wearableRouteOwnerRef.current = null;
+        if (wearableRouteOwnerId) {
+          releaseAndroidNativeVoicePlaybackRoute(wearableRouteOwnerId).catch(() => {});
+        }
         stopNativeMeterLoop();
         if (Platform.OS === 'android') {
           cancelAndroidNativeSpeechRecognition().catch(() => {});

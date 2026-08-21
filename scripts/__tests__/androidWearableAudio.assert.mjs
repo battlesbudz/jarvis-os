@@ -218,6 +218,14 @@ assert.match(
   /codexTurnAbortRef\.current\?\.abort\(\)[\s\S]*?cancelAndroidNativeSpeechRecognition\(\)[\s\S]*?outsideAppCaptureBorrowedRef\.current = false[\s\S]*?handoffAndroidOutsideAppVoiceCapture\(\)/,
 );
 assert.match(
+  voiceRealtime,
+  /acquireAndroidNativeVoicePlaybackRoute\(wearableRouteOwnerId\)[\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?sendCodexVoiceTurn\([\s\S]*?finally \{[\s\S]*?releaseAndroidNativeVoicePlaybackRoute\(wearableRouteOwnerId\)/,
+);
+assert.match(
+  voiceRealtime,
+  /error\.name === 'AbortError'[\s\S]*?return;[\s\S]*?\[voice\] Codex turn failed/,
+);
+assert.match(
   outsideVoice,
   /ACTION_TAKE_CAPTURE -> \{\s+if \(!sessionActive\) \{[\s\S]*?stopSelf\(startId\)[\s\S]*?return START_NOT_STICKY/,
 );
