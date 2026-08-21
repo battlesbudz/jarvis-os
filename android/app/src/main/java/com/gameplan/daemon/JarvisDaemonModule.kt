@@ -19,10 +19,11 @@ class JarvisDaemonModule(
     private val reactApplicationContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactApplicationContext) {
     private val nativeSpeechRecognitionBridge = NativeSpeechRecognitionBridge(reactApplicationContext)
+    private val nativeVoicePlaybackOwners = linkedSetOf<String>()
 
     companion object {
         private const val VOICE_SESSION_CONTROL_EVENT = "JarvisVoiceSessionControl"
-        private const val IN_APP_VOICE_PLAYBACK_AUDIO_OWNER = "in_app_voice_playback"
+        private const val IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX = "in_app_voice_playback:"
 
         @Volatile private var activeReactContext: ReactApplicationContext? = null
 
@@ -53,7 +54,8 @@ class JarvisDaemonModule(
 
     override fun invalidate() {
         nativeSpeechRecognitionBridge.destroy()
-        WearableAudioRouteManager.release(IN_APP_VOICE_PLAYBACK_AUDIO_OWNER)
+        nativeVoicePlaybackOwners.forEach(WearableAudioRouteManager::release)
+        nativeVoicePlaybackOwners.clear()
         if (activeReactContext === reactApplicationContext) activeReactContext = null
         super.invalidate()
     }
@@ -304,16 +306,20 @@ class JarvisDaemonModule(
     }
 
     @ReactMethod
-    fun acquireNativeVoicePlaybackRoute(promise: Promise) {
+    fun acquireNativeVoicePlaybackRoute(ownerId: String, promise: Promise) {
+        val owner = IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX + ownerId
+        nativeVoicePlaybackOwners.add(owner)
         WearableAudioRouteManager.acquire(
             reactApplicationContext,
-            IN_APP_VOICE_PLAYBACK_AUDIO_OWNER,
+            owner,
         ) { promise.resolve(null) }
     }
 
     @ReactMethod
-    fun releaseNativeVoicePlaybackRoute(promise: Promise) {
-        WearableAudioRouteManager.release(IN_APP_VOICE_PLAYBACK_AUDIO_OWNER)
+    fun releaseNativeVoicePlaybackRoute(ownerId: String, promise: Promise) {
+        val owner = IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX + ownerId
+        nativeVoicePlaybackOwners.remove(owner)
+        WearableAudioRouteManager.release(owner)
         promise.resolve(null)
     }
 
