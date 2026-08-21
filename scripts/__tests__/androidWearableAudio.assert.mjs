@@ -86,6 +86,11 @@ assert.doesNotMatch(
 assert.match(routeManager, /OnCommunicationDeviceChangedListener/);
 assert.match(routeManager, /addOnCommunicationDeviceChangedListener/);
 assert.match(routeManager, /handleCommunicationDeviceChanged\(device: AudioDeviceInfo\?\)/);
+assert.match(routeManager, /communicationDeviceOwnedByJarvis = true/);
+assert.match(
+  routeManager,
+  /if \(communicationDeviceOwnedByJarvis\) manager\.clearCommunicationDevice\(\)/,
+);
 assert.match(routeManager, /@TargetApi\(Build\.VERSION_CODES\.S\)/);
 assert.match(routeManager, /private object Api31CommunicationDeviceMonitor/);
 assert.ok(
