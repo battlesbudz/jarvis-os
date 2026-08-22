@@ -88,6 +88,18 @@ assert.match(routes, /streamCoachModelTurn\(\{\s*requestedModel:\s*coachChatSele
 assert.match(routes, /userId:\s*userId\s*\?\?\s*undefined/);
 assert.match(routes, /streamCoachModelTurn/);
 assert.match(routes, /const finalTurn = await streamCoachModelTurn\(/);
+assert.match(
+  routes,
+  /const shouldRunToolLoop = useToolFocusedLoop[\s\S]{0,120}\|\| useMetadataToolLoop/,
+  "ordinary chat should bypass the buffered tool-selection turn",
+);
+assert.match(routes, /selectRelevantToolNames\([\s\S]{0,220}requestTools\.flatMap/);
+assert.match(routes, /classifyToolAwareConversationRoute\(messages\)/);
+assert.match(
+  routes,
+  /for \(let turn = 0; shouldRunToolLoop && turn < MAX_TOOL_TURNS; turn\+\+\)/,
+  "the multi-turn loop should only run for tool-aware requests",
+);
 assert.match(routes, /chunk\.type !== ["']text["']/);
 assert.doesNotMatch(routes, /const stream = await openai\.chat\.completions\.create\(\{\s*model:\s*coachChatModel/s);
 assert.match(routes, /streamedModel\s*=\s*finalTurn\.model\s*\?\?\s*coachChatSelectedModel\s*\?\?\s*["']gpt-4o-mini["']/);

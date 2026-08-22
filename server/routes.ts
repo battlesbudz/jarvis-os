@@ -123,7 +123,11 @@ import {
   normalizeCodexDelegationTimeoutMs,
   resolveCodexDelegationCwd,
 } from "./agent/codexDelegation";
-import { classifyToolAwareRoute } from "./agent/toolAwareRouting";
+import {
+  classifyToolAwareConversationRoute,
+  getToolMetadataRoutingText,
+  selectRelevantToolNames,
+} from "./agent/toolAwareRouting";
 import { buildToolExecutionPolicy } from "./agent/toolExecutionPolicy";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 import { getCoachAppAgentId } from "./agent/coreAgentIds";
@@ -1848,7 +1852,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const buildInstruction = codexDelegationEnabled
         ? "When the user asks you to build, create, edit, inspect, or test a local code project or website, use delegate_to_codex so Codex can do the implementation work. If the user explicitly asks for the change to be permanent, pushed, published, deployed, or on GitHub, delegate that commit/push/publish requirement to Codex too and set allow_external_side_effects=true only for that exact requested action. If the user did not explicitly ask for commit/push/deploy, keep the work local and say that it still needs approval to be pushed."
         : "When the user asks you to build a standalone app, website, or landing page, use queue_background_job with agentType='app_project' so Jarvis can build it persistently in the hosted workspace.";
-      const classifiedToolAwareRoute = classifyToolAwareRoute(lastUserOrigText);
+      const classifiedToolAwareRoute = classifyToolAwareConversationRoute(messages);
       const unavailablePhoneToolNames = new Set<string>(ANDROID_PHONE_RUNTIME_TOOL_NAMES);
       const nonPhonePriorityToolNames = classifiedToolAwareRoute.priorityToolNames
         .filter((name) => !unavailablePhoneToolNames.has(name));
@@ -2119,6 +2123,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         } catch (err) {
           console.warn("[Coach/MCP] failed to load MCP tools:", (err as Error).message);
         }
+        const metadataRoutingText = getToolMetadataRoutingText(messages);
+        const relevantMetadataToolNames = selectRelevantToolNames(
+          metadataRoutingText,
+          requestTools.flatMap((tool) => tool.type === "function"
+            ? [{ name: tool.function.name, description: tool.function.description }]
+            : []),
+        );
         const focusedToolNames = new Set<string>();
         if (toolAwareRoute.shouldPreferTool) {
           effectiveToolAwareRoute.priorityToolNames.forEach((name) => focusedToolNames.add(name));
@@ -2156,11 +2167,14 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         if (isDiagnosticsRequest) {
           focusedToolNames.add("jarvis_self_diagnose");
         }
+        relevantMetadataToolNames.forEach((name) => focusedToolNames.add(name));
         toolAwareRoute.blockedToolNames.forEach((name) => focusedToolNames.delete(name));
+        const useMetadataToolLoop = relevantMetadataToolNames.length > 0;
         const useFocusedRequestTools = toolAwareRoute.shouldPreferTool ||
           phoneRuntimeCoveredRequest ||
           keepDaemonActionFallback ||
-          youtubeServerResearchRequest;
+          youtubeServerResearchRequest ||
+          useMetadataToolLoop;
         const focusedRequestTools =
           useFocusedRequestTools
             ? requestTools.filter((tool) => {
@@ -2182,6 +2196,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               allowServerYoutubeTools: youtubeServerResearchRequest,
             })
           : firstTurnToolPolicy.tools;
+        // Ordinary conversation should not pay for a non-streaming tool-selection
+        // turn. Tool-aware and deterministically required requests retain the
+        // multi-turn tool loop; everything else falls through to the true
+        // incremental final-answer stream below.
+        const shouldRunToolLoop = useToolFocusedLoop
+          || routeRequiredToolNames.length > 0
+          || useMetadataToolLoop;
 
         const firstProviderMessages = useToolFocusedLoop ? toolFocusedMessages : chatMessages;
         openCoachSse(res);
@@ -2192,7 +2213,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           providerMessageCount: Math.max(0, firstProviderMessages.length),
           summarizedMessageCount: Math.max(0, Math.floor(contextTrace.summarizedMessageCount)),
           omittedMessageCount: Math.max(0, Math.floor(contextTrace.omittedMessageCount)),
-          offeredToolNames: modelRequestTools
+          offeredToolNames: (shouldRunToolLoop ? modelRequestTools : [])
             .map((tool) => chatToolName(tool))
             .filter((name): name is string => Boolean(name)),
         })}\n\n`);
@@ -2218,7 +2239,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           allowedToolNames: new Set(modelRequestTools.map((tool) => chatToolName(tool)).filter((name): name is string => Boolean(name))),
         };
 
-        for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
+        for (let turn = 0; shouldRunToolLoop && turn < MAX_TOOL_TURNS; turn++) {
           if (signal.aborted) break;
           const baseMessages = useToolFocusedLoop ? toolFocusedMessages : chatMessages;
           const currentMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [

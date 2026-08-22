@@ -9,6 +9,7 @@ import {
 } from "../providers/codexHostedAppServer";
 import {
   _setCodexOAuthHostedRuntimeForTesting,
+  CodexFinalContentStreamParser,
   CodexOAuthProvider,
 } from "../providers/codexOAuth";
 
@@ -71,10 +72,15 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   if (message.method === "turn/start") {
     state.turn = message.params;
     save();
+    const completedOnly = message.params.input?.[0]?.text?.includes("COMPLETED_ONLY");
     process.stdout.write([
       JSON.stringify({ id: message.id, result: { turn: { id: "turn-hosted" } } }),
-      JSON.stringify({ method: "item/agentMessage/delta", params: { turnId: "turn-hosted", delta: "HOSTED_" } }),
-      JSON.stringify({ method: "item/agentMessage/delta", params: { turnId: "turn-hosted", delta: "OK" } }),
+      ...(completedOnly
+        ? [JSON.stringify({ method: "item/completed", params: { turnId: "turn-hosted", item: { type: "agentMessage", text: "COMPLETED_ONLY" } } })]
+        : [
+            JSON.stringify({ method: "item/agentMessage/delta", params: { turnId: "turn-hosted", delta: "HOSTED_" } }),
+            JSON.stringify({ method: "item/agentMessage/delta", params: { turnId: "turn-hosted", delta: "OK" } }),
+          ]),
       JSON.stringify({ method: "turn/completed", params: { turn: { id: "turn-hosted", status: "completed" } } }),
     ].join("\\n") + "\\n");
   }
@@ -90,11 +96,13 @@ save();
     };
   });
   try {
+    const streamedDeltas: string[] = [];
     const answer = await runHostedCodexPrompt({
       accessToken: fakeJwt("acct-initial"),
       chatgptAccountId: "acct-initial",
       chatgptPlanType: "plus",
       prompt: "Reply with HOSTED_OK",
+      onDelta: (delta) => streamedDeltas.push(delta),
       refreshTokens: async () => ({
         accessToken: fakeJwt("acct-refreshed", "pro"),
         chatgptAccountId: "acct-refreshed",
@@ -102,6 +110,22 @@ save();
       }),
     });
     assert.equal(answer, "HOSTED_OK");
+    assert.deepEqual(streamedDeltas, ["HOSTED_", "OK"]);
+    const completedOnlyDeltas: string[] = [];
+    const completedOnlyAnswer = await runHostedCodexPrompt({
+      accessToken: fakeJwt("acct-initial"),
+      chatgptAccountId: "acct-initial",
+      chatgptPlanType: "plus",
+      prompt: "Reply with COMPLETED_ONLY",
+      onDelta: (delta) => completedOnlyDeltas.push(delta),
+      refreshTokens: async () => ({
+        accessToken: fakeJwt("acct-refreshed", "pro"),
+        chatgptAccountId: "acct-refreshed",
+        chatgptPlanType: "pro",
+      }),
+    });
+    assert.equal(completedOnlyAnswer, "COMPLETED_ONLY");
+    assert.deepEqual(completedOnlyDeltas, ["COMPLETED_ONLY"]);
     const state = JSON.parse(await readFile(statePath, "utf8"));
     assert.equal(state.initialize.capabilities.experimentalApi, true);
     assert.deepEqual(state.login, {
@@ -125,6 +149,187 @@ save();
   } finally {
     _setHostedCodexProcessFactoryForTesting(null);
     await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function testProviderStreamsPlainFinalContent(): Promise<void> {
+  const token = fakeJwt("acct-stream", "plus");
+  let runnerFinished = false;
+  _setCodexOAuthHostedRuntimeForTesting({
+    credentialResolver: async () => ({
+      provider: "openai",
+      authType: "oauth",
+      credential: token,
+      refreshToken: "refresh-token",
+      expiresAt: new Date(Date.now() + 60_000),
+      accountId: "acct-stream",
+      email: "user@example.com",
+    }),
+    credentialRefresher: async () => ({
+      provider: "openai",
+      authType: "oauth",
+      credential: token,
+      refreshToken: "refresh-token",
+      expiresAt: new Date(Date.now() + 60_000),
+      accountId: "acct-stream",
+      email: "user@example.com",
+    }),
+    promptRunner: async (input) => {
+      input.onDelta?.('Hello');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      input.onDelta?.(' world\nright away');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      runnerFinished = true;
+      return 'Hello world\nright away';
+    },
+  });
+
+  try {
+    const provider = new CodexOAuthProvider();
+    const chunks = [];
+    const completionStates: boolean[] = [];
+    for await (const chunk of provider.query({
+      model: "chatgpt-codex-oauth/auto",
+      messages: [{ role: "user", content: "Hello" }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      preferredAuthType: "oauth",
+      stream: true,
+      userId: "user-1",
+    })) {
+      chunks.push(chunk);
+      if (chunk.type === "text") completionStates.push(runnerFinished);
+    }
+    assert.deepEqual(chunks, [
+      { type: "text", delta: "Hello" },
+      { type: "text", delta: " world\nright away" },
+      { type: "finish", reason: "stop" },
+    ]);
+    assert.deepEqual(completionStates, [false, false]);
+  } finally {
+    _setCodexOAuthHostedRuntimeForTesting(null);
+  }
+}
+
+function testStructuredStreamOnlyEmitsFinalContent(): void {
+  const finalParser = new CodexFinalContentStreamParser();
+  assert.equal(finalParser.push('{"type":"fi'), "");
+  assert.equal(finalParser.push('nal","content":"Hello\\n'), "Hello\n");
+  assert.equal(finalParser.push('world"}'), "world");
+
+  const toolParser = new CodexFinalContentStreamParser();
+  assert.equal(toolParser.push(
+    '{"type":"tool_calls","tool_calls":[{"name":"daemon_action","arguments":{"action":"file_write","content":"private file body"}}]}',
+  ), "");
+}
+
+async function testRequiredToolTurnDoesNotStreamFinalEnvelope(): Promise<void> {
+  const token = fakeJwt("acct-required", "plus");
+  _setCodexOAuthHostedRuntimeForTesting({
+    credentialResolver: async () => ({
+      provider: "openai",
+      authType: "oauth",
+      credential: token,
+      refreshToken: "refresh-token",
+      expiresAt: new Date(Date.now() + 60_000),
+      accountId: "acct-required",
+      email: "user@example.com",
+    }),
+    credentialRefresher: async () => ({
+      provider: "openai",
+      authType: "oauth",
+      credential: token,
+      refreshToken: "refresh-token",
+      expiresAt: new Date(Date.now() + 60_000),
+      accountId: "acct-required",
+      email: "user@example.com",
+    }),
+    promptRunner: async (input) => {
+      input.onDelta?.('{"type":"final","content":"Action completed"}');
+      return '{"type":"final","content":"Action completed"}';
+    },
+  });
+
+  try {
+    const chunks = [];
+    const provider = new CodexOAuthProvider();
+    await assert.rejects(async () => {
+      for await (const chunk of provider.query({
+        model: "chatgpt-codex-oauth/auto",
+        messages: [{ role: "user", content: "Do the required action" }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "required_action",
+            description: "Perform the required action",
+            parameters: { type: "object", properties: {} },
+          },
+        }],
+        toolChoice: "required",
+        maxCompletionTokens: 64,
+        preferredAuthType: "oauth",
+        stream: true,
+        userId: "user-1",
+      })) chunks.push(chunk);
+    }, /final answer when a tool call was required/);
+    assert.deepEqual(chunks, []);
+  } finally {
+    _setCodexOAuthHostedRuntimeForTesting(null);
+  }
+}
+
+async function testStreamingProviderPropagatesCancellation(): Promise<void> {
+  const token = fakeJwt("acct-abort", "plus");
+  _setCodexOAuthHostedRuntimeForTesting({
+    credentialResolver: async () => ({
+      provider: "openai",
+      authType: "oauth",
+      credential: token,
+      refreshToken: "refresh-token",
+      expiresAt: new Date(Date.now() + 60_000),
+      accountId: "acct-abort",
+      email: "user@example.com",
+    }),
+    credentialRefresher: async () => ({
+      provider: "openai",
+      authType: "oauth",
+      credential: token,
+      refreshToken: "refresh-token",
+      expiresAt: new Date(Date.now() + 60_000),
+      accountId: "acct-abort",
+      email: "user@example.com",
+    }),
+    promptRunner: async (input) => new Promise<string>((_resolve, reject) => {
+      input.onDelta?.('partial');
+      const abort = () => reject(new DOMException("aborted", "AbortError"));
+      if (input.signal?.aborted) abort();
+      else input.signal?.addEventListener("abort", abort, { once: true });
+    }),
+  });
+
+  try {
+    const controller = new AbortController();
+    const provider = new CodexOAuthProvider();
+    const iterator = provider.query({
+      model: "chatgpt-codex-oauth/auto",
+      messages: [{ role: "user", content: "Hello" }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      preferredAuthType: "oauth",
+      stream: true,
+      userId: "user-1",
+      signal: controller.signal,
+    });
+    assert.deepEqual(await iterator.next(), {
+      value: { type: "text", delta: "partial" },
+      done: false,
+    });
+    controller.abort();
+    await assert.rejects(() => iterator.next(), (error: unknown) => (
+      error instanceof Error && error.name === "AbortError"
+    ));
+  } finally {
+    _setCodexOAuthHostedRuntimeForTesting(null);
   }
 }
 
@@ -193,7 +398,12 @@ async function testProviderUsesHostedSubscription(): Promise<void> {
 async function main(): Promise<void> {
   await testAppServerProtocol();
   await testProviderUsesHostedSubscription();
+  await testProviderStreamsPlainFinalContent();
+  testStructuredStreamOnlyEmitsFinalContent();
+  await testRequiredToolTurnDoesNotStreamFinalEnvelope();
+  await testStreamingProviderPropagatesCancellation();
   console.log("OK: hosted Codex app-server uses externally managed ChatGPT subscription tokens");
+  console.log("OK: hosted Codex final answers stream before turn completion");
   console.log("OK: ChatGPT subscription provider bypasses OpenAI Chat Completions");
 }
 

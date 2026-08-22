@@ -28,6 +28,7 @@ interface ActiveTurn {
   turnId: string | null;
   content: string;
   error: string | null;
+  onDelta?: (delta: string) => void;
   resolve: (value: string) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
@@ -49,6 +50,8 @@ export interface RunHostedCodexPromptInput extends HostedCodexAuthTokens {
   sandbox?: "read-only" | "workspace-write";
   networkAccess?: boolean;
   baseInstructions?: string;
+  /** Receives assistant text deltas as Codex emits them. */
+  onDelta?: (delta: string) => void;
 }
 
 export interface HostedCodexAppServerProcess {
@@ -181,7 +184,9 @@ class HostedCodexAppServerClient {
     if (message.method === "item/agentMessage/delta") {
       const turnId = typeof message.params?.turnId === "string" ? message.params.turnId : null;
       if (!this.activeTurn.turnId || !turnId || turnId === this.activeTurn.turnId) {
-        this.activeTurn.content += String(message.params?.delta ?? "");
+        const delta = String(message.params?.delta ?? "");
+        this.activeTurn.content += delta;
+        if (delta) this.activeTurn.onDelta?.(delta);
       }
       return;
     }
@@ -189,7 +194,9 @@ class HostedCodexAppServerClient {
     if (message.method === "item/completed" && !this.activeTurn.content) {
       const item = message.params?.item;
       if (item?.type === "agentMessage") {
-        this.activeTurn.content = String(item.text ?? item.content ?? "");
+        const content = String(item.text ?? item.content ?? "");
+        this.activeTurn.content = content;
+        if (content) this.activeTurn.onDelta?.(content);
       }
       return;
     }
@@ -264,14 +271,18 @@ class HostedCodexAppServerClient {
     });
   }
 
-  waitForTurn(turnId: string | null, timeoutMs: number): Promise<string> {
+  waitForTurn(
+    turnId: string | null,
+    timeoutMs: number,
+    onDelta?: (delta: string) => void,
+  ): Promise<string> {
     if (this.activeTurn) return Promise.reject(new Error("Codex app-server already has an active turn."));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         if (this.activeTurn?.turnId === turnId) this.activeTurn = null;
         reject(new Error("Codex app-server turn timed out."));
       }, timeoutMs);
-      this.activeTurn = { turnId, content: "", error: null, resolve, reject, timer };
+      this.activeTurn = { turnId, content: "", error: null, onDelta, resolve, reject, timer };
     });
   }
 
@@ -357,7 +368,11 @@ export async function runHostedCodexPrompt(input: RunHostedCodexPromptInput): Pr
 
     // Start listening before sending turn/start. App-server can emit deltas and
     // turn/completed immediately after the response, in the same stdout chunk.
-    const contentPromise = liveClient.waitForTurn(null, input.timeoutMs ?? DEFAULT_TURN_TIMEOUT_MS);
+    const contentPromise = liveClient.waitForTurn(
+      null,
+      input.timeoutMs ?? DEFAULT_TURN_TIMEOUT_MS,
+      input.onDelta,
+    );
     let turnResult: any;
     try {
       turnResult = await liveClient.request("turn/start", {
