@@ -59,6 +59,16 @@ const BARE_LIVE_DATA_NOUN_PATTERN = String.raw`(?:scores?|prices?|polls?|standin
 const FIAT_CURRENCY_CODE_PATTERN = String.raw`(?:usd|eur|gbp|jpy|cad|aud|chf|cny|hkd|nzd|sek|nok|dkk|inr|brl|mxn|zar|sgd|krw|pln|try)`;
 const FIAT_CURRENCY_PAIR_PATTERN = String.raw`${FIAT_CURRENCY_CODE_PATTERN}\s*[\/.-]\s*${FIAT_CURRENCY_CODE_PATTERN}`;
 const PUBLIC_MATCHUP_SUBJECT_PATTERN = String.raw`(?:[$\w.\/&,'\u2019.-]+\s+){0,4}[$\w.\/&,'\u2019.-]+`;
+const PERSONAL_MEMORY_CONTENT_PATTERN = String.raw`(?:\bthat\s+(?:i|we)\b|\b(?:the\s+)?fact\s+that\b|\bwhat\s+(?:i|we)\s+(?:said|told\s+you)\b|\b(?:this|that|our)\s+(?:conversation|chat|exchange|discussion)\b|\b(?:i|we)\s+(?:am|are|was|were|live|lived|work|worked|prefer|preferred|like|liked|love|loved|hate|hated|want|wanted|need|needed|have|had|own|owned|use|used|choose|chose)\b|\b(?:i['\u2019](?:m|ve)|we['\u2019](?:re|ve))\b|\b(?:is|are|was|were)\s+(?:my|our)\s+(?:name|nickname|friend|partner|spouse|husband|wife|mother|father|mom|dad|parent|brother|sister|son|daughter|child|boss|coworker|colleague|business|company|job|work|school|home|address|birthday|preference|favorite)\b|\b(?:my|our)(?:\s+(?:(?:wife|husband|partner|spouse|mother|father|mom|dad|parent|brother|sister|son|daughter|child|children|kid|grandchild|grandchildren|grandkid|friend|boss|coworker|colleague|aunt|uncle|cousin|niece|nephew|grandmother|grandfather|grandma|grandpa)['\u2019]s|(?:wives|husbands|partners|spouses|mothers|fathers|moms|dads|parents|brothers|sisters|siblings|sons|daughters|kids|friends|bosses|coworkers|colleagues|aunts|uncles|cousins|nieces|nephews|grandmothers|grandfathers|grandmas|grandpas|grandparents|grandkids)['\u2019]))?\s+(?:names?|nicknames?|birthdays?|address(?:es)?|emails?|phone(?:\s+numbers?)?|allerg(?:y|ies)|medications?|preferences?|favorites?|jobs?|work|schools?|schedules?|routines?|goals?|projects?)\b)`;
+const RECALL_PERSONAL_CUE_PATTERN = String.raw`(?:${PERSONAL_MEMORY_CONTENT_PATTERN}|\b(?:i|we|me|us|my|our|mine|ours)\b)`;
+const DIRECTED_RECALL_NAMED_QUALIFIER_PATTERN = String.raw`(?:['\u2019]s\s+(?:birthday|address|email|phone(?:\s+number)?|job|schedule|preference|favorite)|\s+(?:birthday|address|email|phone(?:\s+number)?|job|schedule|preference|favorite)|\s+(?:from|at|in)\s+[A-Za-z0-9&.'\u2019/-]+(?:\s+[A-Za-z0-9&.'\u2019/-]+){0,4})?`;
+const TECHNICAL_MEMORY_CONTINUATION_PATTERN = String.raw`(?:address(?:es)?|allocation|allocator|buffer|cache|capacity|card|cell|chip|configuration|consumption|footprint|heap|layout|leaks?|limit|location|management|map|mapping|module|page|pool|pressure|profile|region|register|setting|simulator|size|slot|storage|usage)`;
+const MEMORY_REFERENCE_MODIFIER_PATTERN = String.raw`(?:specific|exact|particular|individual|old|new|existing|saved|stored|incorrect|wrong|inaccurate|outdated|previous|prior|original|current)`;
+const MEMORY_REFERENCE_MODIFIERS_PATTERN = String.raw`(?:${MEMORY_REFERENCE_MODIFIER_PATTERN}(?:\s*,\s*|\s+)){0,4}`;
+const REFERENTIAL_MEMORY_TARGET_PATTERN = String.raw`(?:the|that|this|these|those|my|your)\s+${MEMORY_REFERENCE_MODIFIERS_PATTERN}memor(?:y|ies)\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)`;
+const PERSONAL_MEMORY_CORRECTION_TARGET_PATTERN = String.raw`(?:${REFERENTIAL_MEMORY_TARGET_PATTERN}|one\s+of\s+(?:the|these|those|my|your|our)\s+${MEMORY_REFERENCE_MODIFIERS_PATTERN}memories\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)|(?:a|an)\s+${MEMORY_REFERENCE_MODIFIERS_PATTERN}memor(?:y|ies)\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)\s+(?:about|of|for)\s+(?:me|my|our)\b)`;
+const MEMORY_CORRECTION_PREDICATE_PATTERN = String.raw`(?:wrong|incorrect|inaccurate|outdated|false|mistaken|not\s+(?:quite\s+)?(?:right|correct|accurate|true))`;
+const MEMORY_CORRECTION_QUALIFIER_PATTERN = String.raw`(?:\s+(?:about|of|for)\s+[^.!?\n]{1,60}?)?`;
 
 const TOOL_AWARE_RULES: ToolAwareRule[] = [
   {
@@ -110,9 +120,46 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
   {
     intent: "memory",
     patterns: [
-      /\b(memory|remember|recall|what do you know about me|what have i told you|preferences?|living context)\b/i,
-      /\b(save|store|add|write)\b.{0,60}\b(memory|memories)\b/i,
-      /\bremember\s+(that|this)\b/i,
+      /\b(what do you know about me|what have i told you|living context)\b/i,
+      /\b(?:what|which)\s+(?:personal\s+)?memories?\s+(?:do|can|have|are)\s+you\b/i,
+      new RegExp(String.raw`\b(?:(?:do|did)\s+you\s+have|have\s+you\s+got)\s+(?:(?:any|a|some)\s+)?(?:(?:saved|stored|personal)\s+)?memor(?:y|ies)\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)(?:\s+(?:about|of|for)\b)?`, "i"),
+      /\b(?:tell|show)\s+me\s+what\s+you\s+(?:remember|recall)\b/i,
+      /\bwhat\s+do\s+you\s+(?:remember|recall)\s+(?:about|of)\b/i,
+      /\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?remember\b(?!\s+(?:(?:not|never)\s+)?to\b)/i,
+      new RegExp(String.raw`\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?recall\b(?!\s+(?:(?:not|never)\s+)?to\b)(?=[^.!?\n]{1,120}${RECALL_PERSONAL_CUE_PATTERN})`, "i"),
+      /\b(?:do|can|could|will|would)\s+you\s+(?:please\s+)?recall\b(?!\s+(?:(?:not|never)\s+)?to\b)(?=[^.!?\n]{1,120}\b(?:anything|something)\b)/i,
+      new RegExp(String.raw`\b(?:[Dd]o|[Cc]an|[Cc]ould|[Ww]ill|[Ww]ould)\s+[Yy]ou\s+(?:[Pp]lease\s+)?[Rr]ecall\s+${GENERIC_PUBLIC_PROPER_SUBJECT_PATTERN}${DIRECTED_RECALL_NAMED_QUALIFIER_PATTERN}\s*\??\s*$`),
+      /\b(?:remember|recall)\s+(?:my|what i|what i've|what i have)\b/i,
+      /\b(?:my|our)\s+(?:(?:saved|stored)\s+)?(?:memory|memories|preferences?)\b/i,
+      /\bwhat\s+(?:personal\s+)?preferences?\s+do\s+you\s+have\s+(?:saved|stored)\s+for\s+me\b/i,
+      /\b(?:show|list|search|find|read|get)\s+me\s+(?:the\s+)?preferences?\s+(?:i|we)\s+(?:saved|stored)\b/i,
+      /\b(?:memory|memories)\s+(?:about|for|of)\s+me\b/i,
+      /\b(?:show|list|search|find|read|get)\b.{0,40}\b(?:my|your|saved|personal)\s+memor(?:y|ies)\b/i,
+      /^\s*(?:could|would|can|will)\s+you\s+(?:please\s+)?remember\b(?!\s+(?:(?:not|never)\s+)?to\b)/i,
+      /^\s*(?:(?:hey|hi)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please[\s,]+)?remember\b(?!\s+(?:(?:not|never)\s+)?to\b)/i,
+      new RegExp(String.raw`\b(?:i\s+(?:want|need)\s+(?:you|jarvis)\s+to|i\s+would\s+like\s+(?:you|jarvis)\s+to|i['\u2019]d\s+like\s+(?:you|jarvis)\s+to|make\s+sure\s+(?:you|jarvis))\s+(?:remember|recall)\b(?!\s+(?:(?:not|never)\s+)?to\b)(?=[^.!?\n]{1,120}${RECALL_PERSONAL_CUE_PATTERN})`, "i"),
+      new RegExp(String.raw`\b(?:save|store|add|keep|make|turn|put|record|commit)\b[^.!?\n]{0,40}\b(?:those|these|that|this|them|all(?:\s+of\s+(?:that|those|these))?|the\s+above|what\s+i\s+(?:said|told\s+you))\b\s+(?:as|to|into|in)\s+(?:(?:a|the|your)\s+)?memor(?:y|ies)\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)`, "i"),
+      new RegExp(String.raw`\bcommit\b\s+(?:(?:this|that|the|my|our)\s+)?(?:facts?|details?|preferences?|information|info|notes?|conversations?|chats?)\b[^.!?\n]{0,20}\b(?:to|into)\s+(?:(?:my|the|your)\s+)?memor(?:y|ies)\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)`, "i"),
+      new RegExp(String.raw`\b(save|store|add|write|keep|put|record|commit)\b(?=[^.!?\n]{1,120}${PERSONAL_MEMORY_CONTENT_PATTERN}[^.!?\n]{0,120}\b(?:to|into)\s+(?:(?:my|the|your)\s+)?memory\b)[^.!?\n]{1,120}\b(?:to|into)\s+(?:(?:my|the|your)\s+)?memory\b`, "i"),
+      new RegExp(String.raw`\b(save|store|add|write|keep|put|record|commit)\b(?=[^.!?\n]{1,120}${PERSONAL_MEMORY_CONTENT_PATTERN}[^.!?\n]{0,120}\bin\s+(?:(?:my|the|your)\s+)?memory\b)[^.!?\n]{1,120}\bin\s+(?:(?:my|the|your)\s+)?memory\b`, "i"),
+      new RegExp(String.raw`\b(save|store|add|write|keep|put|record|commit)\b(?=[^.!?\n]{1,120}${PERSONAL_MEMORY_CONTENT_PATTERN}[^.!?\n]{0,120}\bas\s+(?:a\s+)?(?:memory|memories)\b)[^.!?\n]{1,120}\bas\s+(?:a\s+)?(memory|memories)\b`, "i"),
+      /\b(save|store|add|keep|put|record|commit)\b.{0,40}\b(?:my|personal)\s+(?:facts?|details?|preferences?|information|info)\b.{0,40}\b(memory|memories)\b/i,
+      /\b(?:those|these|that|this|them|all(?:\s+of\s+(?:that|those|these))?|the\s+above|what\s+i\s+(?:said|told\s+you))\b\s+(?:(?:should\s+)?(?:all\s+)?(?:be\s+)?memor(?:y|ies)\s+(?:saved|stored|added|written|kept|recorded)|memor(?:y|ies)\s+(?:all\s+)?(?:should|must|needs?\s+to|ha(?:s|ve)\s+to)\s+(?:all\s+)?be\s+(?:saved|stored|added|written|kept|recorded))\b/i,
+      new RegExp(String.raw`\b(?:those|these|that|this|them|all(?:\s+of\s+(?:that|those|these))?|the\s+above|what\s+i\s+(?:said|told\s+you))\b\s+(?:should\s+)?(?:all\s+)?(?:be\s+)?(?:saved|stored|added|written|kept|put|recorded|committed)\b[^.!?\n]{0,20}\b(?:as|to|into|in)\s+(?:(?:a|the|your)\s+)?memor(?:y|ies)\b(?!\s+${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)`, "i"),
+      new RegExp(String.raw`\b(?:save|store|add|keep|put|record)\b[^.!?\n]{0,40}\b${REFERENTIAL_MEMORY_TARGET_PATTERN}`, "i"),
+      /\b(edit|update|correct|change|replace|fix)\b[^.!?\n]{0,80}\b(?:what you remember|what you know about (?:me|my|our))\b/i,
+      new RegExp(String.raw`\b(?:edit|update|correct|change|replace|fix)\b[^.!?\n]{0,40}\b${PERSONAL_MEMORY_CORRECTION_TARGET_PATTERN}`, "i"),
+      /\b(edit|update|correct|change|replace|fix)\b.{0,40}\bthe\s+(memory|memories)\s+(?:about|of|for)\b/i,
+      new RegExp(String.raw`\b${PERSONAL_MEMORY_CORRECTION_TARGET_PATTERN}\s+(?:should|needs?\s+to|must|has\s+to|is|was|be)\s+(?:be\s+)?(?:edit|edited|update|updated|correct|corrected|change|changed|replace|replaced|fix|fixed)\b`, "i"),
+      new RegExp(String.raw`\b${PERSONAL_MEMORY_CORRECTION_TARGET_PATTERN}${MEMORY_CORRECTION_QUALIFIER_PATTERN}\s+(?:is|are|was|were|seems?|looks?)\s+(?:(?:completely|totally|really|clearly|definitely|obviously|still|just)\s+)?${MEMORY_CORRECTION_PREDICATE_PATTERN}\b`, "i"),
+      new RegExp(String.raw`\b${PERSONAL_MEMORY_CORRECTION_TARGET_PATTERN}${MEMORY_CORRECTION_QUALIFIER_PATTERN}['\u2019]s\s+(?:(?:completely|totally|really|clearly|definitely|obviously|still|just)\s+)?${MEMORY_CORRECTION_PREDICATE_PATTERN}\b`, "i"),
+      new RegExp(String.raw`\b${PERSONAL_MEMORY_CORRECTION_TARGET_PATTERN}${MEMORY_CORRECTION_QUALIFIER_PATTERN}\s+(?:isn|aren|wasn|weren|ain)['\u2019]?t\s+(?:quite\s+)?(?:right|correct|accurate|true)\b`, "i"),
+      new RegExp(String.raw`\byou\s+(?:have|had|got|have\s+got|had\s+got)\s+${PERSONAL_MEMORY_CORRECTION_TARGET_PATTERN}\s+(?:(?:completely|totally|really|clearly|definitely|obviously)\s+)?${MEMORY_CORRECTION_PREDICATE_PATTERN}\b`, "i"),
+      new RegExp(String.raw`\b${PERSONAL_MEMORY_CORRECTION_TARGET_PATTERN}\s+(?:that\s+)?you\s+(?:have|had|saved|stored)\s+(?:is|are|was|were|seems?|looks?)\s+(?:(?:completely|totally|really|clearly|definitely|obviously)\s+)?${MEMORY_CORRECTION_PREDICATE_PATTERN}\b`, "i"),
+      /\bwhat\s+you\s+remember(?:\s+about\b[^.!?\n]{1,80})?\s+(?:is|was|seems?|looks?)\s+(?:completely\s+|totally\s+)?(?:wrong|incorrect|inaccurate|outdated|false|mistaken|not\s+(?:right|correct|accurate|true))\b/i,
+      /\bwhat\s+you\s+know\s+about\s+(?:me|my|our)\b[^.!?\n]{0,80}\s+(?:is|was|seems?|looks?)\s+(?:completely\s+|totally\s+)?(?:wrong|incorrect|inaccurate|outdated|false|mistaken|not\s+(?:right|correct|accurate|true))\b/i,
+      new RegExp(String.raw`\bremember\s+(?:that|this)\b(?!\s+(?:memory\s+)?${TECHNICAL_MEMORY_CONTINUATION_PATTERN}\b)`, "i"),
+      new RegExp(String.raw`^\s*(?:(?:hey|hi)[\s,;:!.-]+)?(?:jarvis[\s,:-]+)?(?:please[\s,]+)?recall(?:\s+that)?\b(?!\s+(?:(?:not|never)\s+)?to\b)(?=[^.!?\n]{1,120}${RECALL_PERSONAL_CUE_PATTERN})`, "i"),
       /\b(my work hours|my goals|my routines|my projects|about me)\b/i,
       /\bwhat('?s|\s+is)\s+my\s+(name|nickname)\b/i,
       /\bwho\s+am\s+i\s*\??\s*$/i,
@@ -123,7 +170,7 @@ const TOOL_AWARE_RULES: ToolAwareRule[] = [
     capabilityIds: ["memory"],
     toolGroups: ["memory"],
     priorityToolNames: ["memory_search", "memory_get", "memory_save", "living_context_update"],
-    guidance: "For memory or preference questions, search memory/living context before claiming not to know. When the user explicitly asks Jarvis to remember, save, or correct a fact, call memory_save with the stated content.",
+    guidance: "For memory or preference questions, search memory/living context before claiming not to know. When the user explicitly asks Jarvis to remember or save one or more stated facts, call memory_save for each distinct durable fact. When the user asks to edit or correct an existing memory, call memory_search first to retrieve its memory_id. If the turn states the corrected content, call memory_save with that content and supersedes_memory_id so the change remains reviewable and provenance-aware; otherwise ask the user for the corrected content and do not call memory_save.",
   },
   {
     intent: "research",

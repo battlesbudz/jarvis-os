@@ -365,6 +365,246 @@ assertRoute(
   ["memory"],
   ["memory_save"],
 );
+for (const [query, label] of [
+  ["Yes, great. Those should all be memories saved", "referential plural save"],
+  ["Those memories should all be saved", "post-noun modal plural save"],
+  ["That memory should be stored", "post-noun modal singular save"],
+  ["These memories need to be recorded", "post-noun necessity save"],
+  ["This memory must be kept", "post-noun required save"],
+  ["Save those as memories", "save referential memories"],
+  ["Add all of that to memory", "add conversation context to memory"],
+  ["Commit this to memory", "commit referential context to memory"],
+  ["Commit this fact to memory", "commit explicit fact to memory"],
+  ["Please commit that detail to your memory", "polite commit detail to Jarvis memory"],
+  ["Commit what I said to memory", "commit prior statement to memory"],
+  ["Those should all be committed to memory", "passive committed context to memory"],
+  ["Remember I live in Philadelphia", "imperative remember fact"],
+  ["Please remember I prefer dark mode", "polite remember fact"],
+  ["I want you to remember I work nights", "embedded want-to remember fact"],
+  ["I need you to remember Sarah is my sister", "embedded need-to remember relationship"],
+  ["I would like Jarvis to remember my favorite color is green", "embedded would-like remember preference"],
+  ["I'd like you to remember that I speak Spanish", "contracted embedded remember fact"],
+  ["Make sure you remember our trip is in May", "make-sure remember shared fact"],
+  ["Recall that Sarah is my sister", "imperative recall relationship"],
+  ["Please recall that I work nights", "polite imperative recall fact"],
+  ["Recall that I speak Spanish", "general first-person recall fact"],
+  ["Recall that Sarah is my aunt", "general relationship recall fact"],
+  ["Recall that my favorite color is green", "possessive preference recall fact"],
+  ["Recall I work nights", "imperative recall fact without complementizer"],
+  ["Please recall Sarah is my sister", "polite recall relationship without complementizer"],
+  ["Jarvis, recall I speak Spanish", "vocative recall fact"],
+  ["Hey, Jarvis, please recall Sarah is my aunt", "greeting vocative polite recall relationship"],
+  ["Could you please recall Sarah is my sister?", "directed polite recall relationship"],
+  ["I want you to recall I work nights", "embedded recall fact"],
+  ["I need Jarvis to recall Sarah is my sister", "embedded Jarvis recall relationship"],
+  ["Make sure you recall my favorite color is green", "make-sure recall preference"],
+  ["Could you remember that I work nights?", "directed remember request"],
+  ["Remember I hate cilantro", "general first-person remember fact"],
+  ["Please remember I speak Spanish", "general polite first-person fact"],
+  ["Remember we prefer dark mode", "plural first-person remember fact"],
+  ["Those should all be saved as memories", "passive plural referential save"],
+  ["That should be stored in memory", "passive singular referential save"],
+  ["Remember Sarah is my sister", "named relationship remember fact"],
+  ["Jarvis, remember Sarah is my sister", "vocative remember fact"],
+  ["Hey, Jarvis, remember Sarah is my sister", "greeting and vocative remember fact"],
+  ["Hi, remember Sarah is my sister", "punctuated greeting remember fact"],
+  ["Please, remember Sarah is my sister", "punctuated polite remember fact"],
+  ["Save the fact that Sarah is my sister to memory", "stated fact saved to memory"],
+  ["Store Sarah is my sister in memory", "personal fact stored in memory"],
+  ["Save this conversation to memory", "current conversation saved to memory"],
+  ["Store our chat in memory", "shared chat stored in memory"],
+  ["Save that I'm allergic to peanuts to memory", "contracted personal fact saved to memory"],
+  ["Save that I speak Spanish to memory", "unlisted personal speech predicate save"],
+  ["Store that I study French in memory", "unlisted personal study predicate save"],
+  ["Save my birthday to memory", "possessive birthday save"],
+  ["Store my wife's birthday in memory", "relationship-possessive birthday save"],
+  ["Commit my daughter's phone number to memory", "relationship-possessive phone save"],
+  ["Save my parents' address to memory", "plural relationship-possessive address save"],
+  ["Store my parents' phone number in memory", "plural relationship-possessive phone save"],
+  ["Save my parents’ birthdays to memory", "curly plural relationship-possessive birthday save"],
+  ["Commit our grandparents' address to memory", "shared plural relationship-possessive address save"],
+  ["Save my kids' birthdays to memory", "kids plural-possessive birthday save"],
+  ["Store my kids’ phone number in memory", "curly kids plural-possessive phone save"],
+  ["Commit my kid's birthday to memory", "kid singular-possessive birthday save"],
+  ["Save our grandkids' address to memory", "grandkids plural-possessive address save"],
+  ["Store my grandchildren’s birthdays in memory", "curly grandchildren possessive birthday save"],
+  ["Save my brothers' birthdays to memory", "brothers plural-possessive birthday save"],
+  ["Store my sisters’ phone numbers in memory", "curly sisters plural-possessive phone save"],
+  ["Commit our partners' schedules to memory", "partners plural-possessive schedule save"],
+  ["Save my wives' birthdays to memory", "irregular wives plural-possessive birthday save"],
+  ["Store my bosses' phone numbers in memory", "bosses plural-possessive phone save"],
+  ["Save my grandmothers' birthdays to memory", "grandmothers plural-possessive birthday save"],
+  ["Store my children's birthdays in memory", "irregular relationship-possessive birthday save"],
+  ["Save our address in memory", "shared possessive address save"],
+  ["Save this in your memory", "referential save into Jarvis memory"],
+  ["Store that in your memory", "referential store into Jarvis memory"],
+  ["That should be stored in your memory", "passive referential store into Jarvis memory"],
+  ["Put this in your memory", "referential put into Jarvis memory"],
+  ["Record that in your memory", "referential record into Jarvis memory"],
+  ["Can you add this new memory now?", "modifier-aware new-memory save"],
+  ["Can you record this specific memory now?", "modifier-aware recorded memory"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(plan.shouldPreferTool, `${label}: prefers tool use`);
+  assert(plan.intents.includes("memory"), `${label}: memory intent detected`);
+  assert(plan.toolGroups.includes("memory"), `${label}: includes memory group`);
+  assert(plan.priorityToolNames.includes("memory_save"), `${label}: exposes memory_save`);
+}
+for (const [query, label] of [
+  ["Tell me what you remember about Sarah", "requested remembered-person summary"],
+  ["Show me what you remember about my business", "requested remembered-business summary"],
+  ["What do you remember about our trip?", "direct remembered-trip lookup"],
+  ["What do you recall about Sarah?", "direct recalled-person lookup"],
+  ["Do you recall anything about Sarah?", "indefinite recalled-person lookup"],
+  ["Can you recall Sarah?", "named recall lookup"],
+  ["Can you recall Sarah's birthday?", "possessive qualified recall lookup"],
+  ["Can you recall Sarah from accounting?", "relationship qualified recall lookup"],
+  ["What personal preferences do you have saved for me?", "saved personal-preference lookup"],
+  ["Show me the preferences I saved", "user-saved preference lookup"],
+  ["What are my saved preferences?", "possessive saved-preference lookup"],
+  ["Search your memory for Sarah", "search Jarvis memory"],
+  ["Read your memories about my business", "read Jarvis memories"],
+  ["Do you have any memories of Sarah?", "existential person-memory lookup"],
+  ["Do you have any saved memories about our trip?", "existential saved-memory lookup"],
+  ["Have you got a memory of my first job?", "have-got singular-memory lookup"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(plan.intents.includes("memory"), `${label}: memory intent detected`);
+  assert(plan.priorityToolNames.includes("memory_search"), `${label}: exposes memory_search`);
+}
+for (const [query, label] of [
+  ["How are memories formed?", "general memory science"],
+  ["Tell me a childhood memory story", "non-personal story request"],
+  ["Are memories stored in the brain?", "general passive storage question"],
+  ["Explain computer memory", "technical memory topic"],
+  ["Fix this memory leak", "software memory leak"],
+  ["Keep computer memory usage low", "computer memory instruction"],
+  ["Make a memory matching game", "creative memory concept"],
+  ["Keep this memory usage low", "determiner in technical memory phrase"],
+  ["Make this memory matching game accessible", "determiner in creative memory phrase"],
+  ["Keep this computer memory usage low", "modified technical memory phrase"],
+  ["Make this virtual memory simulator accessible", "modified virtual-memory phrase"],
+  ["Save the buffer to memory", "technical buffer write"],
+  ["Write the decoded image into memory", "technical image write"],
+  ["Save the buffer as a memory", "technical buffer-as-memory write"],
+  ["Save my buffer to memory", "owned technical buffer write"],
+  ["Save the buffer I decoded to memory", "technical relative-clause buffer write"],
+  ["Write our process image into memory", "owned technical process-image write"],
+  ["Change this memory limit to 8 GB", "technical memory limit correction"],
+  ["Edit the memory address", "technical memory address correction"],
+  ["Fix that memory leak", "technical memory leak correction"],
+  ["Update the memory allocation", "technical memory allocation correction"],
+  ["Correct the memory mapping", "technical memory mapping correction"],
+  ["Change the memory setting", "technical memory setting correction"],
+  ["Add this new memory card to the device", "technical memory-card addition"],
+  ["Edit this specific memory address", "modified technical memory-address correction"],
+  ["Record that in process memory", "technical process-memory record"],
+  ["Put this in virtual memory", "technical virtual-memory write"],
+  ["Put this in your memory buffer", "referential technical memory-buffer write"],
+  ["Record that in the memory cache", "referential technical memory-cache record"],
+  ["Commit this buffer to memory", "technical buffer commit to memory"],
+  ["Recall this memory allocation model", "technical recall-this request"],
+  ["Recall that TypeScript uses structural typing", "explanatory TypeScript recall"],
+  ["Recall that HTTP is stateless", "explanatory HTTP recall"],
+  ["Please recall that JavaScript uses an event loop", "polite explanatory recall"],
+  ["Recall TypeScript uses structural typing", "explanatory recall without complementizer"],
+  ["Please recall HTTP is stateless", "polite explanatory recall without complementizer"],
+  ["Hey, Jarvis, recall this memory allocation model", "vocative technical recall"],
+  ["Could you recall TypeScript uses structural typing?", "directed explanatory recall"],
+  ["I want you to recall TypeScript uses structural typing", "embedded explanatory recall"],
+  ["I want you to recall to update my dependencies", "embedded recall-to dependency task"],
+  ["Make sure Jarvis recall to clear our cache", "make-sure recall-to cache task"],
+  ["Please recall to clear our cache", "anchored recall-to cache task"],
+  ["Could you please recall to update my dependencies?", "directed recall-to dependency task"],
+  ["Please recall not to clear our cache", "anchored recall-not-to cache task"],
+  ["Could you recall never to share my password?", "directed recall-never-to task"],
+  ["I want you to remember TypeScript uses structural typing", "embedded explanatory remember"],
+  ["I need you to remember this memory allocation algorithm", "embedded technical remember"],
+  ["Make sure you remember HTTP is stateless", "make-sure explanatory remember"],
+  ["I want you to remember to update my dependencies", "embedded remember-to dependency task"],
+  ["Could you remember to update my dependencies?", "directed remember-to dependency task"],
+  ["Would you remember not to share my password?", "directed remember-not-to task"],
+  ["Please remember to clear our cache", "anchored remember-to cache task"],
+  ["Jarvis, remember never to share my password", "vocative remember-never-to task"],
+  ["Make sure you remember to clear our cache", "embedded remember-to cache task"],
+  ["I'd like you to remember to call my dentist", "embedded remember-to personal task"],
+  ["I want you to remember not to update my dependencies", "embedded remember-not-to dependency task"],
+  ["Make sure you remember not to clear our cache", "embedded remember-not-to cache task"],
+  ["I'd like you to remember never to share my password", "embedded remember-never-to task"],
+  ["Save my buffer to memory", "technical possessive buffer save"],
+  ["Store my cache in memory", "technical possessive cache save"],
+  ["Save my parents' buffer to memory", "plural-owned technical buffer save"],
+  ["Store our coworkers' cache in memory", "plural-owned technical cache save"],
+  ["Save my kids' buffer to memory", "kids-owned technical buffer save"],
+  ["Save my brothers' buffer to memory", "brothers-owned technical buffer save"],
+  ["Do you have any memory allocation data?", "technical existential memory-allocation query"],
+  ["Have you got any memory buffer metrics?", "technical have-got memory-buffer query"],
+  ["Use this memory store for sessions", "technical memory-store noun"],
+  ["Inspect this memory record", "technical memory-record noun"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(!plan.intents.includes("memory"), `${label}: does not detect personal memory intent`);
+  assert(!plan.toolGroups.includes("memory"), `${label}: does not expose the memory group`);
+  assert(!plan.priorityToolNames.includes("memory_save"), `${label}: does not expose memory_save`);
+}
+for (const [query, label] of [
+  ["Correct the memory about Bud Runner", "correct memory"],
+  ["Update what you remember about my business", "update remembered context"],
+  ["That memory should be changed", "referential memory edit"],
+  ["That memory is wrong", "declarative wrong-memory correction"],
+  ["That memory isn't right", "contracted negative correction"],
+  ["Your memory about Sarah isn't correct", "qualified contracted negative correction"],
+  ["That memory's wrong", "contracted copula correction"],
+  ["This memory’s outdated", "curly-apostrophe contracted correction"],
+  ["The memory about Sarah is wrong", "qualified definite-memory correction"],
+  ["Your memory about Sarah is outdated", "qualified owned-memory correction"],
+  ["This memory of my job is inaccurate", "qualified memory-of correction"],
+  ["That memory for our business is not quite right", "qualified shared-memory soft correction"],
+  ["This memory is inaccurate", "declarative inaccurate-memory correction"],
+  ["What you remember about my job is wrong", "declarative remembered-context correction"],
+  ["What you know about my job is wrong", "declarative personal-knowledge correction"],
+  ["Correct what you know about my job", "imperative personal-knowledge correction"],
+  ["Update what you know about our business", "imperative shared-knowledge correction"],
+  ["Hey, no, please change the memory.", "conversational definite-memory correction"],
+  ["Edit that memory, you have it wrong.", "referential edit with trailing explanation"],
+  ["Hey, change that memory, it\'s not quite right.", "conversational edit with soft correction"],
+  ["Please fix this memory.", "polite referential correction"],
+  ["Update my memory about Sarah.", "owned-memory correction"],
+  ["You have that memory wrong.", "second-person wrong-memory correction"],
+  ["You got the memory completely wrong.", "second-person definite-memory correction"],
+  ["That memory you saved is inaccurate.", "saved-memory declarative correction"],
+  ["The memory is not quite right.", "soft declarative correction"],
+  ["Can you change an old memory about me?", "old personal-memory correction"],
+  ["Can you edit this specific, exact memory that I\'m referring to?", "modifier-aware referential correction"],
+  ["Please correct the inaccurate memory about Sarah.", "descriptive personal-memory correction"],
+  ["One of your memories is wrong", "partitive owned-memory correction"],
+  ["One of your saved memories about Sarah is inaccurate", "qualified partitive saved-memory correction"],
+] as const) {
+  const plan = classifyToolAwareRoute(query);
+  assert(plan.shouldPreferTool, `${label}: prefers tool use`);
+  assert(plan.intents.includes("memory"), `${label}: memory intent detected`);
+  assert(plan.priorityToolNames.includes("memory_search"), `${label}: exposes memory_search`);
+  assert(plan.priorityToolNames.includes("memory_save"), `${label}: exposes memory_save`);
+}
+{
+  const plan = classifyToolAwareRoute("That memory is wrong");
+  assert(plan.guidance.includes("otherwise ask the user for the corrected content and do not call memory_save"), "correction without replacement: asks for corrected content after search");
+}
+{
+  const plan = classifyToolAwareRoute("What you know about TypeScript is wrong");
+  assert(!plan.intents.includes("memory"), "general knowledge correction: does not detect personal memory intent");
+  assert(!plan.toolGroups.includes("memory"), "general knowledge correction: does not expose memory tools");
+}
+{
+  const plan = classifyToolAwareRoute("What you know about my job is accurate. TypeScript is wrong");
+  assert(!plan.intents.includes("memory"), "separate-sentence correction: does not detect personal memory intent");
+  assert(!plan.toolGroups.includes("memory"), "separate-sentence correction: does not expose memory tools");
+}
+{
+  const plan = classifyToolAwareRoute("Fix this TypeScript error. What you know about my job is accurate.");
+  assert(!plan.intents.includes("memory"), "separate imperative command: does not detect personal memory intent");
+  assert(!plan.toolGroups.includes("memory"), "separate imperative command: does not expose memory tools");
+}
 assertRoute(
   "open github.com in the browser",
   "browser",
