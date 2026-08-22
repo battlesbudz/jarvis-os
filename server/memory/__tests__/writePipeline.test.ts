@@ -582,6 +582,11 @@ async function testCorrectionApprovalIsAtomic(): Promise<void> {
     /keepPendingMemoryWrites[\s\S]*candidateResult[\s\S]*correctionSourceIds[\s\S]*FOR UPDATE[\s\S]*pendingResult[\s\S]*FOR UPDATE/,
     "bulk correction approval should lock sources before pending proposals",
   );
+  assert.match(
+    pipelineSource,
+    /defaultMemoryWriteDeps[\s\S]*insertUserMemory\(record\)[\s\S]*record\.supersedesMemoryId[\s\S]*FOR UPDATE[\s\S]*tx\.insert\(userMemories\)/,
+    "pipeline correction proposals should lock and revalidate their source before insertion",
+  );
   console.log("OK: correction approval and supersession are atomic");
 }
 
