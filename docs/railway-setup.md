@@ -15,10 +15,9 @@ RAILPACK_NODE_VERSION=22
 
 ## Headless Browser Runtime
 
-The Railway build installs the Chromium headless-shell revision bundled with `@playwright/mcp`
-into `/app/.cache/ms-playwright`. `railpack.json` carries Chromium's required
-Linux libraries into the final runtime image. Keep the build and runtime
-`PLAYWRIGHT_BROWSERS_PATH` values aligned when changing either configuration.
+`railpack.json` installs Debian's Chromium package and points Playwright MCP at
+`/usr/bin/chromium`. This avoids relying on Playwright's external browser CDN
+while carrying Chromium and its Linux libraries together in the runtime image.
 
 After deployment, `browser_navigate` should start the server-side browser when
 no permitted desktop browser daemon is connected. A missing-Chrome or

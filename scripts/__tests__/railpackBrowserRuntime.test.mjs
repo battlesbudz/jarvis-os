@@ -12,26 +12,20 @@ const browserClient = fs.readFileSync(
 );
 
 const buildCommand = railway.build?.buildCommand ?? "";
-assert.match(
+assert.doesNotMatch(
   buildCommand,
-  /PLAYWRIGHT_BROWSERS_PATH=\.\/.cache\/ms-playwright\s+node\s+node_modules\/@playwright\/mcp\/node_modules\/playwright\/cli\.js\s+install\s+--only-shell\s+chromium/,
-  "Railway must install the Chromium headless shell used by the Playwright MCP package into the app image",
-);
-assert.ok(
-  buildCommand.indexOf("install --only-shell chromium") < buildCommand.indexOf("npm run server:build"),
-  "Chromium must be installed before the server build completes",
+  /playwright.*install.*chromium/,
+  "Railway builds must not depend on Playwright's external browser CDN",
 );
 
 assert.equal(
-  railpack.deploy?.variables?.PLAYWRIGHT_BROWSERS_PATH,
-  "/app/.cache/ms-playwright",
-  "the runtime must resolve the same browser directory populated during the build",
+  railpack.deploy?.variables?.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+  "/usr/bin/chromium",
+  "the browser client must use Railpack's system Chromium",
 );
 
 const runtimePackages = new Set(railpack.deploy?.aptPackages ?? []);
-for (const dependency of ["libnss3", "libgbm1", "libasound2"]) {
-  assert.ok(runtimePackages.has(dependency), `Railpack runtime is missing Chromium dependency ${dependency}`);
-}
+assert.ok(runtimePackages.has("chromium"), "Railpack must install Chromium and its runtime dependencies");
 
 assert.match(
   browserClient,
