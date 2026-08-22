@@ -12,6 +12,7 @@ loadEnvFiles(projectRoot);
 const tests = [
   { file: "scripts/__tests__/testEnv.test.mjs" },
   { file: "scripts/__tests__/noReplitRuntimeDeps.test.mjs" },
+  { file: "scripts/__tests__/railpackBrowserRuntime.test.mjs" },
   { file: "scripts/__tests__/androidDaemonUpdateConfig.test.mjs" },
   { file: "scripts/__tests__/androidWearableAudio.assert.mjs" },
   { file: "scripts/android-wake-word-resource-guard.mjs" },

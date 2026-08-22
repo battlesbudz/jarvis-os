@@ -210,7 +210,6 @@ Known acceptable warnings:
 
 - Missing Telegram or Discord token if those channels are intentionally unconfigured.
 - Gmail invalid credentials when Google OAuth needs reconnecting.
-- Chromium unavailable on Railway if browser automation is not required in that deployment.
 
 Known not acceptable:
 
@@ -219,6 +218,7 @@ Known not acceptable:
 - Drizzle waiting on an interactive schema prompt.
 - Foreign key errors during normal app chat.
 - Production chat returning `Failed to get coach response`.
+- Chromium unavailable when the server-side browser tools are offered.
 
 ## Step 9: Test The Live App
 

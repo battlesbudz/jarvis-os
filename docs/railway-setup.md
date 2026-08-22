@@ -13,6 +13,18 @@ If Railway still chooses the wrong version, add this variable in the Railway ser
 RAILPACK_NODE_VERSION=22
 ```
 
+## Headless Browser Runtime
+
+The Railway build installs the Chromium revision bundled with `@playwright/mcp`
+into `/app/.cache/ms-playwright`. `railpack.json` carries Chromium's required
+Linux libraries into the final runtime image. Keep the build and runtime
+`PLAYWRIGHT_BROWSERS_PATH` values aligned when changing either configuration.
+
+After deployment, `browser_navigate` should start the server-side browser when
+no permitted desktop browser daemon is connected. A missing-Chrome or
+missing-Chromium error indicates a failed or stale Railway image, not an APK
+problem.
+
 ## Required Runtime Secrets
 The database URL and JWT secret are intentionally not committed to the repo. They must live in Railway service variables:
 
