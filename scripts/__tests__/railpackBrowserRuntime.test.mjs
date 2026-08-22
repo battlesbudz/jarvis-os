@@ -25,7 +25,7 @@ assert.equal(
 );
 
 const runtimePackages = new Set(railpack.deploy?.aptPackages ?? []);
-for (const dependency of ["libnss3", "libgbm1", "libasound2t64", "fonts-liberation"]) {
+for (const dependency of ["libnss3", "libgbm1", "libasound2", "fonts-liberation"]) {
   assert.ok(runtimePackages.has(dependency), `Railpack runtime is missing Chromium dependency ${dependency}`);
 }
 
