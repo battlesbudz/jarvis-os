@@ -445,7 +445,7 @@ export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
 }
 
 const CONTEXTUAL_TOOL_CONFIRMATION_PATTERN = /^(?:(?:yes|yep|yeah|sure|absolutely|definitely|certainly|of\s+course|ok(?:ay)?|go\s+(?:ahead|for\s+it)|proceed|do\s+(?:it|that)|let'?s\s+do\s+it|sounds\s+(?:good|great|perfect)|that\s+works|works\s+for\s+me|fine\s+by\s+me|that\s+would\s+be\s+(?:good|great|perfect)|i(?:'d|\s+would)\s+(?:like|love)\s+that)(?:\s+(?:please|thanks|thank\s+you))?|please\s+(?:go\s+(?:ahead|for\s+it)|proceed|do\s+(?:it|that)))$/i;
-const CONTEXTUAL_TOOL_NEGATION_PATTERN = /\b(?:no|not|never|cancel|don'?t|do\s+not)\b/i;
+const CONTEXTUAL_TOOL_NEGATION_PATTERN = /\b(?:no|not|never|cancel|do\s+not|don['’]?t|can(?:not|['’]t)|couldn['’]?t|won['’]?t|wouldn['’]?t|shouldn['’]?t)\b/i;
 const CONTEXTUAL_TOOL_RETRY_PATTERN = /\b(?:try\s+(?:(?:it|that)\s+)?(?:again|once\s+more)|retry(?:\s+(?:it|that))?|give\s+(?:it|that)\s+another\s+(?:try|shot)|run\s+(?:it|that)\s+again|one\s+more\s+time)\b/i;
 const ASSISTANT_PROPOSAL_PATTERN = /(?:would\s+you\s+like\s+me\s+to|do\s+you\s+want\s+me\s+to|shall\s+i|should\s+i|may\s+i|can\s+i|i\s+(?:can|could|will)|i['’]ll|let\s+me)\s+([^.!?;]+)/gi;
 const NON_ACTION_PROPOSAL_PATTERN = /^(?:explain|describe|discuss|tell\s+you\s+(?:about|how)|show\s+you\s+how|walk\s+you\s+through)\b/i;
@@ -502,12 +502,14 @@ function isContextualToolFollowUp(text: string): boolean {
 
 function extractAssistantActionProposal(text: string): string | null {
   const proposals = [...text.matchAll(ASSISTANT_PROPOSAL_PATTERN)]
-    .map((match) => match[1]?.trim())
-    .filter((proposal): proposal is string => Boolean(proposal));
+    .flatMap((match) => {
+      const proposal = match[1]?.trim();
+      return proposal ? [{ proposal, source: match[0] }] : [];
+    });
   for (let index = proposals.length - 1; index >= 0; index -= 1) {
-    const proposal = proposals[index];
+    const { proposal, source } = proposals[index];
     if (/\bor\b/i.test(proposal) || NON_ACTION_PROPOSAL_PATTERN.test(proposal)) return null;
-    if (CONTEXTUAL_TOOL_NEGATION_PATTERN.test(proposal)) continue;
+    if (CONTEXTUAL_TOOL_NEGATION_PATTERN.test(source)) continue;
     if (/^(?:do\s+(?:it|that)|go\s+ahead|proceed)$/i.test(proposal)) continue;
     return proposal;
   }
@@ -541,12 +543,13 @@ export function getToolMetadataRoutingText(
   const contextFloor = Math.max(0, lastUserIndex - 2);
   for (let index = lastUserIndex - 1; index >= contextFloor; index -= 1) {
     const message = messages[index];
-    if (typeof message?.content !== "string") continue;
-    if (message.role === "user") return message.content;
-    if (message.role === "assistant") {
-      const proposal = extractAssistantActionProposal(message.content);
-      if (proposal) return proposal;
-    }
+    if (message?.role === "user" && typeof message.content === "string") return message.content;
+  }
+  for (let index = lastUserIndex - 1; index >= contextFloor; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "assistant" || typeof message.content !== "string") continue;
+    const proposal = extractAssistantActionProposal(message.content);
+    if (proposal) return proposal;
   }
   return lastUserText;
 }

@@ -154,6 +154,30 @@ for (const retry of ["Retry that.", "Try it once more.", "Give it another shot."
 }
 
 {
+  const messages = [
+    { role: "user", content: "Generate an image of a cat" },
+    { role: "assistant", content: "The image tool failed; I can diagnose what went wrong." },
+    { role: "user", content: "Try again." },
+  ];
+  assert(
+    getToolMetadataRoutingText(messages) === "Generate an image of a cat",
+    "contextual retry metadata: prefers the original user action",
+  );
+}
+
+for (const refusal of [
+  "I can't set a reminder for tomorrow.",
+  "I couldn't set a reminder for tomorrow.",
+  "I won't set a reminder for tomorrow.",
+]) {
+  const plan = classifyToolAwareConversationRoute([
+    { role: "assistant", content: refusal },
+    { role: "user", content: "Okay." },
+  ]);
+  assert(!plan.shouldPreferTool, `contextual confirmation: rejects contracted negation ${refusal}`);
+}
+
+{
   const relevant = selectRelevantToolNames(
     "Move the Acme card to Done in Trello",
     [
