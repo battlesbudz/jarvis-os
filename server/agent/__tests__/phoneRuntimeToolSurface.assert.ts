@@ -47,6 +47,32 @@ assert.equal(
 );
 assert.equal(
   resolvePhoneRuntimeRequestText([
+    {
+      role: "assistant",
+      content: JSON.stringify({
+        ok: false,
+        requestedApp: "LinkedIn",
+        resolvedApp: { label: "LinkedIn", packageName: "com.linkedin.android" },
+        error: "The operating system blocked the background launch.",
+      }),
+    },
+    { role: "user", content: "Run that operation once more." },
+    { role: "assistant", content: "The prior attempt did not continue." },
+    { role: "user", content: "Please run it again." },
+  ]),
+  "Open the LinkedIn app on my phone.",
+  "a retry can recover an evicted phone request from structured action state",
+);
+assert.equal(
+  resolvePhoneRuntimeRequestText([
+    { role: "assistant", content: '{"ok":true,"requestedApp":"Facebook"}' },
+    { role: "user", content: "Try again." },
+  ]),
+  "Try again.",
+  "successful or untrusted assistant JSON cannot create a retry target",
+);
+assert.equal(
+  resolvePhoneRuntimeRequestText([
     { role: "user", content: "Open Chrome on my phone." },
     { role: "assistant", content: "The phone action failed." },
     { role: "user", content: "Could you please try that again?" },

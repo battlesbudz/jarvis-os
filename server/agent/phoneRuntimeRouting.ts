@@ -546,6 +546,40 @@ function isAcceptedVoiceRestoreBridge(
     /(?:context|conversation)[\s\S]{0,40}restored|restored[\s\S]{0,40}(?:context|conversation)/i.test(acknowledgementText);
 }
 
+function phoneAppTargetFromActionFailure(content: string): string | null {
+  const jsonStart = content.indexOf("{");
+  if (jsonStart < 0) return null;
+  try {
+    const failure = JSON.parse(content.slice(jsonStart)) as {
+      ok?: unknown;
+      requestedApp?: unknown;
+      resolvedApp?: { label?: unknown };
+    };
+    if (failure.ok !== false) return null;
+    const target = typeof failure.requestedApp === "string"
+      ? failure.requestedApp.trim()
+      : typeof failure.resolvedApp?.label === "string"
+        ? failure.resolvedApp.label.trim()
+        : "";
+    return target && target.length <= 80 && /^[\p{L}\p{N} .&'’+-]+$/u.test(target) ? target : null;
+  } catch {
+    return null;
+  }
+}
+
+function recoverPhoneRuntimeRequestFromActionState(
+  messages: Array<{ role?: string; content?: unknown }>,
+  lastUserIndex: number,
+): string | null {
+  for (let index = lastUserIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "assistant" || typeof message.content !== "string") continue;
+    const appTarget = phoneAppTargetFromActionFailure(message.content);
+    if (appTarget) return `Open the ${appTarget} app on my phone.`;
+  }
+  return null;
+}
+
 /**
  * Preserve an explicit phone target across a bounded retry chain. Assistant
  * failure prose is deliberately ignored so a server-browser error cannot
@@ -593,7 +627,7 @@ export function resolvePhoneRuntimeRequestText(
     break;
   }
 
-  return lastUserText;
+  return recoverPhoneRuntimeRequestFromActionState(messages, lastUserIndex) ?? lastUserText;
 }
 
 export function isPhoneNotificationReadRequest(text: string): boolean {
