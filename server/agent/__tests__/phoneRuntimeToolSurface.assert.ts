@@ -176,7 +176,7 @@ assert.deepEqual(
 assert.deepEqual(
   includeConnectedPhoneRuntimeTools(researchTools, allConnectedTools, false).map((candidate) => candidate.function.name),
   ["search_web"],
-  "phone tools must remain unavailable when Android Device Control is disconnected",
+  "phone tools must remain unavailable when Android Device Control is neither connected nor persistently paired",
 );
 assert.equal(
   resolvePhoneRuntimeRequestText([
@@ -208,6 +208,32 @@ const notificationSummarySource = fs.readFileSync(path.resolve("server/agent/and
 const daemonActionSource = fs.readFileSync(path.resolve("server/agent/tools/daemon.ts"), "utf8");
 const actionOntologySource = fs.readFileSync(path.resolve("server/agent/actionOntology.ts"), "utf8");
 
+assert.match(
+  routesSource,
+  /androidActive \|\| await hasDaemonPairing\(userId, "android"\)/,
+  "app chat must distinguish persistent Android pairing from a currently open daemon socket",
+);
+assert.match(
+  routesSource,
+  /const phoneRuntimeAvailable = androidPaired;/,
+  "a temporarily offline paired phone must keep the Phone Runtime capability available",
+);
+assert.match(
+  routesSource,
+  /!activePhoneRuntimeOperation && phoneRuntimeIntentRequest\)/,
+  "phone operations must be persisted from intent even when the device is temporarily offline",
+);
+assert.match(
+  routesSource,
+  /includeConnectedPhoneRuntimeTools\(routedModelRequestTools, requestTools, androidPaired\)/,
+  "a persisted Android pairing must keep deterministic Phone Runtime tools on the model surface",
+);
+assert.match(
+  channelCoachSource,
+  /classifiedToolAwareRoute\.actionType === "jarvis_device_action" && !androidPaired/,
+  "channel requests must only suppress Phone Runtime when no persisted Android pairing exists",
+);
+
 assert.match(routesSource, /ANDROID_PHONE_RUNTIME_TOOL_NAMES/);
 assert.match(routesSource, /filterPhoneRuntimeModelTools/);
 assert.match(routingSource, /function filterPhoneRuntimeModelTools/);
@@ -230,11 +256,11 @@ assert.match(routesSource, /keepDaemonActionFallback[\s\S]*hasUnsupportedPhoneDe
 assert.match(routesSource, /const useFocusedRequestTools = toolAwareRoute\.shouldPreferTool \|\|[\s\S]*phoneRuntimeCoveredRequest \|\|[\s\S]*keepDaemonActionFallback \|\|[\s\S]*youtubeServerResearchRequest/);
 assert.match(routesSource, /const useMetadataToolLoop = relevantMetadataToolNames\.length > 0/);
 assert.match(routesSource, /usePhoneRuntimeToolSurfaceOnly[\s\S]*filterPhoneRuntimeModelTools\(firstTurnToolPolicy\.tools,\s*\{/);
-assert.match(routesSource, /includeConnectedPhoneRuntimeTools\(routedModelRequestTools, requestTools, androidActive\)/);
+assert.match(routesSource, /includeConnectedPhoneRuntimeTools\(routedModelRequestTools, requestTools, androidPaired\)/);
 assert.match(routesSource, /const shouldRunToolLoop = androidActive[\s\S]*\|\| useToolFocusedLoop/);
 assert.match(routesSource, /allowServerYoutubeTools:\s*youtubeServerResearchRequest/);
 assert.match(routesSource, /usePhoneRuntimeToolSurfaceOnly\s*=\s*phoneRuntimeCoveredRequest/);
-assert.match(routesSource, /const phoneRuntimeActionRequest[\s\S]*hasPhoneRuntimeActionRequest[\s\S]*hasContextualPhoneRuntimeActionRequest/);
+assert.match(routesSource, /const phoneRuntimeIntentRequest[\s\S]*hasPhoneRuntimeActionRequest[\s\S]*hasContextualPhoneRuntimeActionRequest/);
 assert.match(routesSource, /buildPhoneRuntimeRequiredToolNames\(\s*phoneRuntimeRequestText,\s*isDeviceControlRequest,\s*phoneRuntimeActionRequest/);
 assert.doesNotMatch(routesSource, /isAndroidLocalGemmaModelName/);
 assert.match(routesSource, /\.\.\.ANDROID_PHONE_RUNTIME_TOOL_NAMES/);
@@ -246,7 +272,7 @@ assert.match(routingSource, /android_read_notifications/);
 assert.match(routingSource, /!options\.androidActive \|\| !options\.phoneRuntimeCoveredRequest/);
 assert.match(routesSource, /Routing notification request to Android Device Control/);
 assert.match(routesSource, /Routing app launch to Android Device Control/);
-assert.match(routesSource, /deterministicPhoneRuntimeToolCallFromRequest\(phoneRuntimeRequestText, modelRequestTools,[\s\S]*androidActive,[\s\S]*phoneRuntimeCoveredRequest/);
+assert.match(routesSource, /deterministicPhoneRuntimeToolCallFromRequest\(phoneRuntimeRequestText, modelRequestTools,[\s\S]*androidActive: androidPaired,[\s\S]*phoneRuntimeCoveredRequest/);
 assert.match(routesSource, /phoneRuntimeActionRequest && modelPhase1\.toolCallList\.length === 0/);
 assert.match(routesSource, /phoneActionRecoveryTool[\s\S]*android_read_screen_context/);
 assert.match(routesSource, /deterministicAndroidToolSummary\(tc\.function\.name, execResult,[\s\S]*deterministicToolCall:\s*deterministicToolCall\?\.id === tc\.id/);
@@ -293,14 +319,14 @@ assert.doesNotMatch(deviceControlCardSource, /const statusReady =[\s\S]{0,180}no
 assert.match(deviceControlCardSource, /detail: !healthy[\s\S]{0,100}Connect Device Control to check Notification Access/);
 assert.match(deviceControlCardSource, /notificationPermissionGranted === true && status\?\.notificationServiceConnected === true[\s\S]{0,180}Permission granted and listener connected/);
 assert.doesNotMatch(routesSource, /isAndroidVoiceOrigin|rawOriginPlatform/);
-assert.match(routesSource, /const phoneRuntimeAvailable = androidActive;/);
+assert.match(routesSource, /const phoneRuntimeAvailable = androidPaired;/);
 assert.match(channelCoachSource, /resolvePhoneRuntimeRequestText\(\[[\s\S]*cachedSessionMessages[\s\S]*\[\.\.\.chatMessages\]\.reverse\(\)[\s\S]*role: ["']user["'][\s\S]*classifyToolAwareRoute\(phoneRuntimeRequestText\)/);
-assert.match(channelCoachSource, /classifiedToolAwareRoute\.actionType === ["']jarvis_device_action["'] && !androidActive/);
+assert.match(channelCoachSource, /classifiedToolAwareRoute\.actionType === ["']jarvis_device_action["'] && !androidPaired/);
 assert.match(channelCoachSource, /phoneRuntimeUnavailable[\s\S]*toolGroups: \[\][\s\S]*priorityToolNames: \[\][\s\S]*shouldPreferTool: false/);
 assert.match(channelCoachSource, /phoneRuntimeUnavailable[\s\S]*new Set<string>\(ANDROID_PHONE_RUNTIME_TOOL_NAMES\)[\s\S]*scopedTools = scopedTools\.filter/);
 assert.match(channelCoachSource, /queryText: phoneRuntimeUnavailable \? undefined : userText/);
 assert.match(channelCoachSource, /The Android daemon is not active\. Do not request a phone tool or approval\./);
-assert.match(routesSource, /phoneRuntimeAvailable && !memoryPhoneBypassRequest && \([\s\S]*isPhoneRuntimeCoveredRequest\(phoneRuntimeRequestText\)/);
+assert.match(routesSource, /const phoneRuntimeCoveredIntent = !memoryPhoneBypassRequest && \([\s\S]*isPhoneRuntimeCoveredRequest\(phoneRuntimeRequestText\)/);
 assert.match(
   routesSource,
   /!phoneRuntimeAvailable && classifiedToolAwareRoute\.actionType === ["']jarvis_device_action["'][\s\S]*shouldPreferTool: hasNonPhoneToolRoute/,

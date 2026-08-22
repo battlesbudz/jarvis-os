@@ -11,7 +11,7 @@ import { getRecentEmailCommitments } from "../integrations/gmail";
 import { getGoogleCalendarEvents } from "../integrations/googleCalendar";
 import { getRecentInteractions, formatInteractionTimeline, logInteraction } from "../interactionLog";
 import { getSoulPromptBlock } from "../memory/soul";
-import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive, isDaemonActionAllowed } from "../daemon/bridge";
+import { isUserPaired, isAndroidDaemonActive, isDesktopDaemonActive, isDaemonActionAllowed, hasDaemonPairing } from "../daemon/bridge";
 import { buildYouTubeContextBlock } from "../utils/youtubeAutoFetch";
 import type { ChannelAttachment } from "./types";
 import { runFastOrchestratorReply, runOrchestrator } from "../agent/orchestrator";
@@ -578,6 +578,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
   const androidActive = isAndroidDaemonActive(userId);
   const desktopActive = isDesktopDaemonActive(userId);
   const daemonPaired = isUserPaired(userId);
+  const androidPaired = androidActive || await hasDaemonPairing(userId, "android").catch(() => false);
   const shellAllowed = desktopActive ? await isDaemonActionAllowed(userId, "shell").catch(() => false) : false;
   const daemonLines: string[] = [];
   if (desktopActive) {
@@ -588,7 +589,8 @@ You can extend yourself by building new tools directly. Generate the complete Ty
     }
   }
   if (androidActive) daemonLines.push("- Android device daemon is ACTIVE. You can open apps (android_open_app), take screenshots (android_screenshot), read the screen (android_read_screen), browse URLs (android_browse), list/read files on the device (android_file_list/android_file_read). Tap/type/swipe actions are available when user enables them. Proactively mention Android capabilities when relevant.");
-  const daemonSection = daemonPaired
+  else if (androidPaired) daemonLines.push("- Android Device Control is paired but currently offline. Preserve phone operations and call the matching Android tool for a real preflight attempt. Report an offline preflight as a Device Control blocker; never claim no device-action tool exists.");
+  const daemonSection = daemonPaired || androidPaired
     ? `## Connected Devices\n${daemonLines.join("\n")}${shellAllowed ? "\n\n**daemon_shell usage**: Call daemon_shell proactively when the user asks to run a script, build an app, run tests, read a local log, execute a cron job, or do any local computation. Don't describe what you'd do — just run the command and show the result." : ""}`
   : "## Android Device Setup Guidance (no daemon paired)\nIf the user asks how to set up Android device control, guide them through the unified Jarvis app:\n1. Install/open the Jarvis Android app and go to Profile → Connected Channels → Android Device.\n2. Tap Enable Device Control. The app uses the configured server URL and signed-in session automatically.\n3. Grant Android permissions from that screen as needed: Accessibility Service, notification access, all files access, camera, and screen recording. Microphone is only needed when a voice session is open.\n4. For hands-free launch, set Jarvis as the Android assistant from Settings. The software wake-word listener stays off unless a fallback is explicitly enabled later.";
 
@@ -695,7 +697,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   }
   const phoneRuntimeOperationContext = formatPhoneRuntimeOperationContext(activePhoneRuntimeOperation);
   const phoneRuntimeUnavailable =
-    classifiedToolAwareRoute.actionType === "jarvis_device_action" && !androidActive;
+    classifiedToolAwareRoute.actionType === "jarvis_device_action" && !androidPaired;
   const toolAwareRoute = phoneRuntimeUnavailable
     ? {
         ...classifiedToolAwareRoute,

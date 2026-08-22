@@ -76,7 +76,7 @@ import { getSoul, getSoulPromptBlock, regenerateSoul, setManualOverride, setSoul
 import { buildUntrustedSoulContext, BUDGET_PRESETS } from "./memory/contextBuilder";
 import { containsRawRestrictedContent } from "./memory/restrictedContent";
 import { listPeople, deletePerson } from "./memory/people";
-import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getRecentNotificationObservation, getDaemonDeviceMeta, setDaemonVoiceApprovalHandler, type AndroidDaemonAction } from "./daemon/bridge";
+import { isUserPaired, sendDaemonOp, pingDaemon, getOpAuditLog, isDaemonActionAllowed, isAndroidDaemonActive, isDesktopDaemonActive, isAndroidDaemonActionAllowed, getRecentPhoneNotifications, getRecentNotificationObservation, getDaemonDeviceMeta, hasDaemonPairing, setDaemonVoiceApprovalHandler, type AndroidDaemonAction } from "./daemon/bridge";
 import type { DaemonAction, DaemonOp } from "./daemon/bridge";
 import { telegramLinks, channelLinks } from "@shared/schema";
 import { connectChannelTool } from "./agent/tools/connectChannel";
@@ -1753,8 +1753,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const daemonPaired = userId ? isUserPaired(userId) : false;
       const androidActive = userId ? isAndroidDaemonActive(userId) : false;
-      const daemonDeviceMeta = daemonPaired && userId
-        ? await getDaemonDeviceMeta(userId, androidActive ? "android" : "desktop")
+      const desktopActive = userId ? isDesktopDaemonActive(userId) : false;
+      const androidPaired = userId
+        ? androidActive || await hasDaemonPairing(userId, "android").catch(() => false)
+        : false;
+      const daemonDeviceMeta = androidPaired && userId
+        ? await getDaemonDeviceMeta(userId, "android")
         : { hostname: null, platform: null };
 
       // Build device-specific package hints for Samsung devices (hostname starts with SM-)
@@ -1768,11 +1772,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         'CRITICAL: If any tool returns result:error, you MUST report that failure immediately. NEVER describe a failed action as successful or invent file names, screenshots, or results that were not in the tool response.',
       ].filter(Boolean).join('\n') : '';
 
-      const daemonSection = daemonPaired
+      const daemonSection = androidPaired
         ? androidActive
         ? `Android Device Control is ACTIVE and connected.\n${deviceHints}\nUse the deterministic Phone Runtime tools for supported phone work: ${ANDROID_PHONE_RUNTIME_TOOL_NAMES.join(", ")}. Low-level daemon actions are internal implementation details and should not be used as the normal phone-control interface unless daemon_action is the only exposed fallback for an unsupported phone action. When that fallback is exposed and succeeds, treat it as a valid phone action. DO NOT use desktop shell/file actions for phone work.\n\nPHONE RUNTIME WORKFLOW:\n  1. Use android_read_screen_context when you need to know what is visible before acting.\n  2. Use android_open_app_by_name for natural app names like YouTube, Facebook, LinkedIn, Maps, Camera, or Settings.\n  3. Use android_youtube_search for \"Search YouTube for X\" so the native app opens deterministically.\n  4. Use android_capture_screen when the user asks for a screenshot or screen capture. The screenshot appears as a temporary inline chat preview; direct capture is not intended as a Gallery photo, but Android fallback capture cleanup is best-effort.\n  5. Use android_tap_screen, android_type_text, android_swipe_screen, android_press_phone_key, and android_wait_for_ui for controlled UI navigation when a higher-level app runtime tool does not exist yet.\n  6. Use android_notify_user, then android_return_to_jarvis_chat at the end of multi-step phone tasks.\n\nYOUTUBE PHONE SEARCH WORKFLOW — when the user asks to search YouTube on the phone, call android_youtube_search. It opens native YouTube search results and reads visible screen context.\n\nYOUTUBE RESEARCH WORKFLOW — when the user asks to research something on YouTube and summarize a video:\n  1. Call search_youtube (server-side) with the query to pick a reputable/high-signal video without touching the phone.\n  2. Call fetch_youtube_transcript with the chosen video ID.\n  3. Call android_open_phone_url with url='vnd.youtube://watch?v=VIDEO_ID' only after the content choice is made.\n  4. Summarize the transcript content for the user.\n  5. Call android_notify_user and android_return_to_jarvis_chat as final phone steps when this was a phone task.\n\nFLAG_SECURE APPS — android_capture_screen may fail for Facebook, Instagram, WhatsApp, Snapchat, streaming, banking, and camera apps. Use android_read_screen_context instead; it reads visible text, labels, and UI element context from accessibility.\n\nACTION FLOW for multi-step tasks: Use as many Phone Runtime tool-call turns as needed. After acting, read the screen to confirm the result before describing it. If a tool returns result:error, tell the user what failed and what you tried.\n\nSCREENSHOT DISPLAY — screenshots ARE shown inline in the Jarvis chat as temporary images:\nWhen android_capture_screen succeeds, the screenshot is stored as a temporary chat preview. Use the returned screenContext for reasoning unless a vision/OCR path has explicitly provided visual details.`
-          : 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing.'
-        : '⚠️ NO DAEMON CONNECTED. Do NOT call daemon_action — it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone device control isn\'t connected. To fix it: (1) Install/open the main Jarvis Android app, (2) Go to Profile and scroll to Android Device, (3) Tap Enable Device Control. The app uses the configured server URL automatically. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it\'s connected.';
+          : `Android Device Control is paired but currently offline. Keep the user's phone operation durable and call the matching Phone Runtime tool for a real preflight attempt. If preflight reports offline, say that Device Control attempted the action but the paired phone is offline; never say you cannot control the phone or that no device-action tool exists.`
+        : desktopActive
+          ? 'Desktop Daemon is ACTIVE. Use shell, notify, file_read, file_write, file_list actions. ALWAYS report errors immediately if a tool returns result:error. Use daemon_diagnostic (no args) to check daemon health before multi-step sequences or when ops are failing.'
+          : '⚠️ NO DAEMON CONNECTED. Do NOT call daemon_action — it will fail with "daemon not connected". If the user asks to control their phone or computer, tell them exactly this: "Your phone device control isn\'t connected. To fix it: (1) Install/open the main Jarvis Android app, (2) Go to Profile and scroll to Android Device, (3) Tap Enable Device Control. The app uses the configured server URL automatically. The status dot should turn green within a few seconds." Do not attempt daemon_action until they confirm it\'s connected.';
       const selfImprovementSection = `## Self-Improvement: Building New Jarvis Tools
 You can extend yourself by building new tools directly. Generate the complete TypeScript code for the tool yourself and call \`build_feature\` to write it to disk, register it in the tool index, and run a smoke test — all in one step.
 
@@ -1806,7 +1812,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             })
           : null;
       const phoneRuntimeRequestText = activePhoneRuntimeOperation?.goal ?? resolvedPhoneRuntimeRequestText;
-      const phoneRuntimeAvailable = androidActive;
+      const phoneRuntimeAvailable = androidPaired;
       const recentPhoneRuntimeConversation = messages
         .slice(-12)
         .map((message: { content?: unknown }) => typeof message.content === "string" ? message.content : "")
@@ -1821,21 +1827,23 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         : null;
       const confirmedAppCoversRequest = Boolean(confirmedAppTarget) &&
         isUnqualifiedPhoneAppOnlyRequest(phoneRuntimeRequestText);
-      const phoneRuntimeActionRequest = phoneRuntimeAvailable && !memoryPhoneBypassRequest && (
+      const phoneRuntimeIntentRequest = !memoryPhoneBypassRequest && (
         hasPhoneRuntimeActionRequest(phoneRuntimeRequestText) ||
         hasContextualPhoneRuntimeActionRequest(phoneRuntimeRequestText, recentPhoneRuntimeConversation.slice(0, -1)) ||
         Boolean(confirmedAppTarget)
       );
-      const phoneRuntimeCoveredRequest = phoneRuntimeAvailable && !memoryPhoneBypassRequest && (
+      const phoneRuntimeActionRequest = phoneRuntimeAvailable && phoneRuntimeIntentRequest;
+      const phoneRuntimeCoveredIntent = !memoryPhoneBypassRequest && (
         isPhoneRuntimeCoveredRequest(phoneRuntimeRequestText) ||
         isContextualPhoneRuntimeCoveredRequest(phoneRuntimeRequestText, recentPhoneRuntimeConversation.slice(0, -1)) ||
         confirmedAppCoversRequest
       );
+      const phoneRuntimeCoveredRequest = phoneRuntimeAvailable && phoneRuntimeCoveredIntent;
       const isDeviceControlRequest = phoneRuntimeAvailable && !memoryPhoneBypassRequest && (
         phoneRuntimeActionRequest ||
         isPhoneDeviceControlKeywordRequest(phoneRuntimeRequestText)
       );
-      if (userId && !activePhoneRuntimeOperation && phoneRuntimeActionRequest) {
+      if (userId && !activePhoneRuntimeOperation && phoneRuntimeIntentRequest) {
         activePhoneRuntimeOperation = await ensurePhoneRuntimeOperation({
           userId,
           goal: phoneRuntimeRequestText,
@@ -1856,7 +1864,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       // Absolute prohibition injected at the TOP of the system message so the model
       // reads it before any other context. Without this, the model pattern-matches
       // against prior hallucinated assistant messages in the chat history and repeats them.
-      const daemonAbsoluteRuleBase = androidActive
+      const daemonAbsoluteRuleBase = androidPaired
         ? `\n⚠️ ABSOLUTE RULE — DEVICE CONTROL: You have ZERO physical ability to open apps, take screenshots, tap, swipe, type, or perform any action on the phone through text alone. The ONLY normal way ANY phone action can happen is by calling an available deterministic Phone Runtime tool such as ${ANDROID_PHONE_RUNTIME_TOOL_NAMES.join(", ")} and receiving result:'success'. If no Phone Runtime tool is called, NOTHING happened on the phone. Prior conversation messages where you (the assistant) described performing phone actions without a successful phone tool call were ERRORS — do not repeat that pattern. For EVERY phone action request, call a Phone Runtime tool. Never write "I opened X" or "I took a screenshot" unless a Phone Runtime tool returned result:'success' in this response.\n`
         : '';
 
@@ -2238,7 +2246,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
           : firstTurnToolPolicy.tools;
         const modelRequestTools = usePhoneRuntimeToolSurfaceOnly
           ? routedModelRequestTools
-          : includeConnectedPhoneRuntimeTools(routedModelRequestTools, requestTools, androidActive);
+          : includeConnectedPhoneRuntimeTools(routedModelRequestTools, requestTools, androidPaired);
         // A connected phone keeps the iterative planner available on every turn.
         // Natural device requests cannot depend on a finite phrase classifier,
         // and the same loop must be able to compose phone and non-phone actions.
@@ -2315,7 +2323,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
             : null;
           const deterministicToolCall = deterministicNotificationOpenCall ?? (turn === 0
             ? deterministicPhoneRuntimeToolCallFromRequest(phoneRuntimeRequestText, modelRequestTools, {
-                androidActive,
+                androidActive: androidPaired,
                 phoneRuntimeCoveredRequest,
                 confirmedAppTarget,
                 recentConversation: recentPhoneRuntimeConversation.slice(0, -1),
@@ -2355,7 +2363,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 userId: userId ?? undefined,
                 logPrefix: "[CoachChat]",
               });
-          const phoneActionRecoveryTool = turn === 0 && !deterministicToolCall && androidActive &&
+          const phoneActionRecoveryTool = turn === 0 && !deterministicToolCall && androidPaired &&
             phoneRuntimeActionRequest && modelPhase1.toolCallList.length === 0 &&
             modelRequestTools.some((tool) => chatToolName(tool) === "android_read_screen_context")
             ? {
@@ -2966,7 +2974,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               const attemptedAction = tc.function.name === 'daemon_action'
                 ? String(args.action || 'unknown')
                 : tc.function.name;
-              toolResultContent = `⛔ ANDROID PHONE ACTION FAILED — THE PHONE DID NOT EXECUTE THIS COMMAND.\nAction attempted: ${attemptedAction}\nError: ${execResult.detail || execResult.label}\n\nYou MUST tell the user this specific action FAILED. Do NOT describe it as successful. Do NOT invent what the phone showed or did.`;
+              toolResultContent = `⛔ ANDROID PHONE ACTION FAILED — THE PHONE DID NOT EXECUTE THIS COMMAND.\nAction attempted: ${attemptedAction}\nError: ${execResult.detail || execResult.label}\n\nYou MUST tell the user this specific action FAILED. Do NOT describe it as successful. Do NOT invent what the phone showed or did. Say Device Control attempted the action and report the returned blocker. Never say you cannot control the phone or that no device-action tool is available.`;
             } else {
               toolResultContent = JSON.stringify({ result: execResult.result, detail: execResult.detail });
             }

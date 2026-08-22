@@ -747,6 +747,12 @@ async function findUserDaemonRow(userId: string, platform?: string) {
   return real || candidates[0];
 }
 
+/** Persistent pairing state, independent of whether the daemon WebSocket is
+ * currently connected. */
+export async function hasDaemonPairing(userId: string, platform?: "desktop" | "android"): Promise<boolean> {
+  return Boolean(await findUserDaemonRow(userId, platform));
+}
+
 export async function getDaemonDeviceMeta(userId: string, platform?: string): Promise<{ hostname: string | null; platform: string | null }> {
   try {
     const row = await findUserDaemonRow(userId, platform);

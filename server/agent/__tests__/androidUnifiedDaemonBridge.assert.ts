@@ -29,6 +29,12 @@ assert.match(
 
 assert.match(
   bridgeSource,
+  /export async function hasDaemonPairing[\s\S]*findUserDaemonRow\(userId, platform\)/,
+  "The bridge should expose persisted pairing independently of live WebSocket state.",
+);
+
+assert.match(
+  bridgeSource,
   /export async function pingAndroidDaemon[\s\S]*sendDaemonOp\(userId, \{ type: "ping" \}, timeoutMs, "android"\)/,
   "Android live capability checks should target the Android socket instead of the desktop-first neutral ping path.",
 );
