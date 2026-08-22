@@ -223,6 +223,61 @@ function testStructuredStreamOnlyEmitsFinalContent(): void {
   ), "");
 }
 
+async function testRequiredToolTurnDoesNotStreamFinalEnvelope(): Promise<void> {
+  const token = fakeJwt("acct-required", "plus");
+  _setCodexOAuthHostedRuntimeForTesting({
+    credentialResolver: async () => ({
+      provider: "openai",
+      authType: "oauth",
+      credential: token,
+      refreshToken: "refresh-token",
+      expiresAt: new Date(Date.now() + 60_000),
+      accountId: "acct-required",
+      email: "user@example.com",
+    }),
+    credentialRefresher: async () => ({
+      provider: "openai",
+      authType: "oauth",
+      credential: token,
+      refreshToken: "refresh-token",
+      expiresAt: new Date(Date.now() + 60_000),
+      accountId: "acct-required",
+      email: "user@example.com",
+    }),
+    promptRunner: async (input) => {
+      input.onDelta?.('{"type":"final","content":"Action completed"}');
+      return '{"type":"final","content":"Action completed"}';
+    },
+  });
+
+  try {
+    const chunks = [];
+    const provider = new CodexOAuthProvider();
+    await assert.rejects(async () => {
+      for await (const chunk of provider.query({
+        model: "chatgpt-codex-oauth/auto",
+        messages: [{ role: "user", content: "Do the required action" }],
+        tools: [{
+          type: "function",
+          function: {
+            name: "required_action",
+            description: "Perform the required action",
+            parameters: { type: "object", properties: {} },
+          },
+        }],
+        toolChoice: "required",
+        maxCompletionTokens: 64,
+        preferredAuthType: "oauth",
+        stream: true,
+        userId: "user-1",
+      })) chunks.push(chunk);
+    }, /final answer when a tool call was required/);
+    assert.deepEqual(chunks, []);
+  } finally {
+    _setCodexOAuthHostedRuntimeForTesting(null);
+  }
+}
+
 async function testStreamingProviderPropagatesCancellation(): Promise<void> {
   const token = fakeJwt("acct-abort", "plus");
   _setCodexOAuthHostedRuntimeForTesting({
@@ -345,6 +400,7 @@ async function main(): Promise<void> {
   await testProviderUsesHostedSubscription();
   await testProviderStreamsPlainFinalContent();
   testStructuredStreamOnlyEmitsFinalContent();
+  await testRequiredToolTurnDoesNotStreamFinalEnvelope();
   await testStreamingProviderPropagatesCancellation();
   console.log("OK: hosted Codex app-server uses externally managed ChatGPT subscription tokens");
   console.log("OK: hosted Codex final answers stream before turn completion");

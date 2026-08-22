@@ -967,7 +967,7 @@ export class CodexOAuthProvider extends BaseProvider {
       if (!credential || credential.authType !== "oauth") {
         throw new Error("ChatGPT subscription OAuth is selected but is not connected for this user.");
       }
-      if (params.stream) {
+      if (params.stream && params.toolChoice !== "required") {
         const queue = new AsyncTextDeltaQueue();
         const expectsOrchestratorEnvelope = !!params.tools?.length && params.toolChoice !== "none";
         const parser = expectsOrchestratorEnvelope ? new CodexFinalContentStreamParser() : null;
