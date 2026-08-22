@@ -91,11 +91,13 @@ export type ExistingMemoryCorrection = {
   id: string;
   pendingReview: boolean;
   reviewStatus: string;
+  content?: string;
 };
 
 export type MemoryCorrectionDeps = {
   loadCurrentMemory: (userId: string, memoryId: string) => Promise<MemoryCorrectionCurrentMemory | null>;
   findCorrectionBySource: (userId: string, sourceEventId: string) => Promise<ExistingMemoryCorrection | null>;
+  findPendingCorrectionByTarget: (userId: string, memoryId: string) => Promise<ExistingMemoryCorrection | null>;
   writeMemory: (input: MemoryWriteInput) => Promise<MemoryWriteResult>;
 };
 
@@ -866,6 +868,29 @@ const defaultMemoryCorrectionDeps: MemoryCorrectionDeps = {
       .limit(1);
     return row ?? null;
   },
+  async findPendingCorrectionByTarget(userId, memoryId) {
+    const [{ db }, schema, drizzle] = await Promise.all([
+      import("../db"),
+      import("@shared/schema"),
+      import("drizzle-orm"),
+    ]);
+    const [row] = await db
+      .select({
+        id: schema.userMemories.id,
+        content: schema.userMemories.content,
+        pendingReview: schema.userMemories.pendingReview,
+        reviewStatus: schema.userMemories.reviewStatus,
+      })
+      .from(schema.userMemories)
+      .where(drizzle.and(
+        drizzle.eq(schema.userMemories.userId, userId),
+        drizzle.eq(schema.userMemories.supersedesMemoryId, memoryId),
+        drizzle.eq(schema.userMemories.pendingReview, true),
+        drizzle.eq(schema.userMemories.reviewStatus, "pending"),
+      ))
+      .limit(1);
+    return row ?? null;
+  },
   async writeMemory(input) {
     const { writeMemoryThroughPipeline } = await import("./writePipeline");
     return writeMemoryThroughPipeline(input);
@@ -893,10 +918,30 @@ function existingCorrectionResult(
   });
 }
 
+function pendingTargetCorrectionResult(
+  review: MemoryCorrectionReview,
+  existing: ExistingMemoryCorrection,
+): MemoryCorrectionReview {
+  if (existing.content && cleanSingleLine(existing.content) === cleanSingleLine(review.proposedContent)) {
+    return existingCorrectionResult(review, existing);
+  }
+  return correctionResult(review, {
+    status: "conflict",
+    correctionMemoryId: existing.id,
+    reason: "A different correction for this memory is already queued in Memory Review.",
+    uncertainty: ["Review or discard the existing correction before submitting another."],
+  });
+}
+
 function isUniqueConstraintError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const record = error as { code?: unknown; cause?: { code?: unknown } };
   return record.code === "23505" || record.cause?.code === "23505";
+}
+
+function isCorrectionSourceConflictError(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" &&
+    (error as { code?: unknown }).code === "MEMORY_CORRECTION_SOURCE_CONFLICT");
 }
 
 export async function recordMemoryCorrection(
@@ -945,6 +990,10 @@ export async function recordMemoryCorrection(
         uncertainty: ["No durable memory change is needed."],
       });
     }
+    const pendingTargetCorrection = await deps.findPendingCorrectionByTarget(userId, currentMemory.id);
+    if (pendingTargetCorrection) {
+      return pendingTargetCorrectionResult(review, pendingTargetCorrection);
+    }
   }
 
   const provenance: MemoryProvenanceMetadata[] = review.provenance.map((ref) => ({
@@ -976,9 +1025,20 @@ export async function recordMemoryCorrection(
       provenance,
     });
   } catch (error) {
+    if (isCorrectionSourceConflictError(error)) {
+      return correctionResult(review, {
+        status: "conflict",
+        reason: "The memory being corrected changed before this correction could be queued.",
+        uncertainty: ["Refresh MemoryOS before preparing another correction."],
+      });
+    }
     if (!isUniqueConstraintError(error)) throw error;
     const racedCorrection = await deps.findCorrectionBySource(userId, sourceEventId);
     if (racedCorrection) return existingCorrectionResult(review, racedCorrection);
+    if (currentMemory) {
+      const racedTargetCorrection = await deps.findPendingCorrectionByTarget(userId, currentMemory.id);
+      if (racedTargetCorrection) return pendingTargetCorrectionResult(review, racedTargetCorrection);
+    }
     throw error;
   }
   if (writeResult.status === "review_required" && writeResult.insertedMemoryId) {

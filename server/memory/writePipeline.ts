@@ -182,6 +182,15 @@ export interface MemoryWritePipelineDeps {
   markMemoriesSuperseded(userId: string, memoryIds: string[], correctedByMemoryId: string): Promise<number>;
 }
 
+export class MemoryCorrectionSourceConflictError extends Error {
+  readonly code = "MEMORY_CORRECTION_SOURCE_CONFLICT";
+
+  constructor() {
+    super("The memory being corrected is no longer active.");
+    this.name = "MemoryCorrectionSourceConflictError";
+  }
+}
+
 export interface WorkingContextDeps {
   upsertWorkingContext(record: WorkingContextRecord): Promise<WorkingContextRecord>;
   expireNonCompactingWorkingContext(now: Date, scopeTypes: string[]): Promise<number>;
@@ -903,24 +912,40 @@ export async function keepPendingMemoryWrites(input: {
 
 export const defaultMemoryWriteDeps: MemoryWritePipelineDeps = {
   async insertUserMemory(record) {
-    const [inserted] = await db.insert(userMemories).values({
-      userId: record.userId,
-      content: record.content,
-      category: record.category,
-      confidence: record.confidence,
-      relevanceScore: record.tier === "long_term" ? 75 : 55,
-      sourceType: record.sourceType,
-      sourceRef: record.sourceRef,
-      tier: record.tier,
-      memoryType: record.memoryType,
-      expiresAt: record.expiresAt ?? undefined,
-      pendingReview: record.pendingReview,
-      reviewStatus: record.reviewStatus,
-      supersedesMemoryId: record.supersedesMemoryId,
-      sensitivity: record.sensitivity,
-      provenance: record.provenance,
-    }).returning({ id: userMemories.id });
-    return { id: inserted.id };
+    return db.transaction(async (tx) => {
+      if (record.supersedesMemoryId) {
+        const sourceResult = await tx.execute<{ id: string }>(sql`
+          SELECT id
+          FROM user_memories
+          WHERE user_id = ${record.userId}
+            AND id = ${record.supersedesMemoryId}
+            AND (pending_review = FALSE OR pending_review IS NULL)
+            AND review_status IN ('active', 'kept', 'edited')
+          FOR UPDATE
+        `);
+        if ((sourceResult.rows ?? []).length === 0) {
+          throw new MemoryCorrectionSourceConflictError();
+        }
+      }
+      const [inserted] = await tx.insert(userMemories).values({
+        userId: record.userId,
+        content: record.content,
+        category: record.category,
+        confidence: record.confidence,
+        relevanceScore: record.tier === "long_term" ? 75 : 55,
+        sourceType: record.sourceType,
+        sourceRef: record.sourceRef,
+        tier: record.tier,
+        memoryType: record.memoryType,
+        expiresAt: record.expiresAt ?? undefined,
+        pendingReview: record.pendingReview,
+        reviewStatus: record.reviewStatus,
+        supersedesMemoryId: record.supersedesMemoryId,
+        sensitivity: record.sensitivity,
+        provenance: record.provenance,
+      }).returning({ id: userMemories.id });
+      return { id: inserted.id };
+    });
   },
   async markMemoriesSuperseded(userId, memoryIds, correctedByMemoryId) {
     if (memoryIds.length === 0) return 0;
