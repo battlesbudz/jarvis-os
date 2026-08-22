@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const railway = JSON.parse(fs.readFileSync(path.join(root, "railway.json"), "utf8"));
+const railpack = JSON.parse(fs.readFileSync(path.join(root, "railpack.json"), "utf8"));
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const browserClient = fs.readFileSync(
   path.join(root, "server/agent/mcp/playwrightMcpClient.ts"),
@@ -16,6 +17,11 @@ assert.doesNotMatch(
   buildCommand,
   /playwright.*install.*chromium/,
   "Railway builds must not depend on Playwright's external browser CDN",
+);
+
+assert.ok(
+  railpack.steps?.install?.commands?.includes("npm ci"),
+  "Railway must honor package-lock.json instead of re-resolving Expo dependencies",
 );
 
 assert.equal(packageJson.dependencies?.["@sparticuz/chromium"], "147.0.2");

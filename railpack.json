@@ -1,0 +1,14 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "steps": {
+    "install": {
+      "deployOutputs": [],
+      "commands": [
+        { "path": "/app/node_modules/.bin" },
+        { "src": "package-lock.json", "dest": "package-lock.json" },
+        { "src": "package.json", "dest": "package.json" },
+        "npm ci"
+      ]
+    }
+  }
+}
