@@ -417,8 +417,10 @@ function maybeUseLeanContext(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
   logPrefix: string,
   tools?: OpenAI.Chat.Completions.ChatCompletionTool[],
+  toolChoice: "auto" | "required" | "none" = "none",
 ): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   if (process.env.JARVIS_LEAN_CONTEXT === "0") return messages;
+  if (toolChoice === "required") return messages;
 
   const inputChars = messageTextSize(messages);
   const toolChars = toolSchemaTextSize(tools);
@@ -1234,7 +1236,7 @@ async function prepareModelTurn(
   params: RoutedModelTurnParams,
   logPrefix: string,
 ): Promise<PreparedModelTurn> {
-  const routedMessages = maybeUseLeanContext(params.messages, logPrefix, params.tools);
+  const routedMessages = maybeUseLeanContext(params.messages, logPrefix, params.tools, params.toolChoice);
   const leanContextApplied = routedMessages !== params.messages;
   const requestedEntry = parseRequestedModelSpec(params.requestedModel);
   const selectedRoute = await getUserSelectedModelRouteChain(params.userId, logPrefix);

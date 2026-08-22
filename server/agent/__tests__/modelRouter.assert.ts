@@ -174,6 +174,34 @@ async function runLeanContextToolBudgetAssertion(): Promise<void> {
     assert.equal(capturedRequest?.messages.at(-1)?.role, "user");
     assert.equal(capturedRequest?.messages.at(-1)?.content, "Please create a tiny 3-bullet test plan for checking that Jarvis is working.");
     console.log("OK: oversized tool schemas trigger lean context for simple writing/planning chat turns");
+
+    captured = null;
+    await routeModelTurn({
+      tier: "balanced",
+      messages: [
+        { role: "system", content: "full coach prompt" },
+        { role: "user", content: "Continue the operation." },
+      ],
+      tools: [
+        {
+          type: "function",
+          function: {
+            name: "required_runtime_action",
+            description: hugeToolDescription,
+            parameters: { type: "object", properties: {} },
+          },
+        },
+      ],
+      toolChoice: "required",
+      maxCompletionTokens: 64,
+      logPrefix: "[ModelRouterRequiredToolTest]",
+    });
+
+    const requiredRequest = captured as ProviderQueryParams | null;
+    assert.equal(requiredRequest?.tools?.length, 1);
+    assert.equal(requiredRequest?.toolChoice, "required");
+    assert.equal(requiredRequest?.messages[0]?.content, "full coach prompt");
+    console.log("OK: required tool turns cannot be downgraded to lean text-only requests");
   } finally {
     _clearProviderCacheForTesting();
     for (const [key, value] of previousEnv) {

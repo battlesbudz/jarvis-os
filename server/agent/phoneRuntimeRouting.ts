@@ -546,11 +546,6 @@ function isAcceptedVoiceRestoreBridge(
     /(?:context|conversation)[\s\S]{0,40}restored|restored[\s\S]{0,40}(?:context|conversation)/i.test(acknowledgementText);
 }
 
-export function isConnectedPhoneCapabilityDenial(text: string): boolean {
-  return /\b(?:i|jarvis)\s+(?:can(?:not|'t)|could(?:\s+not|n't)|do\s+not|don't)\b[^.!?]{0,120}\b(?:control|access|operate|use|open|launch|tap|type|swipe|interact\s+with)\b[^.!?]{0,80}\b(?:phone|device|android|app|apps|device\s+control)\b/i.test(text) ||
-    /\b(?:no|without)\s+(?:available\s+)?(?:phone|android|device(?:-control)?|device control)\s+(?:tool|tools|access|capability|control)\b/i.test(text);
-}
-
 /**
  * Preserve an explicit phone target across a bounded retry chain. Assistant
  * failure prose is deliberately ignored so a server-browser error cannot

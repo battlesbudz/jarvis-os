@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   includeConnectedPhoneRuntimeTools,
-  isConnectedPhoneCapabilityDenial,
   isPhoneRuntimeCoveredRequest,
   resolvePhoneRuntimeRequestText,
 } from "../phoneRuntimeRouting";
@@ -45,18 +44,6 @@ assert.equal(
   ]),
   "Try again.",
   "an unrelated acknowledgement must still stop phone retry backtracking",
-);
-for (const denial of [
-  "I can't control your phone from here.",
-  "I cannot open apps on your Android device.",
-  "There is no available device-control tool.",
-]) {
-  assert.equal(isConnectedPhoneCapabilityDenial(denial), true, "generic connected-phone denials must be blocked");
-}
-assert.equal(
-  isConnectedPhoneCapabilityDenial("Background launch was blocked by Samsung One UI."),
-  false,
-  "a concrete Android action failure must remain reportable",
 );
 assert.equal(
   resolvePhoneRuntimeRequestText([
@@ -234,8 +221,8 @@ assert.match(routingSource, /!options\.androidActive \|\| !options\.phoneRuntime
 assert.match(routesSource, /Routing notification request to Android Device Control/);
 assert.match(routesSource, /Routing app launch to Android Device Control/);
 assert.match(routesSource, /deterministicPhoneRuntimeToolCallFromRequest\(phoneRuntimeRequestText, modelRequestTools,[\s\S]*androidActive,[\s\S]*phoneRuntimeCoveredRequest/);
-assert.match(routesSource, /isConnectedPhoneCapabilityDenial\(modelPhase1\.textContent/);
-assert.match(routesSource, /denialRecoveryTool[\s\S]*android_read_screen_context/);
+assert.match(routesSource, /phoneRuntimeActionRequest && modelPhase1\.toolCallList\.length === 0/);
+assert.match(routesSource, /phoneActionRecoveryTool[\s\S]*android_read_screen_context/);
 assert.match(routesSource, /deterministicAndroidToolSummary\(tc\.function\.name, execResult,[\s\S]*deterministicToolCall:\s*deterministicToolCall\?\.id === tc\.id/);
 assert.match(routesSource, /getRecentNotificationObservation\(userId, 20\)/);
 assert.match(routesSource, /resolveAndroidNotificationFollowUp\(lastUserOrigText, recentNotificationObservation\)/);

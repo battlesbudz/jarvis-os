@@ -98,7 +98,6 @@ import {
   hasUnsupportedPhoneDeviceControlRequest,
   isAndroidPhoneRuntimeToolName,
   isContextualPhoneRuntimeCoveredRequest,
-  isConnectedPhoneCapabilityDenial,
   isMemoryPhoneBypassRequest,
   isPhoneDeviceControlKeywordRequest,
   isPhoneRuntimeCoveredRequest,
@@ -2320,8 +2319,8 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 userId: userId ?? undefined,
                 logPrefix: "[CoachChat]",
               });
-          const denialRecoveryTool = !deterministicToolCall && androidActive &&
-            isConnectedPhoneCapabilityDenial(modelPhase1.textContent || "") &&
+          const phoneActionRecoveryTool = turn === 0 && !deterministicToolCall && androidActive &&
+            phoneRuntimeActionRequest && modelPhase1.toolCallList.length === 0 &&
             modelRequestTools.some((tool) => chatToolName(tool) === "android_read_screen_context")
             ? {
                 id: `jarvis_phone_runtime_${Date.now().toString(36)}_denial_recovery`,
@@ -2332,21 +2331,21 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 },
               }
             : null;
-          if (denialRecoveryTool) {
-            console.warn("[CoachChat] blocked false connected-phone capability denial; inspecting live screen instead");
+          if (phoneActionRecoveryTool) {
+            console.warn("[CoachChat] blocked text-only response for connected-phone action; inspecting live screen instead");
             emitMeaningfulProgress({
               source: "runtime",
               stage: "tool_selection",
               message: "Inspecting the connected phone before continuing",
-              detail: denialRecoveryTool.function.name,
+              detail: phoneActionRecoveryTool.function.name,
             });
           }
-          const phase1 = denialRecoveryTool
+          const phase1 = phoneActionRecoveryTool
             ? {
                 ...modelPhase1,
                 textContent: "",
                 textChunks: [],
-                toolCallList: [denialRecoveryTool],
+                toolCallList: [phoneActionRecoveryTool],
                 finishReason: "tool_calls",
                 providerName: "jarvis-runtime",
                 model: "connected-phone-denial-guard",
