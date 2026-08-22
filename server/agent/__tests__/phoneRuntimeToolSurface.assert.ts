@@ -153,6 +153,7 @@ assert.doesNotMatch(routesSource, /priorityToolNames:\s*uniqueToolNames\(\[[\s\S
 assert.match(routesSource, /const youtubeServerResearchRequest =[\s\S]{0,160}isYoutubeServerResearchRequest\(phoneRuntimeRequestText\)/);
 assert.match(routesSource, /keepDaemonActionFallback[\s\S]*hasUnsupportedPhoneDeviceControlRequest\(phoneRuntimeRequestText\)[\s\S]*!youtubeServerResearchRequest/);
 assert.match(routesSource, /const useFocusedRequestTools = toolAwareRoute\.shouldPreferTool \|\|[\s\S]*phoneRuntimeCoveredRequest \|\|[\s\S]*keepDaemonActionFallback \|\|[\s\S]*youtubeServerResearchRequest/);
+assert.match(routesSource, /const useMetadataToolLoop = relevantMetadataToolNames\.length > 0/);
 assert.match(routesSource, /usePhoneRuntimeToolSurfaceOnly[\s\S]*filterPhoneRuntimeModelTools\(firstTurnToolPolicy\.tools,\s*\{/);
 assert.match(routesSource, /allowServerYoutubeTools:\s*youtubeServerResearchRequest/);
 assert.match(routesSource, /usePhoneRuntimeToolSurfaceOnly\s*=\s*phoneRuntimeCoveredRequest/);

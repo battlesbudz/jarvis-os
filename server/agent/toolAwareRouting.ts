@@ -443,3 +443,196 @@ export function classifyToolAwareRoute(text: string): ToolAwareRoutePlan {
     actionReason: ontology.reason,
   };
 }
+
+const CONTEXTUAL_TOOL_CONFIRMATION_PATTERN = /^(?:(?:yes|yep|yeah|sure|absolutely|definitely|certainly|of\s+course|ok(?:ay)?|go\s+(?:ahead|for\s+it)|proceed|do\s+(?:it|that)|let'?s\s+do\s+it|sounds\s+(?:good|great|perfect)|that\s+works|works\s+for\s+me|fine\s+by\s+me|that\s+would\s+be\s+(?:good|great|perfect)|i(?:'d|\s+would)\s+(?:like|love)\s+that)(?:\s+(?:please|thanks|thank\s+you))?|please\s+(?:go\s+(?:ahead|for\s+it)|proceed|do\s+(?:it|that)))$/i;
+const CONTEXTUAL_TOOL_NEGATION_PATTERN = /\b(?:no|not|never|cancel|don'?t|do\s+not)\b/i;
+const CONTEXTUAL_TOOL_RETRY_PATTERN = /\b(?:try\s+(?:(?:it|that)\s+)?(?:again|once\s+more)|retry(?:\s+(?:it|that))?|give\s+(?:it|that)\s+another\s+(?:try|shot)|run\s+(?:it|that)\s+again|one\s+more\s+time)\b/i;
+const ASSISTANT_PROPOSAL_PATTERN = /(?:would\s+you\s+like\s+me\s+to|do\s+you\s+want\s+me\s+to|shall\s+i|should\s+i|may\s+i|can\s+i|i\s+(?:can|could|will)|i['’]ll|let\s+me)\s+([^.!?;]+)/gi;
+const NON_ACTION_PROPOSAL_PATTERN = /^(?:explain|describe|discuss|tell\s+you\s+(?:about|how)|show\s+you\s+how|walk\s+you\s+through)\b/i;
+
+const DYNAMIC_TOOL_STOP_WORDS = new Set([
+  "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into", "is", "it",
+  "mcp", "my", "of", "on", "or", "please", "that", "the", "this", "to", "tool", "use", "with", "you",
+]);
+
+const TOOL_TOKEN_EQUIVALENT_GROUPS = [
+  ["generate", "generated", "generating", "make", "made", "create", "created", "creating", "draw", "drawn", "render", "rendered", "produce", "produced", "add", "put", "place", "placed"],
+  ["image", "picture", "photo", "illustration", "graphic", "artwork", "visual"],
+  ["connect", "connected", "connecting", "link", "linked", "pair", "paired", "integrate", "integrated"],
+  ["log", "logged", "logging", "record", "recorded", "track", "tracked", "tracking"],
+  ["complete", "completed", "completing", "mark", "marked", "done", "finish", "finished"],
+  ["task", "todo"],
+  ["delete", "deleted", "remove", "removed"],
+  ["update", "updated", "edit", "edited", "change", "changed", "modify", "modified"],
+  ["search", "searched", "find", "found", "lookup"],
+] as const;
+
+const TOOL_TOKEN_CANONICAL = new Map<string, string>(
+  TOOL_TOKEN_EQUIVALENT_GROUPS.flatMap((group) => group.map((token) => [token, group[0]] as const)),
+);
+
+function normalizeDynamicToolToken(rawToken: string): string {
+  let token = rawToken;
+  if (token.length > 4 && token.endsWith("ies")) token = `${token.slice(0, -3)}y`;
+  else if (token.length > 3 && token.endsWith("s") && !/(?:ss|us|is)$/.test(token)) token = token.slice(0, -1);
+  return TOOL_TOKEN_CANONICAL.get(token) ?? token;
+}
+
+function dynamicToolTokens(value: string): Set<string> {
+  return new Set(
+    (value.toLowerCase().match(/[a-z0-9]+/g) ?? [])
+      .filter((token) => token.length >= 3 && !DYNAMIC_TOOL_STOP_WORDS.has(token))
+      .map(normalizeDynamicToolToken),
+  );
+}
+
+function isContextualToolFollowUp(text: string): boolean {
+  const normalized = text
+    .trim()
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[.!?,;:]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized || normalized.split(/\s+/).length > 8 || CONTEXTUAL_TOOL_NEGATION_PATTERN.test(normalized)) {
+    return false;
+  }
+  return CONTEXTUAL_TOOL_RETRY_PATTERN.test(normalized)
+    || CONTEXTUAL_TOOL_CONFIRMATION_PATTERN.test(normalized);
+}
+
+function extractAssistantActionProposal(text: string): string | null {
+  const proposals = [...text.matchAll(ASSISTANT_PROPOSAL_PATTERN)]
+    .map((match) => match[1]?.trim())
+    .filter((proposal): proposal is string => Boolean(proposal));
+  for (let index = proposals.length - 1; index >= 0; index -= 1) {
+    const proposal = proposals[index];
+    if (/\bor\b/i.test(proposal) || NON_ACTION_PROPOSAL_PATTERN.test(proposal)) return null;
+    if (CONTEXTUAL_TOOL_NEGATION_PATTERN.test(proposal)) continue;
+    if (/^(?:do\s+(?:it|that)|go\s+ahead|proceed)$/i.test(proposal)) continue;
+    return proposal;
+  }
+  return null;
+}
+
+/**
+ * Returns the action-bearing text that should be scored against offered tool
+ * metadata. Short confirmations and retries carry no useful tokens by
+ * themselves, so reuse only the immediately validated proposal/request.
+ */
+export function getToolMetadataRoutingText(
+  messages: Array<{ role?: string; content?: unknown }>,
+): string {
+  const lastUserIndex = messages.findLastIndex((message) => (
+    message.role === "user" && typeof message.content === "string"
+  ));
+  if (lastUserIndex < 0) return "";
+  const lastUserText = String(messages[lastUserIndex].content);
+  if (!isContextualToolFollowUp(lastUserText)) return lastUserText;
+
+  const isRetry = CONTEXTUAL_TOOL_RETRY_PATTERN.test(lastUserText);
+  const previousMessage = messages[lastUserIndex - 1];
+  if (!isRetry) {
+    if (previousMessage?.role !== "assistant" || typeof previousMessage.content !== "string") {
+      return lastUserText;
+    }
+    return extractAssistantActionProposal(previousMessage.content) ?? lastUserText;
+  }
+
+  const contextFloor = Math.max(0, lastUserIndex - 2);
+  for (let index = lastUserIndex - 1; index >= contextFloor; index -= 1) {
+    const message = messages[index];
+    if (typeof message?.content !== "string") continue;
+    if (message.role === "user") return message.content;
+    if (message.role === "assistant") {
+      const proposal = extractAssistantActionProposal(message.content);
+      if (proposal) return proposal;
+    }
+  }
+  return lastUserText;
+}
+
+/**
+ * Selects offered tools whose names or descriptions materially overlap the
+ * user's request. This retains built-in and installed-tool extensibility
+ * without making ordinary conversation pay for a buffered selection turn.
+ */
+export function selectRelevantToolNames(
+  text: string,
+  tools: Array<{ name: string; description?: string }>,
+  limit = 12,
+): string[] {
+  const queryTokens = dynamicToolTokens(text);
+  if (queryTokens.size === 0) return [];
+
+  return tools
+    .map((tool) => {
+      const nameTokens = dynamicToolTokens(tool.name);
+      const descriptionTokenList = [...dynamicToolTokens(tool.description ?? "")];
+      const descriptionTokens = new Set(descriptionTokenList);
+      const nameOverlap = [...nameTokens].filter((token) => queryTokens.has(token));
+      const descriptionOverlap = [...descriptionTokens].filter((token) => (
+        queryTokens.has(token) && !nameTokens.has(token)
+      ));
+      const score = (nameOverlap.length * 2) + descriptionOverlap.length;
+      const nameActionToken = [...nameTokens][0];
+      const matchesBuiltInNameAction = !tool.name.startsWith("mcp__")
+        && queryTokens.size >= 3
+        && !!nameActionToken
+        && queryTokens.has(nameActionToken);
+      const matchesDescriptionAction = descriptionTokenList.length > 0
+        && queryTokens.has(descriptionTokenList[0]);
+      const descriptionOnlyThreshold = tool.name.startsWith("mcp__") && matchesDescriptionAction ? 2 : 3;
+      const relevant = nameOverlap.length >= 2
+        || (nameOverlap.length >= 1 && descriptionOverlap.length >= 1)
+        || matchesBuiltInNameAction
+        || descriptionOverlap.length >= descriptionOnlyThreshold;
+      return { name: tool.name, score, relevant };
+    })
+    .filter((candidate) => candidate.relevant)
+    .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
+    .slice(0, Math.max(0, limit))
+    .map((candidate) => candidate.name);
+}
+
+/**
+ * Preserve a tool route when a short affirmative user turn confirms an action
+ * proposed by the immediately preceding assistant message.
+ */
+export function classifyToolAwareConversationRoute(
+  messages: Array<{ role?: string; content?: unknown }>,
+): ToolAwareRoutePlan {
+  const lastUserIndex = messages.findLastIndex((message) => (
+    message.role === "user" && typeof message.content === "string"
+  ));
+  const lastUserText = lastUserIndex >= 0 && typeof messages[lastUserIndex]?.content === "string"
+    ? messages[lastUserIndex].content
+    : "";
+  const directRoute = classifyToolAwareRoute(lastUserText);
+  if (directRoute.shouldPreferTool || !isContextualToolFollowUp(lastUserText)) {
+    return directRoute;
+  }
+
+  const isRetry = CONTEXTUAL_TOOL_RETRY_PATTERN.test(lastUserText);
+  if (!isRetry) {
+    const previousMessage = messages[lastUserIndex - 1];
+    if (previousMessage?.role !== "assistant" || typeof previousMessage.content !== "string") {
+      return directRoute;
+    }
+    const proposal = extractAssistantActionProposal(previousMessage.content);
+    return proposal ? classifyToolAwareRoute(proposal) : directRoute;
+  }
+
+  // A retry may need the prior user request when the assistant failure message
+  // itself contains no action vocabulary. Do not reach further back and revive
+  // an unrelated stale tool intent.
+  const contextFloor = Math.max(0, lastUserIndex - 2);
+  for (let index = lastUserIndex - 1; index >= contextFloor; index -= 1) {
+    const message = messages[index];
+    if (typeof message?.content !== "string") continue;
+    if (message.role !== "assistant" && message.role !== "user") continue;
+    const contextualRoute = classifyToolAwareRoute(message.content);
+    if (contextualRoute.shouldPreferTool) return contextualRoute;
+  }
+
+  return directRoute;
+}

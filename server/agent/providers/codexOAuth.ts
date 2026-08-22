@@ -826,14 +826,127 @@ async function runHostedUserCodexOAuthPrompt(
   credential: ProviderCredential,
   prompt: string,
   signal?: AbortSignal,
+  onDelta?: (delta: string) => void,
 ): Promise<string> {
   const runner = hostedCodexPromptRunnerForTesting ?? runHostedCodexPrompt;
   return runner({
     ...hostedTokensFromCredential(credential),
     prompt,
     signal,
+    onDelta,
     refreshTokens: async () => hostedTokensFromCredential(await refreshHostedSubscriptionCredential(userId)),
   });
+}
+
+/**
+ * Extracts the JSON `content` string from Codex's structured final-answer
+ * envelope without waiting for the closing brace. Escape sequences are held
+ * until complete so every emitted delta is valid display text.
+ */
+export class CodexFinalContentStreamParser {
+  private buffer = "";
+  private started = false;
+  private finished = false;
+
+  push(rawDelta: string): string {
+    if (this.finished || !rawDelta) return "";
+    this.buffer += rawDelta;
+
+    if (!this.started) {
+      // The prompt requires `type` as the envelope's first property. Anchoring
+      // here prevents nested tool arguments named `content` from being emitted.
+      const typeMatch = /^\s*(?:```(?:json)?\s*)?\{\s*"type"\s*:\s*"([^"]*)"/i.exec(this.buffer);
+      if (!typeMatch) return "";
+      if (typeMatch[1] !== "final") {
+        this.finished = true;
+        this.buffer = "";
+        return "";
+      }
+      const contentMatch = /^\s*,\s*"content"\s*:\s*"/.exec(
+        this.buffer.slice(typeMatch[0].length),
+      );
+      if (!contentMatch) return "";
+      this.buffer = this.buffer.slice(typeMatch[0].length + contentMatch[0].length);
+      this.started = true;
+    }
+
+    let output = "";
+    let consumed = 0;
+    while (consumed < this.buffer.length) {
+      const char = this.buffer[consumed];
+      if (char === '"') {
+        this.finished = true;
+        consumed += 1;
+        break;
+      }
+      if (char !== "\\") {
+        output += char;
+        consumed += 1;
+        continue;
+      }
+
+      if (consumed + 1 >= this.buffer.length) break;
+      const escape = this.buffer[consumed + 1];
+      if (escape === "u") {
+        if (consumed + 6 > this.buffer.length) break;
+        const hex = this.buffer.slice(consumed + 2, consumed + 6);
+        if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
+          output += escape;
+          consumed += 2;
+          continue;
+        }
+        output += String.fromCharCode(Number.parseInt(hex, 16));
+        consumed += 6;
+        continue;
+      }
+
+      const decoded: Record<string, string> = {
+        '"': '"',
+        "\\": "\\",
+        "/": "/",
+        b: "\b",
+        f: "\f",
+        n: "\n",
+        r: "\r",
+        t: "\t",
+      };
+      output += decoded[escape] ?? escape;
+      consumed += 2;
+    }
+
+    this.buffer = this.buffer.slice(consumed);
+    return output;
+  }
+}
+
+class AsyncTextDeltaQueue implements AsyncIterable<string> {
+  private values: string[] = [];
+  private waiters: Array<(result: IteratorResult<string>) => void> = [];
+  private closed = false;
+
+  push(value: string): void {
+    if (this.closed || !value) return;
+    const waiter = this.waiters.shift();
+    if (waiter) waiter({ value, done: false });
+    else this.values.push(value);
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    for (const waiter of this.waiters.splice(0)) waiter({ value: undefined, done: true });
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<string> {
+    return {
+      next: async () => {
+        const value = this.values.shift();
+        if (value !== undefined) return { value, done: false };
+        if (this.closed) return { value: undefined, done: true };
+        return new Promise<IteratorResult<string>>((resolve) => this.waiters.push(resolve));
+      },
+    };
+  }
 }
 
 export class CodexOAuthProvider extends BaseProvider {
@@ -848,12 +961,34 @@ export class CodexOAuthProvider extends BaseProvider {
   async *query(params: ProviderQueryParams): AsyncGenerator<ProviderChunk> {
     const prompt = buildCodexOAuthProviderPrompt(params);
     let answer: string;
+    let streamedContent = "";
     if (params.userId && params.preferredAuthType === "oauth") {
       const credential = await getHostedSubscriptionCredential(params.userId);
       if (!credential || credential.authType !== "oauth") {
         throw new Error("ChatGPT subscription OAuth is selected but is not connected for this user.");
       }
-      answer = await runHostedUserCodexOAuthPrompt(params.userId, credential, prompt, params.signal);
+      if (params.stream) {
+        const queue = new AsyncTextDeltaQueue();
+        const expectsOrchestratorEnvelope = !!params.tools?.length && params.toolChoice !== "none";
+        const parser = expectsOrchestratorEnvelope ? new CodexFinalContentStreamParser() : null;
+        const answerPromise = runHostedUserCodexOAuthPrompt(
+          params.userId,
+          credential,
+          prompt,
+          params.signal,
+          (delta) => queue.push(delta),
+        );
+        void answerPromise.then(() => queue.close(), () => queue.close());
+        for await (const rawDelta of queue) {
+          const contentDelta = parser ? parser.push(rawDelta) : rawDelta;
+          if (!contentDelta) continue;
+          streamedContent += contentDelta;
+          yield { type: "text", delta: contentDelta };
+        }
+        answer = await answerPromise;
+      } else {
+        answer = await runHostedUserCodexOAuthPrompt(params.userId, credential, prompt, params.signal);
+      }
     } else {
       const runtimeStatus = await getCodexOAuthRuntimeStatus(params.userId);
       if (!runtimeStatus.available) {
@@ -903,7 +1038,14 @@ export class CodexOAuthProvider extends BaseProvider {
       throw new Error("Codex OAuth provider returned a final answer when a tool call was required.");
     }
 
-    if (parsed.content) yield { type: "text", delta: parsed.content };
+    if (parsed.content) {
+      if (!streamedContent) {
+        yield { type: "text", delta: parsed.content };
+      } else if (parsed.content.startsWith(streamedContent)) {
+        const remainder = parsed.content.slice(streamedContent.length);
+        if (remainder) yield { type: "text", delta: remainder };
+      }
+    }
     yield { type: "finish", reason: "stop" };
   }
 }

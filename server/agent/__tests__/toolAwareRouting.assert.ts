@@ -1,4 +1,9 @@
-import { classifyToolAwareRoute } from "../toolAwareRouting";
+import {
+  classifyToolAwareConversationRoute,
+  classifyToolAwareRoute,
+  getToolMetadataRoutingText,
+  selectRelevantToolNames,
+} from "../toolAwareRouting";
 import type { ToolAwareRoutePlan } from "../toolAwareRouting";
 
 let passed = 0;
@@ -29,6 +34,224 @@ function assertRoute(
   for (const tool of expectedTools) {
     assert(plan.priorityToolNames.includes(tool), `${intent}: prioritizes ${tool}`);
   }
+}
+
+{
+  const plan = classifyToolAwareConversationRoute([
+    { role: "user", content: "I need a dentist appointment next Tuesday" },
+    { role: "assistant", content: "Would you like me to schedule that calendar appointment?" },
+    { role: "user", content: "Yes, please." },
+  ]);
+  assert(plan.shouldPreferTool, "contextual confirmation: preserves the proposed tool route");
+  assert(plan.intents.includes("calendar"), "contextual confirmation: retains calendar intent");
+}
+
+{
+  const plan = classifyToolAwareConversationRoute([
+    { role: "assistant", content: "Would you like a more detailed explanation?" },
+    { role: "user", content: "Yes, please." },
+  ]);
+  assert(!plan.shouldPreferTool, "ordinary contextual confirmation: stays conversational");
+}
+
+for (const confirmation of [
+  "Absolutely.",
+  "Definitely!",
+  "Of course.",
+  "That would be great.",
+  "Let's do it.",
+  "Please go ahead.",
+  "I'd love that.",
+  "Sounds great, thanks.",
+]) {
+  const plan = classifyToolAwareConversationRoute([
+    { role: "assistant", content: "Would you like me to schedule that calendar appointment?" },
+    { role: "user", content: confirmation },
+  ]);
+  assert(plan.intents.includes("calendar"), `contextual confirmation: recognizes ${confirmation}`);
+}
+
+for (const conversationalReply of [
+  "Please explain how it works.",
+  "Sure, explain how reminders work.",
+  "Yes, but just explain it.",
+]) {
+  const plan = classifyToolAwareConversationRoute([
+    { role: "assistant", content: "I can set a reminder, or explain how reminders work." },
+    { role: "user", content: conversationalReply },
+  ]);
+  assert(!plan.shouldPreferTool, `contextual confirmation: rejects ambiguous reply ${conversationalReply}`);
+}
+
+{
+  const plan = classifyToolAwareConversationRoute([
+    {
+      role: "assistant",
+      content: "I will not set a reminder; would you like me to explain how reminders work?",
+    },
+    { role: "user", content: "Yes, please." },
+  ]);
+  assert(!plan.shouldPreferTool, "contextual confirmation: does not inherit a negated tool mention");
+}
+
+{
+  const plan = classifyToolAwareConversationRoute([
+    {
+      role: "assistant",
+      content: "I can schedule that calendar appointment. Would you like me to do that?",
+    },
+    { role: "user", content: "Yes, please." },
+  ]);
+  assert(plan.intents.includes("calendar"), "contextual confirmation: resolves a clear referential proposal");
+}
+
+for (const retry of ["Retry that.", "Try it once more.", "Give it another shot.", "Run it again."]) {
+  const plan = classifyToolAwareConversationRoute([
+    { role: "user", content: "Schedule the dentist appointment next Tuesday" },
+    { role: "assistant", content: "That action failed." },
+    { role: "user", content: retry },
+  ]);
+  assert(plan.intents.includes("calendar"), `contextual retry: recognizes ${retry}`);
+}
+
+{
+  const plan = classifyToolAwareConversationRoute([
+    { role: "assistant", content: "Would you like me to schedule that calendar appointment?" },
+    { role: "user", content: "No, don't do that." },
+  ]);
+  assert(!plan.shouldPreferTool, "contextual confirmation: respects explicit negation");
+}
+
+{
+  const plan = classifyToolAwareConversationRoute([
+    { role: "user", content: "Schedule the dentist appointment next Tuesday" },
+    { role: "assistant", content: "That action failed. I can make another attempt." },
+    { role: "user", content: "Try again." },
+  ]);
+  assert(plan.shouldPreferTool, "contextual retry: recovers the prior tool route");
+  assert(plan.intents.includes("calendar"), "contextual retry: retains calendar intent");
+}
+
+{
+  const plan = classifyToolAwareConversationRoute([
+    { role: "user", content: "Check my calendar" },
+    { role: "assistant", content: "Your calendar is clear." },
+    { role: "user", content: "Tell me a joke" },
+    { role: "assistant", content: "I did not catch that. You can try again." },
+    { role: "user", content: "Try again." },
+  ]);
+  assert(!plan.shouldPreferTool, "contextual retry: does not revive a stale tool route");
+}
+
+{
+  const relevant = selectRelevantToolNames(
+    "Move the Acme card to Done in Trello",
+    [
+      { name: "mcp__connector_42__action_9", description: "Move a Trello card to another list" },
+      { name: "mcp__github__list_pull_requests", description: "List open GitHub pull requests" },
+    ],
+  );
+  assert(relevant.includes("mcp__connector_42__action_9"), "dynamic MCP route: selects matching installed tool metadata");
+  assert(!relevant.includes("mcp__github__list_pull_requests"), "dynamic MCP route: excludes unrelated installed tools");
+}
+
+{
+  const relevant = selectRelevantToolNames(
+    "Tell me a short joke",
+    [{ name: "mcp__trello__move_card", description: "Move a Trello card to another list" }],
+  );
+  assert(relevant.length === 0, "ordinary chat: does not enter the dynamic MCP selection loop");
+}
+
+{
+  const opaqueTool = {
+    name: "mcp__connector_42__action_9",
+    description: "Archive a Trello card",
+  };
+  assert(
+    selectRelevantToolNames("Archive that card", [opaqueTool]).includes(opaqueTool.name),
+    "dynamic MCP route: accepts two meaningful description matches for an opaque name",
+  );
+  assert(
+    selectRelevantToolNames("Tell me about a Trello card", [opaqueTool]).length === 0,
+    "dynamic MCP route: rejects noun-only description matches without the action",
+  );
+}
+
+{
+  const conversation = [
+    { role: "assistant", content: "Would you like me to archive that Trello card?" },
+    { role: "user", content: "Yes, please." },
+  ];
+  const routingText = getToolMetadataRoutingText(conversation);
+  assert(
+    selectRelevantToolNames(routingText, [{
+      name: "mcp__connector_42__action_9",
+      description: "Archive a Trello card",
+    }]).includes("mcp__connector_42__action_9"),
+    "contextual metadata route: scores the validated assistant proposal",
+  );
+}
+
+{
+  const routingText = getToolMetadataRoutingText([
+    {
+      role: "assistant",
+      content: "I will not archive the card; would you like me to explain Trello?",
+    },
+    { role: "user", content: "Yes, please." },
+  ]);
+  assert(routingText === "Yes, please.", "contextual metadata route: rejects negated and explanatory proposals");
+}
+
+{
+  const offeredTools = [
+    { name: "image_generate", description: "Generate an image from a text prompt and display it inline" },
+    { name: "connect_channel", description: "Connect Telegram, WhatsApp, Slack, or Discord to Jarvis" },
+    { name: "log_goal_progress", description: "Log progress toward a goal" },
+  ];
+  assert(
+    selectRelevantToolNames("Generate an image of a cat", offeredTools).includes("image_generate"),
+    "built-in metadata route: selects image generation",
+  );
+  assert(
+    selectRelevantToolNames("Make me a picture of a cat", offeredTools).includes("image_generate"),
+    "built-in metadata route: understands image-generation synonyms",
+  );
+  assert(
+    selectRelevantToolNames("Connect my Slack account", offeredTools).includes("connect_channel"),
+    "built-in metadata route: selects channel connection",
+  );
+  assert(
+    selectRelevantToolNames("Log progress toward my running goal", offeredTools).includes("log_goal_progress"),
+    "built-in metadata route: selects goal progress logging",
+  );
+}
+
+{
+  const addTaskTool = {
+    name: "add_task",
+    description: "Add a new task to the user's plan for today",
+  };
+  assert(
+    selectRelevantToolNames("Put Buy milk on today's plan", [addTaskTool]).includes("add_task"),
+    "built-in metadata route: recognizes put as an add action",
+  );
+  assert(
+    selectRelevantToolNames("What is today's plan?", [addTaskTool]).length === 0,
+    "built-in metadata route: keeps noun-only plan questions conversational",
+  );
+}
+
+{
+  const completeTaskTool = {
+    name: "complete_task",
+    description: "Mark a task as complete in today's plan",
+  };
+  assert(
+    selectRelevantToolNames("Mark Buy milk done", [completeTaskTool]).includes("complete_task"),
+    "built-in metadata route: recognizes concise task completion",
+  );
 }
 
 {
