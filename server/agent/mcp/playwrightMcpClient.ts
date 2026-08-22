@@ -44,12 +44,14 @@ function findPlaywrightChromium(): string | null {
     if (!fs.existsSync(cacheDir)) continue;
     try {
       const dirs = fs.readdirSync(cacheDir)
-        .filter((d) => d.startsWith("chromium-"))
+        .filter((d) => d.startsWith("chromium-") || d.startsWith("chromium_headless_shell-"))
         .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
       for (const dir of dirs) {
         for (const sub of [
           "chrome-linux64/chrome",
           "chrome-linux/chrome",
+          "chrome-headless-shell-linux64/chrome-headless-shell",
+          "chrome-linux/headless_shell",
           "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
           "chrome.exe",
         ]) {
