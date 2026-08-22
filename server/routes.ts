@@ -133,6 +133,13 @@ import { buildToolExecutionPolicy } from "./agent/toolExecutionPolicy";
 import { routeAppCoachChatAutonomy } from "./agent/appCoachChatAutonomy";
 import { getCoachAppAgentId } from "./agent/coreAgentIds";
 import { assembleCoachContext, type CoachContextTrace } from "./agent/coachContextAssembler";
+import {
+  ensurePhoneRuntimeOperation,
+  findReferencedPhoneRuntimeOperation,
+  formatPhoneRuntimeOperationContext,
+  isConcretePhoneRuntimeCommand,
+  recordPhoneRuntimeToolResult,
+} from "./agent/phoneRuntimeOperationStore";
 import { classifyComposioActionPermission } from "./connectors/composio/connectionCenter";
 import { savePendingCoachResponse, storeDaemonScreenshot } from "./services/coachRuntimeState";
 import { createCoachChatProgressStream } from "./services/coachChatProgress";
@@ -1782,7 +1789,23 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const lastUserMsg = [...messages].reverse().find((m: any) => m.role === 'user');
       const lastUserOrigText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : '';
       const lastUserContent = lastUserOrigText.toLowerCase();
-      const phoneRuntimeRequestText = resolvePhoneRuntimeRequestText(messages);
+      const resolvedPhoneRuntimeRequestText = resolvePhoneRuntimeRequestText(messages);
+      const currentMessageHasExplicitPhoneAction =
+        isConcretePhoneRuntimeCommand(lastUserOrigText) ||
+        hasPhoneRuntimeActionRequest(lastUserOrigText) ||
+        isPhoneDeviceControlKeywordRequest(lastUserOrigText);
+      let activePhoneRuntimeOperation = currentMessageHasExplicitPhoneAction
+        ? null
+        : userId
+          ? await findReferencedPhoneRuntimeOperation({
+              userId,
+              text: lastUserOrigText,
+            }).catch((error) => {
+              console.error("[phone-operation] reference lookup failed:", error);
+              return null;
+            })
+          : null;
+      const phoneRuntimeRequestText = activePhoneRuntimeOperation?.goal ?? resolvedPhoneRuntimeRequestText;
       const phoneRuntimeAvailable = androidActive;
       const recentPhoneRuntimeConversation = messages
         .slice(-12)
@@ -1812,6 +1835,18 @@ You can extend yourself by building new tools directly. Generate the complete Ty
         phoneRuntimeActionRequest ||
         isPhoneDeviceControlKeywordRequest(phoneRuntimeRequestText)
       );
+      if (userId && !activePhoneRuntimeOperation && phoneRuntimeActionRequest) {
+        activePhoneRuntimeOperation = await ensurePhoneRuntimeOperation({
+          userId,
+          goal: phoneRuntimeRequestText,
+          sessionId: resumableAppSessionId,
+          originChannel,
+        }).catch((error) => {
+          console.error("[phone-operation] create failed:", error);
+          return null;
+        });
+      }
+      const phoneRuntimeOperationContext = formatPhoneRuntimeOperationContext(activePhoneRuntimeOperation);
       const youtubeServerResearchRequest =
         phoneRuntimeAvailable &&
         isYoutubeServerResearchRequest(phoneRuntimeRequestText);
@@ -1914,7 +1949,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const useToolFocusedLoop = toolAwareRoute.shouldPreferTool;
 
       const chatMessages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-        { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. " + buildInstruction + " Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally.\n\nYou have a weather_lookup tool for weather and forecast questions. Use it when the user asks about the weather and a location is available; if no location is available, ask for the city/state." + (process.env.TAVILY_API_KEY ? "\n\nYou also have search_web and web_search tools. Use them whenever the user asks about current events, live data (stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Prefer search_web when it is available. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever: (a) the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability; OR (b) you notice a pattern of repeated tool failures in this conversation (2+ different tools returning errors in the same session — call this proactively before the user notices to surface the root cause). It runs a full subsystem check and returns a plain-English diagnosis. When you proactively diagnose yourself, briefly tell the user you noticed something was off and present the diagnosis without being asked." + "\n\nSELF-INSPECTION & CODE PROPOSALS: You have three self-edit tools — list_source_files, read_source_file, and propose_code_change. Use them when: (a) the user asks you to 'look at your own code', 'inspect yourself', 'improve your tools', or 'fix a bug you noticed'; OR (b) you encounter a repeated failure and believe you can fix it with a targeted code change. For roadmap or completeness assessments, you MUST read JARVIS_ROADMAP.md, ROADMAP.md, and docs/capability-verification-matrix.md before drawing conclusions. Label important conclusions as Verified (direct code/test evidence), Inferred (architecture evidence), or Unverified (not tested); never invent completion percentages. Treat intentional policies such as MAX_AUTO_BUILDS=0 as policy choices, not missing implementations. Workflow: (1) call list_source_files to find the relevant file, (2) call read_source_file to read it fully, (3) call propose_code_change with the complete improved file content and a plain-English reason. The proposal is saved for user review — you NEVER write files directly. Keep proposals minimal and targeted: fix one specific issue per proposal. Never propose changes to the approval gate itself (codeProposalsRoutes.ts). After proposing, tell the user a suggestion is waiting in the Code Proposals screen for their review." },
+        { role: "system", content: daemonAbsoluteRule + systemPrompt + proactiveQuestionContext + (phoneRuntimeOperationContext ? `\n\n${phoneRuntimeOperationContext}` : "") + "\n\nYou can take actions on the user's behalf using the available tools. When a user asks you to add a task, log progress, update their context, etc., use the appropriate tool. " + buildInstruction + " Respond naturally — do not mention 'tool calls' or 'functions' to the user. Just confirm what you did conversationally.\n\nYou have a weather_lookup tool for weather and forecast questions. Use it when the user asks about the weather and a location is available; if no location is available, ask for the city/state." + (process.env.TAVILY_API_KEY ? "\n\nYou also have search_web and web_search tools. Use them whenever the user asks about current events, live data (stock prices, sports scores, news), or anything requiring real-time information you wouldn't know. Prefer search_web when it is available. Cite your sources naturally in your response." : "") + "\n\nYou have a jarvis_self_diagnose tool. Call it whenever: (a) the user asks about your health, why something isn't working, 'are you OK?', 'what's wrong?', 'why did that fail?', or any question about system reliability; OR (b) you notice a pattern of repeated tool failures in this conversation (2+ different tools returning errors in the same session — call this proactively before the user notices to surface the root cause). It runs a full subsystem check and returns a plain-English diagnosis. When you proactively diagnose yourself, briefly tell the user you noticed something was off and present the diagnosis without being asked." + "\n\nSELF-INSPECTION & CODE PROPOSALS: You have three self-edit tools — list_source_files, read_source_file, and propose_code_change. Use them when: (a) the user asks you to 'look at your own code', 'inspect yourself', 'improve your tools', or 'fix a bug you noticed'; OR (b) you encounter a repeated failure and believe you can fix it with a targeted code change. For roadmap or completeness assessments, you MUST read JARVIS_ROADMAP.md, ROADMAP.md, and docs/capability-verification-matrix.md before drawing conclusions. Label important conclusions as Verified (direct code/test evidence), Inferred (architecture evidence), or Unverified (not tested); never invent completion percentages. Treat intentional policies such as MAX_AUTO_BUILDS=0 as policy choices, not missing implementations. Workflow: (1) call list_source_files to find the relevant file, (2) call read_source_file to read it fully, (3) call propose_code_change with the complete improved file content and a plain-English reason. The proposal is saved for user review — you NEVER write files directly. Keep proposals minimal and targeted: fix one specific issue per proposal. Never propose changes to the approval gate itself (codeProposalsRoutes.ts). After proposing, tell the user a suggestion is waiting in the Code Proposals screen for their review." },
         ...(toolAwareInstruction ? [{ role: "system" as const, content: toolAwareInstruction }] : []),
         ...messages.map((m: { role: string; content: string }, idx: number) => {
           const isLast = idx === messages.length - 1;
@@ -1945,6 +1980,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 isDiagnosticsRequest
                   ? "For health or failure questions, call jarvis_self_diagnose first and base the answer on that result."
                   : "",
+                phoneRuntimeOperationContext,
               ].filter(Boolean).join("\n\n"),
             },
             ...messages.map((m: { role: string; content: string }, idx: number) => {
@@ -2783,6 +2819,23 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               }
             } else {
               execResult = await executeCoachTool(tc.function.name, args, userId, signal);
+            }
+
+            if (
+              activePhoneRuntimeOperation &&
+              (tc.function.name === "daemon_action" || isAndroidPhoneRuntimeToolName(tc.function.name))
+            ) {
+              await recordPhoneRuntimeToolResult(
+                activePhoneRuntimeOperation.id,
+                tc.function.name,
+                args,
+                {
+                  ok: execResult.result === "success",
+                  content: execResult.detail ?? "",
+                  label: execResult.label,
+                  detail: execResult.detail,
+                },
+              ).catch((error) => console.error("[phone-operation] result persistence failed:", error));
             }
 
             // Detect integration connectivity errors in the primary chat and emit

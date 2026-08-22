@@ -2163,6 +2163,30 @@ export async function ensureTablesExist() {
         ON build_sessions (user_id, reminded, created_at DESC)
     `).catch(handleSchemaStepError);
 
+    // ── Durable Android operation memory ───────────────────────────────────
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS phone_runtime_operations (
+        id             VARCHAR   PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id        VARCHAR   NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        session_id     VARCHAR,
+        origin_channel VARCHAR   NOT NULL DEFAULT 'appchat',
+        goal           TEXT      NOT NULL,
+        status         VARCHAR   NOT NULL DEFAULT 'active',
+        state          JSONB     NOT NULL DEFAULT '{}'::jsonb,
+        created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+        updated_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+        completed_at   TIMESTAMP
+      )
+    `).catch(handleSchemaStepError);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS phone_runtime_operations_user_status_updated_idx
+        ON phone_runtime_operations (user_id, status, updated_at DESC)
+    `).catch(handleSchemaStepError);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS phone_runtime_operations_session_idx
+        ON phone_runtime_operations (session_id)
+    `).catch(handleSchemaStepError);
+
     // ── LLM Wiki — Karpathy-style compounding knowledge base (Task #1126) ────
     // Add new columns to knowledge_vault_pages for wiki page types, cross-refs,
     // tags, and archiving. Remove 5-slug hard-coded constraint (schema-side only).

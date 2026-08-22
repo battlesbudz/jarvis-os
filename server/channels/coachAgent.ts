@@ -32,6 +32,13 @@ import { ANDROID_PHONE_RUNTIME_TOOL_NAMES } from "../agent/androidPhoneRuntimeTo
 import { getCoachAgentSessionAgentId } from "./coachAgentSession";
 import { listPendingPersonalCommitments } from "../commitments/dbCommitmentRepository";
 import { recordStatusCheckFollowUp } from "../liveActions/baselineMetrics";
+import {
+  ensurePhoneRuntimeOperation,
+  findReferencedPhoneRuntimeOperation,
+  formatPhoneRuntimeOperationContext,
+  isConcretePhoneRuntimeCommand,
+  wrapPhoneRuntimeOperationTools,
+} from "../agent/phoneRuntimeOperationStore";
 // Side-effect import: registers workspace topic context provider.
 import "../agent/providers/topicContext";
 
@@ -658,11 +665,35 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
   const turnStrategyBlock = turnGuidance
     ? `\n\n## Turn Strategy\n${turnGuidance}`
     : "";
-  const phoneRuntimeRequestText = resolvePhoneRuntimeRequestText([
+  const resolvedPhoneRuntimeRequestText = resolvePhoneRuntimeRequestText([
     ...(sessionResumed ? cachedSessionMessages : [...chatMessages].reverse()),
     { role: "user", content: userText || "" },
   ]);
+  const currentMessageRoute = classifyToolAwareRoute(userText || "");
+  let activePhoneRuntimeOperation = currentMessageRoute.actionType === "jarvis_device_action" ||
+    isConcretePhoneRuntimeCommand(userText || "")
+    ? null
+    : await findReferencedPhoneRuntimeOperation({
+        userId,
+        text: userText || "",
+      }).catch((error) => {
+        console.error(`[${channelName}] phone-operation reference lookup failed:`, error);
+        return null;
+      });
+  const phoneRuntimeRequestText = activePhoneRuntimeOperation?.goal ?? resolvedPhoneRuntimeRequestText;
   const classifiedToolAwareRoute = classifyToolAwareRoute(phoneRuntimeRequestText);
+  if (!activePhoneRuntimeOperation && classifiedToolAwareRoute.actionType === "jarvis_device_action") {
+    activePhoneRuntimeOperation = await ensurePhoneRuntimeOperation({
+      userId,
+      goal: phoneRuntimeRequestText,
+      sessionId: activeSessionId,
+      originChannel: channelName,
+    }).catch((error) => {
+      console.error(`[${channelName}] phone-operation create failed:`, error);
+      return null;
+    });
+  }
+  const phoneRuntimeOperationContext = formatPhoneRuntimeOperationContext(activePhoneRuntimeOperation);
   const phoneRuntimeUnavailable =
     classifiedToolAwareRoute.actionType === "jarvis_device_action" && !androidActive;
   const toolAwareRoute = phoneRuntimeUnavailable
@@ -681,7 +712,8 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     : toolAwareRoute.shouldPreferTool
       ? `\n\n## Tool-Aware Routing\n${toolAwareRoute.guidance}\nDo not give a capability disclaimer until you have tried the matching tool path or confirmed the required integration is not connected.`
       : "";
-  const effectiveSystemPromptBase = systemPrompt + youtubeInlineConstraint + turnStrategyBlock + toolAwareBlock;
+  const effectiveSystemPromptBase = systemPrompt + youtubeInlineConstraint + turnStrategyBlock + toolAwareBlock +
+    (phoneRuntimeOperationContext ? `\n\n${phoneRuntimeOperationContext}` : "");
 
   // ── Context registry: inject registered provider context ────────────────────
   // Derive a normalised platform string for providers that need it.
@@ -768,6 +800,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
     const phoneRuntimeToolNames = new Set<string>(ANDROID_PHONE_RUNTIME_TOOL_NAMES);
     scopedTools = scopedTools.filter((tool) => !phoneRuntimeToolNames.has(tool.name));
   }
+  scopedTools = wrapPhoneRuntimeOperationTools(scopedTools, activePhoneRuntimeOperation?.id);
   const canonicalKey = parseChannelKey(channelName);
   const registeredChannel = canonicalKey ? getChannel(canonicalKey) : undefined;
   console.log(

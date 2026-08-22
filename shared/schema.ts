@@ -778,6 +778,48 @@ export const buildSessions = pgTable("build_sessions", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// Durable state for interactive Android work. Unlike chat history, these rows
+// are intentionally small and survive session compaction, channel changes, and
+// server restarts so an elliptical follow-up can resume the actual operation.
+export interface PhoneRuntimeOperationEvent {
+  at: string;
+  tool: string;
+  args?: Record<string, unknown>;
+  result: "success" | "error" | "pending";
+  detail?: string;
+}
+
+export interface PhoneRuntimeOperationState {
+  appTarget?: string;
+  plan?: string[];
+  lastToolName?: string;
+  lastToolArgs?: Record<string, unknown>;
+  lastResult?: "success" | "error" | "pending";
+  blocker?: string;
+  nextStep?: string;
+  events?: PhoneRuntimeOperationEvent[];
+}
+
+export const phoneRuntimeOperations = pgTable("phone_runtime_operations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  sessionId: varchar("session_id"),
+  originChannel: varchar("origin_channel").notNull().default("appchat"),
+  goal: text("goal").notNull(),
+  // active | blocked | completed | cancelled
+  status: varchar("status").notNull().default("active"),
+  state: jsonb("state").$type<PhoneRuntimeOperationState>().notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  completedAt: timestamp("completed_at"),
+}, (table) => [
+  index("phone_runtime_operations_user_status_updated_idx")
+    .on(table.userId, table.status, table.updatedAt),
+  index("phone_runtime_operations_session_idx").on(table.sessionId),
+]);
+
+export type PhoneRuntimeOperation = typeof phoneRuntimeOperations.$inferSelect;
+
 export type BuildSession = typeof buildSessions.$inferSelect;
 
 export const deliverables = pgTable("deliverables", {
