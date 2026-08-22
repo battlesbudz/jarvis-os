@@ -61,7 +61,7 @@ assert.ok(
 );
 
 assert.ok(
-  /markMemoriesSuperseded/.test(memorySearchSource) &&
+  /corrected_by_memory_id = \$\{created\.id\}/.test(memorySearchSource) &&
     /JARVIS_BRAIN_PROJECTION/.test(memorySearchSource) &&
     /projectApprovedMemories\(ctx\.userId,\s*\{[\s\S]*memoryIds: \[inserted\?\.id, \.\.\.plan\.supersedeMemoryIds\]/.test(memorySearchSource),
   "active manual saves should supersede corrected memories and keep targeted brain projection feature-gated",
@@ -79,9 +79,11 @@ assert.ok(
 assert.ok(
   /!plan\.record\.pendingReview && duplicateIsApproved/.test(memorySearchSource) &&
     /correctionTargets = plan\.supersedeMemoryIds\.filter/.test(memorySearchSource) &&
-    /markMemoriesSuperseded\([\s\S]*ctx\.userId,[\s\S]*correctionTargets,[\s\S]*duplicateId/.test(memorySearchSource) &&
+    /SELECT id, pending_review, review_status, corrected_by_memory_id[\s\S]*ORDER BY id[\s\S]*FOR UPDATE/.test(memorySearchSource) &&
+    /supersedes_memory_id = ANY\(\$\{correctionTargets\}::varchar\[\]\)[\s\S]*pending_review = TRUE[\s\S]*review_status = 'pending'/.test(memorySearchSource) &&
+    /corrected_by_memory_id = \$\{duplicateId\}/.test(memorySearchSource) &&
     /supersededMemoryIds: correctionTargets/.test(memorySearchSource),
-  "an approved duplicate should complete an immediate correction without bypassing Memory Review",
+  "an approved duplicate should atomically retire pending proposals and complete an immediate correction",
 );
 
 assert.ok(
@@ -126,11 +128,12 @@ assert.ok(
 
 assert.ok(
   /const inserted = await db\.transaction/.test(memorySearchSource) &&
+    /SELECT id[\s\S]*id = ANY\(\$\{plan\.supersedeMemoryIds\}::varchar\[\]\)[\s\S]*ORDER BY id[\s\S]*FOR UPDATE[\s\S]*const \[created\] = await tx\.insert/.test(memorySearchSource) &&
     /SET review_status = 'discarded'[\s\S]*supersedes_memory_id = ANY\(\$\{plan\.supersedeMemoryIds\}::varchar\[\]\)[\s\S]*pending_review = TRUE[\s\S]*review_status = 'pending'/.test(memorySearchSource) &&
     /UPDATE user_memories[\s\S]*corrected_by_memory_id = \$\{created\.id\}/.test(memorySearchSource) &&
     /superseded\.rows[\s\S]*plan\.supersedeMemoryIds\.length[\s\S]*throw new MemoryCorrectionConflictError/.test(memorySearchSource) &&
     /err instanceof MemoryCorrectionConflictError/.test(memorySearchSource),
-  "fresh immediate corrections should retire pending proposals, insert, and supersede atomically or report a conflict",
+  "all fresh corrections should lock their sources before insert, and immediate corrections should retire pending proposals atomically",
 );
 
 assert.ok(
@@ -141,20 +144,6 @@ assert.ok(
     /source_memory\.corrected_by_memory_id <> user_memories\.id/.test(databaseSource) &&
     /user_memories_pending_correction_source_uidx/.test(schemaSource),
   "pending correction uniqueness should be enforced while safely cleaning pre-fix duplicates",
-);
-
-assert.ok(
-  /lockedTargets[\s\S]*FOR UPDATE/.test(memorySearchSource) &&
-    /targetResult[\s\S]*FOR UPDATE/.test(memorySearchSource) &&
-    /corrected_by_memory_id === duplicateId/.test(memorySearchSource) &&
-    /supersedes_memory_id = ANY\(\$\{correctionTargets\}::varchar\[\]\)[\s\S]*review_status = 'pending'/.test(memorySearchSource),
-  "pending and immediate corrections should serialize on the source and retire obsolete proposals in both paths",
-);
-
-assert.ok(
-  /supersedes_memory_id = ANY\(\$\{correctionTargets\}::varchar\[\]\)[\s\S]*ORDER BY id[\s\S]*FOR UPDATE[\s\S]*targetResult/.test(memorySearchSource) &&
-    /supersedes_memory_id = ANY\(\$\{plan\.supersedeMemoryIds\}::varchar\[\]\)[\s\S]*ORDER BY id[\s\S]*FOR UPDATE[\s\S]*lockedTargets/.test(memorySearchSource),
-  "immediate correction paths should lock pending proposals before source rows in deterministic order",
 );
 
 assert.ok(
