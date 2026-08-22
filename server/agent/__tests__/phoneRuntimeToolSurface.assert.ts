@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { isPhoneRuntimeCoveredRequest, resolvePhoneRuntimeRequestText } from "../phoneRuntimeRouting";
+import {
+  includeConnectedPhoneRuntimeTools,
+  isPhoneRuntimeCoveredRequest,
+  resolvePhoneRuntimeRequestText,
+} from "../phoneRuntimeRouting";
 
 
 const reproducedPhoneRetryConversation = [
@@ -103,6 +107,28 @@ assert.equal(isPhoneRuntimeCoveredRequest("Show that notification"), true);
 assert.equal(isPhoneRuntimeCoveredRequest("Open that notification"), true);
 assert.equal(isPhoneRuntimeCoveredRequest("What happens when I open a notification?"), false);
 assert.equal(isPhoneRuntimeCoveredRequest("Can you show me what happens when I open a notification?"), false);
+
+const tool = (name: string) => ({
+  type: "function" as const,
+  function: { name, description: name, parameters: { type: "object", properties: {} } },
+});
+const researchTools = [tool("search_web")];
+const allConnectedTools = [
+  ...researchTools,
+  tool("android_open_app_by_name"),
+  tool("android_search_in_app"),
+  tool("android_read_screen_context"),
+];
+assert.deepEqual(
+  includeConnectedPhoneRuntimeTools(researchTools, allConnectedTools, true).map((candidate) => candidate.function.name),
+  ["search_web", "android_open_app_by_name", "android_search_in_app", "android_read_screen_context"],
+  "a connected phone capability must compose with another focused tool route instead of being filtered out",
+);
+assert.deepEqual(
+  includeConnectedPhoneRuntimeTools(researchTools, allConnectedTools, false).map((candidate) => candidate.function.name),
+  ["search_web"],
+  "phone tools must remain unavailable when Android Device Control is disconnected",
+);
 assert.equal(
   resolvePhoneRuntimeRequestText([
     { role: "user", content: "Open Facebook on my phone." },
@@ -155,6 +181,8 @@ assert.match(routesSource, /keepDaemonActionFallback[\s\S]*hasUnsupportedPhoneDe
 assert.match(routesSource, /const useFocusedRequestTools = toolAwareRoute\.shouldPreferTool \|\|[\s\S]*phoneRuntimeCoveredRequest \|\|[\s\S]*keepDaemonActionFallback \|\|[\s\S]*youtubeServerResearchRequest/);
 assert.match(routesSource, /const useMetadataToolLoop = relevantMetadataToolNames\.length > 0/);
 assert.match(routesSource, /usePhoneRuntimeToolSurfaceOnly[\s\S]*filterPhoneRuntimeModelTools\(firstTurnToolPolicy\.tools,\s*\{/);
+assert.match(routesSource, /includeConnectedPhoneRuntimeTools\(routedModelRequestTools, requestTools, androidActive\)/);
+assert.match(routesSource, /const shouldRunToolLoop = androidActive[\s\S]*\|\| useToolFocusedLoop/);
 assert.match(routesSource, /allowServerYoutubeTools:\s*youtubeServerResearchRequest/);
 assert.match(routesSource, /usePhoneRuntimeToolSurfaceOnly\s*=\s*phoneRuntimeCoveredRequest/);
 assert.match(routesSource, /const phoneRuntimeActionRequest[\s\S]*hasPhoneRuntimeActionRequest[\s\S]*hasContextualPhoneRuntimeActionRequest/);

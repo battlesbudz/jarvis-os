@@ -60,6 +60,21 @@ export function filterPhoneRuntimeModelTools(
   });
 }
 
+export function includeConnectedPhoneRuntimeTools(
+  scopedTools: OpenAI.Chat.Completions.ChatCompletionTool[],
+  availableTools: OpenAI.Chat.Completions.ChatCompletionTool[],
+  androidActive: boolean,
+): OpenAI.Chat.Completions.ChatCompletionTool[] {
+  if (!androidActive) return scopedTools;
+
+  const includedNames = new Set(scopedTools.map(phoneRuntimeChatToolName).filter(Boolean));
+  const connectedPhoneTools = availableTools.filter((tool) => {
+    const name = phoneRuntimeChatToolName(tool);
+    return name && isAndroidPhoneRuntimeToolName(name) && !includedNames.has(name);
+  });
+  return connectedPhoneTools.length > 0 ? [...scopedTools, ...connectedPhoneTools] : scopedTools;
+}
+
 function normalizePhoneRuntimeRequestText(text: string): string {
   return text
     .replace(/android\s*[_-]?\s*read\s*[_-]?\s*notifications?/gi, "read notifications")
