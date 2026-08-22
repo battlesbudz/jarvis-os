@@ -1,4 +1,5 @@
 import type OpenAI from "openai";
+import { normalizeVoiceRestoreReply } from "@shared/voiceApprovalGates";
 import { ANDROID_PHONE_RUNTIME_TOOL_NAMES } from "./androidPhoneRuntimeToolNames";
 import { summarizeAndroidNotificationDetail } from "./androidNotificationSummary";
 
@@ -530,6 +531,26 @@ function isPhoneRuntimeContextBridge(text: string): boolean {
     /\b(?:phone|app|action|request|that|it|this|what\s+i\s+asked)\b/.test(normalized);
 }
 
+function isAcceptedVoiceRestoreBridge(
+  messages: Array<{ role?: string; content?: unknown }>,
+  userMessageIndex: number,
+  lastUserIndex: number,
+): boolean {
+  const text = String(messages[userMessageIndex]?.content ?? "");
+  if (normalizeVoiceRestoreReply(text, { allowGenericReply: true }).intent !== "restore") return false;
+  const prompt = messages.slice(0, userMessageIndex).findLast((message) => message.role === "assistant");
+  const acknowledgement = messages.slice(userMessageIndex + 1, lastUserIndex).find((message) => message.role === "assistant");
+  const promptText = typeof prompt?.content === "string" ? prompt.content : "";
+  const acknowledgementText = typeof acknowledgement?.content === "string" ? acknowledgement.content : "";
+  return /(?:voice session|voice context)[\s\S]{0,120}(?:ended|interrupted|restore)/i.test(promptText) &&
+    /(?:context|conversation)[\s\S]{0,40}restored|restored[\s\S]{0,40}(?:context|conversation)/i.test(acknowledgementText);
+}
+
+export function isConnectedPhoneCapabilityDenial(text: string): boolean {
+  return /\b(?:i|jarvis)\s+(?:can(?:not|'t)|could(?:\s+not|n't)|do\s+not|don't)\b[^.!?]{0,120}\b(?:control|access|operate|use|open|launch|tap|type|swipe|interact\s+with)\b[^.!?]{0,80}\b(?:phone|device|android|app|apps|device\s+control)\b/i.test(text) ||
+    /\b(?:no|without)\s+(?:available\s+)?(?:phone|android|device(?:-control)?|device control)\s+(?:tool|tools|access|capability|control)\b/i.test(text);
+}
+
 /**
  * Preserve an explicit phone target across a bounded retry chain. Assistant
  * failure prose is deliberately ignored so a server-browser error cannot
@@ -564,7 +585,7 @@ export function resolvePhoneRuntimeRequestText(
     if (message?.role !== "user" || typeof message.content !== "string") continue;
     inspectedUserMessages += 1;
     const text = message.content.trim();
-    if (isPhoneRuntimeContextBridge(text)) continue;
+    if (isPhoneRuntimeContextBridge(text) || isAcceptedVoiceRestoreBridge(messages, index, lastUserIndex)) continue;
     const retryCandidate = text.replace(
       /^\s*(?:let['’]?s\s+)?(?:try|retry|repeat|run|do)(?:\s+this)?\s+(?:again|once\s+more)\s*[,;:-]?\s*/i,
       "",

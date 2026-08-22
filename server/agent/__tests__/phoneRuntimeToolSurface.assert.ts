@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   includeConnectedPhoneRuntimeTools,
+  isConnectedPhoneCapabilityDenial,
   isPhoneRuntimeCoveredRequest,
   resolvePhoneRuntimeRequestText,
 } from "../phoneRuntimeRouting";
@@ -21,6 +22,41 @@ assert.equal(
   resolvePhoneRuntimeRequestText([...reproducedPhoneRetryConversation]),
   reproducedPhoneRetryConversation[0].content,
   "a retry must retain the explicit Android Chrome target instead of inheriting browser-service failure prose",
+);
+assert.equal(
+  resolvePhoneRuntimeRequestText([
+    { role: "user", content: "Open Facebook and search Marketplace for used cars." },
+    { role: "assistant", content: "Background launch was blocked by Android." },
+    { role: "assistant", content: "The voice session ended unexpectedly. Do you want me to restore the conversation context before we continue?" },
+    { role: "user", content: "Yes" },
+    { role: "assistant", content: "Context restored. We were working inside Facebook Marketplace." },
+    { role: "user", content: "Retry the entire operation once more." },
+  ]),
+  "Open Facebook and search Marketplace for used cars.",
+  "an accepted voice restoration is control flow and must not sever a contextual phone retry",
+);
+assert.equal(
+  resolvePhoneRuntimeRequestText([
+    { role: "user", content: "Open Facebook on my phone." },
+    { role: "assistant", content: "Would you like coffee?" },
+    { role: "user", content: "Yes" },
+    { role: "assistant", content: "Okay." },
+    { role: "user", content: "Try again." },
+  ]),
+  "Try again.",
+  "an unrelated acknowledgement must still stop phone retry backtracking",
+);
+for (const denial of [
+  "I can't control your phone from here.",
+  "I cannot open apps on your Android device.",
+  "There is no available device-control tool.",
+]) {
+  assert.equal(isConnectedPhoneCapabilityDenial(denial), true, "generic connected-phone denials must be blocked");
+}
+assert.equal(
+  isConnectedPhoneCapabilityDenial("Background launch was blocked by Samsung One UI."),
+  false,
+  "a concrete Android action failure must remain reportable",
 );
 assert.equal(
   resolvePhoneRuntimeRequestText([
@@ -197,7 +233,9 @@ assert.match(routingSource, /android_read_notifications/);
 assert.match(routingSource, /!options\.androidActive \|\| !options\.phoneRuntimeCoveredRequest/);
 assert.match(routesSource, /Routing notification request to Android Device Control/);
 assert.match(routesSource, /Routing app launch to Android Device Control/);
-assert.match(routesSource, /deterministicPhoneRuntimeToolCallFromRequest\(lastUserOrigText, modelRequestTools,[\s\S]*androidActive,[\s\S]*phoneRuntimeCoveredRequest/);
+assert.match(routesSource, /deterministicPhoneRuntimeToolCallFromRequest\(phoneRuntimeRequestText, modelRequestTools,[\s\S]*androidActive,[\s\S]*phoneRuntimeCoveredRequest/);
+assert.match(routesSource, /isConnectedPhoneCapabilityDenial\(modelPhase1\.textContent/);
+assert.match(routesSource, /denialRecoveryTool[\s\S]*android_read_screen_context/);
 assert.match(routesSource, /deterministicAndroidToolSummary\(tc\.function\.name, execResult,[\s\S]*deterministicToolCall:\s*deterministicToolCall\?\.id === tc\.id/);
 assert.match(routesSource, /getRecentNotificationObservation\(userId, 20\)/);
 assert.match(routesSource, /resolveAndroidNotificationFollowUp\(lastUserOrigText, recentNotificationObservation\)/);

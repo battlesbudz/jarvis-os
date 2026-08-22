@@ -98,6 +98,7 @@ import {
   hasUnsupportedPhoneDeviceControlRequest,
   isAndroidPhoneRuntimeToolName,
   isContextualPhoneRuntimeCoveredRequest,
+  isConnectedPhoneCapabilityDenial,
   isMemoryPhoneBypassRequest,
   isPhoneDeviceControlKeywordRequest,
   isPhoneRuntimeCoveredRequest,
@@ -2278,7 +2279,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               }
             : null;
           const deterministicToolCall = deterministicNotificationOpenCall ?? (turn === 0
-            ? deterministicPhoneRuntimeToolCallFromRequest(lastUserOrigText, modelRequestTools, {
+            ? deterministicPhoneRuntimeToolCallFromRequest(phoneRuntimeRequestText, modelRequestTools, {
                 androidActive,
                 phoneRuntimeCoveredRequest,
                 confirmedAppTarget,
@@ -2297,7 +2298,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               detail: deterministicToolCall.function.name,
             });
           }
-          const phase1 = deterministicToolCall
+          const modelPhase1 = deterministicToolCall
             ? {
                 textContent: "",
                 textChunks: [],
@@ -2319,6 +2320,38 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 userId: userId ?? undefined,
                 logPrefix: "[CoachChat]",
               });
+          const denialRecoveryTool = !deterministicToolCall && androidActive &&
+            isConnectedPhoneCapabilityDenial(modelPhase1.textContent || "") &&
+            modelRequestTools.some((tool) => chatToolName(tool) === "android_read_screen_context")
+            ? {
+                id: `jarvis_phone_runtime_${Date.now().toString(36)}_denial_recovery`,
+                type: "function" as const,
+                function: {
+                  name: "android_read_screen_context",
+                  arguments: "{}",
+                },
+              }
+            : null;
+          if (denialRecoveryTool) {
+            console.warn("[CoachChat] blocked false connected-phone capability denial; inspecting live screen instead");
+            emitMeaningfulProgress({
+              source: "runtime",
+              stage: "tool_selection",
+              message: "Inspecting the connected phone before continuing",
+              detail: denialRecoveryTool.function.name,
+            });
+          }
+          const phase1 = denialRecoveryTool
+            ? {
+                ...modelPhase1,
+                textContent: "",
+                textChunks: [],
+                toolCallList: [denialRecoveryTool],
+                finishReason: "tool_calls",
+                providerName: "jarvis-runtime",
+                model: "connected-phone-denial-guard",
+              }
+            : modelPhase1;
 
           const choice = {
             finish_reason: phase1.finishReason,
