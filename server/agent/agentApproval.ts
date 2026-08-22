@@ -427,7 +427,7 @@ export async function listAllGates(userId: string): Promise<ApprovalGate[]> {
 
 toolCallHooks.register(
   (ctx) => {
-    if (!requiresApproval(ctx.toolName)) return undefined;
+    if (!requiresApproval(ctx.toolName, ctx.params)) return undefined;
     return {
       requireApproval: {
         title: `Approve: ${ctx.toolName}`,

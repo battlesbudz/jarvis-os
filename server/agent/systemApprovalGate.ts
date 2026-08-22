@@ -78,12 +78,12 @@ async function defaultAwaitApproval(gateId: string, ttlMs?: number, signal?: Abo
 function requiresSystemApproval(
   toolName: string,
   params: Record<string, unknown>,
-  requiresApproval: (toolName: string) => boolean,
+  requiresApproval: (toolName: string, params?: Record<string, unknown>) => boolean,
 ): boolean {
   if (toolName === "queue_background_job" && params.task_scoped_cloud === true) {
     return isCloudBackgroundApprovalReady(params);
   }
-  return requiresApproval(toolName);
+  return requiresApproval(toolName, params);
 }
 
 function catalogProviderLabel(providerId: string): string {

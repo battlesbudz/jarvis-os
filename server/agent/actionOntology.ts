@@ -92,11 +92,11 @@ export function classifyActionOntology(text: string): ActionOntologyDecision {
   if (isPhoneRuntimeCoveredRequest(normalized)) {
     return decision({
       actionType: "jarvis_device_action",
-      actor: "human_approval_required",
-      approvalRequired: true,
+      actor: "jarvis",
+      approvalRequired: false,
       allowedToolGroups: ["system"],
       priorityToolNames: ["android_open_notification", "android_search_in_app", "android_read_notifications"],
-      reason: "The request is an Android device action; Jarvis must obtain explicit approval before executing the matching observable Phone Runtime tool and then verify the result.",
+      reason: "The request is an Android device action; Jarvis should execute and verify observable Phone Runtime steps immediately without an approval gate.",
     });
   }
 

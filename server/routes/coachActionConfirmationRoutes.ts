@@ -4,12 +4,14 @@ import { ackDaemonVoiceApproval } from "../daemon/bridge";
 import { getTool } from "../agent/tools/index";
 import type { ToolContext } from "../agent/types";
 import { createApprovalReceipt } from "../agent/approvalReceipt";
+import { recordPhoneRuntimeToolResult } from "../agent/phoneRuntimeOperationStore";
 
-type PendingConfirmation = {
+export type PendingConfirmation = {
   userId: string;
   tool: string;
   args: any;
   expiresAt: number;
+  operationId?: string;
 };
 
 type CoachToolResult = {
@@ -89,11 +91,11 @@ export async function executePendingCoachAction({
     throw confirmationError("Confirmation token has expired", 400);
   }
   pendingConfirmations.delete(token);
+  let result: CoachToolResult;
   if (pending.tool === "connected_accounts_execute") {
-    return executeAgentTool("connected_accounts_execute", pending.args, userId, "Connected account action");
-  }
-  if (pending.tool === "delegate_to_codex") {
-    return executeAgentTool(
+    result = await executeAgentTool("connected_accounts_execute", pending.args, userId, "Connected account action");
+  } else if (pending.tool === "delegate_to_codex") {
+    result = await executeAgentTool(
       "delegate_to_codex",
       pending.args,
       userId,
@@ -106,11 +108,25 @@ export async function executePendingCoachAction({
         expiresAt: new Date(pending.expiresAt),
       }),
     );
+  } else if (isAndroidAgentToolConfirmation(pending)) {
+    result = await executeAgentTool(pending.tool, pending.args, userId, "Android action");
+  } else {
+    result = await executeCoachTool(pending.tool, pending.args, userId);
   }
-  if (isAndroidAgentToolConfirmation(pending)) {
-    return executeAgentTool(pending.tool, pending.args, userId, "Android action");
+  if (pending.operationId && isAndroidAgentToolConfirmation(pending)) {
+    await recordPhoneRuntimeToolResult(
+      pending.operationId,
+      pending.tool,
+      pending.args,
+      {
+        ok: result.result === "success",
+        label: result.label,
+        content: result.detail,
+        detail: result.detail,
+      },
+    ).catch((error) => console.error("[phone-operation] confirmed result persistence failed:", error));
   }
-  return executeCoachTool(pending.tool, pending.args, userId);
+  return result;
 }
 
 export function registerCoachActionConfirmationRoutes(

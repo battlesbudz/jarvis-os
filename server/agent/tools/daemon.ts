@@ -131,12 +131,12 @@ ANDROID actions (available when an Android device daemon is paired):
 - android_file_search: recursively search for files by name across the device storage — accepts query (substring match), optional root path (defaults to external storage root), optional type filter (image/video/audio/document/any), optional maxDepth (default 4, max 8); returns up to 100 matches with name/path/size/lastModified
 - android_open_file: open a file in its native app (e.g. gallery for images) using an ACTION_VIEW Intent — accepts an absolute file path
 - android_copy_to_clipboard: copy an image file to the Android clipboard so it can be pasted into Telegram, WhatsApp, or any app that supports image paste — accepts an absolute image file path; falls back gracefully if the target app doesn't support paste
-- android_notification_reply: send an inline reply to a notification that exposes a RemoteInput reply action — requires notificationKey (from android_notifications_list), replyText, and approved: true; only works on notifications where hasReplyAction is true; TWO-STEP FLOW: first call without approved to get the confirmation prompt, show the exact reply text to the user, then call again with approved: true once the user has explicitly agreed
+- android_notification_reply: send an inline reply to a notification that exposes a RemoteInput reply action — requires notificationKey (from android_notifications_list) and replyText; only works on notifications where hasReplyAction is true
 - android_camera_snap: take a photo with the device camera — specify facing (front/back, default back); returns base64 JPEG; requires the Jarvis app to be in the foreground and Camera permission granted in daemon settings
-- android_camera_clip: record a short video clip from the camera — specify facing (front/back), durationMs (max 30000 ms, default 5000), audio (boolean); returns base64 MP4; REQUIRES explicit user confirmation (privacy-sensitive); app must be foregrounded
+- android_camera_clip: record a short video clip from the camera — specify facing (front/back), durationMs (max 30000 ms, default 5000), audio (boolean); returns base64 MP4; app must be foregrounded
 - android_location_get: get the device's current GPS coordinates — specify accuracy (coarse/precise, default precise) and optional maxAgeMs (accept cached fix if fresh enough); works in background; returns lat/lng/accuracy/provider
-- android_sms_send: send an SMS text message on behalf of the user — requires to (phone number), message (text body); REQUIRES explicit user confirmation showing exact recipient and message text before sending; approved must be true
-- android_screen_record: record the phone screen as an MP4 clip — specify durationMs (max 60000 ms, default 10000), fps (default 15), audio (boolean); returns base64 MP4; REQUIRES explicit user confirmation; app must be foregrounded
+- android_sms_send: send an SMS text message on behalf of the user — requires to (phone number) and message (text body)
+- android_screen_record: record the phone screen as an MP4 clip — specify durationMs (max 60000 ms, default 10000), fps (default 15), audio (boolean); returns base64 MP4; app must be foregrounded
 - android_view_hierarchy: dump the full UI element hierarchy using the accessibility tree; returns a JSON array of every on-screen element with resource-id, content-desc, text, bounds ([x1,y1][x2,y2] pixel coordinates), and clickable/focusable/scrollable flags; use this when android_read_screen doesn't expose element coordinates or when you need to find unlabeled UI elements like icon-only buttons
 - android_paste_text: paste text into the currently focused field using clipboard paste as primary method and adb shell input text as fallback — requires text; optional fieldDescription for logging; returns { ok, verified, method_used, field_text }. Use this when android_type fails silently or when the field uses a custom input method (e.g. Facebook search bar). NOTE: For the Facebook search bar and other fields with custom IMEs, android_type may silently fail — use android_paste_text instead, then follow immediately with android_press_key {key: 'enter'} to submit.
 - android_get_focused_field: lightweight accessibility check that returns the currently focused input field's text, hint, and resource-id without doing a full hierarchy dump — use before typing to confirm focus
@@ -159,7 +159,7 @@ IN-APP SEARCH — IMPORTANT: If the user asks you to search for something inside
 
 RETRY AFTER PARTIAL FAILURE: When android_search_in_app returns ok=false, it always includes step_reached (the step number where the failure occurred) and error_at_step (a short label for the failure type). You can retry independently without restarting from scratch by calling android_search_in_app again with resume_from_step set to the step_reached value from the failure response. This skips the app-open and load-wait steps so recovery is fast. For example: if step_reached=3, call with resume_from_step: 3 to re-attempt only the search-bar tap. Only restart from step 1 (omit resume_from_step) if the app needs to be reopened (e.g. login wall, app crash). Always read the suggestion field in the failure response — it will tell you the right recovery action for the specific failure.
 
-Do not require confirmation for low-risk phone navigation and read-only control: opening apps, reading notifications, reading the screen, searching, tapping ordinary UI, scrolling, and typing into focused fields can run automatically. Require confirmation before external submit/send/save boundaries, android_notification_reply, android_sms_send, android_camera_clip, android_screen_record, destructive shell/file_write actions, deletes, payments, purchases, public posts, and account changes. Use android_read_screen or android_screenshot to understand context before acting. When an Android daemon is paired, prefer android_* actions. Returns the daemon's response or an error if not paired.`,
+Android device actions run immediately without confirmation, including navigation, typing, submit/send boundaries, notification replies, SMS, camera clips, and screen recording. Continue to require confirmation for non-Android destructive shell/file_write actions and unrelated external-system writes. Use android_read_screen or android_screenshot to understand context before acting. When an Android daemon is paired, prefer android_* actions. Returns the daemon's response or an error if not paired.`,
   parameters: {
     type: "object",
     properties: {
@@ -209,7 +209,6 @@ Do not require confirmation for low-risk phone navigation and read-only control:
       limit: { type: "number", description: "Maximum notifications to return (when action is 'android_notifications_list')" },
       notificationKey: { type: "string", description: "Notification status-bar key from android_notifications_list (for android_notification_open or android_notification_reply)." },
       replyText: { type: "string", description: "The reply text to send inline (when action is 'android_notification_reply')" },
-      approved: { type: "boolean", description: "Must be true for android_notification_reply and android_sms_send — set only after the user has explicitly confirmed in the conversation" },
       facing: { type: "string", enum: ["front", "back", "both"], description: "Camera facing direction (when action is 'android_camera_snap': front/back/both returns one or both images; android_camera_clip: front/back only; default 'back')" },
       audio: { type: "boolean", description: "Whether to record audio (when action is 'android_camera_clip' or 'android_screen_record')" },
       accuracy: { type: "string", enum: ["coarse", "precise"], description: "Location accuracy mode (when action is 'android_location_get', default 'precise')" },
@@ -466,17 +465,11 @@ Do not require confirmation for low-risk phone navigation and read-only control:
       } else if (rawAction === "android_notification_reply") {
         if (!args.notificationKey) return { ok: false, content: jsonErrorContent("notificationKey required") };
         if (!args.replyText) return { ok: false, content: jsonErrorContent("replyText required") };
-        if (!args.approved) {
-          return { ok: false, content: jsonErrorContent(`Confirmation required before sending. Show the user the exact reply and ask them to approve it: "I'll reply inline with: \"${args.replyText}\". Send it?" — then call this action again with approved: true once they confirm.`, { requiresApproval: true }) };
-        }
         op = { type: "android_notification_reply", notificationKey: String(args.notificationKey), replyText: String(args.replyText) };
       } else if (rawAction === "android_camera_snap") {
         const facing = String(args.facing || "back") as "front" | "back" | "both";
         op = { type: "android_camera_snap", facing };
       } else if (rawAction === "android_camera_clip") {
-        if (!args.approved) {
-          return { ok: false, content: jsonErrorContent(`Confirmation required before recording a video clip (privacy-sensitive). Ask the user: "I'll record a ${Math.round((typeof args.durationMs === "number" ? args.durationMs : 5000) / 1000)}s video clip from the ${args.facing || "back"} camera. Is that OK?" — then call again with approved: true.`, { requiresApproval: true }) };
-        }
         const facing = String(args.facing || "back") as "front" | "back";
         const durationMs = Math.min(typeof args.durationMs === "number" ? args.durationMs : 5000, 30000);
         op = { type: "android_camera_clip", facing, durationMs, audio: !!args.audio };
@@ -486,15 +479,8 @@ Do not require confirmation for low-risk phone navigation and read-only control:
       } else if (rawAction === "android_sms_send") {
         if (!args.to) return { ok: false, content: jsonErrorContent("to (phone number) required") };
         if (!args.message) return { ok: false, content: jsonErrorContent("message required") };
-        if (!args.approved) {
-          return { ok: false, content: jsonErrorContent(`Confirmation required before sending SMS. Show the user exactly: "Send SMS to ${args.to}: \"${args.message}\"?" — then call again with approved: true once they confirm.`, { requiresApproval: true }) };
-        }
         op = { type: "android_sms_send", to: String(args.to), message: String(args.message) };
       } else if (rawAction === "android_screen_record") {
-        if (!args.approved) {
-          const dur = Math.min(typeof args.durationMs === "number" ? args.durationMs : 10000, 60000);
-          return { ok: false, content: jsonErrorContent(`Confirmation required before recording the screen. Ask the user: "I'll record your screen for ${Math.round(dur / 1000)}s. Is that OK?" — then call again with approved: true.`, { requiresApproval: true }) };
-        }
         const durationMs = Math.min(typeof args.durationMs === "number" ? args.durationMs : 10000, 60000);
         op = { type: "android_screen_record", durationMs, fps: typeof args.fps === "number" ? args.fps : 15, audio: !!args.audio };
       } else if (rawAction === "android_view_hierarchy") {

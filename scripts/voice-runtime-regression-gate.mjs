@@ -41,7 +41,6 @@ const requiredMockedTests = [
   "server/agent/__tests__/localVoiceLoopTiming.assert.ts",
   "server/agent/__tests__/inAppLocalVoiceLoop.assert.ts",
   "server/agent/__tests__/voiceApprovalGates.assert.ts",
-  "server/agent/__tests__/voiceApprovalServerGate.assert.ts",
   "app/(tabs)/__tests__/voiceApprovalGates.assert.ts",
   "server/state/__tests__/runtimeWorkingContextTruthAudit.assert.ts",
   "server/agent/__tests__/developerDiagnostics.assert.ts",

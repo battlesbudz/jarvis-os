@@ -155,6 +155,7 @@ export function formatPhoneRuntimeOperationContext(operation: schema.PhoneRuntim
     `Status: ${operation.status}`,
     state.appTarget ? `App target: ${state.appTarget}` : "",
     state.lastToolName ? `Last tool: ${state.lastToolName} (${state.lastResult ?? "unknown"})` : "",
+    state.lastToolName && state.appTarget ? `Last action target: ${state.appTarget}` : "",
     state.blocker ? `Last blocker: ${state.blocker}` : "",
     state.nextStep ? `Next step: ${state.nextStep}` : "",
     "Resume this goal from its recorded state. Do not ask the user to restate it and do not restart completed steps unless verification requires it.",

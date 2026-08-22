@@ -54,7 +54,7 @@ import { registerDiscordConnectionRoutes } from "./routes/discordConnectionRoute
 import { registerGoalSummaryRoutes } from "./routes/goalSummaryRoutes";
 import { registerBrainDumpRoutes } from "./routes/brainDumpRoutes";
 import { registerCoachAudioRoutes } from "./routes/coachAudioRoutes";
-import { executePendingCoachAction, registerCoachActionConfirmationRoutes } from "./routes/coachActionConfirmationRoutes";
+import { executePendingCoachAction, registerCoachActionConfirmationRoutes, type PendingConfirmation } from "./routes/coachActionConfirmationRoutes";
 import { codexDelegationRequiresConfirmation } from "./agent/codexDelegationPolicy";
 import { registerCoachInsightRoutes } from "./routes/coachInsightRoutes";
 import { registerCoachSessionRoutes } from "./routes/coachSessionRoutes";
@@ -155,10 +155,6 @@ import {
   runCoachModelTurn,
   streamCoachModelTurn,
 } from "./services/aiCoachContextService";
-import {
-  buildAndroidSubmitConfirmationPreview,
-  isAndroidSubmitCapableAction,
-} from "./agent/voiceApprovalServerGate";
 
 const RESTRICTED_MEMORY_SOURCE_SQL_PATTERN = "%(plaid|bank|banking|financial|transaction|credit_card|credit card|debit_card|debit card|tax_document|tax document|payroll|brokerage|account_balance|account balance|restricted_source|restricted summary|restricted_summary)%";
 
@@ -303,7 +299,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     return tool.type === "function" ? tool.function.name : null;
   }
 
-  const pendingConfirmations = new Map<string, { userId: string; tool: string; args: any; expiresAt: number }>();
+  const pendingConfirmations = new Map<string, PendingConfirmation>();
   setInterval(() => {
     const now = Date.now();
     for (const [token, entry] of pendingConfirmations.entries()) {
@@ -2564,18 +2560,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                   JSON.stringify(args.arguments || args.input || {}).slice(0, 1000),
                 )
               : null;
-            const androidSubmitApprovalRequired = isAndroidSubmitCapableAction(tc.function.name, args, userRequestText);
             const codexDelegationApprovalRequired = tc.function.name === 'delegate_to_codex' &&
               codexDelegationRequiresConfirmation(args);
-            const androidRouteApprovalRequired =
-              isAndroidPhoneRuntimeToolName(tc.function.name) ||
-              (tc.function.name === 'daemon_action' && String(args.action || '').startsWith('android_'));
             const isHighStakes = tc.function.name === 'send_email' ||
               (tc.function.name === 'connected_accounts_execute' && connectedAccountPermission?.approvalRequired === true && args.dry_run !== true) ||
               (tc.function.name === 'daemon_action' && ['shell', 'file_write'].includes(String(args.action || ''))) ||
-              codexDelegationApprovalRequired ||
-              androidRouteApprovalRequired ||
-              androidSubmitApprovalRequired;
+              codexDelegationApprovalRequired;
 
             if (isHighStakes) {
               openCoachSse(res);
@@ -2605,13 +2595,6 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 preview.timeoutSeconds = String(normalizeCodexDelegationTimeoutMs(args.timeout_seconds) / 1000);
                 if (args.allow_external_side_effects === true) preview.externalSideEffects = 'Allowed for this task';
                 preview.reason = 'Codex requested permission to modify the workspace or an external system.';
-              } else if (androidRouteApprovalRequired || androidSubmitApprovalRequired) {
-                Object.assign(preview, buildAndroidSubmitConfirmationPreview(tc.function.name, args, userRequestText));
-                if (androidRouteApprovalRequired && !androidSubmitApprovalRequired) {
-                  preview.reason = toolAwareRoute.approvalRequired
-                    ? toolAwareRoute.reason
-                    : "This Android device action requires explicit approval before execution.";
-                }
               } else {
                 preview.action = String(args.action || '');
                 if (args.cmd) preview.cmd = String(args.cmd);
@@ -2624,6 +2607,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 tool: tc.function.name,
                 args,
                 expiresAt: Date.now() + 5 * 60 * 1000,
+                operationId: activePhoneRuntimeOperation?.id,
               });
               res.write(`data: ${JSON.stringify({ type: 'confirm_required', token: confirmToken, tool: tc.function.name, preview })}\n\n`);
               res.write('data: [DONE]\n\n');

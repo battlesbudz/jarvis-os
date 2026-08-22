@@ -129,18 +129,23 @@ assert.ok(codeTask.allowedToolGroups.includes("self_edit"), "code tasks allow se
 
 const deviceAction = classifyActionOntology("Open the Alex Hormozi notification on my phone");
 assert.equal(deviceAction.actionType, "jarvis_device_action");
-assert.equal(deviceAction.actor, "human_approval_required");
-assert.equal(deviceAction.approvalRequired, true);
+assert.equal(deviceAction.actor, "jarvis");
+assert.equal(deviceAction.approvalRequired, false);
 assert.ok(deviceAction.priorityToolNames.includes("android_open_notification"));
 const deviceResolution = resolveToolsForAction(deviceAction);
 assert.ok(deviceResolution.requiredToolNames.includes("android_open_notification"));
 assert.ok(deviceResolution.requiredToolNames.includes("android_search_in_app"));
-assert.equal(deviceResolution.approvalRequired, true);
+assert.equal(deviceResolution.approvalRequired, false);
 
 for (const toolName of ANDROID_PHONE_RUNTIME_TOOL_NAMES) {
-  assert.equal(requiresApproval(toolName), true, `${toolName}: shared channel gate requires approval`);
-  assert.equal(requiresHumanApproval(toolName), true, `${toolName}: device action waits for human approval`);
+  assert.equal(requiresApproval(toolName), false, `${toolName}: device steps never require approval`);
+  assert.equal(requiresHumanApproval(toolName), false, `${toolName}: device steps continue without a human gate`);
 }
+assert.equal(requiresApproval("android_tap_screen", { label: "Send message" }), false, "submit-capable phone taps do not pause for approval");
+assert.equal(requiresHumanApproval("android_tap_screen", { label: "Send message" }), false, "submit-capable phone taps do not require human approval");
+assert.equal(requiresApproval("daemon_action", { action: "android_tap", label: "Send message" }), false, "Android daemon actions do not pause for approval");
+assert.equal(requiresHumanApproval("daemon_action", { action: "android_tap", label: "Send message" }), false, "Android daemon actions do not require human approval");
+assert.equal(requiresApproval("daemon_action", { action: "shell" }), true, "non-Android daemon actions remain gated");
 
 const inconsistentDeviceResolution = resolveToolsForAction({
   ...deviceAction,
@@ -149,8 +154,8 @@ const inconsistentDeviceResolution = resolveToolsForAction({
 });
 assert.equal(
   inconsistentDeviceResolution.approvalRequired,
-  true,
-  "the resolver must enforce approval even if an upstream device decision is malformed",
+  false,
+  "the resolver must preserve the approval-free Android ontology decision",
 );
 
 console.log("OK: action ontology classifies ownership, approval, tools, and reasons");

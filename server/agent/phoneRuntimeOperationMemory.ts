@@ -3,11 +3,12 @@ import type { PhoneRuntimeOperation } from "@shared/schema";
 const CONTINUATION_WORDS = /\b(?:again|continue|continued|continuing|resume|retry|re-try|finish|restart|carry\s+on|pick\s+(?:it|that|this)\s+up|go\s+back|try\s+(?:it|that|this))\b/i;
 const REFERENCE_WORDS = /\b(?:it|that|this|thing|task|flow|one|what\s+we\s+were\s+doing|where\s+we\s+left\s+off)\b/i;
 const TEMPORAL_WORDS = /\b(?:yesterday|earlier|last\s+(?:night|time|week)|before|previously)\b/i;
+const ACTION_RECALL_QUESTION = /\b(?:what|which|where|how)\b[^?]{0,100}\b(?:action|command|attempt(?:ed)?|execut(?:e|ed)|open(?:ed)?|search(?:ed)?|tap(?:ped)?|type(?:d)?|try|tried|do|did)\b/i;
 const STOP_WORDS = new Set([
-  "a", "about", "again", "and", "app", "back", "can", "continue", "do", "doing", "for",
-  "from", "get", "go", "hey", "i", "in", "it", "jarvis", "last", "me", "my", "of", "on",
+  "a", "about", "action", "again", "and", "app", "attempt", "attempted", "back", "can", "command", "continue", "did", "do", "doing", "execute", "executed", "for",
+  "from", "get", "go", "hey", "i", "in", "it", "jarvis", "last", "me", "most", "my", "of", "on", "phone",
   "flow", "operation", "open", "please", "profile", "resume", "retry", "search", "task", "that", "the", "thing", "this", "to",
-  "try", "up", "was", "we", "were", "what", "with", "you", "yesterday",
+  "how", "ran", "recently", "run", "try", "up", "was", "we", "were", "what", "where", "which", "with", "you", "yesterday",
 ]);
 
 export function normalizePhoneRuntimeGoal(text: string): string {
@@ -22,7 +23,8 @@ export function isPhoneRuntimeOperationReference(text: string): boolean {
   const value = text.trim();
   if (!value || value.length > 240) return false;
   return CONTINUATION_WORDS.test(value) ||
-    (TEMPORAL_WORDS.test(value) && REFERENCE_WORDS.test(value));
+    (TEMPORAL_WORDS.test(value) && REFERENCE_WORDS.test(value)) ||
+    ACTION_RECALL_QUESTION.test(value);
 }
 
 /** True when the current turn supplies a fresh executable instruction rather

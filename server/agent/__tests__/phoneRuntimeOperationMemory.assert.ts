@@ -36,6 +36,8 @@ const instagramGoal = operation({
 });
 
 assert.equal(isPhoneRuntimeOperationReference("Please carry on from where we left off"), true);
+assert.equal(isPhoneRuntimeOperationReference("Which phone action ran most recently?"), true);
+assert.equal(isPhoneRuntimeOperationReference("How did that command execute?"), true);
 assert.equal(isPhoneRuntimeOperationReference("What is Facebook Marketplace?"), false);
 assert.equal(isConcretePhoneRuntimeCommand("Search Instagram for dogs again"), true);
 assert.equal(isConcretePhoneRuntimeCommand("That Facebook thing from yesterday—try again"), false);
@@ -52,6 +54,11 @@ assert.equal(
   selectReferencedPhoneRuntimeOperation("Retry the last operation", [instagramGoal, facebookGoal], now)?.id,
   "instagram",
   "a bare retry should resume the most recently updated unfinished operation",
+);
+assert.equal(
+  selectReferencedPhoneRuntimeOperation("Which phone action ran most recently?", [instagramGoal, facebookGoal], now)?.id,
+  "instagram",
+  "an action-audit follow-up should resolve the latest unfinished operation without requiring the user to repeat its entity",
 );
 assert.equal(
   selectReferencedPhoneRuntimeOperation("Continue that Facebook task", [
@@ -80,5 +87,8 @@ const channelRoute = fs.readFileSync(path.join(root, "server/channels/coachAgent
 assert.match(appRoute, /findReferencedPhoneRuntimeOperation[\s\S]*activePhoneRuntimeOperation\?\.goal/);
 assert.match(appRoute, /recordPhoneRuntimeToolResult\([\s\S]*activePhoneRuntimeOperation\.id/);
 assert.match(channelRoute, /findReferencedPhoneRuntimeOperation[\s\S]*wrapPhoneRuntimeOperationTools/);
+const confirmationRoute = fs.readFileSync(path.join(root, "server/routes/coachActionConfirmationRoutes.ts"), "utf8");
+assert.match(appRoute, /operationId: activePhoneRuntimeOperation\?\.id/);
+assert.match(confirmationRoute, /pending\.operationId[\s\S]*recordPhoneRuntimeToolResult/);
 
 console.log("phoneRuntimeOperationMemory assertions passed");

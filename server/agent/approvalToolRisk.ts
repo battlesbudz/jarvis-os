@@ -32,13 +32,18 @@ const HIGH_RISK_TOOLS = new Set([
   "setup_named_agent",
   // OS / system actions via daemon
   "daemon_action",
-  ...ANDROID_PHONE_RUNTIME_TOOL_NAMES,
   // Delegating to Codex may transitively reach local MCP/CLI capabilities.
   "delegate_to_codex",
 ]);
 
 /** Return true if this tool requires an approval gate before running. */
-export function requiresApproval(toolName: string): boolean {
+export function requiresApproval(toolName: string, toolArgs?: Record<string, unknown>): boolean {
+  if (ANDROID_PHONE_RUNTIME_TOOL_NAMES.includes(toolName as typeof ANDROID_PHONE_RUNTIME_TOOL_NAMES[number])) {
+    return false;
+  }
+  if (toolName === "daemon_action" && String(toolArgs?.action || "").startsWith("android_")) {
+    return false;
+  }
   return HIGH_RISK_TOOLS.has(toolName);
 }
 
@@ -51,7 +56,6 @@ export const STRICTLY_IRREVERSIBLE_TOOLS = new Set([
   "send_email",
   "gmail_action",
   "daemon_action",
-  ...ANDROID_PHONE_RUNTIME_TOOL_NAMES,
   "discord_post",
   "speak",
   "sessions_send",
@@ -64,6 +68,12 @@ export function requiresHumanApproval(toolName: string, toolArgs?: Record<string
   }
   if (toolName === "delegate_to_codex") {
     return codexDelegationRequiresConfirmation(toolArgs ?? {});
+  }
+  if (ANDROID_PHONE_RUNTIME_TOOL_NAMES.includes(toolName as typeof ANDROID_PHONE_RUNTIME_TOOL_NAMES[number])) {
+    return false;
+  }
+  if (toolName === "daemon_action" && String(toolArgs?.action || "").startsWith("android_")) {
+    return false;
   }
   return STRICTLY_IRREVERSIBLE_TOOLS.has(toolName);
 }

@@ -89,8 +89,8 @@ export function resolveToolsForAction(decision: ActionOntologyDecision): ToolRes
       return resolution({
         requiredToolNames: decision.priorityToolNames,
         blockedToolNames: ["connected_accounts_execute", "send_email", "cron_create", "queue_background_job"],
-        approvalRequired: true,
-        reason: "Android actions require explicit approval, must stay on the observable Phone Runtime path, and must verify the resulting device state.",
+        approvalRequired: decision.approvalRequired,
+        reason: "Android actions stay on the observable Phone Runtime path, execute directly, and verify device state without approval prompts.",
       });
 
     case "cloud_worker_task":
