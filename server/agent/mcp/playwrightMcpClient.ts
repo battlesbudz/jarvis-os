@@ -17,6 +17,7 @@
 import * as path from "path";
 import * as os from "os";
 import * as fs from "fs";
+import serverlessChromium from "@sparticuz/chromium";
 import { McpClient, McpToolResult } from "./mcpClient";
 import { isDesktopDaemonActive, isDaemonActionAllowed, sendDaemonOp } from "../../daemon/bridge";
 
@@ -70,6 +71,20 @@ function findPlaywrightChromium(): string | null {
   return null;
 }
 
+async function resolveChromiumRuntime(): Promise<{ executablePath: string; args: string[] }> {
+  const installedPath = findPlaywrightChromium();
+  if (installedPath) return { executablePath: installedPath, args: ["--no-sandbox"] };
+
+  if (process.platform === "linux") {
+    return {
+      executablePath: await serverlessChromium.executablePath(),
+      args: serverlessChromium.args,
+    };
+  }
+
+  throw new Error("No Chrome or Chromium executable is installed");
+}
+
 // ── Session ────────────────────────────────────────────────────────────────────
 
 class McpSession {
@@ -78,7 +93,7 @@ class McpSession {
   readonly screenshotDir: string;
   lastActive = Date.now();
 
-  private readonly client: McpClient;
+  private client: McpClient | null = null;
   private readonly connectPromise: Promise<void>;
 
   constructor(userId: string) {
@@ -88,19 +103,28 @@ class McpSession {
     fs.mkdirSync(this.profileDir, { recursive: true });
     fs.mkdirSync(this.screenshotDir, { recursive: true });
 
-    const chromiumPath = findPlaywrightChromium();
-    const mcpArgs = [
-      MCP_CLI,
-      "--headless",
-      "--no-sandbox",
-      "--user-data-dir", this.profileDir,
-      "--output-dir", this.screenshotDir,
-      "--allow-unrestricted-file-access",
-    ];
-    if (chromiumPath) mcpArgs.push("--executable-path", chromiumPath);
-
-    this.client = new McpClient({ type: "stdio", command: "node", args: mcpArgs });
-    this.connectPromise = this.client.connect().then(() => {
+    this.connectPromise = resolveChromiumRuntime().then(({ executablePath, args }) => {
+      const configPath = path.join(this.screenshotDir, "mcp-config.json");
+      fs.writeFileSync(configPath, JSON.stringify({
+        browser: {
+          browserName: "chromium",
+          userDataDir: this.profileDir,
+          launchOptions: { executablePath, headless: true, args },
+        },
+      }));
+      const client = new McpClient({
+        type: "stdio",
+        command: "node",
+        args: [
+          MCP_CLI,
+          "--config", configPath,
+          "--output-dir", this.screenshotDir,
+          "--allow-unrestricted-file-access",
+        ],
+      });
+      this.client = client;
+      return client.connect();
+    }).then(() => {
       console.log(`[MCP] session initialized for user ${this.userId}`);
     }).catch((err) => {
       console.error(`[MCP] session init failed for user ${this.userId}:`, (err as Error).message);
@@ -111,11 +135,12 @@ class McpSession {
   async callTool(name: string, args: Record<string, unknown>): Promise<McpToolResult> {
     await this.connectPromise;
     this.lastActive = Date.now();
+    if (!this.client) throw new Error("Browser MCP client failed to initialize");
     return this.client.callTool(name, args);
   }
 
   close(): void {
-    this.client.disconnect();
+    this.client?.disconnect();
   }
 }
 

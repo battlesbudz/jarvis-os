@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const railway = JSON.parse(fs.readFileSync(path.join(root, "railway.json"), "utf8"));
-const railpack = JSON.parse(fs.readFileSync(path.join(root, "railpack.json"), "utf8"));
+const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 const browserClient = fs.readFileSync(
   path.join(root, "server/agent/mcp/playwrightMcpClient.ts"),
   "utf8",
@@ -18,19 +18,14 @@ assert.doesNotMatch(
   "Railway builds must not depend on Playwright's external browser CDN",
 );
 
-assert.equal(
-  railpack.deploy?.variables?.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
-  "/usr/bin/chromium",
-  "the browser client must use Railpack's system Chromium",
-);
-
-const runtimePackages = new Set(railpack.deploy?.aptPackages ?? []);
-assert.ok(runtimePackages.has("chromium"), "Railpack must install Chromium and its runtime dependencies");
+assert.equal(packageJson.dependencies?.["@sparticuz/chromium"], "147.0.2");
 
 assert.match(
   browserClient,
   /chrome-headless-shell-linux64\/chrome-headless-shell/,
   "the MCP browser resolver must recognize Playwright's installed headless shell",
 );
+assert.match(browserClient, /serverlessChromium\.executablePath\(\)/);
+assert.match(browserClient, /args:\s*serverlessChromium\.args/);
 
 console.log("Railpack browser runtime assertions passed");

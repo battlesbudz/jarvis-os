@@ -1,9 +1,0 @@
-{
-  "$schema": "https://schema.railpack.com",
-  "deploy": {
-    "aptPackages": ["chromium"],
-    "variables": {
-      "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH": "/usr/bin/chromium"
-    }
-  }
-}
