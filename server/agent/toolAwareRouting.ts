@@ -449,6 +449,8 @@ const CONTEXTUAL_TOOL_NEGATION_PATTERN = /\b(?:no|not|never|cancel|do\s+not|don[
 const CONTEXTUAL_TOOL_RETRY_PATTERN = /\b(?:try\s+(?:(?:it|that)\s+)?(?:again|once\s+more)|retry(?:\s+(?:it|that))?|give\s+(?:it|that)\s+another\s+(?:try|shot)|run\s+(?:it|that)\s+again|one\s+more\s+time)\b/i;
 const ASSISTANT_PROPOSAL_PATTERN = /(?:would\s+you\s+like\s+me\s+to|do\s+you\s+want\s+me\s+to|shall\s+i|should\s+i|may\s+i|can\s+i|i\s+(?:can|could|will)|i['’]ll|let\s+me)\s+([^.!?;]+)/gi;
 const NON_ACTION_PROPOSAL_PATTERN = /^(?:explain|describe|discuss|tell\s+you\s+(?:about|how)|show\s+you\s+how|walk\s+you\s+through)\b/i;
+const SELF_DECLARATIVE_PROPOSAL_PATTERN = /^i(?:\s+(?:can|could|will)|['’]ll)\b/i;
+const ACTION_PROPOSAL_PATTERN = /^(?:add|archive|book|cancel|change|check|complete|connect|create|delete|diagnose|draft|edit|generate|handle|log|look\s+up|make|mark|move|open|post|read|record|remove|rename|reply|reschedule|run|save|schedule|search|send|set|share|start|submit|take\s+care\s+of|track|update|upload|write)\b/i;
 
 const DYNAMIC_TOOL_STOP_WORDS = new Set([
   "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "into", "is", "it",
@@ -510,6 +512,7 @@ function extractAssistantActionProposal(text: string): string | null {
     const { proposal, source } = proposals[index];
     if (/\bor\b/i.test(proposal) || NON_ACTION_PROPOSAL_PATTERN.test(proposal)) return null;
     if (CONTEXTUAL_TOOL_NEGATION_PATTERN.test(source)) continue;
+    if (SELF_DECLARATIVE_PROPOSAL_PATTERN.test(source) && !ACTION_PROPOSAL_PATTERN.test(proposal)) continue;
     if (/^(?:do\s+(?:it|that)|go\s+ahead|proceed)$/i.test(proposal)) continue;
     return proposal;
   }

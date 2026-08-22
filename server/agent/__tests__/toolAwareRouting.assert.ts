@@ -178,6 +178,14 @@ for (const refusal of [
 }
 
 {
+  const plan = classifyToolAwareConversationRoute([
+    { role: "assistant", content: "I can see your reminder is scheduled for 3 PM." },
+    { role: "user", content: "Okay." },
+  ]);
+  assert(!plan.shouldPreferTool, "contextual confirmation: rejects descriptive status statements");
+}
+
+{
   const relevant = selectRelevantToolNames(
     "Move the Acme card to Done in Trello",
     [
