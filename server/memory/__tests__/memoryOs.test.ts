@@ -543,6 +543,7 @@ async function main(): Promise<void> {
       };
     },
     findCorrectionBySource: async () => null,
+    findPendingCorrectionByTarget: async () => null,
     writeMemory: async (input) => {
       correctionWriteInputs.push(input);
       return {
@@ -585,6 +586,9 @@ async function main(): Promise<void> {
       pendingReview: true,
       reviewStatus: "pending",
     }),
+    findPendingCorrectionByTarget: async () => {
+      throw new Error("an existing source correction must bypass target lookup");
+    },
     writeMemory: async () => {
       duplicateWriteCalled = true;
       throw new Error("duplicate correction must not write again");
@@ -615,6 +619,7 @@ async function main(): Promise<void> {
         ? null
         : { id: "memory-os-correction-race", pendingReview: true, reviewStatus: "pending" };
     },
+    findPendingCorrectionByTarget: async () => null,
     writeMemory: async () => {
       throw Object.assign(new Error("duplicate correction source"), { code: "23505" });
     },
@@ -623,6 +628,45 @@ async function main(): Promise<void> {
   assert.equal(racedCorrection.recorded, false);
   assert.equal(racedCorrection.correctionMemoryId, "memory-os-correction-race");
   assert.equal(racedCorrection.status, "review_required");
+
+  let targetRaceLookupCount = 0;
+  const targetRacedCorrection = await recordMemoryCorrection({
+    ...correctionInput,
+    source: { ...correctionInput.source, eventId: "runtime-memory-event-2" },
+  }, {
+    loadCurrentMemory: async () => ({
+      id: "memory-os-1",
+      content: "The user starts daily planning at 9:00.",
+      category: "preferences",
+      tier: "long_term",
+      memoryType: "semantic",
+      confidence: 91,
+      sourceType: "manual",
+      sourceRef: "runtime-memory-event-original",
+      sensitivity: "normal",
+      provenance: [],
+    }),
+    findCorrectionBySource: async () => null,
+    findPendingCorrectionByTarget: async () => {
+      targetRaceLookupCount += 1;
+      return targetRaceLookupCount === 1
+        ? null
+        : {
+            id: "memory-os-other-pending-correction",
+            content: "The user starts daily planning at 8:45.",
+            pendingReview: true,
+            reviewStatus: "pending",
+          };
+    },
+    writeMemory: async () => {
+      throw Object.assign(new Error("duplicate pending correction target"), { code: "23505" });
+    },
+  });
+  assert.equal(targetRaceLookupCount, 2);
+  assert.equal(targetRacedCorrection.recorded, false);
+  assert.equal(targetRacedCorrection.correctionMemoryId, "memory-os-other-pending-correction");
+  assert.equal(targetRacedCorrection.status, "conflict");
+  assert.match(targetRacedCorrection.reason, /different correction/);
 
   const staleCorrection = await recordMemoryCorrection(correctionInput, {
     loadCurrentMemory: async () => ({
@@ -638,6 +682,7 @@ async function main(): Promise<void> {
       provenance: [],
     }),
     findCorrectionBySource: async () => null,
+    findPendingCorrectionByTarget: async () => null,
     writeMemory: async () => {
       throw new Error("stale correction must not be queued");
     },
@@ -666,6 +711,7 @@ async function main(): Promise<void> {
       }],
     }),
     findCorrectionBySource: async () => null,
+    findPendingCorrectionByTarget: async () => null,
     writeMemory: async () => {
       restrictedCorrectionWriteCalled = true;
       throw new Error("restricted corrections must not enter normal Memory Review");
