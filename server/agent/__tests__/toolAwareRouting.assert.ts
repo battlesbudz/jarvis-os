@@ -144,6 +144,16 @@ for (const retry of ["Retry that.", "Try it once more.", "Give it another shot."
 }
 
 {
+  const plan = classifyToolAwareConversationRoute([
+    { role: "user", content: "Generate an image of a cat" },
+    { role: "assistant", content: "The image tool failed." },
+    { role: "user", content: "Try again." },
+  ]);
+  assert(!plan.intents.includes("diagnostics"), "contextual retry: ignores diagnostic words in failure text");
+  assert(!plan.priorityToolNames.includes("jarvis_self_diagnose"), "contextual retry: does not replace the original action with diagnostics");
+}
+
+{
   const relevant = selectRelevantToolNames(
     "Move the Acme card to Done in Trello",
     [

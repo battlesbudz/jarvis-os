@@ -628,9 +628,17 @@ export function classifyToolAwareConversationRoute(
   const contextFloor = Math.max(0, lastUserIndex - 2);
   for (let index = lastUserIndex - 1; index >= contextFloor; index -= 1) {
     const message = messages[index];
-    if (typeof message?.content !== "string") continue;
-    if (message.role !== "assistant" && message.role !== "user") continue;
+    if (message?.role !== "user" || typeof message.content !== "string") continue;
     const contextualRoute = classifyToolAwareRoute(message.content);
+    if (contextualRoute.shouldPreferTool) return contextualRoute;
+  }
+
+  for (let index = lastUserIndex - 1; index >= contextFloor; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "assistant" || typeof message.content !== "string") continue;
+    const proposal = extractAssistantActionProposal(message.content);
+    if (!proposal) continue;
+    const contextualRoute = classifyToolAwareRoute(proposal);
     if (contextualRoute.shouldPreferTool) return contextualRoute;
   }
 
