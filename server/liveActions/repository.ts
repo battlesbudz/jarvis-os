@@ -182,7 +182,10 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
     }
 
     if (!wasInserted) {
-      const staleProjection = row.updatedAt.getTime() > values.updatedAt.getTime();
+      const sameTimestampApprovalRegression = row.updatedAt.getTime() === values.updatedAt.getTime()
+        && row.status === "running"
+        && values.status === "waiting_approval";
+      const staleProjection = row.updatedAt.getTime() > values.updatedAt.getTime() || sameTimestampApprovalRegression;
       if (!staleProjection && (projectionChanged(row, values) || insertedEventCount > 0)) {
         [row] = await tx
           .update(schema.liveActions)

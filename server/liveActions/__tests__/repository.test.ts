@@ -104,6 +104,24 @@ async function main(): Promise<void> {
       "identical source events remain idempotent even when replayed twice",
     );
 
+    const approvalRace = {
+      ...staleProjection,
+      sourceId: `${marker}-approval-job`,
+      sourceLineageKey: `${marker}-approval-lineage`,
+      status: "running" as const,
+    };
+    const runningApprovalAction = await persistAgentJobProjection(approvalRace);
+    await persistAgentJobProjection({
+      ...approvalRace,
+      status: "waiting_approval",
+      attention: { kind: "approval" as const, reason: "Approval required" },
+    });
+    assert.equal(
+      (await getLiveActionForUser(userId, runningApprovalAction.id))?.status,
+      "running",
+      "an equal-timestamp pending snapshot cannot regress a resolved approval",
+    );
+
     const oldCreatedAt = new Date(createdAt.getTime() - 31 * 24 * 60 * 60 * 1_000);
     const [oldJob] = await db.insert(schema.agentJobs).values({
       id: `${marker}-old-job`,
