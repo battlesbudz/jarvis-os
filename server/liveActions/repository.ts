@@ -193,9 +193,30 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
     if (!wasInserted) {
       const sameTimestampConflict = row.updatedAt.getTime() === values.updatedAt.getTime()
         && projectionChanged(row, values);
-      const [canonicalJob] = sameTimestampConflict
+      const canonicalAttempt = sameTimestampConflict
+        ? await tx.execute(sql`
+            WITH RECURSIVE retry_family AS (
+              SELECT id, created_at
+              FROM agent_jobs
+              WHERE user_id = ${projection.userId}
+                AND (
+                  id = ANY(${[projection.sourceLineageKey, projection.sourceId, row.sourceId]}::varchar[])
+                  OR input->>'liveActionLineageKey' = ${projection.sourceLineageKey}
+                  OR input->>'retryOfJobId' = ${projection.sourceLineageKey}
+                )
+              UNION
+              SELECT child.id, child.created_at
+              FROM agent_jobs child
+              JOIN retry_family parent ON child.input->>'retryOfJobId' = parent.id
+              WHERE child.user_id = ${projection.userId}
+            )
+            SELECT id FROM retry_family ORDER BY created_at DESC, id DESC LIMIT 1
+          `)
+        : null;
+      const canonicalJobId = (canonicalAttempt?.rows?.[0] as { id?: unknown } | undefined)?.id;
+      const [canonicalJob] = typeof canonicalJobId === "string"
         ? await tx.select().from(schema.agentJobs).where(and(
-            eq(schema.agentJobs.id, projection.sourceId),
+            eq(schema.agentJobs.id, canonicalJobId),
             eq(schema.agentJobs.userId, projection.userId),
           )).limit(1).for("update")
         : [];

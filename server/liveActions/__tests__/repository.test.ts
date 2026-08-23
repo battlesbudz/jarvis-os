@@ -241,6 +241,26 @@ async function main(): Promise<void> {
       .filter((action) => historicalIds.includes(action.source.id));
     assert.equal(historicalActions.length, 1, "historical retry descendants share one root lineage");
     assert.equal(historicalActions[0]?.source.id, historicalIds[2], "the latest retry owns the shared action");
+
+    const equalRetryIds = [`${marker}-equal-attempt-a`, `${marker}-equal-attempt-z`];
+    const [equalFailedJob, equalRetryJob] = await db.insert(schema.agentJobs).values([
+      {
+        id: equalRetryIds[0], userId, agentType: "research", title: "Equal-time retry",
+        prompt: "First attempt", status: "failed", createdAt, completedAt: createdAt,
+      },
+      {
+        id: equalRetryIds[1], userId, agentType: "research", title: "Equal-time retry",
+        prompt: "Second attempt", input: { retryOfJobId: equalRetryIds[0] }, status: "queued", createdAt,
+      },
+    ]).returning();
+    const equalRetryAction = await persistAgentJobProjection(projectAgentJob(equalRetryJob, new Set(), equalRetryIds[0]));
+    await persistAgentJobProjection(projectAgentJob(equalFailedJob));
+    assert.equal(
+      (await getLiveActionForUser(userId, equalRetryAction.id))?.source.id,
+      equalRetryIds[1],
+      "an equal-timestamp older attempt cannot replace the canonical retry",
+    );
+
     await db.update(schema.agentJobs).set({ status: "complete", completedAt: new Date() })
       .where(eq(schema.agentJobs.id, historicalIds[2]));
     await reconcileAgentJobsForUser(userId, { status: "failed" });
