@@ -2963,11 +2963,15 @@ export default function InsightsScreen() {
           Alert.alert('Unsupported file', `${asset.name} is not a supported file type.`);
           continue;
         }
-        if ((asset.size ?? 0) > MAX_CHAT_ATTACHMENT_BYTES) {
+        if (asset.size == null) {
+          Alert.alert('Could not verify file size', `${asset.name} does not report a size. Download it locally and try again.`);
+          continue;
+        }
+        if (asset.size > MAX_CHAT_ATTACHMENT_BYTES) {
           Alert.alert('File too large', `${asset.name} is larger than 10MB.`);
           continue;
         }
-        if (asset.size != null && totalBytes + asset.size > MAX_CHAT_ATTACHMENTS_TOTAL_BYTES) {
+        if (totalBytes + asset.size > MAX_CHAT_ATTACHMENTS_TOTAL_BYTES) {
           Alert.alert('Attachments too large', 'Attachments can be up to 20MB combined.');
           break;
         }

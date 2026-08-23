@@ -83,3 +83,8 @@ assert.ok(chatSource.indexOf("await abortActiveChatTurn();") < chatSource.indexO
 assert.ok(coachSessionRouteSource.includes("if (!run.done) activeCoachRuns.delete(runId)"), "client abort should retain active app runs until route cleanup resolves them");
 assert.ok(chatSource.includes("const contextMessages = historyBeforeRequest.slice(0, CONTEXT_WINDOW)"), "request context should reuse the persisted snapshot without duplicating the new user turn");
 assert.match(routeSource, /if \(!clientDisconnected\) \{[\s\S]*?res\.write\('data: \[DONE\]\\n\\n'\);[\s\S]*?res\.end\(\);\n      \}\n      cleanupRun\(\);/, "successful final synthesis should emit completion before aborting its lifecycle controller");
+
+assert.ok(documentSource.includes('logPrefix: "[ImageExtraction]"'), "image extraction must use the configured routed provider chain");
+assert.ok(!documentSource.includes("hasDirectOpenAIProvider"), "image attachments must not require a direct OpenAI key");
+assert.ok(chatSource.includes("if (asset.size == null)"), "files with unknown size must be rejected before reading bytes");
+assert.ok(chatSource.indexOf("if (asset.size == null)") < chatSource.indexOf("const data = await readAttachmentBase64(asset.uri)"), "unknown-size validation must run before file materialization");
