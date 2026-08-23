@@ -140,6 +140,11 @@ function classifyError(error: string): string {
   return "execution";
 }
 
+function isWorkflowOwned(job: AgentJobRow): boolean {
+  const workflowId = inputOf(job).workflowId;
+  return typeof workflowId === "string" && !!workflowId.trim();
+}
+
 function capabilities(job: AgentJobRow): LiveActionControlCapability[] {
   const result: LiveActionControlCapability[] = [];
   if (["queued", "running", "resource_paused", "cancelling"].includes(job.status)) {
@@ -150,7 +155,7 @@ function capabilities(job: AgentJobRow): LiveActionControlCapability[] {
       targetRoute: `/api/agent-jobs/${job.id}/cancel`,
     });
   }
-  if (["failed", "cancelled"].includes(job.status)) {
+  if (["failed", "cancelled"].includes(job.status) && !isWorkflowOwned(job)) {
     result.push({ type: "retry", enabled: true, targetRoute: `/api/agent-jobs/${job.id}/retry` });
   }
   return result;
@@ -279,7 +284,7 @@ export function projectAgentJob(
     capabilities: capabilities(job),
     artifacts: [],
     error: status === "failed" && errorSummary
-      ? { category: classifyError(job.error ?? ""), summary: errorSummary, retryEligible: true }
+      ? { category: classifyError(job.error ?? ""), summary: errorSummary, retryEligible: !isWorkflowOwned(job) }
       : null,
     createdAt: job.createdAt,
     startedAt: job.startedAt,

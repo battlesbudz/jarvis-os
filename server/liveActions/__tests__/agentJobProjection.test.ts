@@ -135,6 +135,18 @@ assert.equal(failed.status, "failed");
 assert.equal(failed.error?.retryEligible, true);
 assert.doesNotMatch(failed.error?.summary ?? "", /justin|secret-value/);
 
+const failedWorkflowStep = projectAgentJob(job({
+  status: "failed",
+  error: "Workflow step failed",
+  completedAt: now,
+  input: { workflowId: "workflow-1", workflowStepIndex: 0 },
+}));
+assert.ok(
+  !failedWorkflowStep.capabilities.some((capability) => capability.type === "retry"),
+  "workflow-owned failures do not advertise a retry that cannot reactivate the workflow",
+);
+assert.equal(failedWorkflowStep.error?.retryEligible, false);
+
 const retry = projectAgentJob(job({
   id: "job-2",
   input: {
