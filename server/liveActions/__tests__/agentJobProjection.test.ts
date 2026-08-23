@@ -34,6 +34,14 @@ function job(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
 
 assert.equal(sanitizeLiveActionText("Authorization: Bearer abc.def.ghi"), "authorization: [redacted]");
 assert.equal(sanitizeLiveActionText("Cookie: session=super-secret"), "cookie: [redacted]");
+assert.equal(
+  sanitizeLiveActionText("postgres://user:password@database.example/app"),
+  "postgres://[credentials redacted]@database.example/app",
+);
+assert.equal(
+  sanitizeLiveActionText("Request failed for https://client:secret@provider.example/token"),
+  "Request failed for https://[credentials redacted]@provider.example/token",
+);
 assert.equal(sanitizeLiveActionText("Shell command: curl https://private.example"), "command: [redacted]");
 assert.equal(sanitizeLiveActionText("$ rm -rf /home/justin/private"), "[command redacted]");
 assert.equal(sanitizeLiveActionText("Output at /Users/justin/private/report.md"), "Output at [private path]");

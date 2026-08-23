@@ -283,6 +283,10 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
     ? [
         eq(schema.liveActions.userId, userId),
         eq(schema.liveActions.status, opts.status),
+        or(
+          inArray(schema.liveActions.status, ACTIVE_STATUSES),
+          gte(schema.liveActions.completedAt, terminalCutoff),
+        )!,
         ...(opts.projectId ? [eq(schema.liveActions.projectId, opts.projectId)] : []),
         ...(opts.sourceLineageKey ? [eq(schema.liveActions.sourceLineageKey, opts.sourceLineageKey)] : []),
       ]
@@ -301,6 +305,8 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
     projectedActionConditions.length > 0
       ? db.select({ sourceId: schema.liveActions.sourceId }).from(schema.liveActions)
           .where(and(...projectedActionConditions))
+          .orderBy(desc(schema.liveActions.updatedAt))
+          .limit(500)
       : Promise.resolve([]),
   ]);
   const projectedSourceIds = [...new Set(matchingProjectedActions.map((action) => action.sourceId))];

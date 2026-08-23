@@ -21,6 +21,7 @@ export function sanitizeLiveActionText(value: unknown, maxLength = 500): string 
     .replace(/\b(?:authorization|proxy-authorization)\s*:\s*[^\r\n]+/gi, "authorization: [redacted]")
     .replace(/\b(?:cookie|set-cookie)\s*[:=]\s*[^\r\n]+/gi, "cookie: [redacted]")
     .replace(/\b(?:shell\s+)?command\s*:\s*[^\r\n]+/gi, "command: [redacted]")
+    .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s\/:@]+:[^\s\/@]+@/gi, "$1[credentials redacted]@")
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
     .replace(/\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{12,}\b/g, "[redacted token]")
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[redacted token]")
