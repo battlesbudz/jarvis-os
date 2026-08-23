@@ -475,6 +475,74 @@ async function main(): Promise<void> {
       "terminal filters do not reconcile the rest of an active backlog",
     );
 
+    const olderWaitingId = `${marker}-active-bound-older-waiting`;
+    const olderWaitingGateId = `${marker}-active-bound-older-waiting-gate`;
+    await db.insert(schema.agentApprovalGates).values({
+      id: olderWaitingGateId,
+      agentId: approvalAgentId,
+      userId,
+      toolName: "older_waiting_test",
+      description: "Keep an older running job pending",
+      expiresAt: new Date(createdAt.getTime() + 60_000),
+    });
+    const olderWaitingRuntime = appendWorkerRuntimeEvent(
+      buildInitialWorkerRuntime({
+        agentType: "research",
+        title: "Older pending approval",
+        now: new Date(createdAt.getTime() - 2 * 24 * 60 * 60 * 1_000),
+      }),
+      buildWorkerRuntimeEvent({
+        type: "approval_required",
+        workerType: "research",
+        message: "Approval required",
+        checkpoint: {
+          id: olderWaitingGateId,
+          gateId: olderWaitingGateId,
+          reason: "Approve the older job",
+          requiredFor: "research",
+        },
+        now: new Date(createdAt.getTime() - 2 * 24 * 60 * 60 * 1_000 + 1_000),
+        userVisible: true,
+      }),
+    );
+    await db.insert(schema.agentJobs).values({
+      id: olderWaitingId,
+      userId,
+      agentType: "research",
+      title: "Older pending approval",
+      prompt: "Wait behind newer running jobs",
+      input: { projectId: activeBoundProjectId, workerRuntime: olderWaitingRuntime },
+      status: "running",
+      createdAt: new Date(createdAt.getTime() - 2 * 24 * 60 * 60 * 1_000),
+      startedAt: new Date(createdAt.getTime() - 2 * 24 * 60 * 60 * 1_000),
+    });
+    await reconcileAgentJobsForUser(userId, { status: "waiting_approval", projectId: activeBoundProjectId, limit: 1 });
+    assert.ok(
+      (await listLiveActionsForUser({ userId, status: "waiting_approval", projectId: activeBoundProjectId, limit: 1 }))
+        .some((action) => action.source.id === olderWaitingId),
+      "active filtering pages past newer running jobs until a projected approval match is found",
+    );
+
+    const freshestCancellationId = `${marker}-active-bound-cancelling`;
+    const freshestCancellationAt = new Date(createdAt.getTime() + 120_000);
+    await db.insert(schema.agentJobs).values({
+      id: freshestCancellationId,
+      userId,
+      agentType: "research",
+      title: "Older job with fresh cancellation",
+      prompt: "Cancel now",
+      input: { projectId: activeBoundProjectId, cancelRequestedAt: freshestCancellationAt.toISOString() },
+      status: "cancelling",
+      createdAt: new Date(createdAt.getTime() - 3 * 24 * 60 * 60 * 1_000),
+      startedAt: new Date(createdAt.getTime() - 3 * 24 * 60 * 60 * 1_000),
+    });
+    await reconcileAgentJobsForUser(userId, { projectId: activeBoundProjectId, limit: 2 });
+    assert.ok(
+      (await listLiveActionsForUser({ userId, projectId: activeBoundProjectId, limit: 2 }))
+        .some((action) => action.source.id === freshestCancellationId),
+      "active candidate recency includes durable cancellation requests",
+    );
+
     const [filteredRunningJob] = await db.insert(schema.agentJobs).values({
       id: `${marker}-filtered-running`,
       userId,

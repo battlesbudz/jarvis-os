@@ -143,11 +143,11 @@ function projectionChanged(row: schema.LiveActionRow, values: ReturnType<typeof 
     || row.completedAt?.getTime() !== values.completedAt?.getTime();
 }
 
-async function countCanonicalMatchingLineages(
+async function canonicalMatchingProjectionFamily(
   userId: string,
   status: LiveActionStatus,
   seedJobs: AgentJobRow[],
-): Promise<number> {
+): Promise<{ jobs: AgentJobRow[]; lineageCount: number }> {
   const jobsById = await loadAgentJobRetryFamily(userId, seedJobs, seedJobs.map((job) => job.id));
   const retryGenerations = new Map([...jobsById.values()]
     .map((job) => [job.id, agentJobRetryGeneration(job, jobsById)]));
@@ -182,8 +182,23 @@ async function countCanonicalMatchingLineages(
     : [];
   const pendingGateIds = new Set(gates.filter((gate) => gate.status === "pending").map((gate) => gate.id));
   const gatesById = new Map(gates.map((gate) => [gate.id, gate]));
-  return canonicalJobs.filter(([lineageKey, job]) =>
-    projectAgentJob(job, pendingGateIds, lineageKey, gatesById).status === status).length;
+  const matchingLineageKeys = new Set(canonicalJobs
+    .filter(([lineageKey, job]) =>
+      projectAgentJob(job, pendingGateIds, lineageKey, gatesById).status === status)
+    .map(([lineageKey]) => lineageKey));
+  return {
+    jobs: [...jobsById.values()].filter((job) =>
+      matchingLineageKeys.has(agentJobLineageKey(job, jobsById))),
+    lineageCount: matchingLineageKeys.size,
+  };
+}
+
+async function countCanonicalMatchingLineages(
+  userId: string,
+  status: LiveActionStatus,
+  seedJobs: AgentJobRow[],
+): Promise<number> {
+  return (await canonicalMatchingProjectionFamily(userId, status, seedJobs)).lineageCount;
 }
 
 export async function persistAgentJobProjection(projection: AgentJobLiveActionProjection): Promise<LiveAction> {
@@ -383,6 +398,18 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
   const activeProjectionUpdatedAt = sql<string>`greatest(
     to_char(${schema.agentJobs.createdAt}, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
     coalesce(to_char(${schema.agentJobs.startedAt}, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), ''),
+    coalesce(CASE WHEN ${schema.agentJobs.input}->>'cancelRequestedAt'
+      ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
+      THEN ${schema.agentJobs.input}->>'cancelRequestedAt' END, ''),
+    coalesce(CASE WHEN ${schema.agentJobs.input}->>'requeuedAt'
+      ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
+      THEN ${schema.agentJobs.input}->>'requeuedAt' END, ''),
+    coalesce(CASE WHEN ${schema.agentJobs.input}->'resourcePause'->>'pausedAt'
+      ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
+      THEN ${schema.agentJobs.input}->'resourcePause'->>'pausedAt' END, ''),
+    coalesce(CASE WHEN ${schema.agentJobs.input}->'resourcePause'->>'resumedAt'
+      ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
+      THEN ${schema.agentJobs.input}->'resourcePause'->>'resumedAt' END, ''),
     coalesce((
       SELECT max(runtime_event->>'createdAt')
       FROM jsonb_array_elements(
@@ -394,16 +421,56 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
       ) AS runtime_event
       WHERE runtime_event->>'createdAt'
         ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
+    ), ''),
+    coalesce((
+      SELECT max(to_char(approval_gate.resolved_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+      FROM jsonb_array_elements(
+        CASE
+          WHEN jsonb_typeof(${schema.agentJobs.input}->'workerRuntime'->'approvalCheckpoints') = 'array'
+            THEN ${schema.agentJobs.input}->'workerRuntime'->'approvalCheckpoints'
+          ELSE '[]'::jsonb
+        END
+      ) AS approval_checkpoint
+      JOIN agent_approval_gates approval_gate
+        ON approval_gate.id = approval_checkpoint->>'gateId'
+        AND approval_gate.user_id = ${schema.agentJobs.userId}
     ), '')
   )`;
-  const activeJobs = activeSourceStatuses.length > 0
-    ? await db.select().from(schema.agentJobs).where(and(
-        ...scope,
-        inArray(schema.agentJobs.status, activeSourceStatuses),
-      ))
-      .orderBy(desc(activeProjectionUpdatedAt), desc(schema.agentJobs.id))
-      .limit(targetLineages)
-    : [];
+  let activeJobs: AgentJobRow[] = [];
+  if (activeSourceStatuses.length > 0) {
+    if (!opts.status) {
+      activeJobs = await db.select().from(schema.agentJobs).where(and(
+          ...scope,
+          inArray(schema.agentJobs.status, activeSourceStatuses),
+        ))
+        .orderBy(desc(activeProjectionUpdatedAt), desc(schema.agentJobs.id))
+        .limit(targetLineages);
+    } else {
+      const activeCandidates: AgentJobRow[] = [];
+      let activeCursor: { id: string; updatedAt: string } | undefined;
+      do {
+        const page = await db.select({
+          job: schema.agentJobs,
+          updatedAt: activeProjectionUpdatedAt,
+        }).from(schema.agentJobs).where(and(
+          ...scope,
+          inArray(schema.agentJobs.status, activeSourceStatuses),
+          ...(activeCursor ? [or(
+            lt(activeProjectionUpdatedAt, activeCursor.updatedAt),
+            and(eq(activeProjectionUpdatedAt, activeCursor.updatedAt), lt(schema.agentJobs.id, activeCursor.id)),
+          )!] : []),
+        )).orderBy(desc(activeProjectionUpdatedAt), desc(schema.agentJobs.id)).limit(500);
+        activeCandidates.push(...page.map((entry) => entry.job));
+        const matchingFamily = await canonicalMatchingProjectionFamily(userId, opts.status, activeCandidates);
+        if (matchingFamily.lineageCount >= targetLineages || page.length < 500) {
+          activeJobs = matchingFamily.jobs;
+          break;
+        }
+        const last = page.at(-1)!;
+        activeCursor = { id: last.job.id, updatedAt: last.updatedAt };
+      } while (activeCursor);
+    }
+  }
   const retainedJobs: Array<typeof schema.agentJobs.$inferSelect> = [];
   const sourceUpdatedAt = sql<Date>`greatest(${schema.agentJobs.createdAt}, coalesce(${schema.agentJobs.completedAt}, ${schema.agentJobs.createdAt}))`;
   let sourceCursor: { id: string; updatedAt: Date } | undefined;
