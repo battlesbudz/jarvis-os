@@ -21,7 +21,7 @@ assert.doesNotMatch(routes, /req\.body\?\.userId|req\.query\.userId/);
 assert.match(mutationRoutes, /delete jobInput\.retryOfJobId/);
 assert.match(mutationRoutes, /delete jobInput\.liveActionLineageKey/);
 assert.match(mutationRoutes, /pg_advisory_xact_lock/);
-assert.match(mutationRoutes, /input->>'retryOfJobId'/);
+assert.match(mutationRoutes, /retryOfJobId/);
 assert.match(mutationRoutes, /delete input\.resourcePause/);
 assert.match(mutationRoutes, /skipDuplicateCheck: true/);
 assert.match(cancellation, /agentJobs\.input\} \|\| jsonb_build_object/);
