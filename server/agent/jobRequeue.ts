@@ -7,13 +7,13 @@ export function staleJobRequeueUpdate(now = new Date(), error?: string) {
     status: "queued",
     startedAt: null,
     input: sql`${schema.agentJobs.input} || jsonb_build_object(
-      'requeuedAt', ${requeuedAt},
+      'requeuedAt', ${requeuedAt}::text,
       'requeueHistory', jsonb_path_query_array(
         (CASE
           WHEN jsonb_typeof(${schema.agentJobs.input}->'requeueHistory') = 'array'
             THEN ${schema.agentJobs.input}->'requeueHistory'
           ELSE '[]'::jsonb
-        END) || jsonb_build_array(${requeuedAt}),
+        END) || jsonb_build_array(${requeuedAt}::text),
         '$[last - 199 to last]'
       )
     )`,
