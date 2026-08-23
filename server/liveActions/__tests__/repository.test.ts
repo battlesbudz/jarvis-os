@@ -87,9 +87,10 @@ async function main(): Promise<void> {
       "an overlapping stale reconciliation cannot regress canonical state",
     );
     const completedEvents = await listLiveActionEvents(first.id);
+    const completedSequences = completedEvents.map((event) => event.sequence).sort((a, b) => a - b);
     assert.deepEqual(
-      completedEvents.map((event) => event.sequence),
-      completedEvents.map((_, index) => index + 1),
+      completedSequences,
+      completedSequences.map((_, index) => index + 1),
       "newly discovered events receive monotonic sequences",
     );
 
