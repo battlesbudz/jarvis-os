@@ -40,6 +40,18 @@ async function main(): Promise<void> {
   assert.deepEqual(result, { id: "job-retry", isDuplicate: false });
   assert.equal(insertedInput?.retryOfJobId, "job-failed");
   assert.equal(insertedInput?.liveActionLineageKey, "job-root");
+
+  duplicateChecks = 0;
+  const trusted = await submitAgentJob(retryInput, {
+    skipDuplicateCheck: true,
+    findDuplicate: async () => {
+      duplicateChecks += 1;
+      return { id: "unrelated-active-job", title: "Retry research" };
+    },
+    insertJob: async () => "trusted-retry",
+  });
+  assert.deepEqual(trusted, { id: "trusted-retry", isDuplicate: false });
+  assert.equal(duplicateChecks, 0, "validated retries bypass unrelated title dedupe");
 }
 
 main().then(() => console.log("Live Action retry lineage and duplicate-guard assertions passed.")).catch((error) => {

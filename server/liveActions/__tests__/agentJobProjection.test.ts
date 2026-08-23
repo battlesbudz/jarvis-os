@@ -112,9 +112,15 @@ assert.doesNotMatch(failed.error?.summary ?? "", /justin|secret-value/);
 
 const retry = projectAgentJob(job({
   id: "job-2",
-  input: { ...(job().input as Record<string, unknown>), retryOfJobId: "job-1", liveActionLineageKey: "job-root" },
+  input: {
+    ...(job().input as Record<string, unknown>),
+    retryOfJobId: "job-1",
+    liveActionLineageKey: "job-root",
+    retriedAt: "2026-08-23T12:02:00.000Z",
+  },
 }));
 assert.equal(retry.sourceLineageKey, "job-root");
+assert.equal(retry.events.filter((event) => event.type === "action.retry_scheduled").length, 1);
 assert.equal(projectAgentJob(job({ input: { liveActionLineageKey: "forged-lineage" } })).sourceLineageKey, "job-1");
 
 const cancelRequestedAt = "2026-08-23T12:03:00.000Z";

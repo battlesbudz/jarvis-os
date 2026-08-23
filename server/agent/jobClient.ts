@@ -47,6 +47,8 @@ export interface SubmitJobDeps {
   db?: Pick<typeof db, "select" | "insert">;
   /** Duplicate-check function. Defaults to the real findDuplicateJob. */
   findDuplicate?: typeof findDuplicateJob;
+  /** Trusted callers may skip title dedupe after validating a specific retry source. */
+  skipDuplicateCheck?: boolean;
   /**
    * DB insert function. Defaults to the real drizzle insert.
    * Tests can stub this to verify insertion behaviour without a database.
@@ -171,7 +173,7 @@ export async function submitAgentJob(
     !Array.isArray(cloudBackgroundTask);
 
   // ── Deduplication check ────────────────────────────────────────────────────
-  if (!isCloudBackgroundJob) {
+  if (!isCloudBackgroundJob && !deps.skipDuplicateCheck) {
     try {
       const existing = await guardFn(
         input.userId,
@@ -192,10 +194,12 @@ export async function submitAgentJob(
         dupErr,
       );
     }
-  } else {
+  } else if (isCloudBackgroundJob) {
     console.log(
       `[JobQueue] duplicate guard bypassed for approved cloud background job type=${input.agentType} user=${input.userId} title="${input.title.slice(0, 60)}"`,
     );
+  } else {
+    console.log(`[JobQueue] duplicate guard bypassed for validated retry type=${input.agentType} user=${input.userId}`);
   }
 
   // Auto-inject the routed model when the caller has not provided one.

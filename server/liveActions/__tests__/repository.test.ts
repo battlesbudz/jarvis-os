@@ -165,6 +165,15 @@ async function main(): Promise<void> {
       "waiting_approval",
       "a canonical pending gate permits a genuine equal-timestamp approval transition",
     );
+    const approvalResolvedAt = new Date(createdAt.getTime() + 1_000);
+    await db.update(schema.agentApprovalGates).set({ status: "approved", resolvedAt: approvalResolvedAt })
+      .where(eq(schema.agentApprovalGates.id, pendingGateId));
+    await reconcileAgentJobsForUser(userId);
+    assert.ok(
+      (await listLiveActionEvents(genuineRunningAction.id)).some((event) =>
+        event.type === "action.approval_resolved" && event.createdAt === approvalResolvedAt.toISOString()),
+      "resolved approval gates append a durable resolution event",
+    );
 
     const [equalTimeCompletedJob] = await db.insert(schema.agentJobs).values({
       id: `${marker}-equal-time-complete`,
@@ -321,6 +330,19 @@ async function main(): Promise<void> {
     oldAction = (await listLiveActionsForUser({ userId, limit: 100 }))
       .find((action) => action.source.id === oldJob.id);
     assert.equal(oldAction?.status, "succeeded", "recent completion refreshes jobs created outside retention");
+
+    const expiredAt = new Date(createdAt.getTime() - 31 * 24 * 60 * 60 * 1_000);
+    const expiredDetail = await persistAgentJobProjection(projectAgentJob({
+      ...oldJob,
+      id: `${marker}-expired-detail`,
+      status: "complete",
+      completedAt: expiredAt,
+    }));
+    assert.equal(
+      await getLiveActionForUser(userId, expiredDetail.id),
+      null,
+      "detail reads enforce terminal retention",
+    );
 
     assert.equal(await getLiveActionForUser(otherUserId, first.id), null, "cross-user detail reads are rejected");
     assert.equal((await listLiveActionsForUser({ userId: otherUserId })).length, 0, "cross-user snapshots are empty");

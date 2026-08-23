@@ -228,18 +228,22 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
       const canonicalGateId = canonicalJob
         ? getWorkerRuntimeFromInput(canonicalInput)?.approvalCheckpoints.at(-1)?.gateId
         : undefined;
-      const [canonicalPendingGate] = canonicalGateId
-        ? await tx.select({ id: schema.agentApprovalGates.id }).from(schema.agentApprovalGates).where(and(
+      const [canonicalGate] = canonicalGateId
+        ? await tx.select({
+            id: schema.agentApprovalGates.id,
+            status: schema.agentApprovalGates.status,
+            resolvedAt: schema.agentApprovalGates.resolvedAt,
+          }).from(schema.agentApprovalGates).where(and(
             eq(schema.agentApprovalGates.id, canonicalGateId),
             eq(schema.agentApprovalGates.userId, projection.userId),
-            eq(schema.agentApprovalGates.status, "pending"),
           )).limit(1).for("update")
         : [];
       const canonicalValues = canonicalJob
         ? projectionValues(projectAgentJob(
             canonicalJob,
-            canonicalPendingGate ? new Set([canonicalPendingGate.id]) : new Set(),
+            canonicalGate?.status === "pending" ? new Set([canonicalGate.id]) : new Set(),
             projection.sourceLineageKey,
+            canonicalGate ? new Map([[canonicalGate.id, canonicalGate]]) : new Map(),
           ))
         : null;
       const staleProjection = row.updatedAt.getTime() > values.updatedAt.getTime()
@@ -314,17 +318,13 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
         ...(opts.sourceLineageKey ? [eq(schema.liveActions.sourceLineageKey, opts.sourceLineageKey)] : []),
       ]
     : [];
-  const [activeJobs, recentJobs, recentlyCompletedJobs, pendingGates, matchingProjectedActions] = await Promise.all([
+  const [activeJobs, recentJobs, recentlyCompletedJobs, matchingProjectedActions] = await Promise.all([
     db.select().from(schema.agentJobs).where(and(
       ...scope,
       inArray(schema.agentJobs.status, ["queued", "running", "cancelling", "resource_paused"]),
     )),
     recentJobsQuery.limit(500),
     recentlyCompletedJobsQuery.limit(500),
-    db.select({ id: schema.agentApprovalGates.id }).from(schema.agentApprovalGates).where(and(
-      eq(schema.agentApprovalGates.userId, userId),
-      eq(schema.agentApprovalGates.status, "pending"),
-    )),
     projectedActionConditions.length > 0
       ? db.select({ sourceId: schema.liveActions.sourceId }).from(schema.liveActions)
           .where(and(...projectedActionConditions))
@@ -370,11 +370,29 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
   const jobsById = await loadAgentJobRetryFamily(userId, seedJobs, descendantRoots);
   const jobs = [...jobsById.values()];
   const retryGenerations = new Map(jobs.map((job) => [job.id, agentJobRetryGeneration(job, jobsById)]));
-  const pendingGateIds = new Set(pendingGates.map((gate) => gate.id));
+  const approvalGateIds = [...new Set(jobs.flatMap((job) => {
+    const input = job.input && typeof job.input === "object" && !Array.isArray(job.input)
+      ? job.input as Record<string, unknown>
+      : {};
+    const gateId = getWorkerRuntimeFromInput(input)?.approvalCheckpoints.at(-1)?.gateId;
+    return gateId ? [gateId] : [];
+  }))];
+  const approvalGates = approvalGateIds.length > 0
+    ? await db.select({
+        id: schema.agentApprovalGates.id,
+        status: schema.agentApprovalGates.status,
+        resolvedAt: schema.agentApprovalGates.resolvedAt,
+      }).from(schema.agentApprovalGates).where(and(
+        eq(schema.agentApprovalGates.userId, userId),
+        inArray(schema.agentApprovalGates.id, approvalGateIds),
+      ))
+    : [];
+  const pendingGateIds = new Set(approvalGates.filter((gate) => gate.status === "pending").map((gate) => gate.id));
+  const approvalGatesById = new Map(approvalGates.map((gate) => [gate.id, gate]));
 
   const grouped = new Map<string, AgentJobLiveActionProjection[]>();
   for (const job of jobs) {
-    const projection = projectAgentJob(job, pendingGateIds, agentJobLineageKey(job, jobsById));
+    const projection = projectAgentJob(job, pendingGateIds, agentJobLineageKey(job, jobsById), approvalGatesById);
     const group = grouped.get(projection.sourceLineageKey) ?? [];
     group.push(projection);
     grouped.set(projection.sourceLineageKey, group);
@@ -422,10 +440,18 @@ export async function listLiveActionsForUser(opts: {
 }
 
 export async function getLiveActionForUser(userId: string, actionId: string): Promise<LiveAction | null> {
+  const terminalCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000);
   const [row] = await db
     .select()
     .from(schema.liveActions)
-    .where(and(eq(schema.liveActions.id, actionId), eq(schema.liveActions.userId, userId)))
+    .where(and(
+      eq(schema.liveActions.id, actionId),
+      eq(schema.liveActions.userId, userId),
+      or(
+        inArray(schema.liveActions.status, ACTIVE_STATUSES),
+        gte(schema.liveActions.completedAt, terminalCutoff),
+      ),
+    ))
     .limit(1);
   return row ? rowToAction(row) : null;
 }

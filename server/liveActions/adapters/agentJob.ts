@@ -43,6 +43,11 @@ export interface AgentJobLiveActionProjection {
   events: ProjectedLiveActionEvent[];
 }
 
+export interface AgentApprovalGateProjection {
+  status: string;
+  resolvedAt: Date | null;
+}
+
 function inputOf(job: AgentJobRow): Record<string, unknown> {
   return job.input && typeof job.input === "object" && !Array.isArray(job.input)
     ? job.input as Record<string, unknown>
@@ -149,6 +154,7 @@ export function projectAgentJob(
   job: AgentJobRow,
   pendingApprovalGateIds: ReadonlySet<string> = new Set(),
   resolvedLineageKey?: string,
+  approvalGates: ReadonlyMap<string, AgentApprovalGateProjection> = new Map(),
 ): AgentJobLiveActionProjection {
   const input = inputOf(job);
   const runtime = getWorkerRuntimeFromInput(input);
@@ -205,9 +211,38 @@ export function projectAgentJob(
   const errorSummary = sanitizeLiveActionText(job.error);
   const fallbackEvent = canonicalEvent(job, status, input);
   const isRequeue = job.status === "queued" && !!dateValue(input.requeuedAt);
-  const events = workerEvents.some((event) => event.type === fallbackEvent.type) && !isRequeue
+  const baseEvents = workerEvents.some((event) => event.type === fallbackEvent.type) && !isRequeue
     ? workerEvents
     : [...workerEvents, fallbackEvent];
+  const retriedAt = typeof input.retryOfJobId === "string" ? dateValue(input.retriedAt) : null;
+  const retryEvent: ProjectedLiveActionEvent | null = retriedAt
+    ? {
+        sourceEventKey: `job:${job.id}:retry:${retriedAt.toISOString()}`,
+        type: "action.retry_scheduled",
+        message: "Retry scheduled",
+        safeMetadata: {},
+        userVisible: true,
+        createdAt: retriedAt,
+      }
+    : null;
+  const approvalGate = checkpoint?.gateId ? approvalGates.get(checkpoint.gateId) : undefined;
+  const approvalResolutionEvent: ProjectedLiveActionEvent | null = checkpoint?.gateId
+    && approvalGate?.status !== "pending"
+    && approvalGate?.resolvedAt
+    ? {
+        sourceEventKey: `gate:${checkpoint.gateId}:resolved:${approvalGate.status}`,
+        type: "action.approval_resolved",
+        message: `Approval ${approvalGate.status}`,
+        safeMetadata: { gateId: checkpoint.gateId },
+        userVisible: true,
+        createdAt: approvalGate.resolvedAt,
+      }
+    : null;
+  const events = [
+    ...baseEvents,
+    ...(retryEvent ? [retryEvent] : []),
+    ...(approvalResolutionEvent ? [approvalResolutionEvent] : []),
+  ];
 
   return {
     userId: job.userId,
