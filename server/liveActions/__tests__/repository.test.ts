@@ -93,6 +93,43 @@ async function main(): Promise<void> {
       "newly discovered events receive monotonic sequences",
     );
 
+    const retentionProjection = {
+      ...staleProjection,
+      sourceId: `${marker}-retention-job`,
+      sourceLineageKey: `${marker}-retention-lineage`,
+      events: Array.from({ length: 200 }, (_, index) => ({
+        sourceEventKey: `${marker}-retention-${String(index).padStart(3, "0")}`,
+        type: "action.progress_updated" as const,
+        message: `Progress ${index}`,
+        safeMetadata: {},
+        userVisible: true,
+        createdAt: new Date(createdAt.getTime() + index * 1_000),
+      })),
+    };
+    const retentionAction = await persistAgentJobProjection(retentionProjection);
+    await persistAgentJobProjection({
+      ...retentionProjection,
+      events: [{
+        sourceEventKey: `${marker}-retention-late-old`,
+        type: "action.progress_updated",
+        message: "Late historical progress",
+        safeMetadata: {},
+        userVisible: true,
+        createdAt: new Date(createdAt.getTime() - 1_000),
+      }],
+    });
+    const retainedEvents = await listLiveActionEvents(retentionAction.id);
+    assert.equal(retainedEvents.length, 200);
+    assert.ok(
+      !retainedEvents.some((event) => event.message === "Late historical progress"),
+      "retention evicts by source chronology rather than late insertion sequence",
+    );
+    assert.deepEqual(
+      retainedEvents.map((event) => event.sequence),
+      retainedEvents.map((_, index) => index + 1),
+      "retained history is resequenced in source chronology",
+    );
+
     completedRuntime.events.push(staleSourceEvent);
     await db.update(schema.agentJobs).set({
       input: { workerType: completedRuntime.workerType, workerRuntime: completedRuntime },
@@ -282,6 +319,51 @@ async function main(): Promise<void> {
     const failedHistoricalActions = (await listLiveActionsForUser({ userId, status: "failed", limit: 100 }))
       .filter((action) => historicalIds.includes(action.source.id));
     assert.equal(failedHistoricalActions.length, 0, "filtered reconciliation includes later retry descendants");
+
+    const pagingRetryIds = Array.from({ length: 500 }, (_, index) => `${marker}-paging-retry-${index}`);
+    const pagingNewestAt = new Date(createdAt.getTime() - 10 * 60_000);
+    await db.insert(schema.agentJobs).values(pagingRetryIds.map((id, index) => {
+      const attemptAt = new Date(pagingNewestAt.getTime() - index * 60_000);
+      return {
+        id,
+        userId,
+        agentType: "research",
+        title: "Dense retry lineage",
+        prompt: `Attempt ${index}`,
+        input: index === 0 ? {} : { retryOfJobId: pagingRetryIds[index - 1] },
+        status: "complete",
+        createdAt: attemptAt,
+        completedAt: attemptAt,
+      };
+    }));
+    const pagingSecondTerminalId = `${marker}-paging-second-terminal`;
+    const pagingSecondTerminalAt = new Date(pagingNewestAt.getTime() - 510 * 60_000);
+    await db.insert(schema.agentJobs).values({
+      id: pagingSecondTerminalId,
+      userId,
+      agentType: "research",
+      title: "Second terminal lineage",
+      prompt: "Remain discoverable beyond a dense retry page",
+      status: "complete",
+      createdAt: pagingSecondTerminalAt,
+      completedAt: pagingSecondTerminalAt,
+    });
+    await db.insert(schema.agentJobs).values(Array.from({ length: 25 }, (_, index) => ({
+      id: `${marker}-paging-active-${index}`,
+      userId,
+      agentType: "research",
+      title: `Older active ${index}`,
+      prompt: "Keep running",
+      status: "running",
+      createdAt: new Date(pagingSecondTerminalAt.getTime() - (index + 1) * 60_000),
+      startedAt: new Date(pagingSecondTerminalAt.getTime() - (index + 1) * 60_000),
+    })));
+    await reconcileAgentJobsForUser(userId, { limit: 25 });
+    assert.ok(
+      (await listLiveActionsForUser({ userId, limit: 25 }))
+        .some((action) => action.source.id === pagingSecondTerminalId),
+      "terminal paging does not let active lineages hide a newer terminal lineage beyond a dense retry page",
+    );
 
     const [filteredRunningJob] = await db.insert(schema.agentJobs).values({
       id: `${marker}-filtered-running`,

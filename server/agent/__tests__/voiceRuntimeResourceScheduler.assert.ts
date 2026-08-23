@@ -155,6 +155,11 @@ function testResourcePausedJobsCountAsActiveDuplicates() {
     /withResourcePauseHeartbeat\(job,\s*pausedAt\)/,
     "voice heartbeat should refresh existing voice-resource-paused jobs before stale recovery can requeue them",
   );
+  assert.match(
+    schedulerSource,
+    /transition:\s*"resource_resumed"/,
+    "voice resume should retain a durable transition after a subsequent pause replaces scalar metadata",
+  );
   assert.doesNotMatch(
     schedulerSource,
     /error:\s*"Paused while local voice is active\."/,

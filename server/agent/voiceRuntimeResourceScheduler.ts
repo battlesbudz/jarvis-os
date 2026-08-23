@@ -137,7 +137,7 @@ function withResourceResumeEvent(job: AgentJobRow, resumedAt: string): Record<st
       message: "Resumed after the local voice session ended.",
       userVisible: true,
       progress: { currentStep: "Resumed" },
-      metadata: { reason: RESOURCE_PAUSE_REASON },
+      metadata: { reason: RESOURCE_PAUSE_REASON, transition: "resource_resumed" },
     }),
   );
 }

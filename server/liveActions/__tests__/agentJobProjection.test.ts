@@ -174,6 +174,38 @@ const resumed = projectAgentJob(job({
 assert.equal(resumed.events.filter((event) => event.type === "action.resumed").length, 1);
 assert.equal(resumed.events.at(-1)?.createdAt.toISOString(), resumedAt);
 
+const durableResumeRuntime = withWorkerRuntimeEvent(
+  (job().input as Record<string, unknown>),
+  buildWorkerRuntimeEvent({
+    type: "progress",
+    workerType: "research",
+    message: "Resumed after the local voice session ended.",
+    now: new Date(resumedAt),
+    userVisible: true,
+    progress: { currentStep: "Resumed" },
+    metadata: { reason: "voice_active_local_runtime", transition: "resource_resumed" },
+  }),
+);
+const repaused = projectAgentJob(job({
+  status: "resource_paused",
+  input: {
+    ...durableResumeRuntime,
+    resourcePause: {
+      pausedAt: "2026-08-23T12:07:00.000Z",
+      reason: "voice_active_local_runtime",
+    },
+  },
+}));
+assert.equal(
+  repaused.events.filter((event) => event.type === "action.resumed").length,
+  1,
+  "a durable worker transition preserves a resume after a later pause replaces scalar metadata",
+);
+assert.equal(
+  repaused.events.find((event) => event.type === "action.resumed")?.createdAt.toISOString(),
+  resumedAt,
+);
+
 assert.doesNotThrow(() => LiveActionSchema.parse({
   id: "action-1",
   projectId: null,

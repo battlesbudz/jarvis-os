@@ -7,6 +7,7 @@ import { projectAgentJob, type AgentJobLiveActionProjection } from "./adapters/a
 import { agentJobLineageKey, agentJobRetryGeneration, loadAgentJobRetryFamily } from "./agentJobLineage";
 
 const ACTIVE_STATUSES: LiveActionStatus[] = ["created", "queued", "running", "waiting_approval", "waiting_user", "paused"];
+const ACTIVE_AGENT_JOB_STATUSES = ["queued", "running", "cancelling", "resource_paused"];
 const MAX_EVENTS_PER_ACTION = 200;
 
 function sourceStatusesFor(status: LiveActionStatus): string[] {
@@ -279,9 +280,25 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
         AND id NOT IN (
           SELECT id FROM live_action_events
           WHERE action_id = ${row.id}
-          ORDER BY sequence DESC
+          ORDER BY created_at DESC, source_event_key DESC
           LIMIT ${MAX_EVENTS_PER_ACTION}
         )
+    `);
+    await tx.execute(sql`
+      UPDATE live_action_events
+      SET sequence = -sequence
+      WHERE action_id = ${row.id}
+    `);
+    await tx.execute(sql`
+      WITH ordered_events AS (
+        SELECT id, row_number() OVER (ORDER BY created_at, source_event_key)::int AS sequence
+        FROM live_action_events
+        WHERE action_id = ${row.id}
+      )
+      UPDATE live_action_events event
+      SET sequence = ordered_events.sequence
+      FROM ordered_events
+      WHERE event.id = ordered_events.id
     `);
     return rowToAction(row);
   });
@@ -345,7 +362,7 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
   const [activeJobs] = await Promise.all([
     db.select().from(schema.agentJobs).where(and(
       ...scope,
-      inArray(schema.agentJobs.status, ["queued", "running", "cancelling", "resource_paused"]),
+      inArray(schema.agentJobs.status, ACTIVE_AGENT_JOB_STATUSES),
     )),
   ]);
   const retainedJobs: Array<typeof schema.agentJobs.$inferSelect> = [];
@@ -369,10 +386,11 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
     )).orderBy(desc(sourceUpdatedAt), desc(schema.agentJobs.id)).limit(500);
     retainedJobs.push(...page.map((entry) => entry.job));
     if (page.length < 500) break;
-    const discoveredFamily = await loadAgentJobRetryFamily(userId, [...activeJobs, ...retainedJobs]);
-    const discoveredLineages = new Set([...discoveredFamily.values()]
+    const retainedTerminalJobs = retainedJobs.filter((job) => !ACTIVE_AGENT_JOB_STATUSES.includes(job.status));
+    const discoveredFamily = await loadAgentJobRetryFamily(userId, retainedTerminalJobs);
+    const discoveredTerminalLineages = new Set(retainedTerminalJobs
       .map((job) => agentJobLineageKey(job, discoveredFamily)));
-    if (!opts.status && discoveredLineages.size >= targetLineages) break;
+    if (!opts.status && discoveredTerminalLineages.size >= targetLineages) break;
     const last = page.at(-1)!;
     sourceCursor = { id: last.job.id, updatedAt: last.updatedAt };
   } while (sourceCursor);

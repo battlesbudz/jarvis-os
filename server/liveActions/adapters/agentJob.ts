@@ -54,8 +54,11 @@ function inputOf(job: AgentJobRow): Record<string, unknown> {
     : {};
 }
 
-function eventType(type: WorkerRuntimeEvent["type"]): LiveActionEventType {
-  switch (type) {
+function eventType(event: WorkerRuntimeEvent): LiveActionEventType {
+  if (event.type === "progress" && event.metadata?.transition === "resource_resumed") {
+    return "action.resumed";
+  }
+  switch (event.type) {
     case "queued": return "action.queued";
     case "started": return "action.started";
     case "progress": return "action.progress_updated";
@@ -192,7 +195,7 @@ export function projectAgentJob(
     .filter((event) => event.userVisible)
     .map((event): ProjectedLiveActionEvent => ({
       sourceEventKey: stableWorkerEventKey(job.id, event),
-      type: eventType(event.type),
+      type: eventType(event),
       message: sanitizeLiveActionText(event.message),
       safeMetadata: sanitizeLiveActionMetadata({
         ...event.metadata,
@@ -227,6 +230,8 @@ export function projectAgentJob(
     : null;
   const resumedAt = dateValue(pause?.resumedAt);
   const resumeEvent: ProjectedLiveActionEvent | null = resumedAt
+    && !workerEvents.some((event) => event.type === "action.resumed"
+      && event.createdAt.getTime() === resumedAt.getTime())
     ? {
         sourceEventKey: `job:${job.id}:resume:${resumedAt.toISOString()}`,
         type: "action.resumed",
