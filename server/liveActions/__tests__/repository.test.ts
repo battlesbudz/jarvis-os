@@ -133,22 +133,84 @@ async function main(): Promise<void> {
       description: "Confirm the equal-timestamp transition",
       expiresAt: new Date(createdAt.getTime() + 60_000),
     });
-    const genuineApprovalRace = {
-      ...approvalRace,
-      sourceId: `${marker}-pending-approval-job`,
-      sourceLineageKey: `${marker}-pending-approval-lineage`,
-    };
-    const genuineRunningAction = await persistAgentJobProjection(genuineApprovalRace);
-    await persistAgentJobProjection({
-      ...genuineApprovalRace,
-      status: "waiting_approval",
-      attention: { kind: "approval", reason: "Approval required", referenceId: pendingGateId },
+    const approvalEvent = buildWorkerRuntimeEvent({
+      type: "approval_required",
+      workerType: "research",
+      message: "Approval required",
+      now: createdAt,
+      userVisible: true,
+      checkpoint: {
+        id: pendingGateId,
+        gateId: pendingGateId,
+        reason: "Approval required",
+        requiredFor: "approval_test",
+      },
     });
+    const approvalRuntime = appendWorkerRuntimeEvent(runtime, approvalEvent);
+    const [pendingApprovalJob] = await db.insert(schema.agentJobs).values({
+      id: `${marker}-pending-approval-job`,
+      userId,
+      agentType: "research",
+      title: "Pending approval",
+      prompt: "Wait for approval",
+      input: { workerType: approvalRuntime.workerType, workerRuntime: approvalRuntime },
+      status: "running",
+      createdAt,
+      startedAt: createdAt,
+    }).returning();
+    const genuineRunningAction = await persistAgentJobProjection(projectAgentJob(pendingApprovalJob));
+    await persistAgentJobProjection(projectAgentJob(pendingApprovalJob, new Set([pendingGateId])));
     assert.equal(
       (await getLiveActionForUser(userId, genuineRunningAction.id))?.status,
       "waiting_approval",
       "a canonical pending gate permits a genuine equal-timestamp approval transition",
     );
+
+    const [equalTimeCompletedJob] = await db.insert(schema.agentJobs).values({
+      id: `${marker}-equal-time-complete`,
+      userId,
+      agentType: "research",
+      title: "Equal-time completion",
+      prompt: "Complete immediately",
+      status: "complete",
+      createdAt,
+      completedAt: createdAt,
+    }).returning();
+    const completedProjection = projectAgentJob(equalTimeCompletedJob);
+    const equalTimeTerminalAction = await persistAgentJobProjection(completedProjection);
+    await persistAgentJobProjection(projectAgentJob({
+      ...equalTimeCompletedJob,
+      status: "queued",
+      completedAt: null,
+    }));
+    assert.equal(
+      (await getLiveActionForUser(userId, equalTimeTerminalAction.id))?.status,
+      "succeeded",
+      "an equal-timestamp active snapshot cannot regress canonical terminal state",
+    );
+
+    const historicalIds = ["root", "retry", "retry-again"].map((suffix) => `${marker}-${suffix}`);
+    await db.insert(schema.agentJobs).values([
+      {
+        id: historicalIds[0], userId, agentType: "research", title: "Historical retry chain",
+        prompt: "First attempt", status: "failed", createdAt: new Date(createdAt.getTime() - 3_000), completedAt: new Date(createdAt.getTime() - 3_000),
+      },
+      {
+        id: historicalIds[1], userId, agentType: "research", title: "Historical retry chain",
+        prompt: "Second attempt", input: { retryOfJobId: historicalIds[0] }, status: "failed",
+        createdAt: new Date(createdAt.getTime() - 2_000), completedAt: new Date(createdAt.getTime() - 2_000),
+      },
+      {
+        id: historicalIds[2], userId, agentType: "research", title: "Historical retry chain",
+        prompt: "Third attempt", input: { retryOfJobId: historicalIds[1] }, status: "queued",
+        createdAt: new Date(createdAt.getTime() - 1_000),
+      },
+    ]);
+    await reconcileAgentJobsForUser(userId);
+    const historicalActions = (await listLiveActionsForUser({ userId, limit: 100 }))
+      .filter((action) => historicalIds.includes(action.source.id));
+    assert.equal(historicalActions.length, 1, "historical retry descendants share one root lineage");
+    assert.equal(historicalActions[0]?.source.id, historicalIds[2], "the latest retry owns the shared action");
 
     const oldCreatedAt = new Date(createdAt.getTime() - 31 * 24 * 60 * 60 * 1_000);
     const [oldJob] = await db.insert(schema.agentJobs).values({

@@ -2,7 +2,9 @@ import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { LiveAction, LiveActionEvent, LiveActionStatus } from "@shared/liveActions";
 import { db } from "../db";
+import { getWorkerRuntimeFromInput } from "../agent/workerRuntime";
 import { projectAgentJob, type AgentJobLiveActionProjection } from "./adapters/agentJob";
+import { agentJobLineageKey, loadAgentJobRetryFamily } from "./agentJobLineage";
 
 const ACTIVE_STATUSES: LiveActionStatus[] = ["created", "queued", "running", "waiting_approval", "waiting_user", "paused"];
 const MAX_EVENTS_PER_ACTION = 200;
@@ -182,26 +184,32 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
     }
 
     if (!wasInserted) {
-      const sameTimestampApprovalTransition = row.updatedAt.getTime() === values.updatedAt.getTime()
-        && row.status === "running"
-        && values.status === "waiting_approval";
-      const approvalGateId = sameTimestampApprovalTransition && projection.attention?.kind === "approval"
-        ? projection.attention.referenceId
-        : undefined;
-      const [pendingApprovalGate] = approvalGateId
-        ? await tx
-            .select({ id: schema.agentApprovalGates.id })
-            .from(schema.agentApprovalGates)
-            .where(and(
-              eq(schema.agentApprovalGates.id, approvalGateId),
-              eq(schema.agentApprovalGates.userId, projection.userId),
-              eq(schema.agentApprovalGates.status, "pending"),
-            ))
-            .limit(1)
-            .for("update")
+      const sameTimestampStatusConflict = row.updatedAt.getTime() === values.updatedAt.getTime()
+        && row.status !== values.status;
+      const [canonicalJob] = sameTimestampStatusConflict
+        ? await tx.select().from(schema.agentJobs).where(and(
+            eq(schema.agentJobs.id, projection.sourceId),
+            eq(schema.agentJobs.userId, projection.userId),
+          )).limit(1).for("update")
         : [];
+      const canonicalInput = canonicalJob?.input && typeof canonicalJob.input === "object" && !Array.isArray(canonicalJob.input)
+        ? canonicalJob.input as Record<string, unknown>
+        : {};
+      const canonicalGateId = canonicalJob
+        ? getWorkerRuntimeFromInput(canonicalInput)?.approvalCheckpoints.at(-1)?.gateId
+        : undefined;
+      const [canonicalPendingGate] = canonicalGateId
+        ? await tx.select({ id: schema.agentApprovalGates.id }).from(schema.agentApprovalGates).where(and(
+            eq(schema.agentApprovalGates.id, canonicalGateId),
+            eq(schema.agentApprovalGates.userId, projection.userId),
+            eq(schema.agentApprovalGates.status, "pending"),
+          )).limit(1).for("update")
+        : [];
+      const canonicalStatus = canonicalJob
+        ? projectAgentJob(canonicalJob, canonicalPendingGate ? new Set([canonicalPendingGate.id]) : new Set()).status
+        : row.status;
       const staleProjection = row.updatedAt.getTime() > values.updatedAt.getTime()
-        || (sameTimestampApprovalTransition && !pendingApprovalGate);
+        || (sameTimestampStatusConflict && canonicalStatus !== values.status);
       if (!staleProjection && (projectionChanged(row, values) || insertedEventCount > 0)) {
         [row] = await tx
           .update(schema.liveActions)
@@ -290,12 +298,14 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
         ),
       ))
     : [];
-  const jobs = [...new Map([...activeJobs, ...recentJobs, ...recentlyCompletedJobs, ...lineageJobs].map((job) => [job.id, job])).values()];
+  const seedJobs = [...new Map([...activeJobs, ...recentJobs, ...recentlyCompletedJobs, ...lineageJobs].map((job) => [job.id, job])).values()];
+  const jobsById = await loadAgentJobRetryFamily(userId, seedJobs, opts.sourceLineageKey);
+  const jobs = [...jobsById.values()];
   const pendingGateIds = new Set(pendingGates.map((gate) => gate.id));
 
   const grouped = new Map<string, AgentJobLiveActionProjection[]>();
   for (const job of jobs) {
-    const projection = projectAgentJob(job, pendingGateIds);
+    const projection = projectAgentJob(job, pendingGateIds, agentJobLineageKey(job, jobsById));
     const group = grouped.get(projection.sourceLineageKey) ?? [];
     group.push(projection);
     grouped.set(projection.sourceLineageKey, group);

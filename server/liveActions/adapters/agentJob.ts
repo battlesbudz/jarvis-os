@@ -145,7 +145,11 @@ function capabilities(job: AgentJobRow): LiveActionControlCapability[] {
   return result;
 }
 
-export function projectAgentJob(job: AgentJobRow, pendingApprovalGateIds: ReadonlySet<string> = new Set()): AgentJobLiveActionProjection {
+export function projectAgentJob(
+  job: AgentJobRow,
+  pendingApprovalGateIds: ReadonlySet<string> = new Set(),
+  resolvedLineageKey?: string,
+): AgentJobLiveActionProjection {
   const input = inputOf(job);
   const runtime = getWorkerRuntimeFromInput(input);
   const checkpoint = runtime?.approvalCheckpoints.at(-1);
@@ -197,7 +201,7 @@ export function projectAgentJob(job: AgentJobRow, pendingApprovalGateIds: Readon
   const rawSourceLineageKey = typeof input.retryOfJobId === "string"
     ? typeof input.liveActionLineageKey === "string" ? input.liveActionLineageKey : input.retryOfJobId
     : job.id;
-  const sourceLineageKey = (rawSourceLineageKey.trim() || job.id).slice(0, 200);
+  const sourceLineageKey = (resolvedLineageKey?.trim() || rawSourceLineageKey.trim() || job.id).slice(0, 200);
   const errorSummary = sanitizeLiveActionText(job.error);
 
   return {

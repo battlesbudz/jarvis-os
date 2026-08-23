@@ -96,6 +96,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
         ? { ...(job.input as Record<string, unknown>) }
         : {};
       delete input.retryCount;
+      const { resolveAgentJobLineageKey } = await import("../liveActions/agentJobLineage");
       const retry = await submitAgentJob({
         userId,
         agentType: job.agentType as any,
@@ -103,9 +104,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
         prompt: job.prompt,
         input: {
           ...input,
-          liveActionLineageKey: typeof input.liveActionLineageKey === "string"
-            ? input.liveActionLineageKey
-            : job.id,
+          liveActionLineageKey: await resolveAgentJobLineageKey(userId, job),
           retryOfJobId: job.id,
           retriedAt: new Date().toISOString(),
         },
