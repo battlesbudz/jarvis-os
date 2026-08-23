@@ -116,11 +116,21 @@ function mutableProjectionValues(values: ReturnType<typeof projectionValues>) {
   return mutable;
 }
 
+function normalizedProgressValue(value: number | null): number | null {
+  return value === null ? null : Math.fround(value);
+}
+
 function projectionValuesMatch(
   left: ReturnType<typeof projectionValues>,
   right: ReturnType<typeof projectionValues>,
 ): boolean {
-  return JSON.stringify(mutableProjectionValues(left)) === JSON.stringify(mutableProjectionValues(right));
+  return JSON.stringify({
+    ...mutableProjectionValues(left),
+    progressValue: normalizedProgressValue(left.progressValue),
+  }) === JSON.stringify({
+    ...mutableProjectionValues(right),
+    progressValue: normalizedProgressValue(right.progressValue),
+  });
 }
 
 function projectionChanged(row: schema.LiveActionRow, values: ReturnType<typeof projectionValues>): boolean {
@@ -131,7 +141,7 @@ function projectionChanged(row: schema.LiveActionRow, values: ReturnType<typeof 
     || row.status !== values.status
     || row.currentStep !== values.currentStep
     || row.progressKind !== values.progressKind
-    || row.progressValue !== values.progressValue
+    || normalizedProgressValue(row.progressValue) !== normalizedProgressValue(values.progressValue)
     || row.progressUpdatedAt?.getTime() !== values.progressUpdatedAt?.getTime()
     || JSON.stringify(row.attention) !== JSON.stringify(values.attention)
     || JSON.stringify(row.controlCapabilities) !== JSON.stringify(values.controlCapabilities)

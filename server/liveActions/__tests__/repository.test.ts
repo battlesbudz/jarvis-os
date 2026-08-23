@@ -67,11 +67,30 @@ async function main(): Promise<void> {
       progress: {
         kind: "percent",
         currentStep: "Partial step",
-        value: 12.5,
+        value: 12.3,
         updatedAt: createdAt.toISOString(),
       },
     });
-    assert.equal(fractionalProgressAction.progress?.value, 12.5, "fractional progress survives persistence");
+    assert.ok(
+      Math.abs((fractionalProgressAction.progress?.value ?? 0) - 12.3) < 0.0001,
+      "fractional progress survives persistence",
+    );
+    const replayedFractionalProgressAction = await persistAgentJobProjection({
+      ...staleProjection,
+      sourceId: `${marker}-fractional-progress-job`,
+      sourceLineageKey: `${marker}-fractional-progress-lineage`,
+      progress: {
+        kind: "percent",
+        currentStep: "Partial step",
+        value: 12.3,
+        updatedAt: createdAt.toISOString(),
+      },
+    });
+    assert.equal(
+      replayedFractionalProgressAction.version,
+      fractionalProgressAction.version,
+      "REAL rounding does not create a false projection update",
+    );
 
     const staleSourceEvent = buildWorkerRuntimeEvent({
       type: "started",
