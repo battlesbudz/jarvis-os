@@ -291,6 +291,7 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
   sourceLineageKey?: string;
   status?: LiveActionStatus;
   projectId?: string;
+  limit?: number;
 } = {}): Promise<void> {
   const terminalCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000);
   const lineageCondition = opts.sourceLineageKey
@@ -307,14 +308,6 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
   const filteredScope = sourceStatuses.length > 0
     ? [...scope, inArray(schema.agentJobs.status, sourceStatuses)]
     : opts.status ? [...scope, sql`false`] : scope;
-  const recentJobsQuery = db.select().from(schema.agentJobs).where(and(
-    ...filteredScope,
-    gte(schema.agentJobs.createdAt, terminalCutoff),
-  )).orderBy(desc(schema.agentJobs.createdAt));
-  const recentlyCompletedJobsQuery = db.select().from(schema.agentJobs).where(and(
-    ...filteredScope,
-    gte(schema.agentJobs.completedAt, terminalCutoff),
-  )).orderBy(desc(schema.agentJobs.completedAt));
   const projectedActionConditions = opts.status
     ? [
         eq(schema.liveActions.userId, userId),
@@ -349,14 +342,40 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
       cursor = page.length === 500 ? page.at(-1) : undefined;
     } while (cursor);
   }
-  const [activeJobs, recentJobs, recentlyCompletedJobs] = await Promise.all([
+  const [activeJobs] = await Promise.all([
     db.select().from(schema.agentJobs).where(and(
       ...scope,
       inArray(schema.agentJobs.status, ["queued", "running", "cancelling", "resource_paused"]),
     )),
-    recentJobsQuery.limit(500),
-    recentlyCompletedJobsQuery.limit(500),
   ]);
+  const retainedJobs: Array<typeof schema.agentJobs.$inferSelect> = [];
+  const sourceUpdatedAt = sql<Date>`greatest(${schema.agentJobs.createdAt}, coalesce(${schema.agentJobs.completedAt}, ${schema.agentJobs.createdAt}))`;
+  const targetLineages = opts.sourceLineageKey ? 1 : Math.min(Math.max(opts.limit ?? 25, 1), 100);
+  let sourceCursor: { id: string; updatedAt: Date } | undefined;
+  do {
+    const page = await db.select({
+      job: schema.agentJobs,
+      updatedAt: sourceUpdatedAt,
+    }).from(schema.agentJobs).where(and(
+      ...filteredScope,
+      or(
+        gte(schema.agentJobs.createdAt, terminalCutoff),
+        gte(schema.agentJobs.completedAt, terminalCutoff),
+      ),
+      ...(sourceCursor ? [or(
+        lt(sourceUpdatedAt, sourceCursor.updatedAt),
+        and(eq(sourceUpdatedAt, sourceCursor.updatedAt), lt(schema.agentJobs.id, sourceCursor.id)),
+      )!] : []),
+    )).orderBy(desc(sourceUpdatedAt), desc(schema.agentJobs.id)).limit(500);
+    retainedJobs.push(...page.map((entry) => entry.job));
+    if (page.length < 500) break;
+    const discoveredFamily = await loadAgentJobRetryFamily(userId, [...activeJobs, ...retainedJobs]);
+    const discoveredLineages = new Set([...discoveredFamily.values()]
+      .map((job) => agentJobLineageKey(job, discoveredFamily)));
+    if (!opts.status && discoveredLineages.size >= targetLineages) break;
+    const last = page.at(-1)!;
+    sourceCursor = { id: last.job.id, updatedAt: last.updatedAt };
+  } while (sourceCursor);
   const projectedSourceIds = [...new Set(matchingProjectedActions.map((action) => action.sourceId))];
   const projectedJobs: Array<typeof schema.agentJobs.$inferSelect> = [];
   for (let index = 0; index < projectedSourceIds.length; index += 500) {
@@ -366,7 +385,7 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
       )));
   }
   const filteredLineageKeys = opts.status
-    ? [...new Set([...recentJobs, ...recentlyCompletedJobs].map((job) => projectAgentJob(job).sourceLineageKey))]
+    ? [...new Set(retainedJobs.map((job) => projectAgentJob(job).sourceLineageKey))]
     : [];
   const lineageJobs = filteredLineageKeys.length > 0
     ? await db.select().from(schema.agentJobs).where(and(
@@ -385,8 +404,7 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
     : [];
   const seedJobs = [...new Map([
     ...activeJobs,
-    ...recentJobs,
-    ...recentlyCompletedJobs,
+    ...retainedJobs,
     ...lineageJobs,
     ...projectedJobs,
   ].map((job) => [job.id, job])).values()];

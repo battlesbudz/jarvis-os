@@ -18,7 +18,7 @@ export interface LiveActionReadService {
 
 export const liveActionReadService: LiveActionReadService = {
   async getSnapshot(input) {
-    await reconcileAgentJobsForUser(input.userId, { status: input.status, projectId: input.projectId });
+    await reconcileAgentJobsForUser(input.userId, { status: input.status, projectId: input.projectId, limit: input.limit });
     return LiveActionSnapshotSchema.parse({
       schemaVersion: 1,
       generatedAt: new Date().toISOString(),

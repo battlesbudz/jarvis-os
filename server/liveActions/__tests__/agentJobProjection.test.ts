@@ -156,6 +156,7 @@ const paused = projectAgentJob(job({
   input: { resourcePause: { pausedAt, reason: "voice_active_local_runtime" } },
 }));
 assert.equal(paused.events.at(-1)?.createdAt.toISOString(), pausedAt);
+assert.match(paused.events.at(-1)?.sourceEventKey ?? "", /12:04:00\.000Z$/);
 
 const requeuedAt = "2026-08-23T12:05:00.000Z";
 const requeued = projectAgentJob(job({ input: { ...(job().input as Record<string, unknown>), requeuedAt } }));
