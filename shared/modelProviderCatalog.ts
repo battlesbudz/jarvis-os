@@ -172,9 +172,22 @@ const VISION_CAPABLE_MODELS = new Set([
   "gemini-2.5-pro",
 ]);
 
+const VISION_CAPABLE_MODEL_PREFIXES = [
+  "gpt-4o",
+  "gpt-4.1",
+  "claude-sonnet-4",
+  "claude-opus-4",
+  "gemini-2.5",
+];
+
 export function modelSupportsCapability(model: string, capability: ModelCapability): boolean {
   const normalizedModel = model.trim().toLowerCase().split("/").at(-1) ?? "";
-  if (capability === "vision") return VISION_CAPABLE_MODELS.has(normalizedModel);
+  if (capability === "vision") {
+    return VISION_CAPABLE_MODELS.has(normalizedModel)
+      || VISION_CAPABLE_MODEL_PREFIXES.some((prefix) =>
+        normalizedModel === prefix || normalizedModel.startsWith(`${prefix}-`),
+      );
+  }
   return false;
 }
 

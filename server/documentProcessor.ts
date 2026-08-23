@@ -225,7 +225,14 @@ export async function processDocument(
   buffer: Buffer
 ): Promise<void> {
   try {
-    let extractedText = await extractDocumentText(buffer, mimeType);
+    let extractedText = await extractDocumentText(
+      buffer,
+      mimeType,
+      undefined,
+      undefined,
+      MAX_EXTRACTED_CHARS,
+      userId,
+    );
 
     extractedText = extractedText
       .replace(/\r\n/g, "\n")

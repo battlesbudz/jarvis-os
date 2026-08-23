@@ -62,6 +62,8 @@ assert.ok(documentSource.includes('logPrefix: "[ImageExtraction]"'), "image extr
 assert.ok(documentSource.includes('requiredCapabilities: ["vision"]'), "image extraction should require a capability-verified vision route");
 assert.ok(modelRouterSource.includes("modelSupportsCapability(entry.model, capability)"), "model routing should filter every candidate by required capabilities");
 assert.ok(modelCatalogSource.includes("VISION_CAPABLE_MODELS"), "vision-capable models should be explicitly cataloged");
+assert.ok(modelCatalogSource.includes("VISION_CAPABLE_MODEL_PREFIXES"), "configured dated vision-model variants should remain eligible");
+assert.ok(documentSource.includes("MAX_EXTRACTED_CHARS,\n      userId,"), "profile image processing should route with the authenticated user identity");
 assert.ok(modelRouterSource.includes("getConfiguredVisionRouteChain"), "vision routing should use a capability-specific provider chain");
 assert.ok(!documentSource.includes("hasDirectOpenAIProvider"), "image extraction should not require a direct OpenAI key");
 assert.ok(documentSource.includes("signal,"), "image analysis should receive the chat cancellation signal");
