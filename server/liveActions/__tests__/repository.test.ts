@@ -251,7 +251,7 @@ async function main(): Promise<void> {
     assert.equal(historicalActions.length, 1, "historical retry descendants share one root lineage");
     assert.equal(historicalActions[0]?.source.id, historicalIds[2], "the latest retry owns the shared action");
 
-    const equalRetryIds = [`${marker}-equal-attempt-a`, `${marker}-equal-attempt-z`];
+    const equalRetryIds = [`${marker}-equal-attempt-z`, `${marker}-equal-attempt-a`];
     const [equalFailedJob, equalRetryJob] = await db.insert(schema.agentJobs).values([
       {
         id: equalRetryIds[0], userId, agentType: "research", title: "Equal-time retry",

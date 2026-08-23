@@ -196,23 +196,28 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
       const canonicalAttempt = sameTimestampConflict
         ? await tx.execute(sql`
             WITH RECURSIVE retry_family AS (
-              SELECT id, created_at
-              FROM agent_jobs
-              WHERE user_id = ${projection.userId}
+              SELECT job.id, job.created_at, 0 AS generation, ARRAY[job.id]::varchar[] AS path
+              FROM agent_jobs job
+              WHERE job.user_id = ${projection.userId}
                 AND (
-                  id = ${projection.sourceLineageKey}
-                  OR id = ${projection.sourceId}
-                  OR id = ${row.sourceId}
-                  OR input->>'liveActionLineageKey' = ${projection.sourceLineageKey}
-                  OR input->>'retryOfJobId' = ${projection.sourceLineageKey}
+                  job.id = ${projection.sourceLineageKey}
+                  OR (
+                    (job.id = ${projection.sourceId} OR job.id = ${row.sourceId})
+                    AND NOT EXISTS (
+                      SELECT 1 FROM agent_jobs parent
+                      WHERE parent.user_id = ${projection.userId}
+                        AND parent.id = job.input->>'retryOfJobId'
+                    )
+                  )
                 )
-              UNION
-              SELECT child.id, child.created_at
+              UNION ALL
+              SELECT child.id, child.created_at, parent.generation + 1, parent.path || child.id
               FROM agent_jobs child
               JOIN retry_family parent ON child.input->>'retryOfJobId' = parent.id
               WHERE child.user_id = ${projection.userId}
+                AND NOT child.id = ANY(parent.path)
             )
-            SELECT id FROM retry_family ORDER BY created_at DESC, id DESC LIMIT 1
+            SELECT id FROM retry_family ORDER BY generation DESC, created_at DESC, id DESC LIMIT 1
           `)
         : null;
       const canonicalJobId = (canonicalAttempt?.rows?.[0] as { id?: unknown } | undefined)?.id;
@@ -225,25 +230,29 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
       const canonicalInput = canonicalJob?.input && typeof canonicalJob.input === "object" && !Array.isArray(canonicalJob.input)
         ? canonicalJob.input as Record<string, unknown>
         : {};
-      const canonicalGateId = canonicalJob
-        ? getWorkerRuntimeFromInput(canonicalInput)?.approvalCheckpoints.at(-1)?.gateId
-        : undefined;
-      const [canonicalGate] = canonicalGateId
+      const canonicalGateIds = canonicalJob
+        ? [...new Set(getWorkerRuntimeFromInput(canonicalInput)?.approvalCheckpoints.flatMap((checkpoint) =>
+            checkpoint.gateId ? [checkpoint.gateId] : []) ?? [])]
+        : [];
+      const canonicalGates = canonicalGateIds.length > 0
         ? await tx.select({
             id: schema.agentApprovalGates.id,
             status: schema.agentApprovalGates.status,
             resolvedAt: schema.agentApprovalGates.resolvedAt,
           }).from(schema.agentApprovalGates).where(and(
-            eq(schema.agentApprovalGates.id, canonicalGateId),
             eq(schema.agentApprovalGates.userId, projection.userId),
-          )).limit(1).for("update")
+            inArray(schema.agentApprovalGates.id, canonicalGateIds),
+          )).for("update")
         : [];
+      const canonicalPendingGateIds = new Set(canonicalGates
+        .filter((gate) => gate.status === "pending")
+        .map((gate) => gate.id));
       const canonicalValues = canonicalJob
         ? projectionValues(projectAgentJob(
             canonicalJob,
-            canonicalGate?.status === "pending" ? new Set([canonicalGate.id]) : new Set(),
+            canonicalPendingGateIds,
             projection.sourceLineageKey,
-            canonicalGate ? new Map([[canonicalGate.id, canonicalGate]]) : new Map(),
+            new Map(canonicalGates.map((gate) => [gate.id, gate])),
           ))
         : null;
       const staleProjection = row.updatedAt.getTime() > values.updatedAt.getTime()
@@ -374,8 +383,8 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
     const input = job.input && typeof job.input === "object" && !Array.isArray(job.input)
       ? job.input as Record<string, unknown>
       : {};
-    const gateId = getWorkerRuntimeFromInput(input)?.approvalCheckpoints.at(-1)?.gateId;
-    return gateId ? [gateId] : [];
+    return getWorkerRuntimeFromInput(input)?.approvalCheckpoints.flatMap((checkpoint) =>
+      checkpoint.gateId ? [checkpoint.gateId] : []) ?? [];
   }))];
   const approvalGates = approvalGateIds.length > 0
     ? await db.select({

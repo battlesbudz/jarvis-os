@@ -100,6 +100,24 @@ assert.deepEqual(waiting.attention, {
 assert.equal(waiting.events.filter((event) => event.type === "action.waiting_approval").length, 1);
 assert.doesNotMatch(JSON.stringify(waiting), /very-secret|abc\.def\.ghi|curl private/);
 assert.equal(projectAgentJob(approvalJob).status, "running", "resolved approval checkpoints do not leave stale attention");
+const secondApprovalRuntime = withWorkerRuntimeEvent(approvalRuntime, buildWorkerRuntimeEvent({
+  type: "approval_required",
+  workerType: "research",
+  message: "Second approval required",
+  now: new Date("2026-08-23T12:02:00.000Z"),
+  userVisible: true,
+  checkpoint: { id: "gate-2", gateId: "gate-2", reason: "Approve second step", requiredFor: "research" },
+}));
+const resolvedApprovals = projectAgentJob(
+  job({ input: secondApprovalRuntime, status: "running", startedAt: now }),
+  new Set(),
+  undefined,
+  new Map([
+    ["gate-1", { status: "approved", resolvedAt: new Date("2026-08-23T12:01:30.000Z") }],
+    ["gate-2", { status: "rejected", resolvedAt: new Date("2026-08-23T12:02:30.000Z") }],
+  ]),
+);
+assert.equal(resolvedApprovals.events.filter((event) => event.type === "action.approval_resolved").length, 2);
 
 const failed = projectAgentJob(job({
   status: "failed",

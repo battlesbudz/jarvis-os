@@ -225,23 +225,23 @@ export function projectAgentJob(
         createdAt: retriedAt,
       }
     : null;
-  const approvalGate = checkpoint?.gateId ? approvalGates.get(checkpoint.gateId) : undefined;
-  const approvalResolutionEvent: ProjectedLiveActionEvent | null = checkpoint?.gateId
-    && approvalGate?.status !== "pending"
-    && approvalGate?.resolvedAt
-    ? {
-        sourceEventKey: `gate:${checkpoint.gateId}:resolved:${approvalGate.status}`,
-        type: "action.approval_resolved",
-        message: `Approval ${approvalGate.status}`,
-        safeMetadata: { gateId: checkpoint.gateId },
-        userVisible: true,
-        createdAt: approvalGate.resolvedAt,
-      }
-    : null;
+  const approvalResolutionEvents = (runtime?.approvalCheckpoints ?? []).flatMap((approvalCheckpoint) => {
+    const gate = approvalCheckpoint.gateId ? approvalGates.get(approvalCheckpoint.gateId) : undefined;
+    return approvalCheckpoint.gateId && gate?.status !== "pending" && gate?.resolvedAt
+      ? [{
+          sourceEventKey: `gate:${approvalCheckpoint.gateId}:resolved:${gate.status}`,
+          type: "action.approval_resolved" as const,
+          message: `Approval ${gate.status}`,
+          safeMetadata: { gateId: approvalCheckpoint.gateId },
+          userVisible: true,
+          createdAt: gate.resolvedAt,
+        }]
+      : [];
+  });
   const events = [
     ...baseEvents,
     ...(retryEvent ? [retryEvent] : []),
-    ...(approvalResolutionEvent ? [approvalResolutionEvent] : []),
+    ...approvalResolutionEvents,
   ];
 
   return {
