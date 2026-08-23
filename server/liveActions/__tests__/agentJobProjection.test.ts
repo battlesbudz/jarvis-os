@@ -41,6 +41,8 @@ assert.equal(
   sanitizeLiveActionText("https://provider.example/callback?access_token=first&refresh_token=second&client_secret=third"),
   "https://provider.example/callback?access_token=[redacted]&refresh_token=[redacted]&client_secret=[redacted]",
 );
+assert.equal(sanitizeLiveActionText('{"access_token":"first","client_secret":"second"}'), '{"access_token":"[redacted]","client_secret":"[redacted]"}');
+assert.equal(sanitizeLiveActionText('{\\"refresh_token\\":\\"third\\"}'), '{"refresh_token":"[redacted]"}');
 assert.equal(sanitizeLiveActionText("<thinking>private chain of thought</thinking> Safe update"), "[reasoning redacted] Safe update");
 assert.deepEqual(
   sanitizeLiveActionMetadata({ token: "secret", command: "rm -rf /", workerType: "research", retryAttempt: 1 }),
@@ -112,6 +114,11 @@ const paused = projectAgentJob(job({
   input: { resourcePause: { pausedAt, reason: "voice_active_local_runtime" } },
 }));
 assert.equal(paused.events.at(-1)?.createdAt.toISOString(), pausedAt);
+
+const requeuedAt = "2026-08-23T12:05:00.000Z";
+const requeued = projectAgentJob(job({ input: { requeuedAt } }));
+assert.equal(requeued.events.at(-1)?.createdAt.toISOString(), requeuedAt);
+assert.match(requeued.events.at(-1)?.sourceEventKey ?? "", /12:05:00\.000Z$/);
 
 assert.doesNotThrow(() => LiveActionSchema.parse({
   id: "action-1",

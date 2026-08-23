@@ -21,6 +21,7 @@ import { db } from "../db";
 import { eq, and, desc, gte, sql as sqlExpr } from "drizzle-orm";
 import type { SQL } from "drizzle-orm";
 import * as schema from "@shared/schema";
+import { staleJobRequeueUpdate } from "../agent/jobRequeue";
 import type { DiagnosticSubsystem, DiagnosticSeverity } from "@shared/schema";
 import { routeModelTurn } from "../agent/modelRouter";
 import type { MemoryEmbeddingHealthReport } from "../memory/embeddingHealth";
@@ -252,7 +253,7 @@ async function attemptAutoRecovery(subsystem: DiagnosticSubsystem, userId: strin
         // Re-enqueue (not fail): reset to queued so the job gets another chance.
         await db
           .update(schema.agentJobs)
-          .set({ status: "queued", startedAt: null, error: "Auto-re-enqueued: exceeded watchdog timeout" })
+          .set(staleJobRequeueUpdate(new Date(), "Auto-re-enqueued: exceeded watchdog timeout"))
           .where(eq(schema.agentJobs.id, job.id))
           .catch(() => {});
         await emit({

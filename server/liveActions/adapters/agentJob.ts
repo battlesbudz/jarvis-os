@@ -97,15 +97,16 @@ function canonicalEvent(job: AgentJobRow, status: LiveActionStatus, input: Recor
   const pause = input.resourcePause && typeof input.resourcePause === "object" && !Array.isArray(input.resourcePause)
     ? input.resourcePause as Record<string, unknown>
     : null;
+  const requeuedAt = sourceStatus === "queued" ? dateValue(input.requeuedAt) : null;
   const at = sourceStatus === "cancelling"
     ? dateValue(input.cancelRequestedAt) ?? job.startedAt ?? job.createdAt
     : sourceStatus === "resource_paused"
       ? dateValue(pause?.pausedAt) ?? job.createdAt
-      : job.completedAt ?? job.startedAt ?? job.createdAt;
+      : requeuedAt ?? job.completedAt ?? job.startedAt ?? job.createdAt;
   return {
-    sourceEventKey: `job:${job.id}:status:${sourceStatus}`,
+    sourceEventKey: `job:${job.id}:status:${sourceStatus}${requeuedAt ? `:${requeuedAt.toISOString()}` : ""}`,
     type,
-    message: sourceStatus === "cancelling" ? "Cancellation requested" : `Job ${sourceStatus}`,
+    message: sourceStatus === "cancelling" ? "Cancellation requested" : requeuedAt ? "Job requeued" : `Job ${sourceStatus}`,
     safeMetadata: { sourceStatus },
     userVisible: true,
     createdAt: at,
