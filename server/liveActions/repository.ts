@@ -327,22 +327,6 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
           LIMIT ${MAX_EVENTS_PER_ACTION}
         )
     `);
-    await tx.execute(sql`
-      UPDATE live_action_events
-      SET sequence = -sequence
-      WHERE action_id = ${row.id}
-    `);
-    await tx.execute(sql`
-      WITH ordered_events AS (
-        SELECT id, row_number() OVER (ORDER BY created_at, source_event_key)::int AS sequence
-        FROM live_action_events
-        WHERE action_id = ${row.id}
-      )
-      UPDATE live_action_events event
-      SET sequence = ordered_events.sequence
-      FROM ordered_events
-      WHERE event.id = ordered_events.id
-    `);
     return rowToAction(row);
   });
 }
@@ -570,7 +554,7 @@ export async function listLiveActionEvents(actionId: string): Promise<LiveAction
     .select()
     .from(schema.liveActionEvents)
     .where(eq(schema.liveActionEvents.actionId, actionId))
-    .orderBy(schema.liveActionEvents.sequence);
+    .orderBy(schema.liveActionEvents.createdAt, schema.liveActionEvents.sourceEventKey);
   return rows.map(rowToEvent);
 }
 

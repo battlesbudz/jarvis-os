@@ -127,8 +127,30 @@ async function main(): Promise<void> {
     assert.deepEqual(
       retainedEvents.map((event) => event.sequence),
       retainedEvents.map((_, index) => index + 1),
-      "retained history is resequenced in source chronology",
+      "discarding a late historical event does not disturb assigned sequences",
     );
+    const retainedSequences = new Map(retainedEvents.map((event) => [event.id, event.sequence]));
+    await persistAgentJobProjection({
+      ...retentionProjection,
+      events: [{
+        sourceEventKey: `${marker}-retention-newest`,
+        type: "action.progress_updated",
+        message: "Newest progress",
+        safeMetadata: {},
+        userVisible: true,
+        createdAt: new Date(createdAt.getTime() + 300_000),
+      }],
+    });
+    const rolledEvents = await listLiveActionEvents(retentionAction.id);
+    assert.equal(rolledEvents.length, 200);
+    assert.equal(rolledEvents.at(-1)?.message, "Newest progress");
+    for (const event of rolledEvents) {
+      const previousSequence = retainedSequences.get(event.id);
+      if (previousSequence !== undefined) {
+        assert.equal(event.sequence, previousSequence, "retention preserves surviving event cursors");
+      }
+    }
+    assert.equal(rolledEvents.at(-1)?.sequence, 201, "new events keep a monotonic sequence after eviction");
 
     completedRuntime.events.push(staleSourceEvent);
     await db.update(schema.agentJobs).set({
