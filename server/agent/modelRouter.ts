@@ -1018,6 +1018,7 @@ function getConfiguredVisionRouteChain(): FallbackChainEntry[] {
       providerName: "openai",
       model: getProviderEnvValue("JARVIS_OPENAI_VISION_MODEL") ?? "gpt-4.1-mini",
       preferredAuthType: "api_key",
+      allowEnvironmentCredentialFallback: true,
     });
   }
   if (hasProviderEnvValue("GEMINI_API_KEY", "GOOGLE_AI_API_KEY", "AI_INTEGRATIONS_GEMINI_API_KEY")) {
@@ -1036,7 +1037,11 @@ function getConfiguredVisionRouteChain(): FallbackChainEntry[] {
 
 function normalizeVisionRouteEntry(entry: FallbackChainEntry): FallbackChainEntry {
   return entry.providerName === "openai"
-    ? { ...entry, preferredAuthType: "api_key" }
+    ? {
+        ...entry,
+        preferredAuthType: "api_key",
+        allowEnvironmentCredentialFallback: hasDirectOpenAIProvider(),
+      }
     : entry;
 }
 

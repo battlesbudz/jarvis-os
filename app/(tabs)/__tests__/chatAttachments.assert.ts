@@ -10,6 +10,8 @@ const dataRouteSource = fs.readFileSync("server/dataRoutes.ts", "utf8");
 const googleProviderSource = fs.readFileSync("server/agent/providers/google.ts", "utf8");
 const anthropicProviderSource = fs.readFileSync("server/agent/providers/anthropic.ts", "utf8");
 const modelCatalogSource = fs.readFileSync("shared/modelProviderCatalog.ts", "utf8");
+const providerFallbackSource = fs.readFileSync("server/agent/providers/fallback.ts", "utf8");
+const openAIProviderSource = fs.readFileSync("server/agent/providers/openai.ts", "utf8");
 const coachSessionRouteSource = fs.readFileSync("server/routes/coachSessionRoutes.ts", "utf8");
 const profileSource = fs.readFileSync("app/(tabs)/profile.tsx", "utf8");
 
@@ -66,8 +68,10 @@ assert.ok(modelCatalogSource.includes("VISION_CAPABLE_MODEL_PREFIXES"), "configu
 assert.ok(documentSource.includes("MAX_EXTRACTED_CHARS,\n      userId,"), "profile image processing should route with the authenticated user identity");
 assert.ok(modelRouterSource.includes("getConfiguredVisionRouteChain"), "vision routing should use a capability-specific provider chain");
 assert.ok(modelRouterSource.includes('preferredAuthType: "api_key" as const'), "user-profile OpenAI vision routing should pin API-key auth");
-assert.ok(modelRouterSource.includes('preferredAuthType: "api_key",\n    });'), "environment OpenAI vision routing should pin API-key auth");
+assert.ok(modelRouterSource.includes('preferredAuthType: "api_key",\n      allowEnvironmentCredentialFallback: true'), "environment OpenAI vision routing should pin API-key auth while allowing its configured key");
 assert.ok(modelRouterSource.includes(".map(normalizeVisionRouteEntry)"), "selected OpenAI vision routes should be pinned before deduplication");
+assert.equal((providerFallbackSource.match(/allowEnvironmentCredentialFallback: entry\.allowEnvironmentCredentialFallback/g) || []).length, 2, "credential-source intent should survive streaming and non-streaming fallback");
+assert.ok(openAIProviderSource.includes("params.allowEnvironmentCredentialFallback"), "OpenAI routing should use an explicitly allowed environment-key fallback");
 assert.ok(!documentSource.includes("hasDirectOpenAIProvider"), "image extraction should not require a direct OpenAI key");
 assert.ok(documentSource.includes("signal,"), "image analysis should receive the chat cancellation signal");
 assert.ok(documentSource.includes("extractFromPdf(buffer, maxChars, signal)"), "PDF extraction should receive its output limit and cancellation signal");

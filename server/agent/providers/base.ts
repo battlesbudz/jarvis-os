@@ -30,6 +30,8 @@ export interface ProviderQueryParams {
   maxCompletionTokens: number;
   responseFormat?: ProviderResponseFormat;
   preferredAuthType?: "api_key" | "oauth";
+  /** Allow a route known to come from environment configuration to use that credential. */
+  allowEnvironmentCredentialFallback?: boolean;
   /** When true, the provider should emit fine-grained text deltas in real time. */
   stream: boolean;
   /** User-scoped runtimes, such as the desktop daemon, need this to find the right connection. */

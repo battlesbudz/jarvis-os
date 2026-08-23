@@ -56,6 +56,8 @@ export interface FallbackChainEntry {
   model: string;
   /** Optional per-route credential preference, e.g. ChatGPT subscription -> OpenAI OAuth. */
   preferredAuthType?: ProviderQueryParams["preferredAuthType"];
+  /** Permit this explicitly environment-derived route to use its configured environment credential. */
+  allowEnvironmentCredentialFallback?: boolean;
 }
 
 function collectErrorSignals(err: unknown): string {
@@ -246,6 +248,7 @@ export async function queryWithFallback(
         ...params,
         model: entry.model,
         preferredAuthType: entry.preferredAuthType ?? params.preferredAuthType,
+        allowEnvironmentCredentialFallback: entry.allowEnvironmentCredentialFallback,
       }));
       result.providerName = entry.providerName;
       result.model = entry.model;
@@ -317,6 +320,7 @@ export async function queryWithFallbackStreaming(
           ...params,
           model: entry.model,
           preferredAuthType: entry.preferredAuthType ?? params.preferredAuthType,
+          allowEnvironmentCredentialFallback: entry.allowEnvironmentCredentialFallback,
           stream: true,
         }),
         async (chunk) => {
