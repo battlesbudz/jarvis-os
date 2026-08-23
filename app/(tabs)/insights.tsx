@@ -59,6 +59,7 @@ import {
   type ExecutedAction,
   type PendingConfirm,
   type PendingVoiceRestore,
+  type ChatAttachment,
 } from '@/lib/storage';
 import {
   scheduleEveningAccountability,
@@ -155,9 +156,41 @@ function isNoisyChatFailure(message: ChatMessage, index: number): boolean {
 }
 
 const CONTEXT_WINDOW = 12;
+const MAX_CHAT_ATTACHMENTS = 4;
+const MAX_CHAT_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const MAX_CHAT_ATTACHMENTS_TOTAL_BYTES = 20 * 1024 * 1024;
+const SUPPORTED_CHAT_ATTACHMENT_MIME_TYPES = [
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+] as const;
+const SUPPORTED_CHAT_ATTACHMENT_MIME_TYPE_SET = new Set<string>(SUPPORTED_CHAT_ATTACHMENT_MIME_TYPES);
+
+interface PendingChatAttachment extends ChatAttachment {
+  data: string;
+}
 
 function generateId(): string {
   return Date.now().toString() + Math.random().toString(36).substr(2, 9);
+}
+
+async function readAttachmentBase64(uri: string): Promise<string> {
+  if (Platform.OS !== 'web') {
+    return FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+  }
+  const blob = await (await fetch(uri)).blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(',')[1] ?? '');
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 interface ParsedDraft {
@@ -432,8 +465,11 @@ interface MessageBubbleProps {
   ) => void;
 }
 
-function persistChatHistory(messages: ChatMessage[]) {
-  saveChatHistory(messages.map(({ diagnostics: _diagnostics, ...message }) => message));
+function persistChatHistory(messages: ChatMessage[]): Promise<void> {
+  return saveChatHistory(messages.map(({ diagnostics: _diagnostics, ...message }) => ({
+    ...message,
+    attachments: message.attachments?.map(({ previewUri: _previewUri, ...attachment }) => attachment),
+  })));
 }
 
 function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, onSpeak, isSpeaking, isStreaming, onConfirmAction, onDiscordConnect, onCopyDiagnostics }: MessageBubbleProps) {
@@ -607,6 +643,19 @@ function MessageBubble({ message, isFirst, isLastAssistant, goals, onFollowup, o
             isUser={isUser}
           />
         </Pressable>
+      )}
+
+      {isUser && (message.attachments?.length ?? 0) > 0 && (
+        <View style={styles.userAttachmentList}>
+          {message.attachments!.map((attachment) => attachment.mimeType.startsWith('image/') && attachment.previewUri ? (
+            <Image key={attachment.id} source={{ uri: attachment.previewUri }} style={styles.userAttachmentImage} />
+          ) : (
+            <View key={attachment.id} style={styles.userAttachmentFile}>
+              <Ionicons name="document-outline" size={17} color={Colors.primary} />
+              <Text style={styles.userAttachmentFileName} numberOfLines={1}>{attachment.name}</Text>
+            </View>
+          ))}
+        </View>
       )}
 
       {!isUser && message.stopped && (
@@ -979,6 +1028,7 @@ export default function InsightsScreen() {
   const router = useRouter();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
+  const [pendingAttachments, setPendingAttachments] = useState<PendingChatAttachment[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [showTyping, setShowTyping] = useState(false);
   const [isSearchingWeb, setIsSearchingWeb] = useState(false);
@@ -1052,6 +1102,7 @@ export default function InsightsScreen() {
   const webAudioCtxRef = useRef<AudioContext | null>(null);
   const speakAbortRef = useRef<AbortController | null>(null);
   const chatAbortControllerRef = useRef<AbortController | null>(null);
+  const activeChatTurnSettledRef = useRef<Promise<void> | null>(null);
   const chatRunIdRef = useRef<string | null>(null);
   const sdkSessionIdRef = useRef<string | null>(null);
   const streamingAssistantIdRef = useRef<string | null>(null);
@@ -1064,10 +1115,11 @@ export default function InsightsScreen() {
   const isTranscribingRef = useRef(false);
   const webRecorderRef = useRef<MediaRecorder | null>(null);
   const webChunksRef = useRef<Blob[]>([]);
-  const sendMessageRef = useRef<(text: string, origin?: SendMessageOrigin) => void>(() => {});
+  const sendMessageRef = useRef<(text: string, origin?: SendMessageOrigin, attachments?: PendingChatAttachment[]) => void>(() => {});
   const confirmActionRef = useRef<VoiceConfirmAction>(() => Promise.resolve());
   const inputRef = useRef('');
   const messagesRef = useRef<ChatMessage[]>([]);
+  const pendingAttachmentsRef = useRef<PendingChatAttachment[]>([]);
   const pendingVoiceDiagnosticCopyRef = useRef(false);
   const hasScrolledRef = useRef(false);
   const initialScanDoneRef = useRef(false);
@@ -1169,6 +1221,7 @@ export default function InsightsScreen() {
   useEffect(() => { lifeContextRef.current = lifeContext; }, [lifeContext]);
   useEffect(() => { inputRef.current = input; }, [input]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => { pendingAttachmentsRef.current = pendingAttachments; }, [pendingAttachments]);
 
   useEffect(() => {
     return () => {
@@ -1273,7 +1326,7 @@ export default function InsightsScreen() {
               { state: 'transcription_complete', at: now, detail: 'Talk Mode transcript auto-sent' },
             ],
           },
-        });
+        }, pendingAttachmentsRef.current);
       }, 80);
       return;
     }
@@ -1300,7 +1353,7 @@ export default function InsightsScreen() {
           },
         ],
       },
-    });
+    }, pendingAttachmentsRef.current);
   }, []);
 
   const transcribeAndSend = useCallback(async (base64: string) => {
@@ -2805,15 +2858,187 @@ export default function InsightsScreen() {
     }
   }, []);
 
-  const sendMessage = useCallback(async (text: string, origin: SendMessageOrigin = { source: 'in_app' }) => {
-    if (!text.trim() || isStreaming) return;
+  const addPendingAttachments = useCallback((incoming: PendingChatAttachment[]) => {
+    setPendingAttachments(current => {
+      const available = MAX_CHAT_ATTACHMENTS - current.length;
+      if (available <= 0) {
+        Alert.alert('Attachment limit', `You can attach up to ${MAX_CHAT_ATTACHMENTS} items per message.`);
+        return current;
+      }
+      const accepted: PendingChatAttachment[] = [];
+      let totalBytes = current.reduce((sum, attachment) => sum + (attachment.size ?? 0), 0);
+      for (const attachment of incoming.slice(0, available)) {
+        const nextTotal = totalBytes + (attachment.size ?? 0);
+        if (nextTotal > MAX_CHAT_ATTACHMENTS_TOTAL_BYTES) {
+          Alert.alert('Attachments too large', 'Attachments can be up to 20MB combined.');
+          break;
+        }
+        accepted.push(attachment);
+        totalBytes = nextTotal;
+      }
+      return [...current, ...accepted];
+    });
+  }, []);
+
+  const pickImages = useCallback(async (camera: boolean) => {
+    try {
+      const currentAttachments = pendingAttachmentsRef.current;
+      const available = MAX_CHAT_ATTACHMENTS - currentAttachments.length;
+      if (available <= 0) {
+        Alert.alert('Attachment limit', `You can attach up to ${MAX_CHAT_ATTACHMENTS} items per message.`);
+        return;
+      }
+      const ImagePicker = await import('expo-image-picker');
+      if (camera) {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) {
+          Alert.alert('Camera access required', 'Allow camera access to take a picture for Jarvis.');
+          return;
+        }
+      }
+      const result = camera
+        ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8, base64: true })
+        : await ImagePicker.launchImageLibraryAsync({
+            mediaTypes: ['images'],
+            quality: 0.8,
+            base64: true,
+            allowsMultipleSelection: true,
+            selectionLimit: available,
+          });
+      if (result.canceled) return;
+      const incoming: PendingChatAttachment[] = [];
+      let totalBytes = currentAttachments.reduce((sum, attachment) => sum + (attachment.size ?? 0), 0);
+      for (const asset of result.assets.slice(0, available)) {
+        const mimeType = (asset.mimeType || 'image/jpeg').toLowerCase();
+        if (!SUPPORTED_CHAT_ATTACHMENT_MIME_TYPE_SET.has(mimeType)) {
+          Alert.alert('Unsupported image', 'Jarvis supports JPEG, PNG, WebP, and GIF images.');
+          continue;
+        }
+        const data = asset.base64 || await readAttachmentBase64(asset.uri);
+        const size = asset.fileSize ?? Math.floor(data.length * 0.75);
+        if (size > MAX_CHAT_ATTACHMENT_BYTES) {
+          Alert.alert('Image too large', `${asset.fileName || 'This image'} is larger than 10MB.`);
+          continue;
+        }
+        if (totalBytes + size > MAX_CHAT_ATTACHMENTS_TOTAL_BYTES) {
+          Alert.alert('Attachments too large', 'Attachments can be up to 20MB combined.');
+          break;
+        }
+        incoming.push({
+          id: generateId(),
+          name: asset.fileName || `photo-${Date.now()}.jpg`,
+          mimeType,
+          size,
+          previewUri: asset.uri,
+          data,
+        });
+        totalBytes += size;
+      }
+      addPendingAttachments(incoming);
+    } catch (error) {
+      Alert.alert('Could not attach image', error instanceof Error ? error.message : 'Please try again.');
+    }
+  }, [addPendingAttachments]);
+
+  const pickFiles = useCallback(async () => {
+    try {
+      const currentAttachments = pendingAttachmentsRef.current;
+      const available = MAX_CHAT_ATTACHMENTS - currentAttachments.length;
+      if (available <= 0) {
+        Alert.alert('Attachment limit', `You can attach up to ${MAX_CHAT_ATTACHMENTS} items per message.`);
+        return;
+      }
+      const DocumentPicker = await import('expo-document-picker');
+      const result = await DocumentPicker.getDocumentAsync({
+        type: [...SUPPORTED_CHAT_ATTACHMENT_MIME_TYPES],
+        copyToCacheDirectory: true,
+        multiple: true,
+      });
+      if (result.canceled) return;
+      const incoming: PendingChatAttachment[] = [];
+      let totalBytes = currentAttachments.reduce((sum, attachment) => sum + (attachment.size ?? 0), 0);
+      for (const asset of result.assets.slice(0, available)) {
+        const mimeType = asset.mimeType?.toLowerCase() ?? '';
+        if (!SUPPORTED_CHAT_ATTACHMENT_MIME_TYPE_SET.has(mimeType)) {
+          Alert.alert('Unsupported file', `${asset.name} is not a supported file type.`);
+          continue;
+        }
+        if ((asset.size ?? 0) > MAX_CHAT_ATTACHMENT_BYTES) {
+          Alert.alert('File too large', `${asset.name} is larger than 10MB.`);
+          continue;
+        }
+        if (asset.size != null && totalBytes + asset.size > MAX_CHAT_ATTACHMENTS_TOTAL_BYTES) {
+          Alert.alert('Attachments too large', 'Attachments can be up to 20MB combined.');
+          break;
+        }
+        const data = await readAttachmentBase64(asset.uri);
+        const size = asset.size ?? Math.floor(data.length * 0.75);
+        if (size > MAX_CHAT_ATTACHMENT_BYTES) {
+          Alert.alert('File too large', `${asset.name} is larger than 10MB.`);
+          continue;
+        }
+        if (totalBytes + size > MAX_CHAT_ATTACHMENTS_TOTAL_BYTES) {
+          Alert.alert('Attachments too large', 'Attachments can be up to 20MB combined.');
+          break;
+        }
+        incoming.push({
+          id: generateId(),
+          name: asset.name,
+          mimeType,
+          size,
+          previewUri: mimeType.startsWith('image/') ? asset.uri : undefined,
+          data,
+        });
+        totalBytes += size;
+      }
+      addPendingAttachments(incoming);
+    } catch (error) {
+      Alert.alert('Could not attach file', error instanceof Error ? error.message : 'Please try again.');
+    }
+  }, [addPendingAttachments]);
+
+  const openAttachmentMenu = useCallback(() => {
+    if (Platform.OS === 'web') {
+      void pickFiles();
+      return;
+    }
+    Alert.alert('Attach to Jarvis', undefined, [
+      { text: 'Take photo', onPress: () => pickImages(true) },
+      { text: 'Choose photos', onPress: () => pickImages(false) },
+      { text: 'Choose files', onPress: pickFiles },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }, [pickFiles, pickImages]);
+
+  const sendMessage = useCallback(async (
+    text: string,
+    origin: SendMessageOrigin = { source: 'in_app' },
+    attachments: PendingChatAttachment[] = pendingAttachmentsRef.current,
+  ) => {
+    const messageText = text.trim() || (attachments.length ? 'Please review the attached item.' : '');
+    if (!messageText || isStreaming) return;
+    if (attachments.reduce((sum, attachment) => sum + (attachment.size ?? 0), 0) > MAX_CHAT_ATTACHMENTS_TOTAL_BYTES) {
+      Alert.alert('Attachments too large', 'Attachments can be up to 20MB combined.');
+      return;
+    }
     // Intercept /mcp command to open MCP prompt browser
     if (text.trim().toLowerCase().startsWith('/mcp')) {
       setInput('');
       openMcpSheet();
       return;
     }
-    const userMsg: ChatMessage = { id: generateId(), role: 'user', content: text.trim() };
+    let settleTurn: () => void = () => {};
+    const turnSettled = new Promise<void>((resolve) => { settleTurn = resolve; });
+    activeChatTurnSettledRef.current = turnSettled;
+    try {
+    const pendingVoiceConfirmMessage = origin.source === 'voice'
+      ? messagesRef.current.find((message) => message.role === 'assistant' && !!message.pendingConfirm)
+      : undefined;
+    const userMsg: ChatMessage = {
+      id: generateId(),
+      role: 'user',
+      content: messageText,
+    };
     const assistantId = generateId();
     const diagnosticStartedAt = new Date();
     const diagnosticStreamEvents: { type: string; at: string; payload?: unknown }[] = [];
@@ -2849,9 +3074,6 @@ export default function InsightsScreen() {
     };
     hasScrolledRef.current = false;
 
-    const pendingVoiceConfirmMessage = origin.source === 'voice'
-      ? messagesRef.current.find((message) => message.role === 'assistant' && !!message.pendingConfirm)
-      : undefined;
     if (pendingVoiceConfirmMessage?.pendingConfirm) {
       const reply = normalizeVoiceApprovalReply(userMsg.content);
       setMessages(prev => {
@@ -3173,11 +3395,10 @@ export default function InsightsScreen() {
       return;
     }
 
-    setMessages(prev => {
-      const updated = [userMsg, ...prev];
-      persistChatHistory(updated);
-      return updated;
-    });
+    userMsg.attachments = attachments.map(({ data: _data, ...attachment }) => attachment);
+    const historyBeforeRequest = [userMsg, ...messagesRef.current];
+    setMessages(historyBeforeRequest);
+    await persistChatHistory(historyBeforeRequest);
     setInput('');
     setIntegrationError(null);
     setShowTyping(true);
@@ -3188,7 +3409,7 @@ export default function InsightsScreen() {
     chatAbortControllerRef.current = fetchAbort;
     chatRunIdRef.current = null;
 
-    const contextMessages = [userMsg, ...messagesRef.current].slice(0, CONTEXT_WINDOW);
+    const contextMessages = historyBeforeRequest.slice(0, CONTEXT_WINDOW);
     const apiMessages = buildDiagnosticConversationMessages(contextMessages).reverse();
     let serverContextTrace: ServerContextTrace | null = null;
     let selectedToolNames: string[] = [];
@@ -3280,6 +3501,8 @@ export default function InsightsScreen() {
           sdkSessionId: sdkSessionIdRef.current || undefined,
           originChannel: origin.source === 'voice' ? 'voice' : 'appchat',
           originPlatform: Platform.OS,
+          attachments: attachments.map(({ name, mimeType, data }) => ({ name, mimeType, data })),
+          messageId: userMsg.id,
         }),
         signal: fetchAbort.signal,
       });
@@ -3301,7 +3524,6 @@ export default function InsightsScreen() {
         }
         throw new Error(message);
       }
-
       setShowTyping(false);
       const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' };
       streamingAssistantIdRef.current = assistantId;
@@ -3318,8 +3540,10 @@ export default function InsightsScreen() {
       let buffer = '';
       let executedActions: ExecutedAction[] = [];
       let gotConfirmRequired = false;
+      let confirmTurnPersisted = false;
       let streamAborted = false;
       let streamErrorMessage = '';
+      let streamCompleted = false;
 
       outer: while (true) {
         const { done, value } = await reader.read();
@@ -3331,7 +3555,10 @@ export default function InsightsScreen() {
         for (const line of lines) {
           if (line.startsWith('data: ')) {
             const data = line.slice(6).trim();
-            if (data === '[DONE]') continue;
+            if (data === '[DONE]') {
+              streamCompleted = true;
+              continue;
+            }
             try {
               const parsed = JSON.parse(data);
               diagnosticStreamEvents.push({
@@ -3373,6 +3600,7 @@ export default function InsightsScreen() {
                 break outer;
               } else if (parsed.type === 'confirm_required') {
                 gotConfirmRequired = true;
+                confirmTurnPersisted = parsed.turnPersisted === true;
                 if (typeof parsed.tool === 'string') {
                   selectedToolNames = Array.from(new Set([...selectedToolNames, parsed.tool]));
                 }
@@ -3537,13 +3765,18 @@ export default function InsightsScreen() {
         return;
       }
 
-      if (gotConfirmRequired) {
-        clearAcceptedVoiceRestore();
+      if (streamErrorMessage) {
+        retainAcceptedVoiceRestoreForRetry();
         return;
       }
 
-      if (streamErrorMessage) {
-        retainAcceptedVoiceRestoreForRetry();
+      if (streamCompleted && attachments.length && (!gotConfirmRequired || confirmTurnPersisted)) {
+        const sentIds = new Set(attachments.map((attachment) => attachment.id));
+        setPendingAttachments(current => current.filter((attachment) => !sentIds.has(attachment.id)));
+      }
+
+      if (gotConfirmRequired) {
+        clearAcceptedVoiceRestore();
         return;
       }
 
@@ -3709,6 +3942,10 @@ export default function InsightsScreen() {
         return updated;
       });
       retainAcceptedVoiceRestoreForRetry();
+    }
+    } finally {
+      settleTurn();
+      if (activeChatTurnSettledRef.current === turnSettled) activeChatTurnSettledRef.current = null;
     }
   }, [copyDiagnosticBundleToClipboard, getDiagnosticRecords, isStreaming, openMcpSheet]);
 
@@ -4054,11 +4291,14 @@ export default function InsightsScreen() {
       setConfirmClear(true);
       return;
     }
+    const activeTurnSettled = activeChatTurnSettledRef.current;
+    await abortActiveChatTurn();
+    await activeTurnSettled;
     await Promise.all([clearChatHistory(), saveCoachSessionId(null)]);
     sdkSessionIdRef.current = null;
     setMessages([]);
     setConfirmClear(false);
-  }, [confirmClear]);
+  }, [abortActiveChatTurn, confirmClear]);
 
   const lastAssistantId = messages.find(m => m.role === 'assistant')?.id;
   const visibleMessages = messages.filter((m, index) => !isNoisyChatFailure(m, index));
@@ -4168,7 +4408,7 @@ export default function InsightsScreen() {
         isFirst={isFirst}
         isLastAssistant={msg.role === 'assistant' && msg.id === lastAssistantId}
         goals={goals}
-        onFollowup={sendMessage}
+        onFollowup={(text) => sendMessage(text, { source: 'in_app' }, pendingAttachmentsRef.current)}
         onSpeak={speakText}
         isSpeaking={isSpeaking}
         isStreaming={isStreaming}
@@ -4294,7 +4534,7 @@ export default function InsightsScreen() {
                 <Pressable
                   key={i}
                   style={[styles.suggestedPill, isBaseLoading && { opacity: 0.4 }]}
-                  onPress={() => sendMessage(prompt)}
+                  onPress={() => sendMessage(prompt, { source: 'in_app' }, pendingAttachmentsRef.current)}
                   disabled={isBaseLoading}
                 >
                   <Text style={styles.suggestedText}>{prompt}</Text>
@@ -4338,6 +4578,31 @@ export default function InsightsScreen() {
           }}
         />
       ) : null}
+
+      {pendingAttachments.length > 0 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.pendingAttachmentList}
+        >
+          {pendingAttachments.map((attachment) => (
+            <View key={attachment.id} style={styles.pendingAttachmentCard}>
+              {attachment.mimeType.startsWith('image/') && attachment.previewUri ? (
+                <Image source={{ uri: attachment.previewUri }} style={styles.pendingAttachmentImage} />
+              ) : (
+                <Ionicons name="document-outline" size={24} color={Colors.primary} />
+              )}
+              <Text style={styles.pendingAttachmentName} numberOfLines={1}>{attachment.name}</Text>
+              <Pressable
+                style={styles.pendingAttachmentRemove}
+                onPress={() => setPendingAttachments(current => current.filter(item => item.id !== attachment.id))}
+              >
+                <Ionicons name="close-circle" size={18} color="#fff" />
+              </Pressable>
+            </View>
+          ))}
+        </ScrollView>
+      )}
 
       <View style={[styles.inputContainer, { paddingBottom: tabBarHeight + 8 }]}>
         <Pressable
@@ -4392,6 +4657,14 @@ export default function InsightsScreen() {
           <Ionicons name={talkModeEnabled ? 'toggle' : 'toggle-outline'} size={14} color={talkModeEnabled ? Colors.success : Colors.textSecondary} />
         </Pressable>
         <Pressable
+          style={[styles.attachmentBtn, (isBaseLoading || isRecording || isTranscribing) && { opacity: 0.4 }]}
+          onPress={openAttachmentMenu}
+          disabled={isBaseLoading || isRecording || isTranscribing}
+          accessibilityLabel="Attach photo or file"
+        >
+          <Ionicons name="add" size={23} color={Colors.textSecondary} />
+        </Pressable>
+        <Pressable
           style={[styles.micBtn, isRecording && styles.micBtnRecording, isBaseLoading && { opacity: 0.4 }]}
           onPress={isSpeaking ? interruptSpeakingAndListen : isRecording ? stopRecordingAndSend : startRecording}
           disabled={isTranscribing || isBaseLoading}
@@ -4425,13 +4698,13 @@ export default function InsightsScreen() {
           returnKeyType="send"
           blurOnSubmit={false}
           onSubmitEditing={() => {
-            if (Platform.OS !== 'web') sendMessage(input);
+            if (Platform.OS !== 'web') sendMessage(input, { source: 'in_app' }, pendingAttachments);
           }}
           onKeyPress={(event) => {
             const nativeEvent = event.nativeEvent as typeof event.nativeEvent & { shiftKey?: boolean };
-            if (Platform.OS === 'web' && nativeEvent.key === 'Enter' && !nativeEvent.shiftKey && input.trim()) {
+            if (Platform.OS === 'web' && nativeEvent.key === 'Enter' && !nativeEvent.shiftKey && (input.trim() || pendingAttachments.length)) {
               (event as unknown as { preventDefault?: () => void }).preventDefault?.();
-              sendMessage(input);
+              sendMessage(input, { source: 'in_app' }, pendingAttachments);
             }
           }}
         />
@@ -4453,9 +4726,9 @@ export default function InsightsScreen() {
           </View>
         ) : (
           <Pressable
-            style={[styles.sendBtn, (!input.trim() || isBaseLoading) && styles.sendBtnDisabled]}
-            onPress={() => sendMessage(input)}
-            disabled={!input.trim() || isBaseLoading}
+            style={[styles.sendBtn, ((!input.trim() && !pendingAttachments.length) || isBaseLoading) && styles.sendBtnDisabled]}
+            onPress={() => sendMessage(input, { source: 'in_app' }, pendingAttachments)}
+            disabled={(!input.trim() && !pendingAttachments.length) || isBaseLoading}
           >
             <Ionicons name="arrow-up" size={18} color="#fff" />
           </Pressable>
@@ -5727,6 +6000,52 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
     gap: 10,
   },
+  attachmentBtn: {
+    width: 34,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pendingAttachmentList: {
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    backgroundColor: Colors.background,
+  },
+  pendingAttachmentCard: {
+    width: 82,
+    height: 72,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  pendingAttachmentImage: {
+    width: '100%',
+    height: '100%',
+  },
+  pendingAttachmentName: {
+    position: 'absolute',
+    left: 4,
+    right: 4,
+    bottom: 3,
+    borderRadius: 4,
+    paddingHorizontal: 3,
+    color: '#fff',
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    fontSize: 9,
+    fontFamily: 'Inter_500Medium',
+  },
+  pendingAttachmentRemove: {
+    position: 'absolute',
+    top: 2,
+    right: 2,
+    borderRadius: 10,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
   input: {
     flex: 1,
     backgroundColor: Colors.card,
@@ -5747,6 +6066,36 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  userAttachmentList: {
+    alignSelf: 'flex-end',
+    maxWidth: '82%',
+    gap: 6,
+    marginTop: 4,
+  },
+  userAttachmentImage: {
+    width: 220,
+    height: 180,
+    borderRadius: 14,
+    backgroundColor: Colors.card,
+  },
+  userAttachmentFile: {
+    maxWidth: 240,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.card,
+  },
+  userAttachmentFileName: {
+    flex: 1,
+    color: Colors.text,
+    fontSize: 12,
+    fontFamily: 'Inter_500Medium',
   },
   micLoadingWrap: {
     alignItems: 'center',

@@ -16,7 +16,7 @@ export function registerCoachSessionRoutes(app: Express, openai: OpenAI): void {
     if (!run) return res.json({ ok: true });
     if (run.userId !== callerId) return res.status(403).json({ error: "Forbidden" });
     run.controller.abort();
-    activeCoachRuns.delete(runId);
+    if (!run.done) activeCoachRuns.delete(runId);
 
     try {
       const { cancelUserTranscriptJobs } = await import("../lib/transcriptJobTracker");

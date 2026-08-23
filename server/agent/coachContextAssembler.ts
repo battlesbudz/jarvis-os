@@ -14,6 +14,7 @@ export interface AssembleCoachContextInput {
   clientMessages: unknown[];
   recoveredSessionMessages?: OAIMessage[];
   fallbackMessages?: unknown[];
+  latestUserContext?: string;
   maxEstimatedTokens?: number;
 }
 
@@ -26,17 +27,43 @@ const DEFAULT_MAX_ESTIMATED_TOKENS = 12_000;
 const MAX_SINGLE_MESSAGE_CHARS = 32_000;
 const SUMMARY_PREFIX = "UNTRUSTED CONTEXT: Prior session summary";
 const OVERSIZED_MESSAGE_NOTICE = "\n\n[... middle of oversized message omitted ...]\n\n";
+const SERVER_CONTEXT_BLOCKS = [
+  { start: "\n\n<user_attachments>\n", end: "\n\n</user_attachments>" },
+  { start: "\n\n<youtube_transcripts>\n", end: "\n\n</youtube_transcripts>" },
+];
 
-function boundMessageContent(content: string): string {
-  if (content.length <= MAX_SINGLE_MESSAGE_CHARS) return content;
+function boundRawMessageContent(content: string, maxChars = MAX_SINGLE_MESSAGE_CHARS): string {
+  if (content.length <= maxChars) return content;
+  if (maxChars <= OVERSIZED_MESSAGE_NOTICE.length) return content.slice(-maxChars);
   // Preserve substantially more of the tail because pasted documents commonly
   // put the user's actual question or instruction after the source material.
-  const tailChars = 20_000;
-  const headChars = MAX_SINGLE_MESSAGE_CHARS - tailChars - OVERSIZED_MESSAGE_NOTICE.length;
+  const availableChars = maxChars - OVERSIZED_MESSAGE_NOTICE.length;
+  const tailChars = Math.min(20_000, Math.ceil(availableChars * 0.625));
+  const headChars = availableChars - tailChars;
   return content.slice(0, headChars) + OVERSIZED_MESSAGE_NOTICE + content.slice(-tailChars);
 }
 
-function normalizeVisibleMessages(messages: unknown[]): Array<{ role: "user" | "assistant"; content: string }> {
+function boundContextMessageContent(content: string, maxChars: number): string {
+  const identity = stripServerContext(content);
+  const serverContext = content.slice(identity.length);
+  if (!serverContext) return boundRawMessageContent(content, maxChars);
+  if (serverContext.length >= maxChars) {
+    const identityChars = Math.min(identity.length, Math.max(1, Math.floor(maxChars * 0.25)));
+    const serverContextChars = maxChars - identityChars;
+    return boundRawMessageContent(identity, identityChars) +
+      (serverContextChars > 0 ? boundRawMessageContent(serverContext, serverContextChars) : "");
+  }
+  return boundRawMessageContent(identity, maxChars - serverContext.length) + serverContext;
+}
+
+export function boundMessageContent(content: string, preserveServerContext = false): string {
+  return preserveServerContext ? content : boundRawMessageContent(content);
+}
+
+function normalizeVisibleMessages(
+  messages: unknown[],
+  preserveServerContext = false,
+): Array<{ role: "user" | "assistant"; content: string }> {
   const normalized: Array<{ role: "user" | "assistant"; content: string }> = [];
   for (const value of messages) {
     if (!value || typeof value !== "object") continue;
@@ -45,17 +72,37 @@ function normalizeVisibleMessages(messages: unknown[]): Array<{ role: "user" | "
     if (typeof candidate.content !== "string" || !candidate.content.trim()) continue;
     normalized.push({
       role: candidate.role,
-      content: boundMessageContent(candidate.content),
+      content: boundMessageContent(candidate.content, preserveServerContext),
     });
   }
   return normalized;
+}
+
+export function stripServerContext(content: string): string {
+  let identity = content;
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (const block of SERVER_CONTEXT_BLOCKS) {
+      if (!identity.endsWith(block.end)) continue;
+      // Server wrappers are appended outside user-controlled content. Start at
+      // the outermost marker so legacy unescaped nested delimiters fail closed.
+      const start = identity.indexOf(block.start);
+      if (start === -1) continue;
+      identity = identity.slice(0, start);
+      stripped = true;
+      break;
+    }
+  }
+  return identity;
 }
 
 function sameMessage(
   left: { role: "user" | "assistant"; content: string },
   right: { role: "user" | "assistant"; content: string },
 ): boolean {
-  return left.role === right.role && left.content === right.content;
+  if (left.role !== right.role) return false;
+  return boundMessageContent(stripServerContext(left.content)) === boundMessageContent(stripServerContext(right.content));
 }
 
 /** Merge an older authoritative history with the client's overlapping recent window. */
@@ -81,6 +128,63 @@ export function mergeOverlappingCoachMessages(
   return [...older, ...recent.slice(overlap)];
 }
 
+/** Reconcile a complete app transcript with a provider log that may omit runtime-only turns. */
+export function reconcileCoachMessages(
+  completeMessages: unknown[],
+  providerMessages: unknown[],
+): Array<{ role: "user" | "assistant"; content: string }> {
+  const complete = normalizeVisibleMessages(completeMessages, true);
+  const provider = normalizeVisibleMessages(providerMessages, true);
+  const remainingMatches = Array.from(
+    { length: complete.length + 1 },
+    () => Array<number>(provider.length + 1).fill(0),
+  );
+  for (let completeIndex = complete.length - 1; completeIndex >= 0; completeIndex--) {
+    for (let providerIndex = provider.length - 1; providerIndex >= 0; providerIndex--) {
+      remainingMatches[completeIndex][providerIndex] = sameMessage(
+        complete[completeIndex],
+        provider[providerIndex],
+      )
+        ? remainingMatches[completeIndex + 1][providerIndex + 1] + 1
+        : Math.max(
+            remainingMatches[completeIndex + 1][providerIndex],
+            remainingMatches[completeIndex][providerIndex + 1],
+          );
+    }
+  }
+
+  const merged: typeof complete = [];
+  let completeIndex = 0;
+  let hasMatched = false;
+
+  for (let providerIndex = 0; providerIndex < provider.length; providerIndex++) {
+    const providerMessage = provider[providerIndex];
+    let matchIndex = -1;
+    let bestRemainingMatches = -1;
+    for (let index = completeIndex; index < complete.length; index++) {
+      if (!sameMessage(complete[index], providerMessage)) continue;
+      const candidateMatches = remainingMatches[index + 1][providerIndex + 1];
+      if (
+        candidateMatches > bestRemainingMatches ||
+        (!hasMatched && candidateMatches === bestRemainingMatches)
+      ) {
+        matchIndex = index;
+        bestRemainingMatches = candidateMatches;
+      }
+    }
+    if (matchIndex === -1) {
+      merged.push(providerMessage);
+      continue;
+    }
+    merged.push(...complete.slice(completeIndex, matchIndex), providerMessage);
+    completeIndex = matchIndex + 1;
+    hasMatched = true;
+  }
+
+  merged.push(...complete.slice(completeIndex));
+  return merged;
+}
+
 function estimatedTokens(message: { content: string }): number {
   return Math.ceil(message.content.length / 4) + 6;
 }
@@ -103,20 +207,43 @@ function summarizedMessageCount(messages: Array<{ content: string }>): number {
  */
 export function assembleCoachContext(input: AssembleCoachContextInput): AssembledCoachContext {
   const client = normalizeVisibleMessages(input.clientMessages);
-  const recovered = normalizeVisibleMessages(input.recoveredSessionMessages ?? []);
-  const fallback = normalizeVisibleMessages(input.fallbackMessages ?? []);
+  const recovered = normalizeVisibleMessages(input.recoveredSessionMessages ?? [], true);
+  const fallback = normalizeVisibleMessages(input.fallbackMessages ?? [], true);
   const authoritative = recovered.length > 0 ? recovered : fallback;
   const merged = mergeOverlappingCoachMessages(authoritative, client);
+  if (input.latestUserContext) {
+    const latestUserIndex = merged.findLastIndex((message) => message.role === "user");
+    if (latestUserIndex >= 0) {
+      merged[latestUserIndex] = {
+        ...merged[latestUserIndex],
+        content: [merged[latestUserIndex].content, input.latestUserContext].join("\n\n"),
+      };
+    }
+  }
   const summaries = merged.filter((message) => message.content.startsWith(SUMMARY_PREFIX));
   const raw = merged.filter((message) => !message.content.startsWith(SUMMARY_PREFIX));
   const maxTokens = Math.max(1_000, input.maxEstimatedTokens ?? DEFAULT_MAX_ESTIMATED_TOKENS);
-
   const keptRecent: typeof raw = [];
-  let usedTokens = summaries.reduce((total, message) => total + estimatedTokens(message), 0);
+  let usedTokens = 0;
   for (let index = raw.length - 1; index >= 0; index--) {
-    const cost = estimatedTokens(raw[index]);
-    if (keptRecent.length > 0 && usedTokens + cost > maxTokens) break;
-    keptRecent.unshift(raw[index]);
+    const message = raw[index];
+    const cost = estimatedTokens(message);
+    if (usedTokens + cost > maxTokens) {
+      const availableTokens = maxTokens - usedTokens;
+      const availableChars = Math.max(0, (availableTokens - 6) * 4);
+      const hasServerContext = stripServerContext(message.content) !== message.content;
+      if (hasServerContext && availableChars > OVERSIZED_MESSAGE_NOTICE.length) {
+        const boundedMessage = {
+          ...message,
+          content: boundContextMessageContent(message.content, availableChars),
+        };
+        keptRecent.unshift(boundedMessage);
+        usedTokens += estimatedTokens(boundedMessage);
+        break;
+      }
+      if (keptRecent.length > 0) break;
+    }
+    keptRecent.unshift(message);
     usedTokens += cost;
   }
 

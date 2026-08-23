@@ -63,7 +63,6 @@ import {
 const SUPPORTED_DOC_TYPES = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/msword',
   'text/plain',
   'text/markdown',
   'text/csv',

@@ -300,6 +300,14 @@ export interface McpAttachment {
   mcpServerName?: string;
 }
 
+export interface ChatAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size?: number;
+  previewUri?: string;
+}
+
 export interface ExecutedAction {
   tool: string;
   operation?: string;
@@ -363,6 +371,7 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
+  attachments?: ChatAttachment[];
   actions?: CoachAction[];
   followups?: string[];
   executedActions?: ExecutedAction[];

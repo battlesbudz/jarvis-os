@@ -5,7 +5,7 @@ import {
   createTelegramRunGuard,
   resolveTelegramReplyTimeoutMs,
 } from "../../telegramRunGuard";
-import { activeCoachRuns } from "../../runRegistry";
+import { abortActiveCoachRun, abortActiveCoachRunsForUser, activeCoachRuns } from "../../runRegistry";
 
 async function main() {
   activeCoachRuns.clear();
@@ -88,6 +88,38 @@ async function main() {
   stopped.finish();
   assert.equal(activeCoachRuns.size, 0);
   console.log("OK: explicit Telegram stops still abort the targeted turn");
+
+  const telegram = createTelegramRunGuard("shared-user");
+  const appController = new AbortController();
+  let finishAppRun: () => void = () => {};
+  const appRunDone = new Promise<void>((resolve) => { finishAppRun = resolve; });
+  activeCoachRuns.set("app-run", {
+    controller: appController,
+    userId: "shared-user",
+    channel: "appchat",
+    done: appRunDone,
+  });
+  appController.signal.addEventListener("abort", () => {
+    activeCoachRuns.delete("app-run");
+    finishAppRun();
+  });
+  await abortActiveCoachRunsForUser("shared-user");
+  assert.equal(appController.signal.aborted, true, "clearing app chat aborts its in-flight turn");
+  assert.equal(telegram.signal.aborted, false, "clearing app chat does not abort another channel");
+  telegram.finish();
+  console.log("OK: app-chat clearing waits for app turns without interrupting Telegram");
+
+  const retainedController = new AbortController();
+  const retainedDone = Promise.resolve();
+  activeCoachRuns.set("retained-app-run", {
+    controller: retainedController,
+    userId: "retained-user",
+    channel: "appchat",
+    done: retainedDone,
+  });
+  assert.equal(abortActiveCoachRun("retained-app-run", "retained-user").status, "aborted");
+  assert.equal(activeCoachRuns.has("retained-app-run"), true, "abort keeps app runs registered until route cleanup");
+  activeCoachRuns.delete("retained-app-run");
 
   console.log("\nAll Telegram run guard assertions passed.");
 }

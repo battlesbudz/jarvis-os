@@ -205,8 +205,13 @@ function testAppContextTraceWiringContract() {
   );
   assert.match(
     insights,
-    /if \(gotConfirmRequired\)[\s\S]*?clearAcceptedVoiceRestore\(\)[\s\S]*?if \(streamErrorMessage\)[\s\S]*?retainAcceptedVoiceRestoreForRetry\(\)/,
-    "voice restore markers clear only after a successful coach turn",
+    /if \(gotConfirmRequired\)[\s\S]*?clearAcceptedVoiceRestore\(\)/,
+    "approval requests clear accepted voice restore markers",
+  );
+  assert.match(
+    insights,
+    /if \(streamErrorMessage\)[\s\S]*?retainAcceptedVoiceRestoreForRetry\(\)/,
+    "failed coach turns keep accepted voice restore markers retryable",
   );
   assert.doesNotMatch(
     insights,
