@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from "express";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { db } from "../db";
 import { cancellationStatusForAgentJobStatus } from "../agent/voiceRuntimeResourceCore";
@@ -81,34 +81,54 @@ export function registerAgentJobMutationRoutes(app: Express): void {
       const userId = req.userId;
       if (!userId) return res.status(401).json({ error: "Not authenticated" });
       const id = paramValue(req.params.id);
-      const [job] = await db
-        .select()
-        .from(schema.agentJobs)
-        .where(and(eq(schema.agentJobs.id, id), eq(schema.agentJobs.userId, userId)))
-        .limit(1);
-      if (!job) return res.status(404).json({ error: "Job not found" });
-      if (!["failed", "cancelled"].includes(job.status)) {
-        return res.status(400).json({ error: "Only failed or cancelled jobs can be retried" });
-      }
+      const retry = await db.transaction(async (tx) => {
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${userId}:${id}:retry`}, 0))`);
+        const [job] = await tx
+          .select()
+          .from(schema.agentJobs)
+          .where(and(eq(schema.agentJobs.id, id), eq(schema.agentJobs.userId, userId)))
+          .limit(1)
+          .for("update");
+        if (!job) return { error: "Job not found", statusCode: 404 } as const;
+        if (!["failed", "cancelled"].includes(job.status)) {
+          return { error: "Only failed or cancelled jobs can be retried", statusCode: 400 } as const;
+        }
 
-      const { submitAgentJob } = await import("../agent/jobQueue");
-      const input = job.input && typeof job.input === "object" && !Array.isArray(job.input)
-        ? { ...(job.input as Record<string, unknown>) }
-        : {};
-      delete input.retryCount;
-      const { resolveAgentJobLineageKey } = await import("../liveActions/agentJobLineage");
-      const retry = await submitAgentJob({
-        userId,
-        agentType: job.agentType as any,
-        title: job.title,
-        prompt: job.prompt,
-        input: {
-          ...input,
-          liveActionLineageKey: await resolveAgentJobLineageKey(userId, job),
-          retryOfJobId: job.id,
-          retriedAt: new Date().toISOString(),
-        },
-      }, { skipDuplicateCheck: true });
+        const [existingRetry] = await tx
+          .select({ id: schema.agentJobs.id })
+          .from(schema.agentJobs)
+          .where(and(
+            eq(schema.agentJobs.userId, userId),
+            sql`${schema.agentJobs.input}->>'retryOfJobId' = ${job.id}`,
+          ))
+          .orderBy(desc(schema.agentJobs.createdAt))
+          .limit(1);
+        if (existingRetry) return { id: existingRetry.id, isDuplicate: true } as const;
+
+        const input = job.input && typeof job.input === "object" && !Array.isArray(job.input)
+          ? { ...(job.input as Record<string, unknown>) }
+          : {};
+        delete input.retryCount;
+        delete input.requeuedAt;
+        delete input.resourcePause;
+        delete input.cancelRequestedAt;
+        delete input.retriedAt;
+        const { resolveAgentJobLineageKey } = await import("../liveActions/agentJobLineage");
+        const { submitAgentJob } = await import("../agent/jobQueue");
+        return submitAgentJob({
+          userId,
+          agentType: job.agentType as any,
+          title: job.title,
+          prompt: job.prompt,
+          input: {
+            ...input,
+            liveActionLineageKey: await resolveAgentJobLineageKey(userId, job),
+            retryOfJobId: job.id,
+            retriedAt: new Date().toISOString(),
+          },
+        }, { db: tx, skipDuplicateCheck: true });
+      });
+      if ("error" in retry) return res.status(retry.statusCode).json({ error: retry.error });
 
       res.json({ ok: true, jobId: retry.id, isDuplicate: retry.isDuplicate, status: "queued" });
     } catch (err) {
