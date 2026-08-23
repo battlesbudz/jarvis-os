@@ -14,7 +14,7 @@ import {
   type ProviderStatus,
 } from "./providers/modelProviderAuthProfiles";
 import { DEFAULT_CODEX_OAUTH_MODEL, getCodexOAuthModel } from "./runtimeModel";
-import { ANDROID_LOCAL_GEMMA_MODEL } from "@shared/modelProviderCatalog";
+import { ANDROID_LOCAL_GEMMA_MODEL, modelSupportsCapability, type ModelCapability } from "@shared/modelProviderCatalog";
 import {
   answerRuntimeIdentityQuestion,
   classifyRuntimeIdentityIntent,
@@ -113,6 +113,7 @@ export interface RoutedModelTurnParams {
   disableRuntimeStateCardMemoryContext?: boolean;
   phoneGemmaDeviceId?: string;
   phoneGemmaProfileId?: string;
+  requiredCapabilities?: ModelCapability[];
   excludedProviders?: ProviderName[];
 }
 
@@ -1270,8 +1271,17 @@ async function prepareModelTurn(
     ?? (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix))
     ?? getModelRouteChain(params.tier);
   const excludedProviders = new Set(params.excludedProviders ?? []);
-  const chain = resolvedChain.filter((entry) => !excludedProviders.has(entry.providerName));
+  const requiredCapabilities = params.requiredCapabilities ?? [];
+  const chain = resolvedChain.filter((entry) =>
+    !excludedProviders.has(entry.providerName)
+    && requiredCapabilities.every((capability) => modelSupportsCapability(entry.model, capability)),
+  );
   if (chain.length === 0) {
+    if (requiredCapabilities.length > 0) {
+      throw new Error(
+        `No configured model provider supports the required capabilities: ${requiredCapabilities.join(", ")}.`,
+      );
+    }
     throw new Error(
       "No model providers configured. Enable ChatGPT/Codex OAuth or another explicitly approved provider variable.",
     );
