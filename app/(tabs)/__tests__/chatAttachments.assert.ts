@@ -85,6 +85,7 @@ assert.equal((modelRouterSource.match(/useEnvironmentCredentials: true/g) || [])
 assert.equal((providerFallbackSource.match(/userId: entry\.useEnvironmentCredentials \? undefined : params\.userId/g) || []).length, 2, "environment routes should bypass stale user profiles in streaming and non-streaming turns");
 assert.ok(modelRouterSource.includes('entry.useEnvironmentCredentials ? "env" : "profile"'), "profile and environment routes should remain distinct during deduplication");
 assert.ok(modelRouterSource.includes("hasConfiguredVisionProvider(entry, configuredVisionChain)"), "unconnected selected models should not block configured vision providers");
+assert.ok(modelRouterSource.includes('capability === "vision" && entry.supportsVision'), "explicit OpenRouter vision routes should not depend on the closed model-name catalog");
 assert.ok(!documentSource.includes("hasDirectOpenAIProvider"), "image extraction should not require a direct OpenAI key");
 assert.ok(documentSource.includes("signal,"), "image analysis should receive the chat cancellation signal");
 assert.ok(documentSource.includes("extractFromPdf(buffer, maxChars, signal)"), "PDF extraction should receive its output limit and cancellation signal");
@@ -113,6 +114,7 @@ assert.match(dataRouteSource, /trustedContexts/, "chat-history saves must preser
 assert.match(dataRouteSource, /clearAgentChatState/, "clearing app history must also clear provider history and sessions");
 assert.match(routeSource, /const turnPersisted = attachmentContextPersisted/, "confirmation files must remain queued until app-history enrichment succeeds");
 assert.ok(chatSource.indexOf("await abortActiveChatTurn();") < chatSource.indexOf("await activeTurnSettled;"), "clearing chat should abort and settle the client turn before deleting history");
+assert.ok(chatSource.indexOf("await activeTurnSettled;") < chatSource.indexOf("setPendingAttachments([]);"), "clearing chat should discard retryable attachment bytes after the active turn settles");
 assert.ok(coachSessionRouteSource.includes("if (!run.done) activeCoachRuns.delete(runId)"), "client abort should retain active app runs until route cleanup resolves them");
 assert.ok(chatSource.includes("const contextMessages = historyBeforeRequest.slice(0, CONTEXT_WINDOW)"), "request context should reuse the persisted snapshot without duplicating the new user turn");
 assert.match(routeSource, /if \(!clientDisconnected\) \{[\s\S]*?res\.write\('data: \[DONE\]\\n\\n'\);[\s\S]*?res\.end\(\);\n      \}\n      cleanupRun\(\);/, "successful final synthesis should emit completion before aborting its lifecycle controller");

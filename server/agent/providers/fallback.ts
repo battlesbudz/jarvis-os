@@ -62,6 +62,8 @@ export interface FallbackChainEntry {
   fallbackOnCredentialError?: boolean;
   /** Bypass user-profile resolution for a route derived from deployment configuration. */
   useEnvironmentCredentials?: boolean;
+  /** The dedicated deployment setting explicitly declares this route as vision-capable. */
+  supportsVision?: boolean;
 }
 
 function collectErrorSignals(err: unknown): string {

@@ -4309,6 +4309,7 @@ export default function InsightsScreen() {
     const activeTurnSettled = activeChatTurnSettledRef.current;
     await abortActiveChatTurn();
     await activeTurnSettled;
+    setPendingAttachments([]);
     await Promise.all([clearChatHistory(), saveCoachSessionId(null)]);
     sdkSessionIdRef.current = null;
     setMessages([]);

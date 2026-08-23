@@ -1031,7 +1031,12 @@ function getConfiguredVisionRouteChain(): FallbackChainEntry[] {
   if (hasProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY")) {
     const model = getProviderEnvValue("OPENROUTER_VISION_MODEL", "AI_INTEGRATIONS_OPENROUTER_VISION_MODEL")
       ?? "openai/gpt-4o-mini";
-    pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${model.replace(/^openrouter\//, "")}`, useEnvironmentCredentials: true });
+    pushUnique(chain, {
+      providerName: "openai-compatible",
+      model: `openrouter/${model.replace(/^openrouter\//, "")}`,
+      useEnvironmentCredentials: true,
+      supportsVision: true,
+    });
   }
   return chain;
 }
@@ -1362,7 +1367,10 @@ async function prepareModelTurn(
   const chain = resolvedChain
     .filter((entry) =>
       !excludedProviders.has(entry.providerName)
-      && requiredCapabilities.every((capability) => modelSupportsCapability(entry.model, capability)),
+      && requiredCapabilities.every((capability) =>
+        (capability === "vision" && entry.supportsVision)
+        || modelSupportsCapability(entry.model, capability)
+      ),
     )
     .map((entry) => requiredCapabilities.includes("vision")
       ? { ...entry, fallbackOnCredentialError: true }
