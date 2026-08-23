@@ -279,7 +279,15 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
     ...filteredScope,
     gte(schema.agentJobs.completedAt, terminalCutoff),
   )).orderBy(desc(schema.agentJobs.completedAt));
-  const [activeJobs, recentJobs, recentlyCompletedJobs, pendingGates] = await Promise.all([
+  const projectedActionConditions = opts.status
+    ? [
+        eq(schema.liveActions.userId, userId),
+        eq(schema.liveActions.status, opts.status),
+        ...(opts.projectId ? [eq(schema.liveActions.projectId, opts.projectId)] : []),
+        ...(opts.sourceLineageKey ? [eq(schema.liveActions.sourceLineageKey, opts.sourceLineageKey)] : []),
+      ]
+    : [];
+  const [activeJobs, recentJobs, recentlyCompletedJobs, pendingGates, matchingProjectedActions] = await Promise.all([
     db.select().from(schema.agentJobs).where(and(
       ...scope,
       inArray(schema.agentJobs.status, ["queued", "running", "cancelling", "resource_paused"]),
@@ -290,7 +298,18 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
       eq(schema.agentApprovalGates.userId, userId),
       eq(schema.agentApprovalGates.status, "pending"),
     )),
+    projectedActionConditions.length > 0
+      ? db.select({ sourceId: schema.liveActions.sourceId }).from(schema.liveActions)
+          .where(and(...projectedActionConditions))
+      : Promise.resolve([]),
   ]);
+  const projectedSourceIds = [...new Set(matchingProjectedActions.map((action) => action.sourceId))];
+  const projectedJobs = projectedSourceIds.length > 0
+    ? await db.select().from(schema.agentJobs).where(and(
+        eq(schema.agentJobs.userId, userId),
+        inArray(schema.agentJobs.id, projectedSourceIds),
+      ))
+    : [];
   const filteredLineageKeys = opts.status
     ? [...new Set([...recentJobs, ...recentlyCompletedJobs].map((job) => projectAgentJob(job).sourceLineageKey))]
     : [];
@@ -309,7 +328,13 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
         ),
       ))
     : [];
-  const seedJobs = [...new Map([...activeJobs, ...recentJobs, ...recentlyCompletedJobs, ...lineageJobs].map((job) => [job.id, job])).values()];
+  const seedJobs = [...new Map([
+    ...activeJobs,
+    ...recentJobs,
+    ...recentlyCompletedJobs,
+    ...lineageJobs,
+    ...projectedJobs,
+  ].map((job) => [job.id, job])).values()];
   const descendantRoots = opts.sourceLineageKey
     ? [opts.sourceLineageKey]
     : opts.status ? filteredLineageKeys : [];

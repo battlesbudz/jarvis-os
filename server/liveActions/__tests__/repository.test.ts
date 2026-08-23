@@ -248,6 +248,30 @@ async function main(): Promise<void> {
       .filter((action) => historicalIds.includes(action.source.id));
     assert.equal(failedHistoricalActions.length, 0, "filtered reconciliation includes later retry descendants");
 
+    const [filteredRunningJob] = await db.insert(schema.agentJobs).values({
+      id: `${marker}-filtered-running`,
+      userId,
+      agentType: "research",
+      title: "Filtered running transition",
+      prompt: "Finish while filtered",
+      status: "running",
+      createdAt,
+      startedAt: createdAt,
+    }).returning();
+    await reconcileAgentJobsForUser(userId, { status: "running" });
+    assert.ok(
+      (await listLiveActionsForUser({ userId, status: "running", limit: 100 }))
+        .some((action) => action.source.id === filteredRunningJob.id),
+    );
+    await db.update(schema.agentJobs).set({ status: "complete", completedAt: new Date() })
+      .where(eq(schema.agentJobs.id, filteredRunningJob.id));
+    await reconcileAgentJobsForUser(userId, { status: "running" });
+    assert.ok(
+      !(await listLiveActionsForUser({ userId, status: "running", limit: 100 }))
+        .some((action) => action.source.id === filteredRunningJob.id),
+      "status-filtered polling refreshes actions that leave the requested state",
+    );
+
     const oldCreatedAt = new Date(createdAt.getTime() - 31 * 24 * 60 * 60 * 1_000);
     const [oldJob] = await db.insert(schema.agentJobs).values({
       id: `${marker}-old-job`,
