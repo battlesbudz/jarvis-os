@@ -225,6 +225,17 @@ export function projectAgentJob(
         createdAt: retriedAt,
       }
     : null;
+  const resumedAt = dateValue(pause?.resumedAt);
+  const resumeEvent: ProjectedLiveActionEvent | null = resumedAt
+    ? {
+        sourceEventKey: `job:${job.id}:resume:${resumedAt.toISOString()}`,
+        type: "action.resumed",
+        message: "Job resumed",
+        safeMetadata: {},
+        userVisible: true,
+        createdAt: resumedAt,
+      }
+    : null;
   const approvalResolutionEvents = (runtime?.approvalCheckpoints ?? []).flatMap((approvalCheckpoint) => {
     const gate = approvalCheckpoint.gateId ? approvalGates.get(approvalCheckpoint.gateId) : undefined;
     return approvalCheckpoint.gateId && gate?.status !== "pending" && gate?.resolvedAt
@@ -241,6 +252,7 @@ export function projectAgentJob(
   const events = [
     ...baseEvents,
     ...(retryEvent ? [retryEvent] : []),
+    ...(resumeEvent ? [resumeEvent] : []),
     ...approvalResolutionEvents,
   ];
 

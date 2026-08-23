@@ -48,6 +48,7 @@ for (const prefix of ["ghp", "gho", "ghu", "ghs", "ghr"]) {
 assert.equal(sanitizeLiveActionText("Shell command: curl https://private.example"), "command: [redacted]");
 assert.equal(sanitizeLiveActionText("$ rm -rf /home/justin/private"), "[command redacted]");
 assert.equal(sanitizeLiveActionText("Output at /Users/justin/private/report.md"), "Output at [private path]");
+assert.equal(sanitizeLiveActionText("Key at /root/.ssh/id_rsa"), "Key at [private path]");
 assert.equal(
   sanitizeLiveActionText("https://provider.example/callback?access_token=first&refresh_token=second&client_secret=third"),
   "https://provider.example/callback?access_token=[redacted]&refresh_token=[redacted]&client_secret=[redacted]",
@@ -161,6 +162,16 @@ const requeued = projectAgentJob(job({ input: { ...(job().input as Record<string
 assert.equal(requeued.events.at(-1)?.createdAt.toISOString(), requeuedAt);
 assert.match(requeued.events.at(-1)?.sourceEventKey ?? "", /12:05:00\.000Z$/);
 assert.equal(requeued.events.filter((event) => event.type === "action.queued").length, 2);
+
+const resumedAt = "2026-08-23T12:06:00.000Z";
+const resumed = projectAgentJob(job({
+  input: {
+    ...(job().input as Record<string, unknown>),
+    resourcePause: { pausedAt, resumedAt, reason: "voice_active_local_runtime" },
+  },
+}));
+assert.equal(resumed.events.filter((event) => event.type === "action.resumed").length, 1);
+assert.equal(resumed.events.at(-1)?.createdAt.toISOString(), resumedAt);
 
 assert.doesNotThrow(() => LiveActionSchema.parse({
   id: "action-1",
