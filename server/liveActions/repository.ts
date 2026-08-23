@@ -191,31 +191,38 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
   });
 }
 
-export async function reconcileAgentJobsForUser(userId: string, sourceLineageKey?: string): Promise<void> {
+export async function reconcileAgentJobsForUser(userId: string, opts: {
+  sourceLineageKey?: string;
+  status?: LiveActionStatus;
+  projectId?: string;
+} = {}): Promise<void> {
   const terminalCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000);
-  const lineageCondition = sourceLineageKey
+  const lineageCondition = opts.sourceLineageKey
     ? or(
-        eq(schema.agentJobs.id, sourceLineageKey),
-        sql`${schema.agentJobs.input}->>'liveActionLineageKey' = ${sourceLineageKey}`,
-        sql`${schema.agentJobs.input}->>'retryOfJobId' = ${sourceLineageKey}`,
+        eq(schema.agentJobs.id, opts.sourceLineageKey),
+        sql`${schema.agentJobs.input}->>'liveActionLineageKey' = ${opts.sourceLineageKey}`,
+        sql`${schema.agentJobs.input}->>'retryOfJobId' = ${opts.sourceLineageKey}`,
       )
     : undefined;
-  const scope = lineageCondition
-    ? [eq(schema.agentJobs.userId, userId), lineageCondition]
-    : [eq(schema.agentJobs.userId, userId)];
+  const scope = [eq(schema.agentJobs.userId, userId)];
+  if (lineageCondition) scope.push(lineageCondition);
+  if (opts.projectId) scope.push(sql`${schema.agentJobs.input}->>'projectId' = ${opts.projectId}`);
+  const filteredSnapshot = !!opts.status || !!opts.projectId;
+  const recentJobsQuery = db.select().from(schema.agentJobs).where(and(
+    ...scope,
+    gte(schema.agentJobs.createdAt, terminalCutoff),
+  )).orderBy(desc(schema.agentJobs.createdAt));
+  const recentlyCompletedJobsQuery = db.select().from(schema.agentJobs).where(and(
+    ...scope,
+    gte(schema.agentJobs.completedAt, terminalCutoff),
+  )).orderBy(desc(schema.agentJobs.completedAt));
   const [activeJobs, recentJobs, recentlyCompletedJobs, pendingGates] = await Promise.all([
     db.select().from(schema.agentJobs).where(and(
       ...scope,
       inArray(schema.agentJobs.status, ["queued", "running", "cancelling", "resource_paused"]),
     )),
-    db.select().from(schema.agentJobs).where(and(
-      ...scope,
-      gte(schema.agentJobs.createdAt, terminalCutoff),
-    )).orderBy(desc(schema.agentJobs.createdAt)).limit(500),
-    db.select().from(schema.agentJobs).where(and(
-      ...scope,
-      gte(schema.agentJobs.completedAt, terminalCutoff),
-    )).orderBy(desc(schema.agentJobs.completedAt)).limit(500),
+    filteredSnapshot ? recentJobsQuery : recentJobsQuery.limit(500),
+    filteredSnapshot ? recentlyCompletedJobsQuery : recentlyCompletedJobsQuery.limit(500),
     db.select({ id: schema.agentApprovalGates.id }).from(schema.agentApprovalGates).where(and(
       eq(schema.agentApprovalGates.userId, userId),
       eq(schema.agentApprovalGates.status, "pending"),
