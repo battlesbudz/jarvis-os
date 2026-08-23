@@ -10,12 +10,12 @@ import {
   buildVoiceRuntimeIncidentBundle,
   buildVoiceRuntimeStatusAnswer,
   cancellationStatusForAgentJobStatus,
-  cancellationUpdateForAgentJob,
   isLocalHeavyBackgroundJob,
   resourcePauseMetadata,
   shouldAutoResumeResourcePausedJob,
   shouldRecoverStaleResourcePausedJob,
 } from "../voiceRuntimeResourceCore";
+import { cancellationUpdateForAgentJob } from "../jobCancellation";
 import {
   runLocalVoiceRuntimeHarnessTurn,
   ScriptedFakeLocalGemmaProvider,
@@ -56,10 +56,9 @@ function testResourcePauseClassification() {
   assert.equal(cancellationStatusForAgentJobStatus("running"), "cancelling");
   assert.equal(cancellationStatusForAgentJobStatus("complete"), null);
   const cancelRequestedAt = new Date("2026-07-06T08:05:00.000Z");
-  assert.deepEqual(
-    cancellationUpdateForAgentJob({ input: { originChannel: "web" } }, "cancelling", cancelRequestedAt),
-    { status: "cancelling", input: { originChannel: "web", cancelRequestedAt: cancelRequestedAt.toISOString() } },
-  );
+  const cancellationUpdate = cancellationUpdateForAgentJob("cancelling", cancelRequestedAt);
+  assert.equal(cancellationUpdate.status, "cancelling");
+  assert.ok("input" in cancellationUpdate, "running cancellation atomically merges its request timestamp");
   console.log("OK: voice resource scheduler distinguishes resource-paused jobs from user-paused jobs");
 }
 

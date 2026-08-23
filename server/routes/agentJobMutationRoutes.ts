@@ -2,7 +2,8 @@ import type { Express, Request, Response } from "express";
 import { and, eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { db } from "../db";
-import { cancellationStatusForAgentJobStatus, cancellationUpdateForAgentJob } from "../agent/voiceRuntimeResourceCore";
+import { cancellationStatusForAgentJobStatus } from "../agent/voiceRuntimeResourceCore";
+import { cancellationUpdateForAgentJob } from "../agent/jobCancellation";
 
 const paramValue = (value: string | string[]): string => Array.isArray(value) ? (value[0] ?? "") : value;
 
@@ -66,7 +67,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
       }
       await db
         .update(schema.agentJobs)
-        .set(cancellationUpdateForAgentJob(job, newStatus))
+        .set(cancellationUpdateForAgentJob(newStatus))
         .where(eq(schema.agentJobs.id, id));
       res.json({ ok: true, status: newStatus });
     } catch (err) {
@@ -108,7 +109,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
           retryOfJobId: job.id,
           retriedAt: new Date().toISOString(),
         },
-      }, { findDuplicate: async () => null });
+      });
 
       res.json({ ok: true, jobId: retry.id, isDuplicate: retry.isDuplicate, status: "queued" });
     } catch (err) {

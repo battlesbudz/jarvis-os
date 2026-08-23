@@ -10,19 +10,6 @@ export function cancellationStatusForAgentJobStatus(status: string): AgentJobCan
   return null;
 }
 
-export function cancellationUpdateForAgentJob(
-  job: Pick<VoiceRuntimeJobLike, "input">,
-  status: AgentJobCancellationStatus,
-  now = new Date(),
-) {
-  return status === "cancelled"
-    ? { status, completedAt: now }
-    : {
-        status,
-        input: { ...recordFromInput(job.input), cancelRequestedAt: now.toISOString() },
-      };
-}
-
 export interface VoiceResourcePauseMetadata {
   reason: typeof RESOURCE_PAUSE_REASON;
   pausedBy: "voice_runtime";

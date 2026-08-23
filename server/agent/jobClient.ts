@@ -4,7 +4,7 @@
  * without creating a circular dependency.
  */
 import { db } from "../db";
-import { eq, and, inArray, sql } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { findDuplicateJob, findDuplicateJobWithDb } from "./tools/jobDuplicateGuard";
@@ -13,6 +13,7 @@ import {
   RESOURCE_PAUSED_STATUS,
   isLocalHeavyBackgroundJob,
 } from "./voiceRuntimeResourceCore";
+import { cancellationUpdateForAgentJob } from "./jobCancellation";
 import {
   buildVoiceResourcePausedJobInput,
   isVoiceRuntimeResourceActiveForUser,
@@ -280,10 +281,7 @@ export async function cancelAllForUser(
 
   const cancelling = await db
     .update(schema.agentJobs)
-    .set({
-      status: "cancelling",
-      input: sql`${schema.agentJobs.input} || jsonb_build_object('cancelRequestedAt', ${cancelledAt.toISOString()})`,
-    })
+    .set(cancellationUpdateForAgentJob("cancelling", cancelledAt))
     .where(
       and(
         eq(schema.agentJobs.userId, userId),
