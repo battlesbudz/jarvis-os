@@ -42,6 +42,9 @@ assert.equal(
   sanitizeLiveActionText("Request failed for https://client:secret@provider.example/token"),
   "Request failed for https://[credentials redacted]@provider.example/token",
 );
+for (const prefix of ["ghp", "gho", "ghu", "ghs", "ghr"]) {
+  assert.equal(sanitizeLiveActionText(`${prefix}_abcdefghijklmnop`), "[redacted token]");
+}
 assert.equal(sanitizeLiveActionText("Shell command: curl https://private.example"), "command: [redacted]");
 assert.equal(sanitizeLiveActionText("$ rm -rf /home/justin/private"), "[command redacted]");
 assert.equal(sanitizeLiveActionText("Output at /Users/justin/private/report.md"), "Output at [private path]");
