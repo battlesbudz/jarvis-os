@@ -352,40 +352,38 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
   const filteredScope = sourceStatuses.length > 0
     ? [...scope, inArray(schema.agentJobs.status, sourceStatuses)]
     : opts.status ? [...scope, sql`false`] : scope;
-  const projectedActionConditions = opts.status
-    ? [
-        eq(schema.liveActions.userId, userId),
-        eq(schema.liveActions.status, opts.status),
-        or(
-          inArray(schema.liveActions.status, ACTIVE_STATUSES),
-          gte(schema.liveActions.completedAt, terminalCutoff),
-        )!,
-        ...(opts.projectId ? [eq(schema.liveActions.projectId, opts.projectId)] : []),
-        ...(opts.sourceLineageKey ? [eq(schema.liveActions.sourceLineageKey, opts.sourceLineageKey)] : []),
-      ]
-    : [];
+  const projectedActionConditions = [
+    eq(schema.liveActions.userId, userId),
+    ...(opts.status ? [
+      eq(schema.liveActions.status, opts.status),
+      or(
+        inArray(schema.liveActions.status, ACTIVE_STATUSES),
+        gte(schema.liveActions.completedAt, terminalCutoff),
+      )!,
+    ] : [inArray(schema.liveActions.status, ACTIVE_STATUSES)]),
+    ...(opts.projectId ? [eq(schema.liveActions.projectId, opts.projectId)] : []),
+    ...(opts.sourceLineageKey ? [eq(schema.liveActions.sourceLineageKey, opts.sourceLineageKey)] : []),
+  ];
   const matchingProjectedActions: Array<{ id: string; sourceId: string; updatedAt: Date }> = [];
-  if (projectedActionConditions.length > 0) {
-    let cursor: { id: string; updatedAt: Date } | undefined;
-    do {
-      const page = await db.select({
-        id: schema.liveActions.id,
-        sourceId: schema.liveActions.sourceId,
-        updatedAt: schema.liveActions.updatedAt,
-      }).from(schema.liveActions)
-        .where(and(
-          ...projectedActionConditions,
-          ...(cursor ? [or(
-            lt(schema.liveActions.updatedAt, cursor.updatedAt),
-            and(eq(schema.liveActions.updatedAt, cursor.updatedAt), lt(schema.liveActions.id, cursor.id)),
-          )!] : []),
-        ))
-        .orderBy(desc(schema.liveActions.updatedAt), desc(schema.liveActions.id))
-        .limit(500);
-      matchingProjectedActions.push(...page);
-      cursor = page.length === 500 ? page.at(-1) : undefined;
-    } while (cursor);
-  }
+  let projectedActionCursor: { id: string; updatedAt: Date } | undefined;
+  do {
+    const page = await db.select({
+      id: schema.liveActions.id,
+      sourceId: schema.liveActions.sourceId,
+      updatedAt: schema.liveActions.updatedAt,
+    }).from(schema.liveActions)
+      .where(and(
+        ...projectedActionConditions,
+        ...(projectedActionCursor ? [or(
+          lt(schema.liveActions.updatedAt, projectedActionCursor.updatedAt),
+          and(eq(schema.liveActions.updatedAt, projectedActionCursor.updatedAt), lt(schema.liveActions.id, projectedActionCursor.id)),
+        )!] : []),
+      ))
+      .orderBy(desc(schema.liveActions.updatedAt), desc(schema.liveActions.id))
+      .limit(500);
+    matchingProjectedActions.push(...page);
+    projectedActionCursor = page.length === 500 ? page.at(-1) : undefined;
+  } while (projectedActionCursor);
   const [activeJobs] = await Promise.all([
     db.select().from(schema.agentJobs).where(and(
       ...scope,
@@ -498,13 +496,17 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
         || a.createdAt.getTime() - b.createdAt.getTime()
         || a.sourceId.localeCompare(b.sourceId));
       const latest = group.at(-1)!;
+      const canonical = {
+        ...latest,
+        createdAt: new Date(Math.min(...group.map((projection) => projection.createdAt.getTime()))),
+      };
       const eventsBySourceKey = new Map(group
         .flatMap((projection) => projection.events)
         .map((event) => [event.sourceEventKey, event]));
-      latest.events = [...eventsBySourceKey.values()]
+      canonical.events = [...eventsBySourceKey.values()]
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.sourceEventKey.localeCompare(b.sourceEventKey))
         .slice(-MAX_EVENTS_PER_ACTION);
-      await persistAgentJobProjection(latest);
+      await persistAgentJobProjection(canonical);
     }));
   }
 }

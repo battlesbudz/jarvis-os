@@ -310,6 +310,11 @@ async function main(): Promise<void> {
       .filter((action) => historicalIds.includes(action.source.id));
     assert.equal(historicalActions.length, 1, "historical retry descendants share one root lineage");
     assert.equal(historicalActions[0]?.source.id, historicalIds[2], "the latest retry owns the shared action");
+    assert.equal(
+      historicalActions[0]?.createdAt,
+      new Date(createdAt.getTime() - 3_000).toISOString(),
+      "a retry lineage keeps the root attempt's creation time",
+    );
 
     const equalRetryIds = [`${marker}-equal-attempt-z`, `${marker}-equal-attempt-a`];
     const [equalFailedJob, equalRetryJob] = await db.insert(schema.agentJobs).values([
@@ -447,6 +452,29 @@ async function main(): Promise<void> {
       await getLiveActionForUser(userId, expiredDetail.id),
       null,
       "detail reads enforce terminal retention",
+    );
+
+    const [staleActiveJob] = await db.insert(schema.agentJobs).values({
+      id: `${marker}-stale-active`,
+      userId,
+      agentType: "research",
+      title: "Stale active projection",
+      prompt: "Finish outside retention",
+      status: "running",
+      createdAt: expiredAt,
+      startedAt: expiredAt,
+    }).returning();
+    await reconcileAgentJobsForUser(userId);
+    const staleActiveAction = (await listLiveActionsForUser({ userId, limit: 100 }))
+      .find((action) => action.source.id === staleActiveJob.id);
+    assert.equal(staleActiveAction?.status, "running");
+    await db.update(schema.agentJobs).set({ status: "complete", completedAt: expiredAt })
+      .where(eq(schema.agentJobs.id, staleActiveJob.id));
+    await reconcileAgentJobsForUser(userId);
+    assert.equal(
+      await getLiveActionForUser(userId, staleActiveAction!.id),
+      null,
+      "unfiltered reconciliation expires materialized active rows whose source finished outside retention",
     );
 
     assert.equal(await getLiveActionForUser(otherUserId, first.id), null, "cross-user detail reads are rejected");
