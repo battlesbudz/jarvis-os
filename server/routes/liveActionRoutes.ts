@@ -23,7 +23,10 @@ export function registerLiveActionRoutes(app: Express, deps: LiveActionRouteDeps
     if (status && !status.success) return res.status(400).json({ error: "Invalid Live Action status" });
     const projectId = typeof req.query.projectId === "string" ? req.query.projectId : undefined;
     if (projectId && projectId.length > 200) return res.status(400).json({ error: "Invalid project ID" });
-    const limit = Math.min(Math.max(Number(req.query.limit) || 25, 1), 100);
+    const requestedLimit = Number(req.query.limit);
+    const limit = Number.isFinite(requestedLimit)
+      ? Math.min(Math.max(Math.floor(requestedLimit), 1), 100)
+      : 25;
     try {
       const service = await resolveService();
       res.json(await service.getSnapshot({

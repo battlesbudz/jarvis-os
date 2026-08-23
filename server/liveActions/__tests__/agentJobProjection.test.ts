@@ -45,6 +45,7 @@ assert.equal(
 for (const prefix of ["ghp", "gho", "ghu", "ghs", "ghr"]) {
   assert.equal(sanitizeLiveActionText(`${prefix}_abcdefghijklmnop`), "[redacted token]");
 }
+assert.equal(sanitizeLiveActionText("https://example.test?key=AIzaSyA1234567890abcdefghijklmn"), "https://example.test?key=[redacted token]");
 assert.equal(sanitizeLiveActionText("Shell command: curl https://private.example"), "command: [redacted]");
 assert.equal(sanitizeLiveActionText("$ rm -rf /home/justin/private"), "[command redacted]");
 assert.equal(sanitizeLiveActionText("Command failed: git push origin secret-branch"), "Command failed: [redacted]");
@@ -179,8 +180,20 @@ const resumed = projectAgentJob(job({
 assert.equal(resumed.events.filter((event) => event.type === "action.resumed").length, 1);
 assert.equal(resumed.events.at(-1)?.createdAt.toISOString(), resumedAt);
 
-const durableResumeRuntime = withWorkerRuntimeEvent(
+const durableFirstPauseRuntime = withWorkerRuntimeEvent(
   (job().input as Record<string, unknown>),
+  buildWorkerRuntimeEvent({
+    type: "progress",
+    workerType: "research",
+    message: "Paused while local voice is active.",
+    now: new Date(pausedAt),
+    userVisible: true,
+    progress: { currentStep: "Paused for voice stability" },
+    metadata: { reason: "voice_active_local_runtime", transition: "resource_paused" },
+  }),
+);
+const durableResumeRuntime = withWorkerRuntimeEvent(
+  durableFirstPauseRuntime,
   buildWorkerRuntimeEvent({
     type: "progress",
     workerType: "research",
@@ -191,16 +204,33 @@ const durableResumeRuntime = withWorkerRuntimeEvent(
     metadata: { reason: "voice_active_local_runtime", transition: "resource_resumed" },
   }),
 );
+const durableSecondPauseRuntime = withWorkerRuntimeEvent(
+  durableResumeRuntime,
+  buildWorkerRuntimeEvent({
+    type: "progress",
+    workerType: "research",
+    message: "Paused while local voice is active.",
+    now: new Date("2026-08-23T12:07:00.000Z"),
+    userVisible: true,
+    progress: { currentStep: "Paused for voice stability" },
+    metadata: { reason: "voice_active_local_runtime", transition: "resource_paused" },
+  }),
+);
 const repaused = projectAgentJob(job({
   status: "resource_paused",
   input: {
-    ...durableResumeRuntime,
+    ...durableSecondPauseRuntime,
     resourcePause: {
       pausedAt: "2026-08-23T12:07:00.000Z",
       reason: "voice_active_local_runtime",
     },
   },
 }));
+assert.equal(
+  repaused.events.filter((event) => event.type === "action.paused").length,
+  2,
+  "durable worker transitions preserve every pause across a resume cycle",
+);
 assert.equal(
   repaused.events.filter((event) => event.type === "action.resumed").length,
   1,

@@ -55,6 +55,9 @@ function inputOf(job: AgentJobRow): Record<string, unknown> {
 }
 
 function eventType(event: WorkerRuntimeEvent): LiveActionEventType {
+  if (event.type === "progress" && event.metadata?.transition === "resource_paused") {
+    return "action.paused";
+  }
   if (event.type === "progress" && event.metadata?.transition === "resource_resumed") {
     return "action.resumed";
   }

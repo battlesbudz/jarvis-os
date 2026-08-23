@@ -95,7 +95,7 @@ export function buildVoiceResourcePausedJobInput(opts: {
       message: "Paused while local voice is active.",
       userVisible: true,
       progress: { currentStep: "Paused for voice stability" },
-      metadata: { reason: RESOURCE_PAUSE_REASON },
+      metadata: { reason: RESOURCE_PAUSE_REASON, transition: "resource_paused" },
     }),
   );
 }

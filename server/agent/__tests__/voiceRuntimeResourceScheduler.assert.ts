@@ -157,6 +157,11 @@ function testResourcePausedJobsCountAsActiveDuplicates() {
   );
   assert.match(
     schedulerSource,
+    /transition:\s*"resource_paused"/,
+    "voice pause should retain a durable transition after a later pause replaces scalar metadata",
+  );
+  assert.match(
+    schedulerSource,
     /transition:\s*"resource_resumed"/,
     "voice resume should retain a durable transition after a subsequent pause replaces scalar metadata",
   );

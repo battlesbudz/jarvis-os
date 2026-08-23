@@ -13,9 +13,11 @@ async function get(port: number, path: string, userId?: string) {
 
 async function main(): Promise<void> {
   const calls: string[] = [];
+  let lastSnapshotLimit: number | undefined;
   const service: LiveActionReadService = {
     async getSnapshot(input) {
       calls.push(`snapshot:${input.userId}`);
+      lastSnapshotLimit = input.limit;
       return { schemaVersion: 1, generatedAt: new Date().toISOString(), actions: [] };
     },
     async getDetail(userId, actionId) {
@@ -41,6 +43,8 @@ async function main(): Promise<void> {
     assert.equal((await get(port, "/api/live-actions/action-from-other-user", "owner")).status, 404);
     assert.deepEqual(calls, ["snapshot:owner", "detail:owner:action-from-other-user"]);
     assert.equal((await get(port, "/api/live-actions?status=not-a-status", "owner")).status, 400);
+    assert.equal((await get(port, "/api/live-actions?limit=1.5", "owner")).status, 200);
+    assert.equal(lastSnapshotLimit, 1, "fractional limits are normalized before reaching PostgreSQL");
   } finally {
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }

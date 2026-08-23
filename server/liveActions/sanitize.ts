@@ -24,6 +24,7 @@ export function sanitizeLiveActionText(value: unknown, maxLength = 500): string 
     .replace(/\b(?:shell\s+)?command\s*:\s*[^\r\n]+/gi, "command: [redacted]")
     .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s\/:@]+:[^\s\/@]+@/gi, "$1[credentials redacted]@")
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
+    .replace(/\bAIza[0-9A-Za-z_-]{20,}\b/g, "[redacted token]")
     .replace(/\b(?:sk|gh[pousr]|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{12,}\b/g, "[redacted token]")
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[redacted token]")
     .replace(/\\?(["'])((?:[A-Za-z0-9]+[_-])*(?:(?:access|refresh|id|oauth)[_-]?token|client[_-]?secret|token|api[_-]?key|secret(?:[_-]?access[_-]?key)?|password|database[_-]?url))\\?\1\s*:\s*\\?(["'])[^"'\r\n]*\\?\3/gi, "$1$2$1:$3[redacted]$3")
