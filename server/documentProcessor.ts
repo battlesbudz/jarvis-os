@@ -170,6 +170,7 @@ async function extractFromImage(buffer: Buffer, mimeType: string, prompt?: strin
     logPrefix: "[ImageExtraction]",
     signal,
     disableRuntimeStateCard: true,
+    excludedProviders: ["chatgpt-codex-oauth", "android-local-gemma"],
   });
 
   return response.choices[0]?.message?.content || "";

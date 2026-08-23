@@ -17,6 +17,7 @@ export interface RoutedChatCompletionOptions {
   logPrefix?: string;
   userId?: string;
   disableRuntimeStateCard?: boolean;
+  excludedProviders?: string[];
 }
 
 export interface RoutedOpenAIChatShimOptions extends Pick<RoutedChatCompletionOptions, "disableRuntimeStateCard"> {
@@ -175,6 +176,7 @@ export async function createRoutedChatCompletion(
     userId: options.userId ?? getUserIdFromChatBody(body),
     signal: options.signal,
     disableRuntimeStateCard: options.disableRuntimeStateCard ?? strictJsonOnlyRequest,
+    excludedProviders: options.excludedProviders,
     logPrefix: options.logPrefix,
     allowRuntimeIdentityShortcut: allowRuntimeAnswerShortcuts,
     allowRuntimeCapabilityShortcut: allowRuntimeAnswerShortcuts,
