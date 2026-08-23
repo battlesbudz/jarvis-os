@@ -253,6 +253,12 @@ async function main(): Promise<void> {
         prompt: "Second attempt", input: { retryOfJobId: equalRetryIds[0] }, status: "queued", createdAt,
       },
     ]).returning();
+    await reconcileAgentJobsForUser(userId);
+    assert.ok(
+      (await listLiveActionsForUser({ userId, limit: 100 }))
+        .some((action) => action.source.id === equalRetryIds[1]),
+      "equal-timestamp reconciliation selects the newest retry generation",
+    );
     const equalRetryAction = await persistAgentJobProjection(projectAgentJob(equalRetryJob, new Set(), equalRetryIds[0]));
     await persistAgentJobProjection(projectAgentJob(equalFailedJob));
     assert.equal(

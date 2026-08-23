@@ -4,7 +4,7 @@ import type { LiveAction, LiveActionEvent, LiveActionStatus } from "@shared/live
 import { db } from "../db";
 import { getWorkerRuntimeFromInput } from "../agent/workerRuntime";
 import { projectAgentJob, type AgentJobLiveActionProjection } from "./adapters/agentJob";
-import { agentJobLineageKey, loadAgentJobRetryFamily } from "./agentJobLineage";
+import { agentJobLineageKey, agentJobRetryGeneration, loadAgentJobRetryFamily } from "./agentJobLineage";
 
 const ACTIVE_STATUSES: LiveActionStatus[] = ["created", "queued", "running", "waiting_approval", "waiting_user", "paused"];
 const MAX_EVENTS_PER_ACTION = 200;
@@ -369,6 +369,7 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
     : opts.status ? filteredLineageKeys : [];
   const jobsById = await loadAgentJobRetryFamily(userId, seedJobs, descendantRoots);
   const jobs = [...jobsById.values()];
+  const retryGenerations = new Map(jobs.map((job) => [job.id, agentJobRetryGeneration(job, jobsById)]));
   const pendingGateIds = new Set(pendingGates.map((gate) => gate.id));
 
   const grouped = new Map<string, AgentJobLiveActionProjection[]>();
@@ -382,7 +383,9 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
   const groups = [...grouped.values()];
   for (let index = 0; index < groups.length; index += 8) {
     await Promise.all(groups.slice(index, index + 8).map(async (group) => {
-      group.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      group.sort((a, b) => (retryGenerations.get(a.sourceId) ?? 0) - (retryGenerations.get(b.sourceId) ?? 0)
+        || a.createdAt.getTime() - b.createdAt.getTime()
+        || a.sourceId.localeCompare(b.sourceId));
       const latest = group.at(-1)!;
       const eventsBySourceKey = new Map(group
         .flatMap((projection) => projection.events)

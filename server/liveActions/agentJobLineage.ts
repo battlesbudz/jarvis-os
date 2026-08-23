@@ -31,6 +31,22 @@ export function agentJobLineageKey(job: AgentJobRow, jobsById: ReadonlyMap<strin
   return [...seen].sort()[0]!.slice(0, 200);
 }
 
+export function agentJobRetryGeneration(job: AgentJobRow, jobsById: ReadonlyMap<string, AgentJobRow>): number {
+  const seen = new Set<string>();
+  let current = job;
+  let generation = 0;
+  while (!seen.has(current.id)) {
+    seen.add(current.id);
+    const parentId = retryParentId(current);
+    if (!parentId) break;
+    generation += 1;
+    const parent = jobsById.get(parentId);
+    if (!parent) break;
+    current = parent;
+  }
+  return generation;
+}
+
 export async function loadAgentJobRetryFamily(
   userId: string,
   seedJobs: AgentJobRow[],
