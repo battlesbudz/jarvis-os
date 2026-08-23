@@ -33,5 +33,9 @@ assert.match(requeue, /jsonb_path_query_array/);
 assert.match(requeue, /requeueHistory/);
 assert.match(gateway, /\.set\(cancellationUpdateForAgentJob\(nextStatus\)\)/);
 assert.match(gateway, /delete input\.liveActionLineageKey/);
+assert.match(gateway, /delete input\.requeuedAt/);
+assert.match(gateway, /delete input\.requeueHistory/);
+assert.match(gateway, /delete input\.cancelRequestedAt/);
+assert.match(gateway, /delete input\.resourcePause/);
 
 console.log("Live Action migration and authenticated route ownership assertions passed.");

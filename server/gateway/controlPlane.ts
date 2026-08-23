@@ -277,6 +277,10 @@ async function jobCreate(userId: string, params: RpcParams) {
   delete input.retryOfJobId;
   delete input.liveActionLineageKey;
   delete input.retriedAt;
+  delete input.requeuedAt;
+  delete input.requeueHistory;
+  delete input.cancelRequestedAt;
+  delete input.resourcePause;
   const result = await submitAgentJob({
     userId,
     agentType: agentType as any,
