@@ -3,6 +3,7 @@ import { extractDocumentText, SUPPORTED_MIME_TYPES } from "./documentProcessor";
 export const MAX_CHAT_ATTACHMENTS = 4;
 export const MAX_CHAT_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_CHAT_ATTACHMENTS_TOTAL_BYTES = 20 * 1024 * 1024;
+const MAX_CHAT_ATTACHMENT_BASE64_CHARS = Math.ceil(MAX_CHAT_ATTACHMENT_BYTES / 3) * 4;
 const MAX_ATTACHMENT_CONTEXT_CHARS = 40_000;
 
 interface ChatAttachmentInput {
@@ -18,6 +19,9 @@ interface ValidatedChatAttachment {
 }
 
 function decodeBase64(value: string): Buffer {
+  if (value.length > MAX_CHAT_ATTACHMENT_BASE64_CHARS) {
+    throw new Error("Attachment data exceeds the 10MB encoded limit.");
+  }
   const normalized = value.replace(/\s/g, "");
   if (!normalized || normalized.length % 4 === 1 || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)) {
     throw new Error("Attachment data is not valid base64.");
