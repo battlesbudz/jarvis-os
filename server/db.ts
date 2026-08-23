@@ -1050,6 +1050,74 @@ export async function ensureTablesExist() {
     `).catch(handleSchemaStepError);
 
     await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS live_actions (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        project_id VARCHAR,
+        parent_action_id VARCHAR REFERENCES live_actions(id) ON DELETE SET NULL,
+        lineage_type VARCHAR NOT NULL,
+        source_lineage_key VARCHAR NOT NULL,
+        source_type VARCHAR NOT NULL,
+        source_id VARCHAR NOT NULL,
+        kind VARCHAR NOT NULL,
+        title TEXT NOT NULL,
+        status VARCHAR NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        current_step TEXT,
+        progress_kind VARCHAR NOT NULL DEFAULT 'indeterminate',
+        progress_value INTEGER,
+        progress_updated_at TIMESTAMP,
+        attention JSONB,
+        control_capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
+        artifact_refs JSONB NOT NULL DEFAULT '[]'::jsonb,
+        error_category VARCHAR,
+        error_summary TEXT,
+        retry_eligible BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        started_at TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMP
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS live_actions_user_lineage_uidx
+        ON live_actions (user_id, lineage_type, source_lineage_key)
+    `).catch(handleSchemaStepError);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS live_actions_user_status_updated_idx
+        ON live_actions (user_id, status, updated_at DESC)
+    `).catch(handleSchemaStepError);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS live_actions_source_idx
+        ON live_actions (source_type, source_id)
+    `).catch(handleSchemaStepError);
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS live_action_events (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        action_id VARCHAR NOT NULL REFERENCES live_actions(id) ON DELETE CASCADE,
+        sequence INTEGER NOT NULL,
+        source_event_key VARCHAR NOT NULL,
+        event_type VARCHAR NOT NULL,
+        message TEXT,
+        safe_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+        user_visible BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS live_action_events_action_sequence_uidx
+        ON live_action_events (action_id, sequence)
+    `).catch(handleSchemaStepError);
+    await db.execute(sql`
+      CREATE UNIQUE INDEX IF NOT EXISTS live_action_events_action_source_uidx
+        ON live_action_events (action_id, source_event_key)
+    `).catch(handleSchemaStepError);
+    await db.execute(sql`
+      CREATE INDEX IF NOT EXISTS live_action_events_action_created_idx
+        ON live_action_events (action_id, created_at)
+    `).catch(handleSchemaStepError);
+
+    await db.execute(sql`
       CREATE TABLE IF NOT EXISTS deliverables (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id VARCHAR NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -1,0 +1,212 @@
+import { createHash } from "node:crypto";
+import type { agentJobs } from "@shared/schema";
+import type {
+  LiveActionArtifactRef,
+  LiveActionAttention,
+  LiveActionControlCapability,
+  LiveActionEventType,
+  LiveActionProgress,
+  LiveActionStatus,
+} from "@shared/liveActions";
+import { getWorkerRuntimeFromInput, type WorkerRuntimeEvent } from "../../agent/workerRuntime";
+import { sanitizeLiveActionMetadata, sanitizeLiveActionText } from "../sanitize";
+
+export type AgentJobRow = typeof agentJobs.$inferSelect;
+
+export interface ProjectedLiveActionEvent {
+  sourceEventKey: string;
+  type: LiveActionEventType;
+  message: string | null;
+  safeMetadata: Record<string, unknown>;
+  userVisible: boolean;
+  createdAt: Date;
+}
+
+export interface AgentJobLiveActionProjection {
+  userId: string;
+  projectId: string | null;
+  lineageType: "agent_job";
+  sourceLineageKey: string;
+  sourceType: "agent_job";
+  sourceId: string;
+  kind: string;
+  title: string;
+  status: LiveActionStatus;
+  progress: LiveActionProgress | null;
+  attention: LiveActionAttention | null;
+  capabilities: LiveActionControlCapability[];
+  artifacts: LiveActionArtifactRef[];
+  error: { category: string; summary: string; retryEligible: boolean } | null;
+  createdAt: Date;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  events: ProjectedLiveActionEvent[];
+}
+
+function inputOf(job: AgentJobRow): Record<string, unknown> {
+  return job.input && typeof job.input === "object" && !Array.isArray(job.input)
+    ? job.input as Record<string, unknown>
+    : {};
+}
+
+function eventType(type: WorkerRuntimeEvent["type"]): LiveActionEventType {
+  switch (type) {
+    case "queued": return "action.queued";
+    case "started": return "action.started";
+    case "progress": return "action.progress_updated";
+    case "approval_required": return "action.waiting_approval";
+    case "retrying": return "action.retry_scheduled";
+    case "completed": return "action.succeeded";
+    case "failed": return "action.failed";
+    case "cancelled": return "action.cancelled";
+  }
+}
+
+function normalizedStatus(jobStatus: string, runtimeStatus?: WorkerRuntimeEvent["type"]): LiveActionStatus {
+  switch (jobStatus) {
+    case "queued": return "queued";
+    case "running": return runtimeStatus === "approval_required" ? "waiting_approval" : "running";
+    case "cancelling": return "running";
+    case "resource_paused": return "paused";
+    case "complete":
+    case "delivered": return "succeeded";
+    case "failed": return "failed";
+    case "cancelled": return "cancelled";
+    default: return "created";
+  }
+}
+
+function canonicalEvent(job: AgentJobRow, status: LiveActionStatus): ProjectedLiveActionEvent {
+  const sourceStatus = job.status;
+  const type: LiveActionEventType = sourceStatus === "cancelling"
+    ? "action.cancel_requested"
+    : status === "queued" ? "action.queued"
+      : status === "running" ? "action.started"
+        : status === "waiting_approval" ? "action.waiting_approval"
+          : status === "paused" ? "action.paused"
+            : status === "succeeded" ? "action.succeeded"
+              : status === "failed" ? "action.failed"
+                : status === "cancelled" ? "action.cancelled"
+                  : "action.created";
+  const at = job.completedAt ?? job.startedAt ?? job.createdAt;
+  return {
+    sourceEventKey: `job:${job.id}:status:${sourceStatus}`,
+    type,
+    message: sourceStatus === "cancelling" ? "Cancellation requested" : `Job ${sourceStatus}`,
+    safeMetadata: { sourceStatus },
+    userVisible: true,
+    createdAt: at,
+  };
+}
+
+function stableWorkerEventKey(jobId: string, event: WorkerRuntimeEvent): string {
+  const digest = createHash("sha256")
+    .update(JSON.stringify([event.id, event.type, event.createdAt, event.message]))
+    .digest("hex")
+    .slice(0, 24);
+  return `job:${jobId}:worker:${digest}`;
+}
+
+function classifyError(error: string): string {
+  if (/\b(?:401|403|auth|credential|token)\b/i.test(error)) return "authentication";
+  if (/\b(?:429|rate.?limit|quota)\b/i.test(error)) return "rate_limit";
+  if (/\b(?:timeout|timed.?out)\b/i.test(error)) return "timeout";
+  if (/\b(?:network|connection|socket|econn)\b/i.test(error)) return "network";
+  return "execution";
+}
+
+function capabilities(job: AgentJobRow): LiveActionControlCapability[] {
+  const result: LiveActionControlCapability[] = [];
+  if (["queued", "running", "resource_paused", "cancelling"].includes(job.status)) {
+    result.push({
+      type: "cancel",
+      enabled: job.status !== "cancelling",
+      disabledReason: job.status === "cancelling" ? "Cancellation is already pending" : undefined,
+      targetRoute: `/api/agent-jobs/${job.id}/cancel`,
+    });
+  }
+  if (["failed", "cancelled"].includes(job.status)) {
+    result.push({ type: "retry", enabled: true, targetRoute: `/api/agent-jobs/${job.id}/retry` });
+  }
+  return result;
+}
+
+export function projectAgentJob(job: AgentJobRow): AgentJobLiveActionProjection {
+  const input = inputOf(job);
+  const runtime = getWorkerRuntimeFromInput(input);
+  const status = normalizedStatus(job.status, runtime?.status);
+  const checkpoint = runtime?.approvalCheckpoints.at(-1);
+  const pause = input.resourcePause && typeof input.resourcePause === "object"
+    ? input.resourcePause as Record<string, unknown>
+    : null;
+  const attention: LiveActionAttention | null = status === "waiting_approval" && checkpoint
+    ? {
+        kind: "approval",
+        reason: sanitizeLiveActionText(checkpoint.reason, 500) ?? "Approval required",
+        ...(checkpoint.gateId ? { referenceId: checkpoint.gateId.slice(0, 200) } : {}),
+      }
+    : job.status === "cancelling"
+      ? { kind: "warning", reason: "Cancellation requested" }
+      : status === "paused"
+        ? { kind: "warning", reason: sanitizeLiveActionText(pause?.reason, 500) ?? "Paused for runtime resources" }
+        : null;
+  const progressValue = runtime?.progress && Number.isFinite(runtime.progress.percent)
+    ? Math.min(100, Math.max(0, runtime.progress.percent!))
+    : null;
+  const progressUpdatedAt = runtime?.progress ? new Date(runtime.progress.updatedAt) : null;
+  const progress: LiveActionProgress | null = runtime?.progress
+    ? {
+        kind: progressValue === null ? "indeterminate" : "percent",
+        currentStep: sanitizeLiveActionText(runtime.progress.currentStep, 300) ?? "In progress",
+        value: progressValue,
+        updatedAt: progressUpdatedAt && !Number.isNaN(progressUpdatedAt.getTime())
+          ? progressUpdatedAt.toISOString()
+          : (job.startedAt ?? job.createdAt).toISOString(),
+      }
+    : null;
+  const workerEvents = (runtime?.events ?? [])
+    .filter((event) => event.userVisible)
+    .map((event): ProjectedLiveActionEvent => ({
+      sourceEventKey: stableWorkerEventKey(job.id, event),
+      type: eventType(event.type),
+      message: sanitizeLiveActionText(event.message),
+      safeMetadata: sanitizeLiveActionMetadata({
+        ...event.metadata,
+        workerType: event.workerType,
+        retryAttempt: event.retryAttempt,
+        gateId: event.checkpoint?.gateId,
+      }),
+      userVisible: true,
+      createdAt: new Date(event.createdAt),
+    }))
+    .filter((event) => !Number.isNaN(event.createdAt.getTime()));
+  const rawSourceLineageKey = typeof input.liveActionLineageKey === "string"
+    ? input.liveActionLineageKey
+    : typeof input.retryOfJobId === "string" ? input.retryOfJobId : job.id;
+  const sourceLineageKey = (rawSourceLineageKey.trim() || job.id).slice(0, 200);
+  const errorSummary = sanitizeLiveActionText(job.error);
+
+  return {
+    userId: job.userId,
+    projectId: typeof input.projectId === "string" ? input.projectId.slice(0, 200) : null,
+    lineageType: "agent_job",
+    sourceLineageKey,
+    sourceType: "agent_job",
+    sourceId: job.id,
+    kind: job.agentType.slice(0, 100),
+    title: sanitizeLiveActionText(job.title, 300) ?? "Background task",
+    status,
+    progress,
+    attention,
+    capabilities: capabilities(job),
+    artifacts: [],
+    error: status === "failed" && errorSummary
+      ? { category: classifyError(job.error ?? ""), summary: errorSummary, retryEligible: true }
+      : null,
+    createdAt: job.createdAt,
+    startedAt: job.startedAt,
+    completedAt: job.completedAt,
+    events: [...workerEvents, canonicalEvent(job, status)]
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.sourceEventKey.localeCompare(b.sourceEventKey)),
+  };
+}

@@ -1,0 +1,262 @@
+import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
+import * as schema from "@shared/schema";
+import type { LiveAction, LiveActionEvent, LiveActionStatus } from "@shared/liveActions";
+import { db } from "../db";
+import { projectAgentJob, type AgentJobLiveActionProjection } from "./adapters/agentJob";
+
+const ACTIVE_STATUSES: LiveActionStatus[] = ["created", "queued", "running", "waiting_approval", "waiting_user", "paused"];
+const MAX_EVENTS_PER_ACTION = 200;
+
+function dateIso(value: Date | null): string | null {
+  return value?.toISOString() ?? null;
+}
+
+function rowToAction(row: schema.LiveActionRow): LiveAction {
+  return {
+    id: row.id,
+    projectId: row.projectId,
+    parentActionId: row.parentActionId,
+    source: {
+      type: "agent_job",
+      id: row.sourceId,
+      lineageType: "agent_job",
+      lineageKey: row.sourceLineageKey,
+    },
+    kind: row.kind,
+    title: row.title,
+    status: row.status as LiveActionStatus,
+    version: row.version,
+    progress: row.currentStep && row.progressUpdatedAt
+      ? {
+          kind: row.progressKind as "indeterminate" | "percent",
+          currentStep: row.currentStep,
+          value: row.progressValue,
+          updatedAt: row.progressUpdatedAt.toISOString(),
+        }
+      : null,
+    attention: row.attention ?? null,
+    capabilities: row.controlCapabilities,
+    artifacts: row.artifactRefs,
+    error: row.errorCategory && row.errorSummary
+      ? { category: row.errorCategory, summary: row.errorSummary, retryEligible: row.retryEligible }
+      : null,
+    createdAt: row.createdAt.toISOString(),
+    startedAt: dateIso(row.startedAt),
+    updatedAt: row.updatedAt.toISOString(),
+    completedAt: dateIso(row.completedAt),
+  };
+}
+
+function rowToEvent(row: schema.LiveActionEventRow): LiveActionEvent {
+  return {
+    id: row.id,
+    actionId: row.actionId,
+    sequence: row.sequence,
+    type: row.eventType as LiveActionEvent["type"],
+    message: row.message,
+    safeMetadata: row.safeMetadata,
+    userVisible: row.userVisible,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+function projectionValues(projection: AgentJobLiveActionProjection) {
+  return {
+    userId: projection.userId,
+    projectId: projection.projectId,
+    lineageType: projection.lineageType,
+    sourceLineageKey: projection.sourceLineageKey,
+    sourceType: projection.sourceType,
+    sourceId: projection.sourceId,
+    kind: projection.kind,
+    title: projection.title,
+    status: projection.status,
+    currentStep: projection.progress?.currentStep ?? null,
+    progressKind: projection.progress?.kind ?? "indeterminate",
+    progressValue: projection.progress?.value ?? null,
+    progressUpdatedAt: projection.progress ? new Date(projection.progress.updatedAt) : null,
+    attention: projection.attention,
+    controlCapabilities: projection.capabilities,
+    artifactRefs: projection.artifacts,
+    errorCategory: projection.error?.category ?? null,
+    errorSummary: projection.error?.summary ?? null,
+    retryEligible: projection.error?.retryEligible ?? false,
+    createdAt: projection.createdAt,
+    startedAt: projection.startedAt,
+    completedAt: projection.completedAt,
+  };
+}
+
+function mutableProjectionValues(values: ReturnType<typeof projectionValues>) {
+  const { userId: _userId, lineageType: _lineageType, sourceLineageKey: _sourceLineageKey, createdAt: _createdAt, ...mutable } = values;
+  return mutable;
+}
+
+function projectionChanged(row: schema.LiveActionRow, values: ReturnType<typeof projectionValues>): boolean {
+  return row.projectId !== values.projectId
+    || row.sourceId !== values.sourceId
+    || row.kind !== values.kind
+    || row.title !== values.title
+    || row.status !== values.status
+    || row.currentStep !== values.currentStep
+    || row.progressKind !== values.progressKind
+    || row.progressValue !== values.progressValue
+    || row.progressUpdatedAt?.getTime() !== values.progressUpdatedAt?.getTime()
+    || JSON.stringify(row.attention) !== JSON.stringify(values.attention)
+    || JSON.stringify(row.controlCapabilities) !== JSON.stringify(values.controlCapabilities)
+    || JSON.stringify(row.artifactRefs) !== JSON.stringify(values.artifactRefs)
+    || row.errorCategory !== values.errorCategory
+    || row.errorSummary !== values.errorSummary
+    || row.retryEligible !== values.retryEligible
+    || row.startedAt?.getTime() !== values.startedAt?.getTime()
+    || row.completedAt?.getTime() !== values.completedAt?.getTime();
+}
+
+export async function persistAgentJobProjection(projection: AgentJobLiveActionProjection): Promise<LiveAction> {
+  return db.transaction(async (tx) => {
+    const lockKey = `${projection.userId}:${projection.lineageType}:${projection.sourceLineageKey}`;
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+
+    let [row] = await tx
+      .select()
+      .from(schema.liveActions)
+      .where(and(
+        eq(schema.liveActions.userId, projection.userId),
+        eq(schema.liveActions.lineageType, projection.lineageType),
+        eq(schema.liveActions.sourceLineageKey, projection.sourceLineageKey),
+      ))
+      .limit(1);
+    const values = projectionValues(projection);
+
+    const wasInserted = !row;
+    if (!row) {
+      [row] = await tx.insert(schema.liveActions).values(values).returning();
+    }
+    if (!row) throw new Error("Live Action projection insert returned no row");
+
+    const existingEvents = await tx
+      .select({ sourceEventKey: schema.liveActionEvents.sourceEventKey })
+      .from(schema.liveActionEvents)
+      .where(eq(schema.liveActionEvents.actionId, row.id));
+    const existingKeys = new Set(existingEvents.map((event) => event.sourceEventKey));
+    const newEvents = projection.events.filter((event) => !existingKeys.has(event.sourceEventKey));
+    let insertedEventCount = 0;
+
+    if (newEvents.length > 0) {
+      const [maxSequence] = await tx
+        .select({ value: sql<number>`coalesce(max(${schema.liveActionEvents.sequence}), 0)::int` })
+        .from(schema.liveActionEvents)
+        .where(eq(schema.liveActionEvents.actionId, row.id));
+      const inserted = await tx.insert(schema.liveActionEvents).values(newEvents.map((event, index) => ({
+        actionId: row!.id,
+        sequence: (maxSequence?.value ?? 0) + index + 1,
+        sourceEventKey: event.sourceEventKey,
+        eventType: event.type,
+        message: event.message,
+        safeMetadata: event.safeMetadata,
+        userVisible: event.userVisible,
+        createdAt: event.createdAt,
+      }))).onConflictDoNothing().returning({ id: schema.liveActionEvents.id });
+      insertedEventCount = inserted.length;
+    }
+
+    if (!wasInserted && (projectionChanged(row, values) || insertedEventCount > 0)) {
+      [row] = await tx
+        .update(schema.liveActions)
+        .set({ ...mutableProjectionValues(values), version: row.version + 1, updatedAt: new Date() })
+        .where(eq(schema.liveActions.id, row.id))
+        .returning();
+    }
+    if (!row) throw new Error("Live Action projection update returned no row");
+
+    await tx.execute(sql`
+      DELETE FROM live_action_events
+      WHERE action_id = ${row.id}
+        AND id NOT IN (
+          SELECT id FROM live_action_events
+          WHERE action_id = ${row.id}
+          ORDER BY sequence DESC
+          LIMIT ${MAX_EVENTS_PER_ACTION}
+        )
+    `);
+    return rowToAction(row);
+  });
+}
+
+export async function reconcileAgentJobsForUser(userId: string): Promise<void> {
+  const terminalCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000);
+  const [activeJobs, recentJobs] = await Promise.all([
+    db.select().from(schema.agentJobs).where(and(
+      eq(schema.agentJobs.userId, userId),
+      inArray(schema.agentJobs.status, ["queued", "running", "cancelling", "resource_paused"]),
+    )),
+    db.select().from(schema.agentJobs).where(and(
+      eq(schema.agentJobs.userId, userId),
+      gte(schema.agentJobs.createdAt, terminalCutoff),
+    )).orderBy(desc(schema.agentJobs.createdAt)).limit(500),
+  ]);
+  const jobs = [...new Map([...activeJobs, ...recentJobs].map((job) => [job.id, job])).values()];
+
+  const grouped = new Map<string, AgentJobLiveActionProjection[]>();
+  for (const job of jobs) {
+    const projection = projectAgentJob(job);
+    const group = grouped.get(projection.sourceLineageKey) ?? [];
+    group.push(projection);
+    grouped.set(projection.sourceLineageKey, group);
+  }
+
+  for (const group of grouped.values()) {
+    group.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const latest = group.at(-1)!;
+    const eventsBySourceKey = new Map(group
+      .flatMap((projection) => projection.events)
+      .map((event) => [event.sourceEventKey, event]));
+    latest.events = [...eventsBySourceKey.values()]
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.sourceEventKey.localeCompare(b.sourceEventKey))
+      .slice(-MAX_EVENTS_PER_ACTION);
+    await persistAgentJobProjection(latest);
+  }
+}
+
+export async function listLiveActionsForUser(opts: {
+  userId: string;
+  status?: LiveActionStatus;
+  projectId?: string;
+  limit?: number;
+}): Promise<LiveAction[]> {
+  const conditions = [eq(schema.liveActions.userId, opts.userId)];
+  const terminalCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000);
+  conditions.push(or(
+    inArray(schema.liveActions.status, ACTIVE_STATUSES),
+    gte(schema.liveActions.completedAt, terminalCutoff),
+  )!);
+  if (opts.status) conditions.push(eq(schema.liveActions.status, opts.status));
+  if (opts.projectId) conditions.push(eq(schema.liveActions.projectId, opts.projectId));
+  const rows = await db
+    .select()
+    .from(schema.liveActions)
+    .where(and(...conditions))
+    .orderBy(desc(schema.liveActions.updatedAt))
+    .limit(Math.min(Math.max(opts.limit ?? 25, 1), 100));
+  return rows.map(rowToAction);
+}
+
+export async function getLiveActionForUser(userId: string, actionId: string): Promise<LiveAction | null> {
+  const [row] = await db
+    .select()
+    .from(schema.liveActions)
+    .where(and(eq(schema.liveActions.id, actionId), eq(schema.liveActions.userId, userId)))
+    .limit(1);
+  return row ? rowToAction(row) : null;
+}
+
+export async function listLiveActionEvents(actionId: string): Promise<LiveActionEvent[]> {
+  const rows = await db
+    .select()
+    .from(schema.liveActionEvents)
+    .where(eq(schema.liveActionEvents.actionId, actionId))
+    .orderBy(schema.liveActionEvents.sequence);
+  return rows.map(rowToEvent);
+}
+
+export const liveActionActiveStatuses = ACTIVE_STATUSES;

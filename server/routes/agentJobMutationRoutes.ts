@@ -98,6 +98,9 @@ export function registerAgentJobMutationRoutes(app: Express): void {
         prompt: job.prompt,
         input: {
           ...input,
+          liveActionLineageKey: typeof input.liveActionLineageKey === "string"
+            ? input.liveActionLineageKey
+            : job.id,
           retryOfJobId: job.id,
           retriedAt: new Date().toISOString(),
         },

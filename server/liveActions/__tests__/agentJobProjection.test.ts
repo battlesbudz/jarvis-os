@@ -1,0 +1,114 @@
+import assert from "node:assert/strict";
+import { LiveActionSchema } from "@shared/liveActions";
+import type { AgentJobRow } from "../adapters/agentJob";
+import { projectAgentJob } from "../adapters/agentJob";
+import { sanitizeLiveActionMetadata, sanitizeLiveActionText } from "../sanitize";
+import { buildInitialWorkerRuntime, buildWorkerRuntimeEvent, withWorkerRuntimeEvent } from "../../agent/workerRuntime";
+
+const now = new Date("2026-08-23T12:00:00.000Z");
+
+function job(overrides: Partial<AgentJobRow> = {}): AgentJobRow {
+  const runtime = buildInitialWorkerRuntime({
+    agentType: "research",
+    title: "Research launch",
+    now,
+  });
+  return {
+    id: "job-1",
+    userId: "user-1",
+    agentType: "research",
+    title: "Research launch",
+    prompt: "Research safely",
+    input: { workerRuntime: runtime, workerType: runtime.workerType },
+    status: "queued",
+    result: null,
+    error: null,
+    turns: 0,
+    toolCallsCount: 0,
+    createdAt: now,
+    startedAt: null,
+    completedAt: null,
+    ...overrides,
+  };
+}
+
+assert.equal(sanitizeLiveActionText("Authorization: Bearer abc.def.ghi"), "authorization: [redacted]");
+assert.equal(sanitizeLiveActionText("Cookie: session=super-secret"), "cookie: [redacted]");
+assert.equal(sanitizeLiveActionText("Shell command: curl https://private.example"), "command: [redacted]");
+assert.equal(sanitizeLiveActionText("$ rm -rf /home/justin/private"), "[command redacted]");
+assert.equal(sanitizeLiveActionText("Output at /Users/justin/private/report.md"), "Output at [private path]");
+assert.equal(sanitizeLiveActionText("<thinking>private chain of thought</thinking> Safe update"), "[reasoning redacted] Safe update");
+assert.deepEqual(
+  sanitizeLiveActionMetadata({ token: "secret", command: "rm -rf /", workerType: "research", retryAttempt: 1 }),
+  { workerType: "research", retryAttempt: 1 },
+);
+
+const queued = projectAgentJob(job());
+assert.equal(queued.status, "queued");
+assert.equal(queued.sourceLineageKey, "job-1");
+assert.equal(queued.progress?.value, 0);
+assert.ok(queued.events.every((event) => event.userVisible));
+
+const approvalRuntime = withWorkerRuntimeEvent(
+  (job().input as Record<string, unknown>),
+  buildWorkerRuntimeEvent({
+    type: "approval_required",
+    workerType: "research",
+    message: "Approval required; token=very-secret",
+    now: new Date("2026-08-23T12:01:00.000Z"),
+    userVisible: true,
+    progress: { currentStep: "Waiting for approval" },
+    checkpoint: {
+      id: "gate-1",
+      gateId: "gate-1",
+      reason: "Approve access using Bearer abc.def.ghi",
+      requiredFor: "research",
+    },
+    metadata: { gateId: "gate-1", token: "very-secret", command: "curl private" },
+  }),
+);
+const waiting = projectAgentJob(job({ input: approvalRuntime, status: "running", startedAt: now }));
+assert.equal(waiting.status, "waiting_approval");
+assert.deepEqual(waiting.attention, {
+  kind: "approval",
+  reason: "Approve access using Bearer [redacted]",
+  referenceId: "gate-1",
+});
+assert.doesNotMatch(JSON.stringify(waiting), /very-secret|abc\.def\.ghi|curl private/);
+
+const failed = projectAgentJob(job({
+  status: "failed",
+  error: "Command failed at C:\\Users\\justin\\private with api_key=secret-value",
+  completedAt: now,
+}));
+assert.equal(failed.status, "failed");
+assert.equal(failed.error?.retryEligible, true);
+assert.doesNotMatch(failed.error?.summary ?? "", /justin|secret-value/);
+
+const retry = projectAgentJob(job({
+  id: "job-2",
+  input: { ...(job().input as Record<string, unknown>), retryOfJobId: "job-1", liveActionLineageKey: "job-root" },
+}));
+assert.equal(retry.sourceLineageKey, "job-root");
+
+assert.doesNotThrow(() => LiveActionSchema.parse({
+  id: "action-1",
+  projectId: null,
+  parentActionId: null,
+  source: { type: "agent_job", id: queued.sourceId, lineageType: "agent_job", lineageKey: queued.sourceLineageKey },
+  kind: queued.kind,
+  title: queued.title,
+  status: queued.status,
+  version: 1,
+  progress: queued.progress,
+  attention: queued.attention,
+  capabilities: queued.capabilities,
+  artifacts: queued.artifacts,
+  error: queued.error,
+  createdAt: queued.createdAt.toISOString(),
+  startedAt: null,
+  updatedAt: now.toISOString(),
+  completedAt: null,
+}));
+
+console.log("Live Action agent-job mapping, contracts, and redaction assertions passed.");

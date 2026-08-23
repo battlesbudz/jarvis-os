@@ -1,7 +1,8 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint, index, customType } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, date, primaryKey, integer, uniqueIndex, boolean, serial, real, bigint, index, customType, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import type { LiveActionArtifactRef, LiveActionAttention, LiveActionControlCapability } from "./liveActions";
 
 const vector1536 = customType<{ data: number[] | null }>({
   dataType() {
@@ -758,6 +759,61 @@ export const agentJobs = pgTable("agent_jobs", {
   startedAt: timestamp("started_at"),
   completedAt: timestamp("completed_at"),
 });
+
+// Materialized, user-scoped read model over canonical execution owners.
+// These rows never execute work; adapters reconcile them from agent_jobs and
+// future source systems for reconnect-safe status rendering.
+export const liveActions = pgTable("live_actions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  projectId: varchar("project_id"),
+  parentActionId: varchar("parent_action_id").references((): AnyPgColumn => liveActions.id, { onDelete: "set null" }),
+  lineageType: varchar("lineage_type").notNull(),
+  sourceLineageKey: varchar("source_lineage_key").notNull(),
+  sourceType: varchar("source_type").notNull(),
+  sourceId: varchar("source_id").notNull(),
+  kind: varchar("kind").notNull(),
+  title: text("title").notNull(),
+  status: varchar("status").notNull(),
+  version: integer("version").notNull().default(1),
+  currentStep: text("current_step"),
+  progressKind: varchar("progress_kind").notNull().default("indeterminate"),
+  progressValue: integer("progress_value"),
+  progressUpdatedAt: timestamp("progress_updated_at"),
+  attention: jsonb("attention").$type<LiveActionAttention | null>(),
+  controlCapabilities: jsonb("control_capabilities").$type<LiveActionControlCapability[]>().notNull().default(sql`'[]'::jsonb`),
+  artifactRefs: jsonb("artifact_refs").$type<LiveActionArtifactRef[]>().notNull().default(sql`'[]'::jsonb`),
+  errorCategory: varchar("error_category"),
+  errorSummary: text("error_summary"),
+  retryEligible: boolean("retry_eligible").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  startedAt: timestamp("started_at"),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  completedAt: timestamp("completed_at"),
+}, (table) => [
+  uniqueIndex("live_actions_user_lineage_uidx").on(table.userId, table.lineageType, table.sourceLineageKey),
+  index("live_actions_user_status_updated_idx").on(table.userId, table.status, table.updatedAt),
+  index("live_actions_source_idx").on(table.sourceType, table.sourceId),
+]);
+
+export const liveActionEvents = pgTable("live_action_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  actionId: varchar("action_id").notNull().references(() => liveActions.id, { onDelete: "cascade" }),
+  sequence: integer("sequence").notNull(),
+  sourceEventKey: varchar("source_event_key").notNull(),
+  eventType: varchar("event_type").notNull(),
+  message: text("message"),
+  safeMetadata: jsonb("safe_metadata").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  userVisible: boolean("user_visible").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("live_action_events_action_sequence_uidx").on(table.actionId, table.sequence),
+  uniqueIndex("live_action_events_action_source_uidx").on(table.actionId, table.sourceEventKey),
+  index("live_action_events_action_created_idx").on(table.actionId, table.createdAt),
+]);
+
+export type LiveActionRow = typeof liveActions.$inferSelect;
+export type LiveActionEventRow = typeof liveActionEvents.$inferSelect;
 
 /**
  * Persistent record of a build-ack event so the suspended-build reminder
