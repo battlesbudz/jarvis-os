@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { LiveAction, LiveActionEvent, LiveActionStatus } from "@shared/liveActions";
 import { db } from "../db";
@@ -327,27 +327,44 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
         ...(opts.sourceLineageKey ? [eq(schema.liveActions.sourceLineageKey, opts.sourceLineageKey)] : []),
       ]
     : [];
-  const [activeJobs, recentJobs, recentlyCompletedJobs, matchingProjectedActions] = await Promise.all([
+  const matchingProjectedActions: Array<{ id: string; sourceId: string; updatedAt: Date }> = [];
+  if (projectedActionConditions.length > 0) {
+    let cursor: { id: string; updatedAt: Date } | undefined;
+    do {
+      const page = await db.select({
+        id: schema.liveActions.id,
+        sourceId: schema.liveActions.sourceId,
+        updatedAt: schema.liveActions.updatedAt,
+      }).from(schema.liveActions)
+        .where(and(
+          ...projectedActionConditions,
+          ...(cursor ? [or(
+            lt(schema.liveActions.updatedAt, cursor.updatedAt),
+            and(eq(schema.liveActions.updatedAt, cursor.updatedAt), lt(schema.liveActions.id, cursor.id)),
+          )!] : []),
+        ))
+        .orderBy(desc(schema.liveActions.updatedAt), desc(schema.liveActions.id))
+        .limit(500);
+      matchingProjectedActions.push(...page);
+      cursor = page.length === 500 ? page.at(-1) : undefined;
+    } while (cursor);
+  }
+  const [activeJobs, recentJobs, recentlyCompletedJobs] = await Promise.all([
     db.select().from(schema.agentJobs).where(and(
       ...scope,
       inArray(schema.agentJobs.status, ["queued", "running", "cancelling", "resource_paused"]),
     )),
     recentJobsQuery.limit(500),
     recentlyCompletedJobsQuery.limit(500),
-    projectedActionConditions.length > 0
-      ? db.select({ sourceId: schema.liveActions.sourceId }).from(schema.liveActions)
-          .where(and(...projectedActionConditions))
-          .orderBy(desc(schema.liveActions.updatedAt))
-          .limit(500)
-      : Promise.resolve([]),
   ]);
   const projectedSourceIds = [...new Set(matchingProjectedActions.map((action) => action.sourceId))];
-  const projectedJobs = projectedSourceIds.length > 0
-    ? await db.select().from(schema.agentJobs).where(and(
+  const projectedJobs: Array<typeof schema.agentJobs.$inferSelect> = [];
+  for (let index = 0; index < projectedSourceIds.length; index += 500) {
+    projectedJobs.push(...await db.select().from(schema.agentJobs).where(and(
         eq(schema.agentJobs.userId, userId),
-        inArray(schema.agentJobs.id, projectedSourceIds),
-      ))
-    : [];
+        inArray(schema.agentJobs.id, projectedSourceIds.slice(index, index + 500)),
+      )));
+  }
   const filteredLineageKeys = opts.status
     ? [...new Set([...recentJobs, ...recentlyCompletedJobs].map((job) => projectAgentJob(job).sourceLineageKey))]
     : [];
