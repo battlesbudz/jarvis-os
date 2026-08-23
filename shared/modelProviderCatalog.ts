@@ -163,6 +163,7 @@ export const MODEL_DEFAULTS: Record<ModelCategory, string> = {
 };
 
 const VISION_CAPABLE_MODELS = new Set([
+  "gpt-4o",
   "gpt-4o-mini",
   "gpt-4.1-mini",
   "gpt-4.1",
@@ -172,20 +173,15 @@ const VISION_CAPABLE_MODELS = new Set([
   "gemini-2.5-pro",
 ]);
 
-const VISION_CAPABLE_MODEL_PREFIXES = [
-  "gpt-4o",
-  "gpt-4.1",
-  "claude-sonnet-4",
-  "claude-opus-4",
-  "gemini-2.5",
-];
+const VISION_CAPABLE_MODEL_PREFIXES = Array.from(VISION_CAPABLE_MODELS);
 
 export function modelSupportsCapability(model: string, capability: ModelCapability): boolean {
   const normalizedModel = model.trim().toLowerCase().split("/").at(-1) ?? "";
   if (capability === "vision") {
     return VISION_CAPABLE_MODELS.has(normalizedModel)
       || VISION_CAPABLE_MODEL_PREFIXES.some((prefix) =>
-        normalizedModel === prefix || normalizedModel.startsWith(`${prefix}-`),
+        normalizedModel.startsWith(prefix)
+          && /^-(?:\d{4}-\d{2}-\d{2}|\d{8}|latest)$/.test(normalizedModel.slice(prefix.length)),
       );
   }
   return false;

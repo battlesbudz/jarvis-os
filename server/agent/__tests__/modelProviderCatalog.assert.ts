@@ -6,6 +6,7 @@ import {
   MODEL_PROVIDER_CATALOG,
   getModelsForCategory,
   isValidModelForCategory,
+  modelSupportsCapability,
 } from "@shared/modelProviderCatalog";
 
 const providerIds = MODEL_PROVIDER_CATALOG.map((provider) => provider.id);
@@ -20,6 +21,11 @@ assert.equal(isValidModelForCategory("google/gemini-2.5-pro", "orchestrator"), t
 assert.equal(isValidModelForCategory("anthropic/claude-sonnet-4-5", "orchestrator"), true);
 assert.equal(isValidModelForCategory("openai-compatible/llama-local", "orchestrator"), true);
 assert.equal(isValidModelForCategory(ANDROID_LOCAL_GEMMA_MODEL, "orchestrator"), true);
+assert.equal(modelSupportsCapability("openai/gpt-4o", "vision"), true);
+assert.equal(modelSupportsCapability("openai/gpt-4o-2024-11-20", "vision"), true);
+assert.equal(modelSupportsCapability("openai/gpt-4o-mini-2024-07-18", "vision"), true);
+assert.equal(modelSupportsCapability("openai/gpt-4o-transcribe", "vision"), false);
+assert.equal(modelSupportsCapability("deepseek/deepseek-chat", "vision"), false);
 
 for (const category of ["chat", "planning", "memory", "research", "orchestrator"] as const) {
   assert.ok(getModelsForCategory(category).length > 0, `${category} has selectable models`);
