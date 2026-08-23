@@ -165,8 +165,8 @@ export const DEFAULT_TIER_MODELS: Record<ModelTier, string> = {
 };
 
 function pushUnique(chain: FallbackChainEntry[], entry: FallbackChainEntry): void {
-  const key = `${entry.providerName}:${entry.model}`;
-  if (!chain.some((item) => `${item.providerName}:${item.model}` === key)) {
+  const key = `${entry.providerName}:${entry.model}:${entry.useEnvironmentCredentials ? "env" : "profile"}`;
+  if (!chain.some((item) => `${item.providerName}:${item.model}:${item.useEnvironmentCredentials ? "env" : "profile"}` === key)) {
     chain.push(entry);
   }
 }
@@ -1019,18 +1019,19 @@ function getConfiguredVisionRouteChain(): FallbackChainEntry[] {
       model: getProviderEnvValue("JARVIS_OPENAI_VISION_MODEL") ?? "gpt-4.1-mini",
       preferredAuthType: "api_key",
       allowEnvironmentCredentialFallback: true,
+      useEnvironmentCredentials: true,
     });
   }
   if (hasProviderEnvValue("GEMINI_API_KEY", "GOOGLE_AI_API_KEY", "AI_INTEGRATIONS_GEMINI_API_KEY")) {
-    pushUnique(chain, { providerName: "google", model: "gemini-2.5-flash" });
+    pushUnique(chain, { providerName: "google", model: "gemini-2.5-flash", useEnvironmentCredentials: true });
   }
   if (hasProviderEnvValue("ANTHROPIC_API_KEY", "AI_INTEGRATIONS_ANTHROPIC_API_KEY")) {
-    pushUnique(chain, { providerName: "anthropic", model: "claude-sonnet-4-5" });
+    pushUnique(chain, { providerName: "anthropic", model: "claude-sonnet-4-5", useEnvironmentCredentials: true });
   }
   if (hasProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY")) {
     const model = getProviderEnvValue("OPENROUTER_VISION_MODEL", "AI_INTEGRATIONS_OPENROUTER_VISION_MODEL")
       ?? "openai/gpt-4o-mini";
-    pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${model.replace(/^openrouter\//, "")}` });
+    pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${model.replace(/^openrouter\//, "")}`, useEnvironmentCredentials: true });
   }
   return chain;
 }

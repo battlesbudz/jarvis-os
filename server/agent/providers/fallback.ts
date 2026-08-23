@@ -60,6 +60,8 @@ export interface FallbackChainEntry {
   allowEnvironmentCredentialFallback?: boolean;
   /** Allow capability-specific chains to advance past a stale provider credential. */
   fallbackOnCredentialError?: boolean;
+  /** Bypass user-profile resolution for a route derived from deployment configuration. */
+  useEnvironmentCredentials?: boolean;
 }
 
 function collectErrorSignals(err: unknown): string {
@@ -260,6 +262,7 @@ export async function queryWithFallback(
       const result = await accumulateTurn(provider.query({
         ...params,
         model: entry.model,
+        userId: entry.useEnvironmentCredentials ? undefined : params.userId,
         preferredAuthType: entry.preferredAuthType ?? params.preferredAuthType,
         allowEnvironmentCredentialFallback: entry.allowEnvironmentCredentialFallback,
       }));
@@ -335,6 +338,7 @@ export async function queryWithFallbackStreaming(
         provider.query({
           ...params,
           model: entry.model,
+          userId: entry.useEnvironmentCredentials ? undefined : params.userId,
           preferredAuthType: entry.preferredAuthType ?? params.preferredAuthType,
           allowEnvironmentCredentialFallback: entry.allowEnvironmentCredentialFallback,
           stream: true,

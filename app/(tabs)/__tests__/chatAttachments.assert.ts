@@ -74,6 +74,9 @@ assert.equal((providerFallbackSource.match(/allowEnvironmentCredentialFallback: 
 assert.ok(openAIProviderSource.includes("params.allowEnvironmentCredentialFallback"), "OpenAI routing should use an explicitly allowed environment-key fallback");
 assert.ok(modelRouterSource.includes("fallbackOnCredentialError: true"), "vision capability chains should advance past stale credentials");
 assert.equal((providerFallbackSource.match(/entry\.fallbackOnCredentialError/g) || []).length, 2, "stale credential fallback should cover streaming and non-streaming turns");
+assert.equal((modelRouterSource.match(/useEnvironmentCredentials: true/g) || []).length, 4, "every deployment vision route should preserve its environment credential source");
+assert.equal((providerFallbackSource.match(/userId: entry\.useEnvironmentCredentials \? undefined : params\.userId/g) || []).length, 2, "environment routes should bypass stale user profiles in streaming and non-streaming turns");
+assert.ok(modelRouterSource.includes('entry.useEnvironmentCredentials ? "env" : "profile"'), "profile and environment routes should remain distinct during deduplication");
 assert.ok(modelRouterSource.includes("hasConfiguredVisionProvider(entry, configuredVisionChain)"), "unconnected selected models should not block configured vision providers");
 assert.ok(!documentSource.includes("hasDirectOpenAIProvider"), "image extraction should not require a direct OpenAI key");
 assert.ok(documentSource.includes("signal,"), "image analysis should receive the chat cancellation signal");
