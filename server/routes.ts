@@ -1353,6 +1353,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           requestedAttachments,
           boundMessageContent(requestedUserText),
           signal,
+          userId,
         );
       } catch (error) {
         if (signal.aborted) return;

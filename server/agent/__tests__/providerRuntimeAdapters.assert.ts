@@ -253,6 +253,76 @@ async function testGoogleUsesUserCredential() {
   _setGoogleCredentialResolverForTesting(null);
 }
 
+async function testVisionProvidersPreserveImageData() {
+  const imageMessage = [{
+    role: "user" as const,
+    content: [
+      { type: "image_url" as const, image_url: { url: "data:image/png;base64,AA==" } },
+      { type: "text" as const, text: "Describe this image." },
+    ],
+  }];
+
+  _setGoogleCredentialResolverForTesting(async () => ({
+    provider: "google",
+    authType: "api_key",
+    credential: "gemini-user-key",
+    refreshToken: null,
+    expiresAt: null,
+    accountId: null,
+    email: null,
+  }));
+  _setGoogleFetchForTesting(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    assert.deepEqual(body.contents[0].parts[0], { inlineData: { mimeType: "image/png", data: "AA==" } });
+    return new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: "google image" }] }, finishReason: "STOP" }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  await accumulateTurn(new GoogleProvider().query({
+    model: "google/gemini-2.5-pro",
+    messages: imageMessage,
+    toolChoice: "none",
+    maxCompletionTokens: 128,
+    stream: false,
+    userId: "user-gemini",
+  }));
+  _setGoogleFetchForTesting(null);
+  _setGoogleCredentialResolverForTesting(null);
+
+  _setAnthropicCredentialResolverForTesting(async () => ({
+    provider: "anthropic",
+    authType: "api_key",
+    credential: "sk-ant-user",
+    refreshToken: null,
+    expiresAt: null,
+    accountId: null,
+    email: null,
+  }));
+  _setAnthropicFetchForTesting(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    assert.deepEqual(body.messages[0].content[0], {
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "AA==" },
+    });
+    return new Response(JSON.stringify({
+      content: [{ type: "text", text: "anthropic image" }],
+      stop_reason: "end_turn",
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  await accumulateTurn(new AnthropicProvider().query({
+    model: "anthropic/claude-sonnet-4-5",
+    messages: imageMessage,
+    toolChoice: "none",
+    maxCompletionTokens: 128,
+    stream: false,
+    userId: "user-claude",
+  }));
+  _setAnthropicFetchForTesting(null);
+  _setAnthropicCredentialResolverForTesting(null);
+
+  console.log("OK: routed vision providers preserve image bytes");
+}
+
 async function testGoogleEmptyBlockedResponseIsVisibleFailure() {
   _setGoogleCredentialResolverForTesting(async () => ({
     provider: "google",
@@ -8906,6 +8976,7 @@ async function main() {
   await testAnthropicToolUseFinishReasonIsToolCalls();
   await testAnthropicToolChoiceNoneOmitsTools();
   await testGoogleUsesUserCredential();
+  await testVisionProvidersPreserveImageData();
   await testGoogleEmptyBlockedResponseIsVisibleFailure();
   await testGoogleToolResponseUsesOriginalFunctionName();
   await testGoogleToolResponseMapsOpenAIToolCallIdsToFunctionNames();

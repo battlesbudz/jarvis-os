@@ -32,7 +32,7 @@ function escapeServerContextDelimiters(value: string): string {
   );
 }
 
-export async function buildChatAttachmentContext(raw: unknown, userPrompt: string, signal?: AbortSignal): Promise<string> {
+export async function buildChatAttachmentContext(raw: unknown, userPrompt: string, signal?: AbortSignal, userId?: string): Promise<string> {
   if (raw == null) return "";
   if (!Array.isArray(raw)) throw new Error("attachments must be an array.");
   if (raw.length === 0) return "";
@@ -69,7 +69,7 @@ export async function buildChatAttachmentContext(raw: unknown, userPrompt: strin
   for (const { name, mimeType, buffer } of validated) {
     signal?.throwIfAborted();
     const extracted = escapeServerContextDelimiters(
-      await extractDocumentText(buffer, mimeType, userPrompt, signal, attachmentContextChars),
+      await extractDocumentText(buffer, mimeType, userPrompt, signal, attachmentContextChars, userId),
     )
       .replace(/\r\n/g, "\n")
       .trim()

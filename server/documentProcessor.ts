@@ -1,4 +1,5 @@
 import { createRoutedChatCompletion } from "./agent/routedChatCompletion";
+import { routeModelTurn } from "./agent/modelRouter";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
@@ -140,13 +141,13 @@ async function extractFromDocx(buffer: Buffer, maxChars: number, signal?: AbortS
   return (result.value || "").slice(0, maxChars);
 }
 
-async function extractFromImage(buffer: Buffer, mimeType: string, prompt?: string, signal?: AbortSignal): Promise<string> {
+async function extractFromImage(buffer: Buffer, mimeType: string, prompt?: string, signal?: AbortSignal, userId?: string): Promise<string> {
   signal?.throwIfAborted();
   const base64 = buffer.toString("base64");
   const dataUrl = `data:${mimeType};base64,${base64}`;
 
-  const response = await createRoutedChatCompletion({
-    model: "gpt-4o",
+  const response = await routeModelTurn({
+    tier: "balanced",
     messages: [
       {
         role: "user",
@@ -164,16 +165,16 @@ async function extractFromImage(buffer: Buffer, mimeType: string, prompt?: strin
         ],
       },
     ],
-    max_tokens: 4096,
-  }, {
-    tier: "balanced",
+    maxCompletionTokens: 4096,
+    stream: false,
     logPrefix: "[ImageExtraction]",
     signal,
+    userId,
     disableRuntimeStateCard: true,
     excludedProviders: ["chatgpt-codex-oauth", "android-local-gemma"],
   });
 
-  return response.choices[0]?.message?.content || "";
+  return response.textContent;
 }
 
 export async function extractDocumentText(
@@ -182,12 +183,13 @@ export async function extractDocumentText(
   imagePrompt?: string,
   signal?: AbortSignal,
   maxChars = MAX_EXTRACTED_CHARS,
+  userId?: string,
 ): Promise<string> {
   signal?.throwIfAborted();
   if (mimeType === "application/pdf") return extractFromPdf(buffer, maxChars, signal);
   if (mimeType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document") return extractFromDocx(buffer, maxChars, signal);
   if (mimeType.startsWith("text/") || mimeType === "application/json") return buffer.toString("utf-8").slice(0, maxChars);
-  if (mimeType.startsWith("image/")) return extractFromImage(buffer, mimeType, imagePrompt, signal);
+  if (mimeType.startsWith("image/")) return extractFromImage(buffer, mimeType, imagePrompt, signal, userId);
   return buffer.toString("utf-8");
 }
 

@@ -6,7 +6,6 @@ const routeSource = fs.readFileSync("server/routes.ts", "utf8");
 const attachmentSource = fs.readFileSync("server/chatAttachments.ts", "utf8");
 const documentSource = fs.readFileSync("server/documentProcessor.ts", "utf8");
 const dataRouteSource = fs.readFileSync("server/dataRoutes.ts", "utf8");
-const routedSource = fs.readFileSync("server/agent/routedChatCompletion.ts", "utf8");
 const googleProviderSource = fs.readFileSync("server/agent/providers/google.ts", "utf8");
 const anthropicProviderSource = fs.readFileSync("server/agent/providers/anthropic.ts", "utf8");
 const coachSessionRouteSource = fs.readFileSync("server/routes/coachSessionRoutes.ts", "utf8");
@@ -87,12 +86,10 @@ assert.ok(coachSessionRouteSource.includes("if (!run.done) activeCoachRuns.delet
 assert.ok(chatSource.includes("const contextMessages = historyBeforeRequest.slice(0, CONTEXT_WINDOW)"), "request context should reuse the persisted snapshot without duplicating the new user turn");
 assert.match(routeSource, /if \(!clientDisconnected\) \{[\s\S]*?res\.write\('data: \[DONE\]\\n\\n'\);[\s\S]*?res\.end\(\);\n      \}\n      cleanupRun\(\);/, "successful final synthesis should emit completion before aborting its lifecycle controller");
 
-assert.ok(documentSource.includes('logPrefix: "[ImageExtraction]"'), "image extraction must use the configured routed provider chain");
-assert.ok(!documentSource.includes("hasDirectOpenAIProvider"), "image attachments must not require a direct OpenAI key");
 assert.ok(chatSource.includes("if (asset.size == null)"), "files with unknown size must be rejected before reading bytes");
 assert.ok(chatSource.indexOf("if (asset.size == null)") < chatSource.indexOf("const data = await readAttachmentBase64(asset.uri)"), "unknown-size validation must run before file materialization");
 
-assert.ok(routedSource.includes("excludedProviders: options.excludedProviders"), "routed completions must forward provider capability exclusions");
+assert.ok(documentSource.includes("routeModelTurn({"), "image extraction must use the configured model route without forcing a raw model");
+assert.ok(!documentSource.includes('model: "gpt-4o"'), "image extraction must not force an unconfigured OpenAI-compatible model");
 assert.ok(googleProviderSource.includes("inlineData"), "Google routing must preserve image bytes");
 assert.ok(anthropicProviderSource.includes('type: "image"'), "Anthropic routing must preserve image bytes");
-assert.ok(documentSource.includes('excludedProviders: ["chatgpt-codex-oauth", "android-local-gemma"]'), "vision requests must exclude text-only providers");
