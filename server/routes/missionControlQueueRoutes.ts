@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { db as dbType } from "../db";
-import { cancellationStatusForAgentJobStatus } from "../agent/voiceRuntimeResourceCore";
+import { cancellationStatusForAgentJobStatus, cancellationUpdateForAgentJob } from "../agent/voiceRuntimeResourceCore";
 
 type Db = typeof dbType;
 
@@ -81,7 +81,7 @@ export function registerMissionControlQueueRoutes(app: Express, deps: MissionCon
       }
       await db
         .update(schema.agentJobs)
-        .set({ status: newStatus, completedAt: newStatus === "cancelled" ? new Date() : undefined })
+        .set(cancellationUpdateForAgentJob(job, newStatus))
         .where(eq(schema.agentJobs.id, id));
 
       res.json({ ok: true, status: newStatus });

@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import { and, eq } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { db } from "../db";
-import { cancellationStatusForAgentJobStatus } from "../agent/voiceRuntimeResourceCore";
+import { cancellationStatusForAgentJobStatus, cancellationUpdateForAgentJob } from "../agent/voiceRuntimeResourceCore";
 
 const paramValue = (value: string | string[]): string => Array.isArray(value) ? (value[0] ?? "") : value;
 
@@ -24,13 +24,17 @@ export function registerAgentJobMutationRoutes(app: Express): void {
       if (!title || !prompt) {
         return res.status(400).json({ error: "title and prompt are required" });
       }
+      const jobInput = { ...(input || {}) };
+      delete jobInput.retryOfJobId;
+      delete jobInput.liveActionLineageKey;
+      delete jobInput.retriedAt;
       const { submitAgentJob } = await import("../agent/jobQueue");
       const { id: jobId } = await submitAgentJob({
         userId,
         agentType: agentType as (typeof allowed)[number],
         title,
         prompt,
-        input: input || {},
+        input: jobInput,
       });
       res.json({ ok: true, jobId, status: "queued" });
     } catch (err) {
@@ -62,7 +66,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
       }
       await db
         .update(schema.agentJobs)
-        .set({ status: newStatus, completedAt: newStatus === "cancelled" ? new Date() : undefined })
+        .set(cancellationUpdateForAgentJob(job, newStatus))
         .where(eq(schema.agentJobs.id, id));
       res.json({ ok: true, status: newStatus });
     } catch (err) {

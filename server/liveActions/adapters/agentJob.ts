@@ -76,7 +76,13 @@ function normalizedStatus(jobStatus: string, approvalPending: boolean): LiveActi
   }
 }
 
-function canonicalEvent(job: AgentJobRow, status: LiveActionStatus): ProjectedLiveActionEvent {
+function dateValue(value: unknown): Date | null {
+  if (typeof value !== "string") return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function canonicalEvent(job: AgentJobRow, status: LiveActionStatus, input: Record<string, unknown>): ProjectedLiveActionEvent {
   const sourceStatus = job.status;
   const type: LiveActionEventType = sourceStatus === "cancelling"
     ? "action.cancel_requested"
@@ -88,7 +94,14 @@ function canonicalEvent(job: AgentJobRow, status: LiveActionStatus): ProjectedLi
               : status === "failed" ? "action.failed"
                 : status === "cancelled" ? "action.cancelled"
                   : "action.created";
-  const at = job.completedAt ?? job.startedAt ?? job.createdAt;
+  const pause = input.resourcePause && typeof input.resourcePause === "object" && !Array.isArray(input.resourcePause)
+    ? input.resourcePause as Record<string, unknown>
+    : null;
+  const at = sourceStatus === "cancelling"
+    ? dateValue(input.cancelRequestedAt) ?? job.startedAt ?? job.createdAt
+    : sourceStatus === "resource_paused"
+      ? dateValue(pause?.pausedAt) ?? job.createdAt
+      : job.completedAt ?? job.startedAt ?? job.createdAt;
   return {
     sourceEventKey: `job:${job.id}:status:${sourceStatus}`,
     type,
@@ -180,9 +193,9 @@ export function projectAgentJob(job: AgentJobRow, pendingApprovalGateIds: Readon
       createdAt: new Date(event.createdAt),
     }))
     .filter((event) => !Number.isNaN(event.createdAt.getTime()));
-  const rawSourceLineageKey = typeof input.liveActionLineageKey === "string"
-    ? input.liveActionLineageKey
-    : typeof input.retryOfJobId === "string" ? input.retryOfJobId : job.id;
+  const rawSourceLineageKey = typeof input.retryOfJobId === "string"
+    ? typeof input.liveActionLineageKey === "string" ? input.liveActionLineageKey : input.retryOfJobId
+    : job.id;
   const sourceLineageKey = (rawSourceLineageKey.trim() || job.id).slice(0, 200);
   const errorSummary = sanitizeLiveActionText(job.error);
 
@@ -206,7 +219,7 @@ export function projectAgentJob(job: AgentJobRow, pendingApprovalGateIds: Readon
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     completedAt: job.completedAt,
-    events: [...workerEvents, canonicalEvent(job, status)]
+    events: [...workerEvents, canonicalEvent(job, status, input)]
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.sourceEventKey.localeCompare(b.sourceEventKey)),
   };
 }

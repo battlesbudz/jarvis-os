@@ -4,7 +4,7 @@ import { eq, and, desc } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import { submitAgentJob } from "../jobQueue";
 import type { AgentJobType } from "../jobQueue";
-import { cancellationStatusForAgentJobStatus } from "../voiceRuntimeResourceCore";
+import { cancellationStatusForAgentJobStatus, cancellationUpdateForAgentJob } from "../voiceRuntimeResourceCore";
 
 export const sessionsListTool: AgentTool = {
   name: "sessions_list",
@@ -374,10 +374,7 @@ export const sessionsCancelTool: AgentTool = {
       }
       await db
         .update(schema.agentJobs)
-        .set({
-          status: newStatus,
-          completedAt: newStatus === "cancelled" ? new Date() : undefined,
-        })
+        .set(cancellationUpdateForAgentJob(job, newStatus))
         .where(eq(schema.agentJobs.id, jobId));
 
       const msg =

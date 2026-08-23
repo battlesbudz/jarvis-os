@@ -4,7 +4,7 @@
  * without creating a circular dependency.
  */
 import { db } from "../db";
-import { eq, and, inArray } from "drizzle-orm";
+import { eq, and, inArray, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { SubAgentType } from "./subagents";
 import { findDuplicateJob, findDuplicateJobWithDb } from "./tools/jobDuplicateGuard";
@@ -266,9 +266,10 @@ export interface CancelAllResult {
 export async function cancelAllForUser(
   userId: string,
 ): Promise<CancelAllResult> {
+  const cancelledAt = new Date();
   const cancelled = await db
     .update(schema.agentJobs)
-    .set({ status: "cancelled", completedAt: new Date() })
+    .set({ status: "cancelled", completedAt: cancelledAt })
     .where(
       and(
         eq(schema.agentJobs.userId, userId),
@@ -279,7 +280,10 @@ export async function cancelAllForUser(
 
   const cancelling = await db
     .update(schema.agentJobs)
-    .set({ status: "cancelling" })
+    .set({
+      status: "cancelling",
+      input: sql`${schema.agentJobs.input} || jsonb_build_object('cancelRequestedAt', ${cancelledAt.toISOString()})`,
+    })
     .where(
       and(
         eq(schema.agentJobs.userId, userId),

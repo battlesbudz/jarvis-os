@@ -92,6 +92,22 @@ const retry = projectAgentJob(job({
   input: { ...(job().input as Record<string, unknown>), retryOfJobId: "job-1", liveActionLineageKey: "job-root" },
 }));
 assert.equal(retry.sourceLineageKey, "job-root");
+assert.equal(projectAgentJob(job({ input: { liveActionLineageKey: "forged-lineage" } })).sourceLineageKey, "job-1");
+
+const cancelRequestedAt = "2026-08-23T12:03:00.000Z";
+const cancelling = projectAgentJob(job({
+  status: "cancelling",
+  startedAt: now,
+  input: { cancelRequestedAt },
+}));
+assert.equal(cancelling.events.at(-1)?.createdAt.toISOString(), cancelRequestedAt);
+
+const pausedAt = "2026-08-23T12:04:00.000Z";
+const paused = projectAgentJob(job({
+  status: "resource_paused",
+  input: { resourcePause: { pausedAt, reason: "voice_active_local_runtime" } },
+}));
+assert.equal(paused.events.at(-1)?.createdAt.toISOString(), pausedAt);
 
 assert.doesNotThrow(() => LiveActionSchema.parse({
   id: "action-1",
