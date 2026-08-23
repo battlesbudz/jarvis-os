@@ -168,6 +168,17 @@ const cancelling = projectAgentJob(job({
 }));
 assert.equal(cancelling.events.at(-1)?.createdAt.toISOString(), cancelRequestedAt);
 
+const cancelledAfterRequest = projectAgentJob(job({
+  status: "cancelled",
+  input: { cancelRequestedAt },
+  completedAt: new Date("2026-08-23T12:04:00.000Z"),
+}));
+assert.deepEqual(
+  cancelledAfterRequest.events.map((event) => event.type),
+  ["action.cancel_requested", "action.cancelled"],
+  "a completed cancellation retains the preceding durable request",
+);
+
 const pausedAt = "2026-08-23T12:04:00.000Z";
 const paused = projectAgentJob(job({
   status: "resource_paused",
@@ -193,6 +204,20 @@ assert.deepEqual(
 );
 assert.match(requeued.events.at(-1)?.sourceEventKey ?? "", /12:05:00\.000Z$/);
 assert.equal(requeued.events.filter((event) => event.type === "action.queued").length, 3);
+const startedAfterRequeue = projectAgentJob(job({
+  status: "running",
+  startedAt: new Date("2026-08-23T12:06:00.000Z"),
+  input: {
+    ...(job().input as Record<string, unknown>),
+    requeuedAt,
+    requeueHistory: [requeuedAt],
+  },
+}));
+assert.equal(
+  startedAfterRequeue.events.filter((event) => event.message === "Job requeued").length,
+  1,
+  "the latest durable requeue survives a cold read after the job starts",
+);
 
 const resumedAt = "2026-08-23T12:06:00.000Z";
 const resumed = projectAgentJob(job({

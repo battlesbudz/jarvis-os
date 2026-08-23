@@ -229,7 +229,7 @@ export function projectAgentJob(
   const historicalRequeueEvents = Array.isArray(input.requeueHistory)
     ? input.requeueHistory.flatMap((value) => {
         const at = dateValue(value);
-        return at && at.getTime() !== requeuedAt?.getTime()
+        return at && !(isRequeue && at.getTime() === requeuedAt?.getTime())
           ? [{
               sourceEventKey: `job:${job.id}:requeue:${at.toISOString()}`,
               type: "action.queued" as const,
@@ -241,6 +241,17 @@ export function projectAgentJob(
           : [];
       })
     : [];
+  const cancelRequestedAt = dateValue(input.cancelRequestedAt);
+  const historicalCancelRequestEvent = cancelRequestedAt && job.status !== "cancelling"
+    ? {
+        sourceEventKey: `job:${job.id}:cancel_requested:${cancelRequestedAt.toISOString()}`,
+        type: "action.cancel_requested" as const,
+        message: "Cancellation requested",
+        safeMetadata: { sourceStatus: "cancelling" },
+        userVisible: true,
+        createdAt: cancelRequestedAt,
+      }
+    : null;
   const retriedAt = typeof input.retryOfJobId === "string" ? dateValue(input.retriedAt) : null;
   const retryEvent: ProjectedLiveActionEvent | null = retriedAt
     ? {
@@ -280,6 +291,7 @@ export function projectAgentJob(
   });
   const events = [
     ...historicalRequeueEvents,
+    ...(historicalCancelRequestEvent ? [historicalCancelRequestEvent] : []),
     ...baseEvents,
     ...(retryEvent ? [retryEvent] : []),
     ...(resumeEvent ? [resumeEvent] : []),
