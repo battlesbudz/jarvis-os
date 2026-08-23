@@ -46,6 +46,11 @@ async function main(): Promise<void> {
   }
 
   const disabledApp = express();
+  disabledApp.use((req, _res, next) => {
+    const userId = req.header("x-test-user");
+    if (userId) req.userId = userId;
+    next();
+  });
   registerLiveActionRoutes(disabledApp, { service, projectorEnabled: () => false });
   const disabledServer = http.createServer(disabledApp);
   await new Promise<void>((resolve) => disabledServer.listen(0, "127.0.0.1", resolve));
