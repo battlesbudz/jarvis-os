@@ -114,6 +114,13 @@ function mutableProjectionValues(values: ReturnType<typeof projectionValues>) {
   return mutable;
 }
 
+function projectionValuesMatch(
+  left: ReturnType<typeof projectionValues>,
+  right: ReturnType<typeof projectionValues>,
+): boolean {
+  return JSON.stringify(mutableProjectionValues(left)) === JSON.stringify(mutableProjectionValues(right));
+}
+
 function projectionChanged(row: schema.LiveActionRow, values: ReturnType<typeof projectionValues>): boolean {
   return row.projectId !== values.projectId
     || row.sourceId !== values.sourceId
@@ -184,9 +191,9 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
     }
 
     if (!wasInserted) {
-      const sameTimestampStatusConflict = row.updatedAt.getTime() === values.updatedAt.getTime()
-        && row.status !== values.status;
-      const [canonicalJob] = sameTimestampStatusConflict
+      const sameTimestampConflict = row.updatedAt.getTime() === values.updatedAt.getTime()
+        && projectionChanged(row, values);
+      const [canonicalJob] = sameTimestampConflict
         ? await tx.select().from(schema.agentJobs).where(and(
             eq(schema.agentJobs.id, projection.sourceId),
             eq(schema.agentJobs.userId, projection.userId),
@@ -205,11 +212,15 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
             eq(schema.agentApprovalGates.status, "pending"),
           )).limit(1).for("update")
         : [];
-      const canonicalStatus = canonicalJob
-        ? projectAgentJob(canonicalJob, canonicalPendingGate ? new Set([canonicalPendingGate.id]) : new Set()).status
-        : row.status;
+      const canonicalValues = canonicalJob
+        ? projectionValues(projectAgentJob(
+            canonicalJob,
+            canonicalPendingGate ? new Set([canonicalPendingGate.id]) : new Set(),
+            projection.sourceLineageKey,
+          ))
+        : null;
       const staleProjection = row.updatedAt.getTime() > values.updatedAt.getTime()
-        || (sameTimestampStatusConflict && canonicalStatus !== values.status);
+        || (sameTimestampConflict && (!canonicalValues || !projectionValuesMatch(values, canonicalValues)));
       if (!staleProjection && (projectionChanged(row, values) || insertedEventCount > 0)) {
         [row] = await tx
           .update(schema.liveActions)
@@ -299,7 +310,10 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
       ))
     : [];
   const seedJobs = [...new Map([...activeJobs, ...recentJobs, ...recentlyCompletedJobs, ...lineageJobs].map((job) => [job.id, job])).values()];
-  const jobsById = await loadAgentJobRetryFamily(userId, seedJobs, opts.sourceLineageKey);
+  const descendantRoots = opts.sourceLineageKey
+    ? [opts.sourceLineageKey]
+    : opts.status ? filteredLineageKeys : [];
+  const jobsById = await loadAgentJobRetryFamily(userId, seedJobs, descendantRoots);
   const jobs = [...jobsById.values()];
   const pendingGateIds = new Set(pendingGates.map((gate) => gate.id));
 

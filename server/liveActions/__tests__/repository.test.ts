@@ -189,6 +189,36 @@ async function main(): Promise<void> {
       "an equal-timestamp active snapshot cannot regress canonical terminal state",
     );
 
+    const newerRuntime = appendWorkerRuntimeEvent(runtime, buildWorkerRuntimeEvent({
+      type: "progress",
+      workerType: "research",
+      message: "Newer progress",
+      now: createdAt,
+      userVisible: true,
+      progress: { currentStep: "Newer progress", percent: 50 },
+    }));
+    const [equalTimeRunningJob] = await db.insert(schema.agentJobs).values({
+      id: `${marker}-equal-time-running`,
+      userId,
+      agentType: "research",
+      title: "Equal-time progress",
+      prompt: "Make progress",
+      input: { workerType: newerRuntime.workerType, workerRuntime: newerRuntime },
+      status: "running",
+      createdAt,
+      startedAt: createdAt,
+    }).returning();
+    const equalTimeRunningAction = await persistAgentJobProjection(projectAgentJob(equalTimeRunningJob));
+    await persistAgentJobProjection(projectAgentJob({
+      ...equalTimeRunningJob,
+      input: { workerType: runtime.workerType, workerRuntime: runtime },
+    }));
+    assert.equal(
+      (await getLiveActionForUser(userId, equalTimeRunningAction.id))?.progress?.currentStep,
+      "Newer progress",
+      "an equal-timestamp same-status snapshot cannot regress canonical progress",
+    );
+
     const historicalIds = ["root", "retry", "retry-again"].map((suffix) => `${marker}-${suffix}`);
     await db.insert(schema.agentJobs).values([
       {
@@ -211,6 +241,12 @@ async function main(): Promise<void> {
       .filter((action) => historicalIds.includes(action.source.id));
     assert.equal(historicalActions.length, 1, "historical retry descendants share one root lineage");
     assert.equal(historicalActions[0]?.source.id, historicalIds[2], "the latest retry owns the shared action");
+    await db.update(schema.agentJobs).set({ status: "complete", completedAt: new Date() })
+      .where(eq(schema.agentJobs.id, historicalIds[2]));
+    await reconcileAgentJobsForUser(userId, { status: "failed" });
+    const failedHistoricalActions = (await listLiveActionsForUser({ userId, status: "failed", limit: 100 }))
+      .filter((action) => historicalIds.includes(action.source.id));
+    assert.equal(failedHistoricalActions.length, 0, "filtered reconciliation includes later retry descendants");
 
     const oldCreatedAt = new Date(createdAt.getTime() - 31 * 24 * 60 * 60 * 1_000);
     const [oldJob] = await db.insert(schema.agentJobs).values({

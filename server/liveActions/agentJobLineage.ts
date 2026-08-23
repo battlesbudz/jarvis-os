@@ -34,7 +34,7 @@ export function agentJobLineageKey(job: AgentJobRow, jobsById: ReadonlyMap<strin
 export async function loadAgentJobRetryFamily(
   userId: string,
   seedJobs: AgentJobRow[],
-  descendantRoot?: string,
+  descendantRoots: string[] = [],
 ): Promise<Map<string, AgentJobRow>> {
   const jobsById = new Map(seedJobs.map((job) => [job.id, job]));
   let ancestorIds = [...new Set(seedJobs.map(retryParentId).filter((id): id is string => !!id))]
@@ -53,8 +53,8 @@ export async function loadAgentJobRetryFamily(
     }
   }
 
-  if (descendantRoot) {
-    let parentIds = [...new Set([descendantRoot, ...jobsById.keys()])];
+  if (descendantRoots.length > 0) {
+    let parentIds = [...new Set([...descendantRoots, ...jobsById.keys()])];
     while (parentIds.length > 0) {
       const descendants = await db.select().from(schema.agentJobs).where(and(
         eq(schema.agentJobs.userId, userId),
