@@ -208,6 +208,11 @@ assert.deepEqual(
   ["action.cancel_requested", "action.cancelled"],
   "a completed cancellation retains the preceding durable request",
 );
+assert.equal(
+  cancelling.events.at(-1)?.sourceEventKey,
+  cancelledAfterRequest.events[0]?.sourceEventKey,
+  "active and historical cancellation requests share an idempotency key",
+);
 
 const pausedAt = "2026-08-23T12:04:00.000Z";
 const paused = projectAgentJob(job({
@@ -247,6 +252,11 @@ assert.equal(
   startedAfterRequeue.events.filter((event) => event.message === "Job requeued").length,
   1,
   "the latest durable requeue survives a cold read after the job starts",
+);
+assert.equal(
+  requeued.events.at(-1)?.sourceEventKey,
+  startedAfterRequeue.events.find((event) => event.message === "Job requeued")?.sourceEventKey,
+  "active and historical watchdog requeues share an idempotency key",
 );
 
 const resumedAt = "2026-08-23T12:06:00.000Z";
