@@ -1034,6 +1034,12 @@ function getConfiguredVisionRouteChain(): FallbackChainEntry[] {
   return chain;
 }
 
+function normalizeVisionRouteEntry(entry: FallbackChainEntry): FallbackChainEntry {
+  return entry.providerName === "openai"
+    ? { ...entry, preferredAuthType: "api_key" }
+    : entry;
+}
+
 async function getUserProviderProfileRouteState(
   userId: string | undefined,
   tier: ModelExecutionTier,
@@ -1307,8 +1313,12 @@ async function prepareModelTurn(
   );
   const resolvedChain = params.requiredCapabilities?.includes("vision")
     ? [
-        ...(preferredRequestedChain ?? []).filter((entry) => modelSupportsCapability(entry.model, "vision")),
-        ...(selectedRuntimeChain ?? []).filter((entry) => modelSupportsCapability(entry.model, "vision")),
+        ...(preferredRequestedChain ?? [])
+          .filter((entry) => modelSupportsCapability(entry.model, "vision"))
+          .map(normalizeVisionRouteEntry),
+        ...(selectedRuntimeChain ?? [])
+          .filter((entry) => modelSupportsCapability(entry.model, "vision"))
+          .map(normalizeVisionRouteEntry),
         ...providerProfileState.visionChain,
         ...getConfiguredVisionRouteChain(),
       ].reduce<FallbackChainEntry[]>((chain, entry) => {
