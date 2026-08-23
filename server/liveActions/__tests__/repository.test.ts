@@ -424,6 +424,30 @@ async function main(): Promise<void> {
       "unfiltered paging loads retry descendants beyond an equal-timestamp source boundary",
     );
 
+    const activeBoundProjectId = `${marker}-active-bound-project`;
+    await db.insert(schema.agentJobs).values(Array.from({ length: 5 }, (_, index) => ({
+      id: `${marker}-active-bound-${index}`,
+      userId,
+      agentType: "research",
+      title: `Bounded active ${index}`,
+      prompt: "Remain queued",
+      input: { projectId: activeBoundProjectId },
+      status: "queued",
+      createdAt: new Date(createdAt.getTime() + index * 1_000),
+    })));
+    await reconcileAgentJobsForUser(userId, { projectId: activeBoundProjectId, limit: 2 });
+    assert.equal(
+      (await listLiveActionsForUser({ userId, projectId: activeBoundProjectId, limit: 100 })).length,
+      2,
+      "active reconciliation is bounded by the requested snapshot size",
+    );
+    await reconcileAgentJobsForUser(userId, { status: "succeeded", projectId: activeBoundProjectId, limit: 1 });
+    assert.equal(
+      (await listLiveActionsForUser({ userId, projectId: activeBoundProjectId, limit: 100 })).length,
+      2,
+      "terminal filters do not reconcile the rest of an active backlog",
+    );
+
     const [filteredRunningJob] = await db.insert(schema.agentJobs).values({
       id: `${marker}-filtered-running`,
       userId,
@@ -460,14 +484,14 @@ async function main(): Promise<void> {
       createdAt: oldCreatedAt,
       startedAt: oldCreatedAt,
     }).returning();
-    await reconcileAgentJobsForUser(userId);
+    await reconcileAgentJobsForUser(userId, { limit: 100 });
     let oldAction = (await listLiveActionsForUser({ userId, limit: 100 }))
       .find((action) => action.source.id === oldJob.id);
     assert.equal(oldAction?.status, "running");
 
     await db.update(schema.agentJobs).set({ status: "complete", completedAt: new Date() })
       .where(eq(schema.agentJobs.id, oldJob.id));
-    await reconcileAgentJobsForUser(userId);
+    await reconcileAgentJobsForUser(userId, { limit: 100 });
     oldAction = (await listLiveActionsForUser({ userId, limit: 100 }))
       .find((action) => action.source.id === oldJob.id);
     assert.equal(oldAction?.status, "succeeded", "recent completion refreshes jobs created outside retention");
@@ -495,13 +519,13 @@ async function main(): Promise<void> {
       createdAt: expiredAt,
       startedAt: expiredAt,
     }).returning();
-    await reconcileAgentJobsForUser(userId);
+    await reconcileAgentJobsForUser(userId, { limit: 100 });
     const staleActiveAction = (await listLiveActionsForUser({ userId, limit: 100 }))
       .find((action) => action.source.id === staleActiveJob.id);
     assert.equal(staleActiveAction?.status, "running");
     await db.update(schema.agentJobs).set({ status: "complete", completedAt: expiredAt })
       .where(eq(schema.agentJobs.id, staleActiveJob.id));
-    await reconcileAgentJobsForUser(userId);
+    await reconcileAgentJobsForUser(userId, { limit: 100 });
     assert.equal(
       await getLiveActionForUser(userId, staleActiveAction!.id),
       null,

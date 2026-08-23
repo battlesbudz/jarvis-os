@@ -50,8 +50,8 @@ assert.equal(sanitizeLiveActionText("Shell command: curl https://private.example
 assert.equal(sanitizeLiveActionText("$ rm -rf /home/justin/private"), "[command redacted]");
 assert.equal(sanitizeLiveActionText("Command failed: git push origin secret-branch"), "Command failed: [redacted]");
 assert.equal(
-  sanitizeLiveActionText("Error: Command failed: npm run private-task\nstderr details"),
-  "Error: Command failed: [redacted] stderr details",
+  sanitizeLiveActionText("Error: Command failed: npm run private-task\nprivate file contents without a token"),
+  "Error: Command failed: [redacted]",
 );
 assert.equal(sanitizeLiveActionText("Output at /Users/justin/private/report.md"), "Output at [private path]");
 assert.equal(sanitizeLiveActionText("Key at /root/.ssh/id_rsa"), "Key at [private path]");

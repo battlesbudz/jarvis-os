@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, notInArray, or, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { LiveAction, LiveActionEvent, LiveActionStatus } from "@shared/liveActions";
 import { db } from "../db";
@@ -348,10 +348,18 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
   const scope = [eq(schema.agentJobs.userId, userId)];
   if (lineageCondition) scope.push(lineageCondition);
   if (opts.projectId) scope.push(sql`${schema.agentJobs.input}->>'projectId' = ${opts.projectId}`);
+  const targetLineages = opts.sourceLineageKey ? 1 : Math.min(Math.max(opts.limit ?? 25, 1), 100);
   const sourceStatuses = opts.status ? sourceStatusesFor(opts.status) : [];
-  const filteredScope = sourceStatuses.length > 0
-    ? [...scope, inArray(schema.agentJobs.status, sourceStatuses)]
-    : opts.status ? [...scope, sql`false`] : scope;
+  const activeSourceStatuses = opts.status
+    ? sourceStatuses.filter((status) => ACTIVE_AGENT_JOB_STATUSES.includes(status))
+    : ACTIVE_AGENT_JOB_STATUSES;
+  const terminalSourceStatuses = sourceStatuses
+    .filter((status) => !ACTIVE_AGENT_JOB_STATUSES.includes(status));
+  const filteredScope = opts.status
+    ? terminalSourceStatuses.length > 0
+      ? [...scope, inArray(schema.agentJobs.status, terminalSourceStatuses)]
+      : [...scope, sql`false`]
+    : [...scope, notInArray(schema.agentJobs.status, ACTIVE_AGENT_JOB_STATUSES)];
   const projectedActionConditions = [
     eq(schema.liveActions.userId, userId),
     ...(opts.status ? [
@@ -364,35 +372,24 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
     ...(opts.projectId ? [eq(schema.liveActions.projectId, opts.projectId)] : []),
     ...(opts.sourceLineageKey ? [eq(schema.liveActions.sourceLineageKey, opts.sourceLineageKey)] : []),
   ];
-  const matchingProjectedActions: Array<{ id: string; sourceId: string; updatedAt: Date }> = [];
-  let projectedActionCursor: { id: string; updatedAt: Date } | undefined;
-  do {
-    const page = await db.select({
-      id: schema.liveActions.id,
-      sourceId: schema.liveActions.sourceId,
-      updatedAt: schema.liveActions.updatedAt,
-    }).from(schema.liveActions)
-      .where(and(
-        ...projectedActionConditions,
-        ...(projectedActionCursor ? [or(
-          lt(schema.liveActions.updatedAt, projectedActionCursor.updatedAt),
-          and(eq(schema.liveActions.updatedAt, projectedActionCursor.updatedAt), lt(schema.liveActions.id, projectedActionCursor.id)),
-        )!] : []),
+  const matchingProjectedActions = await db.select({
+    id: schema.liveActions.id,
+    sourceId: schema.liveActions.sourceId,
+    updatedAt: schema.liveActions.updatedAt,
+  }).from(schema.liveActions)
+    .where(and(...projectedActionConditions))
+    .orderBy(desc(schema.liveActions.updatedAt), desc(schema.liveActions.id))
+    .limit(targetLineages);
+  const activeJobs = activeSourceStatuses.length > 0
+    ? await db.select().from(schema.agentJobs).where(and(
+        ...scope,
+        inArray(schema.agentJobs.status, activeSourceStatuses),
       ))
-      .orderBy(desc(schema.liveActions.updatedAt), desc(schema.liveActions.id))
-      .limit(500);
-    matchingProjectedActions.push(...page);
-    projectedActionCursor = page.length === 500 ? page.at(-1) : undefined;
-  } while (projectedActionCursor);
-  const [activeJobs] = await Promise.all([
-    db.select().from(schema.agentJobs).where(and(
-      ...scope,
-      inArray(schema.agentJobs.status, ACTIVE_AGENT_JOB_STATUSES),
-    )),
-  ]);
+      .orderBy(desc(schema.agentJobs.createdAt), desc(schema.agentJobs.id))
+      .limit(targetLineages)
+    : [];
   const retainedJobs: Array<typeof schema.agentJobs.$inferSelect> = [];
   const sourceUpdatedAt = sql<Date>`greatest(${schema.agentJobs.createdAt}, coalesce(${schema.agentJobs.completedAt}, ${schema.agentJobs.createdAt}))`;
-  const targetLineages = opts.sourceLineageKey ? 1 : Math.min(Math.max(opts.limit ?? 25, 1), 100);
   let sourceCursor: { id: string; updatedAt: Date } | undefined;
   do {
     const page = await db.select({
