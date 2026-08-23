@@ -192,7 +192,7 @@ assert.deepEqual(
   "every durable watchdog requeue is projected exactly once",
 );
 assert.match(requeued.events.at(-1)?.sourceEventKey ?? "", /12:05:00\.000Z$/);
-assert.equal(requeued.events.filter((event) => event.type === "action.queued").length, 2);
+assert.equal(requeued.events.filter((event) => event.type === "action.queued").length, 3);
 
 const resumedAt = "2026-08-23T12:06:00.000Z";
 const resumed = projectAgentJob(job({
