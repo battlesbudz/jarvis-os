@@ -58,6 +58,7 @@ assert.equal(queued.status, "queued");
 assert.equal(queued.sourceLineageKey, "job-1");
 assert.equal(queued.progress?.value, 0);
 assert.ok(queued.events.every((event) => event.userVisible));
+assert.equal(queued.events.filter((event) => event.type === "action.queued").length, 1);
 
 const approvalRuntime = withWorkerRuntimeEvent(
   (job().input as Record<string, unknown>),
@@ -85,6 +86,7 @@ assert.deepEqual(waiting.attention, {
   reason: "Approve access using Bearer [redacted]",
   referenceId: "gate-1",
 });
+assert.equal(waiting.events.filter((event) => event.type === "action.waiting_approval").length, 1);
 assert.doesNotMatch(JSON.stringify(waiting), /very-secret|abc\.def\.ghi|curl private/);
 assert.equal(projectAgentJob(approvalJob).status, "running", "resolved approval checkpoints do not leave stale attention");
 
@@ -120,9 +122,10 @@ const paused = projectAgentJob(job({
 assert.equal(paused.events.at(-1)?.createdAt.toISOString(), pausedAt);
 
 const requeuedAt = "2026-08-23T12:05:00.000Z";
-const requeued = projectAgentJob(job({ input: { requeuedAt } }));
+const requeued = projectAgentJob(job({ input: { ...(job().input as Record<string, unknown>), requeuedAt } }));
 assert.equal(requeued.events.at(-1)?.createdAt.toISOString(), requeuedAt);
 assert.match(requeued.events.at(-1)?.sourceEventKey ?? "", /12:05:00\.000Z$/);
+assert.equal(requeued.events.filter((event) => event.type === "action.queued").length, 2);
 
 assert.doesNotThrow(() => LiveActionSchema.parse({
   id: "action-1",

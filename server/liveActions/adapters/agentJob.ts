@@ -203,6 +203,11 @@ export function projectAgentJob(
     : job.id;
   const sourceLineageKey = (resolvedLineageKey?.trim() || rawSourceLineageKey.trim() || job.id).slice(0, 200);
   const errorSummary = sanitizeLiveActionText(job.error);
+  const fallbackEvent = canonicalEvent(job, status, input);
+  const isRequeue = job.status === "queued" && !!dateValue(input.requeuedAt);
+  const events = workerEvents.some((event) => event.type === fallbackEvent.type) && !isRequeue
+    ? workerEvents
+    : [...workerEvents, fallbackEvent];
 
   return {
     userId: job.userId,
@@ -224,7 +229,7 @@ export function projectAgentJob(
     createdAt: job.createdAt,
     startedAt: job.startedAt,
     completedAt: job.completedAt,
-    events: [...workerEvents, canonicalEvent(job, status, input)]
+    events: events
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.sourceEventKey.localeCompare(b.sourceEventKey)),
   };
 }
