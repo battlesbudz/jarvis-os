@@ -6,7 +6,7 @@ if (!process.env.DATABASE_URL) {
 }
 
 async function main(): Promise<void> {
-  const { eq } = await import("drizzle-orm");
+  const { eq, inArray } = await import("drizzle-orm");
   const schema = await import("@shared/schema");
   const { db, ensureTablesExist, pool } = await import("../../db");
   const { buildInitialWorkerRuntime, buildWorkerRuntimeEvent, appendWorkerRuntimeEvent } = await import("../../agent/workerRuntime");
@@ -611,6 +611,38 @@ async function main(): Promise<void> {
       !(await listLiveActionsForUser({ userId, status: "running", limit: 100 }))
         .some((action) => action.source.id === filteredRunningJob.id),
       "status-filtered polling refreshes actions that leave the requested state",
+    );
+
+    const staleWindowProjectId = `${marker}-stale-window-project`;
+    const staleWindowIds = Array.from({ length: 3 }, (_, index) => `${marker}-stale-window-${index}`);
+    await db.insert(schema.agentJobs).values(staleWindowIds.map((id, index) => ({
+      id,
+      userId,
+      agentType: "research",
+      title: `Stale window ${index}`,
+      prompt: "Finish before the next filtered poll",
+      input: { projectId: staleWindowProjectId },
+      status: "running",
+      createdAt: new Date(createdAt.getTime() + index * 1_000),
+      startedAt: new Date(createdAt.getTime() + index * 1_000),
+    })));
+    await reconcileAgentJobsForUser(userId, { projectId: staleWindowProjectId, limit: 3 });
+    await db.update(schema.agentJobs).set({ status: "complete", completedAt: new Date() })
+      .where(inArray(schema.agentJobs.id, staleWindowIds));
+    await reconcileAgentJobsForUser(userId, {
+      status: "running",
+      projectId: staleWindowProjectId,
+      limit: 2,
+    });
+    assert.equal(
+      (await listLiveActionsForUser({
+        userId,
+        status: "running",
+        projectId: staleWindowProjectId,
+        limit: 2,
+      })).length,
+      0,
+      "status-filtered polling backfills after a full stale window leaves the result",
     );
 
     const oldCreatedAt = new Date(createdAt.getTime() - 31 * 24 * 60 * 60 * 1_000);

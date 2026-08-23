@@ -346,12 +346,12 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
   });
 }
 
-export async function reconcileAgentJobsForUser(userId: string, opts: {
+async function reconcileAgentJobsForUserPass(userId: string, opts: {
   sourceLineageKey?: string;
   status?: LiveActionStatus;
   projectId?: string;
   limit?: number;
-} = {}): Promise<void> {
+} = {}): Promise<boolean> {
   const terminalCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000);
   const lineageCondition = opts.sourceLineageKey
     ? or(
@@ -395,6 +395,7 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
     .where(and(...projectedActionConditions))
     .orderBy(desc(schema.liveActions.updatedAt), desc(schema.liveActions.id))
     .limit(targetLineages);
+  const projectedActionIdsBefore = matchingProjectedActions.map((action) => action.id);
   const activeProjectionUpdatedAt = sql<string>`greatest(
     to_char(${schema.agentJobs.createdAt}, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
     coalesce(to_char(${schema.agentJobs.startedAt}, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), ''),
@@ -592,6 +593,27 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
         .slice(-MAX_EVENTS_PER_ACTION);
       await persistAgentJobProjection(canonical);
     }));
+  }
+
+  const projectedActionIdsAfter = (await db.select({ id: schema.liveActions.id })
+    .from(schema.liveActions)
+    .where(and(...projectedActionConditions))
+    .orderBy(desc(schema.liveActions.updatedAt), desc(schema.liveActions.id))
+    .limit(targetLineages))
+    .map((action) => action.id);
+  return projectedActionIdsBefore.length === projectedActionIdsAfter.length
+    && projectedActionIdsBefore.every((id, index) => id === projectedActionIdsAfter[index]);
+}
+
+export async function reconcileAgentJobsForUser(userId: string, opts: {
+  sourceLineageKey?: string;
+  status?: LiveActionStatus;
+  projectId?: string;
+  limit?: number;
+} = {}): Promise<void> {
+  while (!await reconcileAgentJobsForUserPass(userId, opts)) {
+    // A refreshed projection left or moved within the requested window. Refill
+    // from the next bounded page until the visible top-N is canonical.
   }
 }
 
