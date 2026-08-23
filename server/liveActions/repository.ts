@@ -7,6 +7,19 @@ import { projectAgentJob, type AgentJobLiveActionProjection } from "./adapters/a
 const ACTIVE_STATUSES: LiveActionStatus[] = ["created", "queued", "running", "waiting_approval", "waiting_user", "paused"];
 const MAX_EVENTS_PER_ACTION = 200;
 
+function sourceStatusesFor(status: LiveActionStatus): string[] {
+  switch (status) {
+    case "queued": return ["queued"];
+    case "running": return ["running", "cancelling"];
+    case "waiting_approval": return ["running"];
+    case "paused": return ["resource_paused"];
+    case "succeeded": return ["complete", "delivered"];
+    case "failed": return ["failed"];
+    case "cancelled": return ["cancelled"];
+    default: return [];
+  }
+}
+
 function dateIso(value: Date | null): string | null {
   return value?.toISOString() ?? null;
 }
@@ -168,12 +181,21 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
       insertedEventCount = inserted.length;
     }
 
-    if (!wasInserted && (projectionChanged(row, values) || insertedEventCount > 0)) {
-      [row] = await tx
-        .update(schema.liveActions)
-        .set({ ...mutableProjectionValues(values), version: row.version + 1 })
-        .where(eq(schema.liveActions.id, row.id))
-        .returning();
+    if (!wasInserted) {
+      const staleProjection = row.updatedAt.getTime() > values.updatedAt.getTime();
+      if (!staleProjection && (projectionChanged(row, values) || insertedEventCount > 0)) {
+        [row] = await tx
+          .update(schema.liveActions)
+          .set({ ...mutableProjectionValues(values), version: row.version + 1 })
+          .where(eq(schema.liveActions.id, row.id))
+          .returning();
+      } else if (staleProjection && insertedEventCount > 0) {
+        [row] = await tx
+          .update(schema.liveActions)
+          .set({ version: row.version + 1 })
+          .where(eq(schema.liveActions.id, row.id))
+          .returning();
+      }
     }
     if (!row) throw new Error("Live Action projection update returned no row");
 
@@ -207,13 +229,16 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
   const scope = [eq(schema.agentJobs.userId, userId)];
   if (lineageCondition) scope.push(lineageCondition);
   if (opts.projectId) scope.push(sql`${schema.agentJobs.input}->>'projectId' = ${opts.projectId}`);
-  const filteredSnapshot = !!opts.status || !!opts.projectId;
+  const sourceStatuses = opts.status ? sourceStatusesFor(opts.status) : [];
+  const filteredScope = sourceStatuses.length > 0
+    ? [...scope, inArray(schema.agentJobs.status, sourceStatuses)]
+    : opts.status ? [...scope, sql`false`] : scope;
   const recentJobsQuery = db.select().from(schema.agentJobs).where(and(
-    ...scope,
+    ...filteredScope,
     gte(schema.agentJobs.createdAt, terminalCutoff),
   )).orderBy(desc(schema.agentJobs.createdAt));
   const recentlyCompletedJobsQuery = db.select().from(schema.agentJobs).where(and(
-    ...scope,
+    ...filteredScope,
     gte(schema.agentJobs.completedAt, terminalCutoff),
   )).orderBy(desc(schema.agentJobs.completedAt));
   const [activeJobs, recentJobs, recentlyCompletedJobs, pendingGates] = await Promise.all([
@@ -221,14 +246,32 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
       ...scope,
       inArray(schema.agentJobs.status, ["queued", "running", "cancelling", "resource_paused"]),
     )),
-    filteredSnapshot ? recentJobsQuery : recentJobsQuery.limit(500),
-    filteredSnapshot ? recentlyCompletedJobsQuery : recentlyCompletedJobsQuery.limit(500),
+    recentJobsQuery.limit(500),
+    recentlyCompletedJobsQuery.limit(500),
     db.select({ id: schema.agentApprovalGates.id }).from(schema.agentApprovalGates).where(and(
       eq(schema.agentApprovalGates.userId, userId),
       eq(schema.agentApprovalGates.status, "pending"),
     )),
   ]);
-  const jobs = [...new Map([...activeJobs, ...recentJobs, ...recentlyCompletedJobs].map((job) => [job.id, job])).values()];
+  const filteredLineageKeys = opts.status
+    ? [...new Set([...recentJobs, ...recentlyCompletedJobs].map((job) => projectAgentJob(job).sourceLineageKey))]
+    : [];
+  const lineageJobs = filteredLineageKeys.length > 0
+    ? await db.select().from(schema.agentJobs).where(and(
+        eq(schema.agentJobs.userId, userId),
+        or(
+          inArray(schema.agentJobs.id, filteredLineageKeys),
+          inArray(sql<string>`${schema.agentJobs.input}->>'liveActionLineageKey'`, filteredLineageKeys),
+          inArray(sql<string>`${schema.agentJobs.input}->>'retryOfJobId'`, filteredLineageKeys),
+        ),
+        or(
+          inArray(schema.agentJobs.status, ["queued", "running", "cancelling", "resource_paused"]),
+          gte(schema.agentJobs.createdAt, terminalCutoff),
+          gte(schema.agentJobs.completedAt, terminalCutoff),
+        ),
+      ))
+    : [];
+  const jobs = [...new Map([...activeJobs, ...recentJobs, ...recentlyCompletedJobs, ...lineageJobs].map((job) => [job.id, job])).values()];
   const pendingGateIds = new Set(pendingGates.map((gate) => gate.id));
 
   const grouped = new Map<string, AgentJobLiveActionProjection[]>();

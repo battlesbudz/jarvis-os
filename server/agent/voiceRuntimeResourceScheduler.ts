@@ -108,7 +108,7 @@ function withResourcePauseEvent(job: AgentJobRow, pausedAt: string): Record<stri
   });
 }
 
-function withResourcePauseHeartbeat(job: AgentJobRow, pausedAt: string): Record<string, unknown> {
+function withResourcePauseHeartbeat(job: AgentJobRow, heartbeatAt: string): Record<string, unknown> {
   const input = recordFromInput(job.input);
   const pause = resourcePauseMetadata(input);
   return {
@@ -116,7 +116,8 @@ function withResourcePauseHeartbeat(job: AgentJobRow, pausedAt: string): Record<
     resourcePause: {
       reason: RESOURCE_PAUSE_REASON,
       pausedBy: pause?.pausedBy ?? "voice_runtime",
-      pausedAt,
+      pausedAt: pause?.pausedAt ?? heartbeatAt,
+      heartbeatAt,
     } satisfies VoiceResourcePauseMetadata,
   };
 }
@@ -283,7 +284,7 @@ export async function recoverStaleResourcePausedJobsAfterVoice(opts: { now?: Dat
         and(
           eq(schema.agentJobs.id, job.id),
           eq(schema.agentJobs.status, RESOURCE_PAUSED_STATUS),
-          sql`${schema.agentJobs.input}->'resourcePause'->>'pausedAt' = ${pause.pausedAt}`,
+          sql`coalesce(${schema.agentJobs.input}->'resourcePause'->>'heartbeatAt', ${schema.agentJobs.input}->'resourcePause'->>'pausedAt') = ${pause.heartbeatAt ?? pause.pausedAt}`,
         ),
       )
       .returning();

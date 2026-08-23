@@ -10,10 +10,12 @@ async function main(): Promise<void> {
   const schema = await import("@shared/schema");
   const { db, ensureTablesExist, pool } = await import("../../db");
   const { buildInitialWorkerRuntime, buildWorkerRuntimeEvent, appendWorkerRuntimeEvent } = await import("../../agent/workerRuntime");
+  const { projectAgentJob } = await import("../adapters/agentJob");
   const {
     getLiveActionForUser,
     listLiveActionEvents,
     listLiveActionsForUser,
+    persistAgentJobProjection,
     reconcileAgentJobsForUser,
   } = await import("../repository");
 
@@ -39,6 +41,7 @@ async function main(): Promise<void> {
       status: "queued",
       createdAt,
     }).returning();
+    const staleProjection = projectAgentJob(job);
 
     await reconcileAgentJobsForUser(userId);
     const [first] = await listLiveActionsForUser({ userId });
@@ -77,6 +80,12 @@ async function main(): Promise<void> {
     assert.equal(completed.status, "succeeded", "an out-of-order event cannot regress canonical terminal state");
     assert.equal(completed.updatedAt, new Date(createdAt.getTime() + 5 * 60_000).toISOString());
     assert.ok(completed.version > first.version, "a real source transition advances the version");
+    await persistAgentJobProjection(staleProjection);
+    assert.equal(
+      (await getLiveActionForUser(userId, first.id))?.status,
+      "succeeded",
+      "an overlapping stale reconciliation cannot regress canonical state",
+    );
     const completedEvents = await listLiveActionEvents(first.id);
     assert.deepEqual(
       completedEvents.map((event) => event.sequence),

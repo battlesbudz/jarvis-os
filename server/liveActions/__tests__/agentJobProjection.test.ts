@@ -43,6 +43,10 @@ assert.equal(
 );
 assert.equal(sanitizeLiveActionText('{"access_token":"first","client_secret":"second"}'), '{"access_token":"[redacted]","client_secret":"[redacted]"}');
 assert.equal(sanitizeLiveActionText('{\\"refresh_token\\":\\"third\\"}'), '{"refresh_token":"[redacted]"}');
+assert.equal(
+  sanitizeLiveActionText("AWS_SECRET_ACCESS_KEY=first OPENAI_API_KEY=second DATABASE_URL=postgres://private"),
+  "AWS_SECRET_ACCESS_KEY=[redacted] OPENAI_API_KEY=[redacted] DATABASE_URL=[redacted]",
+);
 assert.equal(sanitizeLiveActionText("<thinking>private chain of thought</thinking> Safe update"), "[reasoning redacted] Safe update");
 assert.deepEqual(
   sanitizeLiveActionMetadata({ token: "secret", command: "rm -rf /", workerType: "research", retryAttempt: 1 }),

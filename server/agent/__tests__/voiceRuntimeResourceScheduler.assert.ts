@@ -51,6 +51,15 @@ function testResourcePauseClassification() {
     ),
     true,
   );
+  const heartbeatPause = { ...resourcePause, heartbeatAt: "2026-07-06T09:00:00.000Z" };
+  assert.equal(
+    shouldRecoverStaleResourcePausedJob(
+      { status: RESOURCE_PAUSED_STATUS, input: { resourcePause: heartbeatPause } } as any,
+      new Date("2026-07-06T10:00:00.000Z"),
+    ),
+    false,
+    "pause recovery uses the heartbeat without moving the original transition",
+  );
   assert.equal(cancellationStatusForAgentJobStatus("queued"), "cancelled");
   assert.equal(cancellationStatusForAgentJobStatus(RESOURCE_PAUSED_STATUS), "cancelled");
   assert.equal(cancellationStatusForAgentJobStatus("running"), "cancelling");
@@ -153,8 +162,8 @@ function testResourcePausedJobsCountAsActiveDuplicates() {
   );
   assert.match(
     schedulerSource,
-    /resourcePause'->>'pausedAt' = \$\{pause\.pausedAt\}/,
-    "stale recovery should only requeue a job when the stored pausedAt still matches the stale snapshot",
+    /resourcePause'->>'heartbeatAt'[\s\S]*?pause\.heartbeatAt \?\? pause\.pausedAt/,
+    "stale recovery should only requeue a job when the stored heartbeat still matches the stale snapshot",
   );
   assert.match(
     schedulerSource,
