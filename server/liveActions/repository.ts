@@ -183,38 +183,60 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
   });
 }
 
-export async function reconcileAgentJobsForUser(userId: string): Promise<void> {
+export async function reconcileAgentJobsForUser(userId: string, sourceLineageKey?: string): Promise<void> {
   const terminalCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1_000);
-  const [activeJobs, recentJobs] = await Promise.all([
+  const lineageCondition = sourceLineageKey
+    ? or(
+        eq(schema.agentJobs.id, sourceLineageKey),
+        sql`${schema.agentJobs.input}->>'liveActionLineageKey' = ${sourceLineageKey}`,
+        sql`${schema.agentJobs.input}->>'retryOfJobId' = ${sourceLineageKey}`,
+      )
+    : undefined;
+  const scope = lineageCondition
+    ? [eq(schema.agentJobs.userId, userId), lineageCondition]
+    : [eq(schema.agentJobs.userId, userId)];
+  const [activeJobs, recentJobs, recentlyCompletedJobs, pendingGates] = await Promise.all([
     db.select().from(schema.agentJobs).where(and(
-      eq(schema.agentJobs.userId, userId),
+      ...scope,
       inArray(schema.agentJobs.status, ["queued", "running", "cancelling", "resource_paused"]),
     )),
     db.select().from(schema.agentJobs).where(and(
-      eq(schema.agentJobs.userId, userId),
+      ...scope,
       gte(schema.agentJobs.createdAt, terminalCutoff),
     )).orderBy(desc(schema.agentJobs.createdAt)).limit(500),
+    db.select().from(schema.agentJobs).where(and(
+      ...scope,
+      gte(schema.agentJobs.completedAt, terminalCutoff),
+    )).orderBy(desc(schema.agentJobs.completedAt)).limit(500),
+    db.select({ id: schema.agentApprovalGates.id }).from(schema.agentApprovalGates).where(and(
+      eq(schema.agentApprovalGates.userId, userId),
+      eq(schema.agentApprovalGates.status, "pending"),
+    )),
   ]);
-  const jobs = [...new Map([...activeJobs, ...recentJobs].map((job) => [job.id, job])).values()];
+  const jobs = [...new Map([...activeJobs, ...recentJobs, ...recentlyCompletedJobs].map((job) => [job.id, job])).values()];
+  const pendingGateIds = new Set(pendingGates.map((gate) => gate.id));
 
   const grouped = new Map<string, AgentJobLiveActionProjection[]>();
   for (const job of jobs) {
-    const projection = projectAgentJob(job);
+    const projection = projectAgentJob(job, pendingGateIds);
     const group = grouped.get(projection.sourceLineageKey) ?? [];
     group.push(projection);
     grouped.set(projection.sourceLineageKey, group);
   }
 
-  for (const group of grouped.values()) {
-    group.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-    const latest = group.at(-1)!;
-    const eventsBySourceKey = new Map(group
-      .flatMap((projection) => projection.events)
-      .map((event) => [event.sourceEventKey, event]));
-    latest.events = [...eventsBySourceKey.values()]
-      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.sourceEventKey.localeCompare(b.sourceEventKey))
-      .slice(-MAX_EVENTS_PER_ACTION);
-    await persistAgentJobProjection(latest);
+  const groups = [...grouped.values()];
+  for (let index = 0; index < groups.length; index += 8) {
+    await Promise.all(groups.slice(index, index + 8).map(async (group) => {
+      group.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      const latest = group.at(-1)!;
+      const eventsBySourceKey = new Map(group
+        .flatMap((projection) => projection.events)
+        .map((event) => [event.sourceEventKey, event]));
+      latest.events = [...eventsBySourceKey.values()]
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.sourceEventKey.localeCompare(b.sourceEventKey))
+        .slice(-MAX_EVENTS_PER_ACTION);
+      await persistAgentJobProjection(latest);
+    }));
   }
 }
 

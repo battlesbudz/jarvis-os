@@ -6,27 +6,37 @@ async function main(): Promise<void> {
   const { submitAgentJob } = await import("../../agent/jobClient");
   let duplicateChecks = 0;
   let insertedInput: Record<string, unknown> | null = null;
-  const result = await submitAgentJob({
+  const retryInput = {
     userId: "user-1",
-    agentType: "research",
+    agentType: "research" as const,
     title: "Retry research",
     prompt: "Retry the same logical work",
     input: {
       retryOfJobId: "job-failed",
       liveActionLineageKey: "job-root",
     },
-  }, {
+  };
+  const untrusted = await submitAgentJob(retryInput, {
     findDuplicate: async () => {
       duplicateChecks += 1;
       return { id: "unrelated-active-job", title: "Retry research" };
     },
+    insertJob: async () => {
+      throw new Error("unvalidated retries must not bypass deduplication");
+    },
+  });
+
+  assert.equal(duplicateChecks, 1);
+  assert.deepEqual(untrusted, { id: "unrelated-active-job", isDuplicate: true });
+
+  const result = await submitAgentJob(retryInput, {
+    findDuplicate: async () => null,
     insertJob: async (values) => {
       insertedInput = values.input;
       return "job-retry";
     },
   });
 
-  assert.equal(duplicateChecks, 0, "an explicit retry must not alias to an unrelated duplicate job");
   assert.deepEqual(result, { id: "job-retry", isDuplicate: false });
   assert.equal(insertedInput?.retryOfJobId, "job-failed");
   assert.equal(insertedInput?.liveActionLineageKey, "job-root");

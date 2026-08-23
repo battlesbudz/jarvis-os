@@ -104,7 +104,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
           retryOfJobId: job.id,
           retriedAt: new Date().toISOString(),
         },
-      });
+      }, { findDuplicate: async () => null });
 
       res.json({ ok: true, jobId: retry.id, isDuplicate: retry.isDuplicate, status: "queued" });
     } catch (err) {

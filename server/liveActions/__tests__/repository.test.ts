@@ -93,6 +93,30 @@ async function main(): Promise<void> {
       "identical source events remain idempotent even when replayed twice",
     );
 
+    const oldCreatedAt = new Date(createdAt.getTime() - 31 * 24 * 60 * 60 * 1_000);
+    const [oldJob] = await db.insert(schema.agentJobs).values({
+      id: `${marker}-old-job`,
+      userId,
+      agentType: "research",
+      title: "Long-running research",
+      prompt: "Finish eventually",
+      input: { workerType: runtime.workerType, workerRuntime: runtime },
+      status: "running",
+      createdAt: oldCreatedAt,
+      startedAt: oldCreatedAt,
+    }).returning();
+    await reconcileAgentJobsForUser(userId);
+    let oldAction = (await listLiveActionsForUser({ userId, limit: 100 }))
+      .find((action) => action.source.id === oldJob.id);
+    assert.equal(oldAction?.status, "running");
+
+    await db.update(schema.agentJobs).set({ status: "complete", completedAt: new Date() })
+      .where(eq(schema.agentJobs.id, oldJob.id));
+    await reconcileAgentJobsForUser(userId);
+    oldAction = (await listLiveActionsForUser({ userId, limit: 100 }))
+      .find((action) => action.source.id === oldJob.id);
+    assert.equal(oldAction?.status, "succeeded", "recent completion refreshes jobs created outside retention");
+
     assert.equal(await getLiveActionForUser(otherUserId, first.id), null, "cross-user detail reads are rejected");
     assert.equal((await listLiveActionsForUser({ userId: otherUserId })).length, 0, "cross-user snapshots are empty");
   } finally {

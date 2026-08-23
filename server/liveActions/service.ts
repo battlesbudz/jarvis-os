@@ -27,8 +27,10 @@ export const liveActionReadService: LiveActionReadService = {
   },
 
   async getDetail(userId, actionId) {
-    await reconcileAgentJobsForUser(userId);
-    const action = await getLiveActionForUser(userId, actionId);
+    let action = await getLiveActionForUser(userId, actionId);
+    if (!action) return null;
+    await reconcileAgentJobsForUser(userId, action.source.lineageKey);
+    action = await getLiveActionForUser(userId, actionId);
     if (!action) return null;
     return LiveActionDetailSchema.parse({
       schemaVersion: 1,

@@ -67,7 +67,8 @@ const approvalRuntime = withWorkerRuntimeEvent(
     metadata: { gateId: "gate-1", token: "very-secret", command: "curl private" },
   }),
 );
-const waiting = projectAgentJob(job({ input: approvalRuntime, status: "running", startedAt: now }));
+const approvalJob = job({ input: approvalRuntime, status: "running", startedAt: now });
+const waiting = projectAgentJob(approvalJob, new Set(["gate-1"]));
 assert.equal(waiting.status, "waiting_approval");
 assert.deepEqual(waiting.attention, {
   kind: "approval",
@@ -75,6 +76,7 @@ assert.deepEqual(waiting.attention, {
   referenceId: "gate-1",
 });
 assert.doesNotMatch(JSON.stringify(waiting), /very-secret|abc\.def\.ghi|curl private/);
+assert.equal(projectAgentJob(approvalJob).status, "running", "resolved approval checkpoints do not leave stale attention");
 
 const failed = projectAgentJob(job({
   status: "failed",

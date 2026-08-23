@@ -62,10 +62,10 @@ function eventType(type: WorkerRuntimeEvent["type"]): LiveActionEventType {
   }
 }
 
-function normalizedStatus(jobStatus: string, runtimeStatus?: WorkerRuntimeEvent["type"]): LiveActionStatus {
+function normalizedStatus(jobStatus: string, approvalPending: boolean): LiveActionStatus {
   switch (jobStatus) {
     case "queued": return "queued";
-    case "running": return runtimeStatus === "approval_required" ? "waiting_approval" : "running";
+    case "running": return approvalPending ? "waiting_approval" : "running";
     case "cancelling": return "running";
     case "resource_paused": return "paused";
     case "complete":
@@ -131,11 +131,11 @@ function capabilities(job: AgentJobRow): LiveActionControlCapability[] {
   return result;
 }
 
-export function projectAgentJob(job: AgentJobRow): AgentJobLiveActionProjection {
+export function projectAgentJob(job: AgentJobRow, pendingApprovalGateIds: ReadonlySet<string> = new Set()): AgentJobLiveActionProjection {
   const input = inputOf(job);
   const runtime = getWorkerRuntimeFromInput(input);
-  const status = normalizedStatus(job.status, runtime?.status);
   const checkpoint = runtime?.approvalCheckpoints.at(-1);
+  const status = normalizedStatus(job.status, !!checkpoint?.gateId && pendingApprovalGateIds.has(checkpoint.gateId));
   const pause = input.resourcePause && typeof input.resourcePause === "object"
     ? input.resourcePause as Record<string, unknown>
     : null;

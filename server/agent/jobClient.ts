@@ -168,10 +168,9 @@ export async function submitAgentJob(
     !!cloudBackgroundTask &&
     typeof cloudBackgroundTask === "object" &&
     !Array.isArray(cloudBackgroundTask);
-  const isExplicitRetry = typeof callerInput.retryOfJobId === "string";
 
   // ── Deduplication check ────────────────────────────────────────────────────
-  if (!isCloudBackgroundJob && !isExplicitRetry) {
+  if (!isCloudBackgroundJob) {
     try {
       const existing = await guardFn(
         input.userId,
@@ -192,13 +191,9 @@ export async function submitAgentJob(
         dupErr,
       );
     }
-  } else if (isCloudBackgroundJob) {
-    console.log(
-      `[JobQueue] duplicate guard bypassed for approved cloud background job type=${input.agentType} user=${input.userId} title="${input.title.slice(0, 60)}"`,
-    );
   } else {
     console.log(
-      `[JobQueue] duplicate guard bypassed for explicit retry type=${input.agentType} user=${input.userId} title="${input.title.slice(0, 60)}"`,
+      `[JobQueue] duplicate guard bypassed for approved cloud background job type=${input.agentType} user=${input.userId} title="${input.title.slice(0, 60)}"`,
     );
   }
 
