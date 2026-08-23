@@ -34,6 +34,8 @@ assert.ok(chatSource.indexOf("if (streamErrorMessage)") < chatSource.indexOf(att
 assert.ok(chatSource.indexOf("setPendingAttachments(current => current.filter") < chatSource.indexOf("if (gotConfirmRequired)"), "successful approval requests should clear sent attachments");
 assert.ok(routeSource.includes("buildChatAttachmentContext"), "coach chat should extract attachment context");
 assert.ok(routeSource.indexOf("registerCoachRunLifecycle({") < routeSource.indexOf("buildChatAttachmentContext("), "cancellation should be registered before attachment extraction");
+assert.equal((routeSource.match(/finishAbortedRun\(\);/g) || []).length, 2, "attachment abort exits should resolve the active run before returning");
+assert.ok(routeSource.includes("cleanupRun();\n        if (!res.writableEnded) res.end();"), "attachment abort cleanup should settle clear-chat waiters and close the response");
 assert.ok(routeSource.indexOf("messages must end with a user text message") < routeSource.indexOf("buildChatAttachmentContext("), "chat messages should end with the user turn enriched by attachments");
 assert.ok(routeSource.includes("boundMessageContent(requestedUserText)"), "image prompts should use the existing message bound");
 assert.ok(routeSource.includes("const latestUserContext = [youtubeCtxBlock, attachmentContext]"), "server-added context should be combined before provider budgeting");

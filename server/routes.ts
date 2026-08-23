@@ -1346,6 +1346,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
       res.setHeader('X-Run-Id', runId);
       res.setHeader('Access-Control-Expose-Headers', 'X-Run-Id');
+      const finishAbortedRun = () => {
+        cleanupRun();
+        if (!res.writableEnded) res.end();
+      };
 
       let attachmentContext = "";
       try {
@@ -1356,10 +1360,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
           userId,
         );
       } catch (error) {
-        if (signal.aborted) return;
+        if (signal.aborted) {
+          finishAbortedRun();
+          return;
+        }
         return res.status(400).json({ error: error instanceof Error ? error.message : "Could not read the attachment." });
       }
-      if (signal.aborted) return;
+      if (signal.aborted) {
+        finishAbortedRun();
+        return;
+      }
       let messages = requestedMessages;
       let resumableAppSessionId: string | undefined;
       let contextTrace: CoachContextTrace = {
