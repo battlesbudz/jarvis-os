@@ -44,6 +44,7 @@ async function main(): Promise<void> {
     const [first] = await listLiveActionsForUser({ userId });
     assert.ok(first, "first reconciliation persists an action");
     assert.equal(first.version, 1);
+    assert.equal(first.updatedAt, createdAt.toISOString(), "backfills retain source recency");
     const firstEvents = await listLiveActionEvents(first.id);
     assert.ok(firstEvents.length >= 1);
     assert.deepEqual(firstEvents.map((event) => event.sequence), firstEvents.map((_, index) => index + 1));
@@ -74,6 +75,7 @@ async function main(): Promise<void> {
     const [completed] = await listLiveActionsForUser({ userId });
     assert.equal(completed.id, first.id);
     assert.equal(completed.status, "succeeded", "an out-of-order event cannot regress canonical terminal state");
+    assert.equal(completed.updatedAt, new Date(createdAt.getTime() + 5 * 60_000).toISOString());
     assert.ok(completed.version > first.version, "a real source transition advances the version");
     const completedEvents = await listLiveActionEvents(first.id);
     assert.deepEqual(

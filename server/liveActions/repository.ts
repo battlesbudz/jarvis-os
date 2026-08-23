@@ -61,6 +61,12 @@ function rowToEvent(row: schema.LiveActionEventRow): LiveActionEvent {
 }
 
 function projectionValues(projection: AgentJobLiveActionProjection) {
+  const updatedAt = new Date(Math.max(
+    projection.createdAt.getTime(),
+    projection.startedAt?.getTime() ?? 0,
+    projection.completedAt?.getTime() ?? 0,
+    ...projection.events.map((event) => event.createdAt.getTime()),
+  ));
   return {
     userId: projection.userId,
     projectId: projection.projectId,
@@ -83,6 +89,7 @@ function projectionValues(projection: AgentJobLiveActionProjection) {
     retryEligible: projection.error?.retryEligible ?? false,
     createdAt: projection.createdAt,
     startedAt: projection.startedAt,
+    updatedAt,
     completedAt: projection.completedAt,
   };
 }
@@ -109,6 +116,7 @@ function projectionChanged(row: schema.LiveActionRow, values: ReturnType<typeof 
     || row.errorSummary !== values.errorSummary
     || row.retryEligible !== values.retryEligible
     || row.startedAt?.getTime() !== values.startedAt?.getTime()
+    || row.updatedAt.getTime() !== values.updatedAt.getTime()
     || row.completedAt?.getTime() !== values.completedAt?.getTime();
 }
 
@@ -163,7 +171,7 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
     if (!wasInserted && (projectionChanged(row, values) || insertedEventCount > 0)) {
       [row] = await tx
         .update(schema.liveActions)
-        .set({ ...mutableProjectionValues(values), version: row.version + 1, updatedAt: new Date() })
+        .set({ ...mutableProjectionValues(values), version: row.version + 1 })
         .where(eq(schema.liveActions.id, row.id))
         .returning();
     }

@@ -24,7 +24,7 @@ export function sanitizeLiveActionText(value: unknown, maxLength = 500): string 
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
     .replace(/\b(?:sk|ghp|github_pat|xox[baprs])[-_][A-Za-z0-9_-]{12,}\b/g, "[redacted token]")
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, "[redacted token]")
-    .replace(/\b(?:token|api[_-]?key|secret|password)\s*[=:]\s*[^\s,;]+/gi, "$1=[redacted]")
+    .replace(/\b((?:(?:access|refresh|id|oauth)[_-]?token)|client[_-]?secret|token|api[_-]?key|secret|password)\s*[=:]\s*[^\s,;&]+/gi, "$1=[redacted]")
     .replace(/(?:[A-Za-z]:\\Users\\[^\\\s]+|\/(?:Users|home)\/[^/\s]+)(?:[\\/][^\s,;]*)?/g, "[private path]")
     .replace(/\s+/g, " ")
     .trim();

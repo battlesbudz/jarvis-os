@@ -37,6 +37,10 @@ assert.equal(sanitizeLiveActionText("Cookie: session=super-secret"), "cookie: [r
 assert.equal(sanitizeLiveActionText("Shell command: curl https://private.example"), "command: [redacted]");
 assert.equal(sanitizeLiveActionText("$ rm -rf /home/justin/private"), "[command redacted]");
 assert.equal(sanitizeLiveActionText("Output at /Users/justin/private/report.md"), "Output at [private path]");
+assert.equal(
+  sanitizeLiveActionText("https://provider.example/callback?access_token=first&refresh_token=second&client_secret=third"),
+  "https://provider.example/callback?access_token=[redacted]&refresh_token=[redacted]&client_secret=[redacted]",
+);
 assert.equal(sanitizeLiveActionText("<thinking>private chain of thought</thinking> Safe update"), "[reasoning redacted] Safe update");
 assert.deepEqual(
   sanitizeLiveActionMetadata({ token: "secret", command: "rm -rf /", workerType: "research", retryAttempt: 1 }),
