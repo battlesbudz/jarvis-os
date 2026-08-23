@@ -107,6 +107,36 @@ assert.deepEqual(waiting.attention, {
 assert.equal(waiting.events.filter((event) => event.type === "action.waiting_approval").length, 1);
 assert.doesNotMatch(JSON.stringify(waiting), /very-secret|abc\.def\.ghi|curl private/);
 assert.equal(projectAgentJob(approvalJob).status, "running", "resolved approval checkpoints do not leave stale attention");
+const collidingEventAt = new Date("2026-08-23T12:01:30.000Z");
+const firstCollidingEvent = buildWorkerRuntimeEvent({
+  type: "progress",
+  workerType: "research",
+  message: "Processing",
+  now: collidingEventAt,
+  userVisible: true,
+  progress: { currentStep: "Processing", percent: 25 },
+});
+const secondCollidingEvent = buildWorkerRuntimeEvent({
+  type: "progress",
+  workerType: "research",
+  message: "Processing",
+  now: collidingEventAt,
+  userVisible: true,
+  progress: { currentStep: "Processing", percent: 50 },
+});
+assert.equal(firstCollidingEvent.id, secondCollidingEvent.id);
+const collidingRuntime = withWorkerRuntimeEvent(
+  withWorkerRuntimeEvent(job().input as Record<string, unknown>, firstCollidingEvent),
+  secondCollidingEvent,
+);
+const collidingProjectionEvents = projectAgentJob(job({ input: collidingRuntime, status: "running", startedAt: now }))
+  .events.filter((event) => event.message === "Processing");
+assert.equal(collidingProjectionEvents.length, 2);
+assert.equal(
+  new Set(collidingProjectionEvents.map((event) => event.sourceEventKey)).size,
+  2,
+  "same-millisecond worker events retain distinct full-payload identities",
+);
 const secondApprovalRuntime = withWorkerRuntimeEvent(approvalRuntime, buildWorkerRuntimeEvent({
   type: "approval_required",
   workerType: "research",

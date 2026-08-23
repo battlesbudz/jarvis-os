@@ -126,7 +126,7 @@ function canonicalEvent(job: AgentJobRow, status: LiveActionStatus, input: Recor
 
 function stableWorkerEventKey(jobId: string, event: WorkerRuntimeEvent): string {
   const digest = createHash("sha256")
-    .update(JSON.stringify([event.id, event.type, event.createdAt, event.message]))
+    .update(JSON.stringify(event))
     .digest("hex")
     .slice(0, 24);
   return `job:${jobId}:worker:${digest}`;
