@@ -858,11 +858,19 @@ async function appendWorkerEventToJob(opts: {
       metadata: opts.metadata,
     }),
   );
-  await db
+  const inputPatch = { ...nextInput };
+  delete inputPatch.requeuedAt;
+  delete inputPatch.requeueHistory;
+  delete inputPatch.cancelRequestedAt;
+  delete inputPatch.resourcePause;
+  const [updated] = await db
     .update(schema.agentJobs)
-    .set({ input: nextInput })
-    .where(eq(schema.agentJobs.id, opts.jobId));
-  return nextInput;
+    .set({ input: sql`${schema.agentJobs.input} || ${JSON.stringify(inputPatch)}::jsonb` })
+    .where(eq(schema.agentJobs.id, opts.jobId))
+    .returning({ input: schema.agentJobs.input });
+  return updated?.input && typeof updated.input === "object" && !Array.isArray(updated.input)
+    ? updated.input as Record<string, unknown>
+    : nextInput;
 }
 
 async function appendWorkerProgressToJob(opts: {
