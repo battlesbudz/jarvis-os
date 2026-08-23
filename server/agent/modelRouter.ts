@@ -1004,7 +1004,7 @@ function getVisionProviderProfileRouteChainFromStatus(
     const provider = status.providers[providerId];
     if (!provider?.authTypes.api_key.connected) continue;
     const route = providerId === "openai"
-      ? { providerName: "openai" as const, model: getProviderEnvValue("JARVIS_OPENAI_VISION_MODEL") ?? "gpt-4.1-mini" }
+      ? { providerName: "openai" as const, model: getProviderEnvValue("JARVIS_OPENAI_VISION_MODEL") ?? "gpt-4.1-mini", preferredAuthType: "api_key" as const }
       : defaultRouteForProviderProfile(providerId, "api_key", tier);
     if (route) pushUnique(chain, route);
   }
@@ -1017,6 +1017,7 @@ function getConfiguredVisionRouteChain(): FallbackChainEntry[] {
     pushUnique(chain, {
       providerName: "openai",
       model: getProviderEnvValue("JARVIS_OPENAI_VISION_MODEL") ?? "gpt-4.1-mini",
+      preferredAuthType: "api_key",
     });
   }
   if (hasProviderEnvValue("GEMINI_API_KEY", "GOOGLE_AI_API_KEY", "AI_INTEGRATIONS_GEMINI_API_KEY")) {

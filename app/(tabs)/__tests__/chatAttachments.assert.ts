@@ -65,6 +65,8 @@ assert.ok(modelCatalogSource.includes("VISION_CAPABLE_MODELS"), "vision-capable 
 assert.ok(modelCatalogSource.includes("VISION_CAPABLE_MODEL_PREFIXES"), "configured dated vision-model variants should remain eligible");
 assert.ok(documentSource.includes("MAX_EXTRACTED_CHARS,\n      userId,"), "profile image processing should route with the authenticated user identity");
 assert.ok(modelRouterSource.includes("getConfiguredVisionRouteChain"), "vision routing should use a capability-specific provider chain");
+assert.ok(modelRouterSource.includes('preferredAuthType: "api_key" as const'), "user-profile OpenAI vision routing should pin API-key auth");
+assert.ok(modelRouterSource.includes('preferredAuthType: "api_key",\n    });'), "environment OpenAI vision routing should pin API-key auth");
 assert.ok(!documentSource.includes("hasDirectOpenAIProvider"), "image extraction should not require a direct OpenAI key");
 assert.ok(documentSource.includes("signal,"), "image analysis should receive the chat cancellation signal");
 assert.ok(documentSource.includes("extractFromPdf(buffer, maxChars, signal)"), "PDF extraction should receive its output limit and cancellation signal");
