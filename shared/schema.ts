@@ -778,7 +778,7 @@ export const liveActions = pgTable("live_actions", {
   version: integer("version").notNull().default(1),
   currentStep: text("current_step"),
   progressKind: varchar("progress_kind").notNull().default("indeterminate"),
-  progressValue: integer("progress_value"),
+  progressValue: real("progress_value"),
   progressUpdatedAt: timestamp("progress_updated_at"),
   attention: jsonb("attention").$type<LiveActionAttention | null>(),
   controlCapabilities: jsonb("control_capabilities").$type<LiveActionControlCapability[]>().notNull().default(sql`'[]'::jsonb`),

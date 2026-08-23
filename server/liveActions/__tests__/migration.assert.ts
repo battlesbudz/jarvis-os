@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const migration = fs.readFileSync("migrations/0020_live_actions.sql", "utf8");
+const fractionalProgressMigration = fs.readFileSync("migrations/0021_live_action_fractional_progress.sql", "utf8");
 const schema = fs.readFileSync("shared/schema.ts", "utf8");
 const routes = fs.readFileSync("server/routes/liveActionRoutes.ts", "utf8");
 const mutationRoutes = fs.readFileSync("server/routes/agentJobMutationRoutes.ts", "utf8");
@@ -10,6 +11,8 @@ const requeue = fs.readFileSync("server/agent/jobRequeue.ts", "utf8");
 const gateway = fs.readFileSync("server/gateway/controlPlane.ts", "utf8");
 
 assert.match(migration, /CREATE TABLE IF NOT EXISTS "live_actions"/);
+assert.match(migration, /"progress_value" real/);
+assert.match(fractionalProgressMigration, /ALTER COLUMN "progress_value" TYPE real/);
 assert.match(migration, /live_actions_user_lineage_uidx/);
 assert.match(migration, /live_action_events_action_sequence_uidx/);
 assert.match(migration, /live_action_events_action_source_uidx/);

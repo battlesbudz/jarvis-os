@@ -60,6 +60,19 @@ async function main(): Promise<void> {
     assert.equal(replayed.version, first.version, "duplicate replay does not advance the version");
     assert.equal(replayedEvents.length, firstEvents.length, "duplicate replay does not append events");
 
+    const fractionalProgressAction = await persistAgentJobProjection({
+      ...staleProjection,
+      sourceId: `${marker}-fractional-progress-job`,
+      sourceLineageKey: `${marker}-fractional-progress-lineage`,
+      progress: {
+        kind: "percent",
+        currentStep: "Partial step",
+        value: 12.5,
+        updatedAt: createdAt.toISOString(),
+      },
+    });
+    assert.equal(fractionalProgressAction.progress?.value, 12.5, "fractional progress survives persistence");
+
     const staleSourceEvent = buildWorkerRuntimeEvent({
       type: "started",
       workerType: "research",

@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS "live_actions" (
   "version" integer DEFAULT 1 NOT NULL,
   "current_step" text,
   "progress_kind" varchar DEFAULT 'indeterminate' NOT NULL,
-  "progress_value" integer,
+  "progress_value" real,
   "progress_updated_at" timestamp,
   "attention" jsonb,
   "control_capabilities" jsonb DEFAULT '[]'::jsonb NOT NULL,

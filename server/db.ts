@@ -1065,7 +1065,7 @@ export async function ensureTablesExist() {
         version INTEGER NOT NULL DEFAULT 1,
         current_step TEXT,
         progress_kind VARCHAR NOT NULL DEFAULT 'indeterminate',
-        progress_value INTEGER,
+        progress_value REAL,
         progress_updated_at TIMESTAMP,
         attention JSONB,
         control_capabilities JSONB NOT NULL DEFAULT '[]'::jsonb,
