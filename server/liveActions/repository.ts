@@ -200,7 +200,9 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
               FROM agent_jobs
               WHERE user_id = ${projection.userId}
                 AND (
-                  id = ANY(${[projection.sourceLineageKey, projection.sourceId, row.sourceId]}::varchar[])
+                  id = ${projection.sourceLineageKey}
+                  OR id = ${projection.sourceId}
+                  OR id = ${row.sourceId}
                   OR input->>'liveActionLineageKey' = ${projection.sourceLineageKey}
                   OR input->>'retryOfJobId' = ${projection.sourceLineageKey}
                 )
