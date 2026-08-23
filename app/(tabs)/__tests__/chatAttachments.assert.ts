@@ -72,6 +72,8 @@ assert.ok(modelRouterSource.includes('preferredAuthType: "api_key",\n      allow
 assert.ok(modelRouterSource.includes(".map(normalizeVisionRouteEntry)"), "selected OpenAI vision routes should be pinned before deduplication");
 assert.equal((providerFallbackSource.match(/allowEnvironmentCredentialFallback: entry\.allowEnvironmentCredentialFallback/g) || []).length, 2, "credential-source intent should survive streaming and non-streaming fallback");
 assert.ok(openAIProviderSource.includes("params.allowEnvironmentCredentialFallback"), "OpenAI routing should use an explicitly allowed environment-key fallback");
+assert.ok(modelRouterSource.includes("fallbackOnCredentialError: true"), "vision capability chains should advance past stale credentials");
+assert.equal((providerFallbackSource.match(/entry\.fallbackOnCredentialError/g) || []).length, 2, "stale credential fallback should cover streaming and non-streaming turns");
 assert.ok(modelRouterSource.includes("hasConfiguredVisionProvider(entry, configuredVisionChain)"), "unconnected selected models should not block configured vision providers");
 assert.ok(!documentSource.includes("hasDirectOpenAIProvider"), "image extraction should not require a direct OpenAI key");
 assert.ok(documentSource.includes("signal,"), "image analysis should receive the chat cancellation signal");
@@ -80,7 +82,9 @@ assert.ok(documentSource.includes("MAX_PDF_PAGES = 200"), "PDF parsing should en
 assert.ok(documentSource.includes("MAX_PDF_TEXT_ITEMS_PER_PAGE"), "PDF parsing should enforce a per-page item limit");
 assert.ok(documentSource.includes("streamTextContent().getReader()"), "PDF parsing should stream page text instead of materializing it all");
 assert.ok(!documentSource.includes('import("pdf-parse")'), "PDF parsing should not fall back to an unbounded whole-document parser");
-assert.ok(documentSource.includes("expandedBytes > MAX_DOCX_EXPANDED_BYTES"), "DOCX expansion should be bounded before decompression");
+assert.ok(documentSource.includes("expandedBytes > MAX_DOCX_EXPANDED_BYTES"), "DOCX metadata should be bounded before decompression");
+assert.ok(documentSource.includes("inflateRawSync(compressed, { maxOutputLength: remainingBytes })"), "DOCX entries should enforce the byte limit during actual decompression");
+assert.ok(documentSource.includes("verifiedExpandedBytes > MAX_DOCX_EXPANDED_BYTES"), "DOCX actual expanded bytes should be bounded cumulatively");
 assert.ok(attachmentSource.includes("signal, attachmentContextChars"), "document extraction should enforce its output limit while parsing");
 assert.ok(documentSource.includes('addEventListener("abort", abortLoading'), "PDF.js extraction should stop when the chat request is cancelled");
 assert.ok(!documentSource.includes("\nconst openai = new OpenAI"), "image extraction should not create an unusable module-level OpenAI client");

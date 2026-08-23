@@ -58,6 +58,8 @@ export interface FallbackChainEntry {
   preferredAuthType?: ProviderQueryParams["preferredAuthType"];
   /** Permit this explicitly environment-derived route to use its configured environment credential. */
   allowEnvironmentCredentialFallback?: boolean;
+  /** Allow capability-specific chains to advance past a stale provider credential. */
+  fallbackOnCredentialError?: boolean;
 }
 
 function collectErrorSignals(err: unknown): string {
@@ -107,6 +109,17 @@ function collectErrorSignals(err: unknown): string {
  * retriable - a different provider would see the same failure. 413 is the
  * exception because another model/provider may have a larger context or TPM cap.
  */
+export function isProviderCredentialError(err: unknown): boolean {
+  if (err instanceof Error && err.name === "AbortError") return false;
+  const anyErr = err as Record<string, unknown>;
+  if (anyErr.status === 401 || anyErr.status === 403) return true;
+  const lower = collectErrorSignals(err).toLowerCase();
+  return [
+    "api key", "api_key", "authentication", "unauthorized", "credential",
+    "profile is required", "not connected", "permission denied",
+  ].some((term) => lower.includes(term));
+}
+
 export function isRetriableProviderError(err: unknown): boolean {
   if (err instanceof Error && err.name === "AbortError") return false;
 
@@ -270,8 +283,11 @@ export async function queryWithFallback(
       }
 
       const hasMore = i < chain.length - 1;
-      if (hasMore && isRetriableProviderError(err)) {
-        // Retriable - try the next provider in the chain.
+      if (hasMore && (
+        isRetriableProviderError(err)
+        || (entry.fallbackOnCredentialError && isProviderCredentialError(err))
+      )) {
+        // Retriable, or a stale credential in an explicitly capability-scoped chain.
         continue;
       }
 
@@ -347,7 +363,10 @@ export async function queryWithFallbackStreaming(
       }
 
       const hasMore = i < chain.length - 1;
-      if (!emittedChunk && hasMore && isRetriableProviderError(err)) {
+      if (!emittedChunk && hasMore && (
+        isRetriableProviderError(err)
+        || (entry.fallbackOnCredentialError && isProviderCredentialError(err))
+      )) {
         continue;
       }
 

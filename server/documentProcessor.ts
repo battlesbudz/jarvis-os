@@ -3,6 +3,7 @@ import { routeModelTurn } from "./agent/modelRouter";
 import type { TextItem } from "pdfjs-dist/types/src/display/api";
 import { db } from "./db";
 import { eq, desc } from "drizzle-orm";
+import { inflateRawSync } from "node:zlib";
 import { userDocuments } from "@shared/schema";
 
 const MAX_DOCS_PER_USER = 10;
@@ -102,10 +103,7 @@ function validateDocxArchive(buffer: Buffer): void {
   const minimumEocdOffset = Math.max(0, buffer.length - 65_557);
   let eocdOffset = -1;
   for (let offset = buffer.length - 22; offset >= minimumEocdOffset; offset--) {
-    if (buffer.readUInt32LE(offset) === 0x06054b50) {
-      eocdOffset = offset;
-      break;
-    }
+    if (buffer.readUInt32LE(offset) === 0x06054b50) { eocdOffset = offset; break; }
   }
   if (eocdOffset < 0) throw new Error("DOCX archive is invalid.");
 
@@ -118,20 +116,52 @@ function validateDocxArchive(buffer: Buffer): void {
 
   let offset = directoryOffset;
   let expandedBytes = 0;
+  let verifiedExpandedBytes = 0;
   for (let index = 0; index < entryCount; index++) {
     if (offset + 46 > eocdOffset || buffer.readUInt32LE(offset) !== 0x02014b50) {
       throw new Error("DOCX archive is invalid.");
     }
+    const flags = buffer.readUInt16LE(offset + 8);
+    const compressionMethod = buffer.readUInt16LE(offset + 10);
+    const compressedBytes = buffer.readUInt32LE(offset + 20);
     const entryBytes = buffer.readUInt32LE(offset + 24);
-    if (entryBytes === 0xffffffff) throw new Error("ZIP64 DOCX archives are not supported.");
+    const localHeaderOffset = buffer.readUInt32LE(offset + 42);
+    if (flags & 0x1) throw new Error("Encrypted DOCX archives are not supported.");
+    if (compressedBytes === 0xffffffff || entryBytes === 0xffffffff || localHeaderOffset === 0xffffffff) {
+      throw new Error("ZIP64 DOCX archives are not supported.");
+    }
     expandedBytes += entryBytes;
     if (expandedBytes > MAX_DOCX_EXPANDED_BYTES) {
+      throw new Error("DOCX expands beyond the 80MB processing limit.");
+    }
+    if (localHeaderOffset + 30 > buffer.length || buffer.readUInt32LE(localHeaderOffset) !== 0x04034b50) {
+      throw new Error("DOCX archive is invalid.");
+    }
+    const dataOffset = localHeaderOffset + 30
+      + buffer.readUInt16LE(localHeaderOffset + 26)
+      + buffer.readUInt16LE(localHeaderOffset + 28);
+    if (dataOffset + compressedBytes > buffer.length) throw new Error("DOCX archive is invalid.");
+    const compressed = buffer.subarray(dataOffset, dataOffset + compressedBytes);
+    let actualEntryBytes: number;
+    if (compressionMethod === 0) {
+      actualEntryBytes = compressed.length;
+    } else if (compressionMethod === 8) {
+      const remainingBytes = Math.max(1, MAX_DOCX_EXPANDED_BYTES - verifiedExpandedBytes);
+      try {
+        actualEntryBytes = inflateRawSync(compressed, { maxOutputLength: remainingBytes }).length;
+      } catch {
+        throw new Error("DOCX expands beyond the 80MB processing limit.");
+      }
+    } else {
+      throw new Error("DOCX uses an unsupported compression method.");
+    }
+    verifiedExpandedBytes += actualEntryBytes;
+    if (verifiedExpandedBytes > MAX_DOCX_EXPANDED_BYTES) {
       throw new Error("DOCX expands beyond the 80MB processing limit.");
     }
     offset += 46 + buffer.readUInt16LE(offset + 28) + buffer.readUInt16LE(offset + 30) + buffer.readUInt16LE(offset + 32);
   }
 }
-
 async function extractFromDocx(buffer: Buffer, maxChars: number, signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted();
   validateDocxArchive(buffer);

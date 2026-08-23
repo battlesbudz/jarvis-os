@@ -1358,10 +1358,14 @@ async function prepareModelTurn(
       ?? getModelRouteChain(params.tier);
   const excludedProviders = new Set(params.excludedProviders ?? []);
   const requiredCapabilities = params.requiredCapabilities ?? [];
-  const chain = resolvedChain.filter((entry) =>
-    !excludedProviders.has(entry.providerName)
-    && requiredCapabilities.every((capability) => modelSupportsCapability(entry.model, capability)),
-  );
+  const chain = resolvedChain
+    .filter((entry) =>
+      !excludedProviders.has(entry.providerName)
+      && requiredCapabilities.every((capability) => modelSupportsCapability(entry.model, capability)),
+    )
+    .map((entry) => requiredCapabilities.includes("vision")
+      ? { ...entry, fallbackOnCredentialError: true }
+      : entry);
   if (chain.length === 0) {
     if (requiredCapabilities.length > 0) {
       throw new Error(
