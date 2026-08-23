@@ -29,6 +29,10 @@ export function registerAgentJobMutationRoutes(app: Express): void {
       delete jobInput.retryOfJobId;
       delete jobInput.liveActionLineageKey;
       delete jobInput.retriedAt;
+      delete jobInput.requeuedAt;
+      delete jobInput.requeueHistory;
+      delete jobInput.cancelRequestedAt;
+      delete jobInput.resourcePause;
       const { submitAgentJob } = await import("../agent/jobQueue");
       const { id: jobId } = await submitAgentJob({
         userId,
@@ -110,6 +114,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
           : {};
         delete input.retryCount;
         delete input.requeuedAt;
+        delete input.requeueHistory;
         delete input.resourcePause;
         delete input.cancelRequestedAt;
         delete input.retriedAt;

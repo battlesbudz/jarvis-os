@@ -225,6 +225,22 @@ export function projectAgentJob(
   const baseEvents = workerEvents.some((event) => event.type === fallbackEvent.type) && !isRequeue
     ? workerEvents
     : [...workerEvents, fallbackEvent];
+  const requeuedAt = dateValue(input.requeuedAt);
+  const historicalRequeueEvents = Array.isArray(input.requeueHistory)
+    ? input.requeueHistory.flatMap((value) => {
+        const at = dateValue(value);
+        return at && at.getTime() !== requeuedAt?.getTime()
+          ? [{
+              sourceEventKey: `job:${job.id}:requeue:${at.toISOString()}`,
+              type: "action.queued" as const,
+              message: "Job requeued",
+              safeMetadata: { sourceStatus: "queued" },
+              userVisible: true,
+              createdAt: at,
+            }]
+          : [];
+      })
+    : [];
   const retriedAt = typeof input.retryOfJobId === "string" ? dateValue(input.retriedAt) : null;
   const retryEvent: ProjectedLiveActionEvent | null = retriedAt
     ? {
@@ -263,6 +279,7 @@ export function projectAgentJob(
       : [];
   });
   const events = [
+    ...historicalRequeueEvents,
     ...baseEvents,
     ...(retryEvent ? [retryEvent] : []),
     ...(resumeEvent ? [resumeEvent] : []),

@@ -10,6 +10,7 @@ async function main(): Promise<void> {
   const schema = await import("@shared/schema");
   const { db, ensureTablesExist, pool } = await import("../../db");
   const { buildInitialWorkerRuntime, buildWorkerRuntimeEvent, appendWorkerRuntimeEvent } = await import("../../agent/workerRuntime");
+  const { staleJobRequeueUpdate } = await import("../../agent/jobRequeue");
   const { projectAgentJob } = await import("../adapters/agentJob");
   const {
     getLiveActionForUser,
@@ -152,6 +153,38 @@ async function main(): Promise<void> {
       }
     }
     assert.equal(rolledEvents.at(-1)?.sequence, 201, "new events keep a monotonic sequence after eviction");
+
+    const watchdogJobId = `${marker}-watchdog-requeue`;
+    await db.insert(schema.agentJobs).values({
+      id: watchdogJobId,
+      userId,
+      agentType: "research",
+      title: "Repeated watchdog recovery",
+      prompt: "Survive repeated restarts",
+      input: { workerType: runtime.workerType, workerRuntime: runtime },
+      status: "running",
+      createdAt,
+      startedAt: createdAt,
+    });
+    const firstRequeueAt = new Date(createdAt.getTime() + 10_000);
+    const secondRequeueAt = new Date(createdAt.getTime() + 20_000);
+    await db.update(schema.agentJobs).set(staleJobRequeueUpdate(firstRequeueAt))
+      .where(eq(schema.agentJobs.id, watchdogJobId));
+    await db.update(schema.agentJobs).set({ status: "running", startedAt: firstRequeueAt })
+      .where(eq(schema.agentJobs.id, watchdogJobId));
+    await db.update(schema.agentJobs).set(staleJobRequeueUpdate(secondRequeueAt))
+      .where(eq(schema.agentJobs.id, watchdogJobId));
+    await reconcileAgentJobsForUser(userId, { sourceLineageKey: watchdogJobId });
+    const watchdogAction = (await listLiveActionsForUser({ userId, limit: 100 }))
+      .find((action) => action.source.id === watchdogJobId);
+    assert.ok(watchdogAction);
+    assert.deepEqual(
+      (await listLiveActionEvents(watchdogAction.id))
+        .filter((event) => event.message === "Job requeued")
+        .map((event) => event.createdAt),
+      [firstRequeueAt.toISOString(), secondRequeueAt.toISOString()],
+      "repeated watchdog recoveries preserve every queued transition",
+    );
 
     completedRuntime.events.push(staleSourceEvent);
     await db.update(schema.agentJobs).set({

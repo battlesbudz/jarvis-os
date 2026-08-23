@@ -177,8 +177,20 @@ assert.equal(paused.events.at(-1)?.createdAt.toISOString(), pausedAt);
 assert.match(paused.events.at(-1)?.sourceEventKey ?? "", /12:04:00\.000Z$/);
 
 const requeuedAt = "2026-08-23T12:05:00.000Z";
-const requeued = projectAgentJob(job({ input: { ...(job().input as Record<string, unknown>), requeuedAt } }));
+const earlierRequeuedAt = "2026-08-23T12:04:30.000Z";
+const requeued = projectAgentJob(job({
+  input: {
+    ...(job().input as Record<string, unknown>),
+    requeuedAt,
+    requeueHistory: [earlierRequeuedAt, requeuedAt],
+  },
+}));
 assert.equal(requeued.events.at(-1)?.createdAt.toISOString(), requeuedAt);
+assert.deepEqual(
+  requeued.events.filter((event) => event.message === "Job requeued").map((event) => event.createdAt.toISOString()),
+  [earlierRequeuedAt, requeuedAt],
+  "every durable watchdog requeue is projected exactly once",
+);
 assert.match(requeued.events.at(-1)?.sourceEventKey ?? "", /12:05:00\.000Z$/);
 assert.equal(requeued.events.filter((event) => event.type === "action.queued").length, 2);
 

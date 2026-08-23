@@ -20,12 +20,17 @@ assert.match(routes, /userId: req\.userId/);
 assert.doesNotMatch(routes, /req\.body\?\.userId|req\.query\.userId/);
 assert.match(mutationRoutes, /delete jobInput\.retryOfJobId/);
 assert.match(mutationRoutes, /delete jobInput\.liveActionLineageKey/);
+assert.match(mutationRoutes, /delete jobInput\.requeuedAt/);
+assert.match(mutationRoutes, /delete jobInput\.requeueHistory/);
+assert.match(mutationRoutes, /delete jobInput\.cancelRequestedAt/);
+assert.match(mutationRoutes, /delete jobInput\.resourcePause/);
 assert.match(mutationRoutes, /pg_advisory_xact_lock/);
 assert.match(mutationRoutes, /retryOfJobId/);
 assert.match(mutationRoutes, /delete input\.resourcePause/);
 assert.match(mutationRoutes, /skipDuplicateCheck: true/);
 assert.match(cancellation, /agentJobs\.input\} \|\| jsonb_build_object/);
-assert.match(requeue, /jsonb_build_object\('requeuedAt'/);
+assert.match(requeue, /jsonb_path_query_array/);
+assert.match(requeue, /requeueHistory/);
 assert.match(gateway, /\.set\(cancellationUpdateForAgentJob\(nextStatus\)\)/);
 assert.match(gateway, /delete input\.liveActionLineageKey/);
 
