@@ -208,4 +208,36 @@ import {
   console.log("OK: worker approval checkpoints are represented in runtime context");
 }
 
+{
+  const startedAt = new Date("2026-05-26T12:00:00.000Z");
+  let runtime = buildInitialWorkerRuntime({
+    agentType: "research",
+    title: "Retain projector history",
+    now: startedAt,
+  });
+  for (let index = 1; index < 200; index += 1) {
+    runtime = appendWorkerRuntimeEvent(runtime, buildWorkerRuntimeEvent({
+      type: "progress",
+      workerType: "research",
+      message: `Progress ${index}`,
+      now: new Date(startedAt.getTime() + index * 1_000),
+      userVisible: true,
+    }));
+  }
+  assert.equal(runtime.events.length, 200);
+  assert.equal(runtime.events[0]?.type, "queued", "the full Live Action retention window remains recoverable");
+
+  runtime = appendWorkerRuntimeEvent(runtime, buildWorkerRuntimeEvent({
+    type: "completed",
+    workerType: "research",
+    message: "Complete",
+    now: new Date(startedAt.getTime() + 200_000),
+    userVisible: true,
+  }));
+  assert.equal(runtime.events.length, 200);
+  assert.equal(runtime.events[0]?.message, "Progress 1", "source history evicts only beyond projector retention");
+  assert.equal(runtime.events.at(-1)?.type, "completed");
+  console.log("OK: worker runtime retains the full Live Action event window");
+}
+
 console.log("\nAll worker runtime assertions passed.");
