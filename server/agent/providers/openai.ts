@@ -96,6 +96,7 @@ export class OpenAIProvider extends BaseProvider {
       allowAuthTypeFallback,
     });
 
+    if (!credential && params.allowEnvironmentCredentialFallback) return this.getEnvClient();
     if (!credential && preferredAuthType && !allowAuthTypeFallback) {
       throw new Error(`OpenAI ${preferredAuthType} profile is required but is not connected for this user`);
     }

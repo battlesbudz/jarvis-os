@@ -17,7 +17,7 @@ assert.doesNotMatch(
 );
 assert.match(
   insightsSource,
-  /if \(!text\.trim\(\) \|\| isStreaming\) return;/,
+  /if \(!messageText \|\| isStreaming\) return;/,
   "sending a drafted message should remain blocked while the current response is streaming",
 );
 

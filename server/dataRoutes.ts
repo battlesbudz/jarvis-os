@@ -35,7 +35,14 @@ function registerSimpleJsonCrud(
         .from(table)
         .where(eq(table.userId, userId));
       if (result.length === 0) return res.json({ data: null });
-      res.json({ data: result[0].data });
+      const responseData = path === "chat-history" && Array.isArray(result[0].data)
+        ? result[0].data.map((item: any) => {
+            if (!item || typeof item !== "object") return item;
+            const { attachmentContext: _serverOnly, ...publicItem } = item;
+            return publicItem;
+          })
+        : result[0].data;
+      res.json({ data: responseData });
     } catch (e) {
       console.error(`Error fetching ${path}:`, e);
       res.status(500).json({ error: `Failed to fetch ${path}` });
@@ -47,12 +54,34 @@ function registerSimpleJsonCrud(
       const userId = requireUserId(req, res);
       if (!userId) return;
       const { data } = req.body;
+      let persistedData = data;
+      if (path === "chat-history" && Array.isArray(data)) {
+        const existingRows = await db
+          .select({ data: table.data })
+          .from(table)
+          .where(eq(table.userId, userId))
+          .limit(1);
+        const trustedContexts = new Map<string, string>();
+        if (Array.isArray(existingRows[0]?.data)) {
+          for (const item of existingRows[0].data as any[]) {
+            if (typeof item?.id === "string" && typeof item?.attachmentContext === "string") {
+              trustedContexts.set(item.id, item.attachmentContext);
+            }
+          }
+        }
+        persistedData = data.map((item: any) => {
+          if (!item || typeof item !== "object") return item;
+          const { attachmentContext: _untrusted, ...cleanItem } = item;
+          const trustedContext = typeof item.id === "string" ? trustedContexts.get(item.id) : undefined;
+          return trustedContext ? { ...cleanItem, attachmentContext: trustedContext } : cleanItem;
+        });
+      }
       await db
         .insert(table)
-        .values({ userId, data, updatedAt: new Date() })
+        .values({ userId, data: persistedData, updatedAt: new Date() })
         .onConflictDoUpdate({
           target: [table.userId],
-          set: { data, updatedAt: new Date() },
+          set: { data: persistedData, updatedAt: new Date() },
         });
       res.json({ ok: true });
     } catch (e) {
@@ -65,9 +94,17 @@ function registerSimpleJsonCrud(
     try {
       const userId = requireUserId(req, res);
       if (!userId) return;
-      await db
-        .delete(table)
-        .where(eq(table.userId, userId));
+      if (path === "chat-history") {
+        const [{ clearAgentChatState }, { getCoachAppAgentId }] = await Promise.all([
+          import("./agent/providers/sessionStore"),
+          import("./agent/coreAgentIds"),
+        ]);
+        await clearAgentChatState(getCoachAppAgentId(userId), userId);
+      } else {
+        await db
+          .delete(table)
+          .where(eq(table.userId, userId));
+      }
       res.json({ ok: true });
     } catch (e) {
       console.error(`Error deleting ${path}:`, e);

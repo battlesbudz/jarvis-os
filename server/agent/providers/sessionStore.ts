@@ -8,7 +8,7 @@
 import type OpenAI from "openai";
 import { randomUUID } from "crypto";
 import { eq, and, gt, asc, desc } from "drizzle-orm";
-import { agentChatSessions, agentChatMessages, agentChatSessionSummaries } from "@shared/schema";
+import { agentChatSessions, agentChatMessages, agentChatSessionSummaries, chatHistory } from "@shared/schema";
 import type { AgentChatMessage } from "@shared/schema";
 
 const SESSION_TTL_HOURS = parseInt(process.env.AGENT_SESSION_TTL_HOURS ?? "24", 10);
@@ -458,9 +458,16 @@ export async function persistChatMessages(
   agentId: string,
   userId: string,
   messages: Array<{ role: "user" | "assistant"; content: string }>,
-): Promise<void> {
-  if (messages.length === 0) return;
-  const db = await getDb();
+): Promise<boolean> {
+  if (messages.length === 0) return true;
+  let db: Awaited<ReturnType<typeof getDb>>;
+  try {
+    db = await getDb();
+  } catch (err) {
+    console.error("[SessionStore] persistChatMessages DB error:", err);
+    return false;
+  }
+  let persisted = true;
   for (const m of messages) {
     try {
       await db.insert(agentChatMessages).values({
@@ -470,9 +477,11 @@ export async function persistChatMessages(
         content: m.content,
       });
     } catch (err) {
+      persisted = false;
       console.error("[SessionStore] persistChatMessages DB error:", err);
     }
   }
+  return persisted;
 }
 
 export async function getChatHistory(
@@ -523,5 +532,27 @@ export async function expireSession(sdkSessionId: string): Promise<void> {
       .where(eq(agentChatSessions.sdkSessionId, sdkSessionId));
   } catch {
     // best-effort
+  }
+}
+
+export async function clearAgentChatState(agentId: string, userId: string): Promise<void> {
+  const { abortActiveCoachRunsForUser } = await import("../../runRegistry");
+  await abortActiveCoachRunsForUser(userId);
+
+  const db = await getDb();
+  await db.transaction(async (tx) => {
+    await tx.delete(chatHistory).where(eq(chatHistory.userId, userId));
+    await tx.delete(agentChatMessages).where(and(
+      eq(agentChatMessages.agentId, agentId),
+      eq(agentChatMessages.userId, userId),
+    ));
+    await tx.delete(agentChatSessions).where(and(
+      eq(agentChatSessions.agentId, agentId),
+      eq(agentChatSessions.userId, userId),
+    ));
+  });
+
+  for (const [sessionId, entry] of processCache) {
+    if (entry.agentId === agentId && entry.userId === userId) processCache.delete(sessionId);
   }
 }

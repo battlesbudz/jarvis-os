@@ -1,6 +1,7 @@
 export type ProviderCredentialKind = "api_key" | "oauth" | "local";
 export type ModelProviderId = "openai" | "anthropic" | "google" | "local-llama" | "android-local-gemma";
 export type ModelCategory = "chat" | "planning" | "memory" | "research" | "orchestrator";
+export type ModelCapability = "vision";
 
 export interface CatalogModelOption {
   value: string;
@@ -160,6 +161,31 @@ export const MODEL_DEFAULTS: Record<ModelCategory, string> = {
   research: CODEX_OAUTH_MODEL,
   orchestrator: CODEX_OAUTH_MODEL,
 };
+
+const VISION_CAPABLE_MODELS = new Set([
+  "gpt-4o",
+  "gpt-4o-mini",
+  "gpt-4.1-mini",
+  "gpt-4.1",
+  "claude-sonnet-4-5",
+  "claude-opus-4-1",
+  "gemini-2.5-flash",
+  "gemini-2.5-pro",
+]);
+
+const VISION_CAPABLE_MODEL_PREFIXES = Array.from(VISION_CAPABLE_MODELS);
+
+export function modelSupportsCapability(model: string, capability: ModelCapability): boolean {
+  const normalizedModel = model.trim().toLowerCase().split("/").at(-1) ?? "";
+  if (capability === "vision") {
+    return VISION_CAPABLE_MODELS.has(normalizedModel)
+      || VISION_CAPABLE_MODEL_PREFIXES.some((prefix) =>
+        normalizedModel.startsWith(prefix)
+          && /^-(?:\d{4}-\d{2}-\d{2}|\d{8}|latest)$/.test(normalizedModel.slice(prefix.length)),
+      );
+  }
+  return false;
+}
 
 export function getModelProvider(providerId: string): CatalogProvider | null {
   return MODEL_PROVIDER_CATALOG.find((provider) => provider.id === providerId) ?? null;

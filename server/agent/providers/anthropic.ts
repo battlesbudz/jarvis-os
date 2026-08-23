@@ -64,6 +64,33 @@ function textFromContent(content: OpenAI.Chat.Completions.ChatCompletionMessageP
     .join("\n");
 }
 
+function anthropicContentFromOpenAI(content: OpenAI.Chat.Completions.ChatCompletionMessageParam["content"]): unknown {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const blocks: Array<Record<string, unknown>> = [];
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+    if ("text" in part && typeof part.text === "string") {
+      blocks.push({ type: "text", text: part.text });
+      continue;
+    }
+    if (!("image_url" in part)) continue;
+    const imageUrl = typeof part.image_url === "string"
+      ? part.image_url
+      : part.image_url && typeof part.image_url === "object" && "url" in part.image_url
+        ? String(part.image_url.url)
+        : "";
+    const match = /^data:([^;,]+);base64,(.+)$/s.exec(imageUrl);
+    if (match) {
+      blocks.push({
+        type: "image",
+        source: { type: "base64", media_type: match[1], data: match[2] },
+      });
+    }
+  }
+  return blocks;
+}
+
 function toAnthropicMessages(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]) {
   const system: string[] = [];
   const converted: Array<{ role: "user" | "assistant"; content: unknown }> = [];
@@ -110,8 +137,10 @@ function toAnthropicMessages(messages: OpenAI.Chat.Completions.ChatCompletionMes
       continue;
     }
 
-    const text = textFromContent(message.content);
-    if (text) converted.push({ role: "user", content: text });
+    const content = anthropicContentFromOpenAI(message.content);
+    if (typeof content === "string" ? content : Array.isArray(content) && content.length) {
+      converted.push({ role: "user", content });
+    }
   }
 
   return { system: system.join("\n\n"), messages: converted };

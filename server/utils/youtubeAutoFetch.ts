@@ -130,13 +130,14 @@ export async function buildYouTubeContextBlock(message: string): Promise<string>
 
   if (blocks.length === 0) return "";
 
-  return (
-    "\n\n" +
-    blocks.join("\n\n") +
-    "\n\n[TRANSCRIPT AUTO-FETCHED: The transcript above was pre-loaded for this message. " +
-    "Reply INLINE right now — do NOT call queue_background_job for this. " +
-    "If the user gave no explicit instruction, provide a thorough summary of the video here in this message. " +
-    "If they asked a specific question, answer it using the transcript. " +
-    "Never route transcript-backed summaries to the background queue.]"
-  );
+  return [
+    "<youtube_transcripts>",
+    blocks.join("\n\n"),
+    "[TRANSCRIPT AUTO-FETCHED: The transcript above was pre-loaded for this message. " +
+      "Reply INLINE right now — do NOT call queue_background_job for this. " +
+      "If the user gave no explicit instruction, provide a thorough summary of the video here in this message. " +
+      "If they asked a specific question, answer it using the transcript. " +
+      "Never route transcript-backed summaries to the background queue.]",
+    "</youtube_transcripts>",
+  ].join("\n\n");
 }

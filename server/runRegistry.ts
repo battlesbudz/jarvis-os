@@ -1,6 +1,11 @@
 import "./agent/openaiChatRouterPatch";
 
-export const activeCoachRuns = new Map<string, { controller: AbortController; userId: string }>();
+export const activeCoachRuns = new Map<string, {
+  controller: AbortController;
+  userId: string;
+  channel?: "appchat";
+  done?: Promise<void>;
+}>();
 
 export function registerActiveCoachRun(runId: string, controller: AbortController, userId: string): void {
   activeCoachRuns.set(runId, { controller, userId });
@@ -24,6 +29,17 @@ export function abortActiveCoachRun(runId: string, callerId: string): { status: 
   if (!run) return { status: "not_found" };
   if (run.userId !== callerId) return { status: "forbidden" };
   run.controller.abort();
-  activeCoachRuns.delete(runId);
+  if (!run.done) activeCoachRuns.delete(runId);
   return { status: "aborted", userId: run.userId };
+}
+
+export async function abortActiveCoachRunsForUser(userId: string): Promise<void> {
+  const pending: Promise<void>[] = [];
+  for (const [runId, entry] of activeCoachRuns) {
+    if (entry.userId !== userId || entry.channel !== "appchat") continue;
+    entry.controller.abort();
+    if (entry.done) pending.push(entry.done);
+    else activeCoachRuns.delete(runId);
+  }
+  await Promise.all(pending);
 }

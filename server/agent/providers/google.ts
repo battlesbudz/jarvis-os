@@ -108,6 +108,28 @@ function textFromContent(content: OpenAI.Chat.Completions.ChatCompletionMessageP
     .join("\n");
 }
 
+function googlePartsFromContent(content: OpenAI.Chat.Completions.ChatCompletionMessageParam["content"]): Array<Record<string, unknown>> {
+  if (typeof content === "string") return content ? [{ text: content }] : [];
+  if (!Array.isArray(content)) return [];
+  const parts: Array<Record<string, unknown>> = [];
+  for (const part of content) {
+    if (!part || typeof part !== "object") continue;
+    if ("text" in part && typeof part.text === "string") {
+      parts.push({ text: part.text });
+      continue;
+    }
+    if (!("image_url" in part)) continue;
+    const imageUrl = typeof part.image_url === "string"
+      ? part.image_url
+      : part.image_url && typeof part.image_url === "object" && "url" in part.image_url
+        ? String(part.image_url.url)
+        : "";
+    const match = /^data:([^;,]+);base64,(.+)$/s.exec(imageUrl);
+    if (match) parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
+  }
+  return parts;
+}
+
 function toGoogleRequest(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]) {
   const system: string[] = [];
   const contents: Array<{ role: "user" | "model"; parts: Array<Record<string, unknown>> }> = [];
@@ -150,8 +172,8 @@ function toGoogleRequest(messages: OpenAI.Chat.Completions.ChatCompletionMessage
       continue;
     }
 
-    const text = textFromContent(message.content);
-    if (text) contents.push({ role: "user", parts: [{ text }] });
+    const parts = googlePartsFromContent(message.content);
+    if (parts.length) contents.push({ role: "user", parts });
   }
 
   return {

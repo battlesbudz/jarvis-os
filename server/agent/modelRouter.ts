@@ -14,7 +14,7 @@ import {
   type ProviderStatus,
 } from "./providers/modelProviderAuthProfiles";
 import { DEFAULT_CODEX_OAUTH_MODEL, getCodexOAuthModel } from "./runtimeModel";
-import { ANDROID_LOCAL_GEMMA_MODEL } from "@shared/modelProviderCatalog";
+import { ANDROID_LOCAL_GEMMA_MODEL, modelSupportsCapability, type ModelCapability } from "@shared/modelProviderCatalog";
 import {
   answerRuntimeIdentityQuestion,
   classifyRuntimeIdentityIntent,
@@ -113,6 +113,7 @@ export interface RoutedModelTurnParams {
   disableRuntimeStateCardMemoryContext?: boolean;
   phoneGemmaDeviceId?: string;
   phoneGemmaProfileId?: string;
+  requiredCapabilities?: ModelCapability[];
   excludedProviders?: ProviderName[];
 }
 
@@ -134,6 +135,7 @@ interface SelectedModelPreferenceState {
 
 interface UserProviderProfileRouteState {
   defaultChain: FallbackChainEntry[] | null;
+  visionChain: FallbackChainEntry[];
   hasOpenAIOAuthProfile: boolean;
 }
 
@@ -163,8 +165,8 @@ export const DEFAULT_TIER_MODELS: Record<ModelTier, string> = {
 };
 
 function pushUnique(chain: FallbackChainEntry[], entry: FallbackChainEntry): void {
-  const key = `${entry.providerName}:${entry.model}`;
-  if (!chain.some((item) => `${item.providerName}:${item.model}` === key)) {
+  const key = `${entry.providerName}:${entry.model}:${entry.useEnvironmentCredentials ? "env" : "profile"}`;
+  if (!chain.some((item) => `${item.providerName}:${item.model}:${item.useEnvironmentCredentials ? "env" : "profile"}` === key)) {
     chain.push(entry);
   }
 }
@@ -993,18 +995,86 @@ function getDefaultProviderProfileRouteChainFromStatus(
   return null;
 }
 
+function getVisionProviderProfileRouteChainFromStatus(
+  status: ProviderStatus,
+  tier: ModelExecutionTier,
+): FallbackChainEntry[] {
+  const chain: FallbackChainEntry[] = [];
+  for (const providerId of ["google", "anthropic", "openai"]) {
+    const provider = status.providers[providerId];
+    if (!provider?.authTypes.api_key.connected) continue;
+    const route = providerId === "openai"
+      ? { providerName: "openai" as const, model: getProviderEnvValue("JARVIS_OPENAI_VISION_MODEL") ?? "gpt-4.1-mini", preferredAuthType: "api_key" as const }
+      : defaultRouteForProviderProfile(providerId, "api_key", tier);
+    if (route) pushUnique(chain, route);
+  }
+  return chain;
+}
+
+function getConfiguredVisionRouteChain(): FallbackChainEntry[] {
+  const chain: FallbackChainEntry[] = [];
+  if (hasDirectOpenAIProvider()) {
+    pushUnique(chain, {
+      providerName: "openai",
+      model: getProviderEnvValue("JARVIS_OPENAI_VISION_MODEL") ?? "gpt-4.1-mini",
+      preferredAuthType: "api_key",
+      allowEnvironmentCredentialFallback: true,
+      useEnvironmentCredentials: true,
+    });
+  }
+  if (hasProviderEnvValue("GEMINI_API_KEY", "GOOGLE_AI_API_KEY", "AI_INTEGRATIONS_GEMINI_API_KEY")) {
+    pushUnique(chain, { providerName: "google", model: "gemini-2.5-flash", useEnvironmentCredentials: true });
+  }
+  if (hasProviderEnvValue("ANTHROPIC_API_KEY", "AI_INTEGRATIONS_ANTHROPIC_API_KEY")) {
+    pushUnique(chain, { providerName: "anthropic", model: "claude-sonnet-4-5", useEnvironmentCredentials: true });
+  }
+  if (hasProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY")) {
+    const model = getProviderEnvValue("OPENROUTER_VISION_MODEL", "AI_INTEGRATIONS_OPENROUTER_VISION_MODEL")
+      ?? "openai/gpt-4o-mini";
+    pushUnique(chain, {
+      providerName: "openai-compatible",
+      model: `openrouter/${model.replace(/^openrouter\//, "")}`,
+      useEnvironmentCredentials: true,
+      supportsVision: true,
+    });
+  }
+  return chain;
+}
+
+function normalizeVisionRouteEntry(entry: FallbackChainEntry): FallbackChainEntry {
+  return entry.providerName === "openai"
+    ? {
+        ...entry,
+        preferredAuthType: "api_key",
+        allowEnvironmentCredentialFallback: hasDirectOpenAIProvider(),
+      }
+    : entry;
+}
+
+function hasConfiguredVisionProvider(
+  entry: FallbackChainEntry,
+  configuredChain: FallbackChainEntry[],
+): boolean {
+  return configuredChain.some((configured) =>
+    configured.providerName === entry.providerName
+      && (entry.providerName !== "openai-compatible"
+        || (entry.model.startsWith("openrouter/") && configured.model.startsWith("openrouter/"))),
+  );
+}
+
 async function getUserProviderProfileRouteState(
   userId: string | undefined,
   tier: ModelExecutionTier,
   logPrefix: string,
 ): Promise<UserProviderProfileRouteState> {
-  if (!userId) return { defaultChain: null, hasOpenAIOAuthProfile: false };
+  if (!userId) return { defaultChain: null, visionChain: [], hasOpenAIOAuthProfile: false };
 
   const resolver = providerStatusResolverForTesting ?? getProviderStatus;
   try {
     const status = await resolver({ userId });
     return {
       defaultChain: getDefaultProviderProfileRouteChainFromStatus(status, tier),
+      visionChain: getVisionProviderProfileRouteChainFromStatus(status, tier),
       hasOpenAIOAuthProfile: hasConnectedOpenAIOAuthProfile(status),
     };
   } catch (err) {
@@ -1012,7 +1082,7 @@ async function getUserProviderProfileRouteState(
     console.warn(`${logPrefix} provider_profile_status_unavailable: ${message.slice(0, 160)}`);
   }
 
-  return { defaultChain: null, hasOpenAIOAuthProfile: false };
+  return { defaultChain: null, visionChain: [], hasOpenAIOAuthProfile: false };
 }
 
 export async function getUserSelectedModelRouteChain(
@@ -1249,10 +1319,11 @@ async function prepareModelTurn(
   const needsProviderProfileState =
     selectedCodexMayBeStale ||
     selectedOrRequestedCodexOnly ||
-    (!selectedChain && (!requestedChain || requestedCodexOnly));
+    (!selectedChain && (!requestedChain || requestedCodexOnly)) ||
+    params.requiredCapabilities?.includes("vision") === true;
   const providerProfileState = needsProviderProfileState
     ? await getUserProviderProfileRouteState(params.userId, params.tier, logPrefix)
-    : { defaultChain: null, hasOpenAIOAuthProfile: false };
+    : { defaultChain: null, visionChain: [], hasOpenAIOAuthProfile: false };
   const selectedRuntimeChain = resolveCodexSubscriptionChain(selectedChain, providerProfileState, params.tier);
   const requestedRuntimeChain = resolveCodexSubscriptionChain(requestedChain, providerProfileState, params.tier);
   const preferredRequestedChain = params.preferRequestedModel ? requestedRuntimeChain : requestedNonCodexChain;
@@ -1262,16 +1333,54 @@ async function prepareModelTurn(
   console.log(
     `${logPrefix} route_input requested=${params.requestedModel ?? "none"} requestedEntry=${describeRouteChain(requestedChain)} selected=${describeRouteChain(selectedChain)} selectedExplicit=${selectedRoute?.isExplicit ? "true" : "false"} preferRequested=${params.preferRequestedModel ? "true" : "false"}`,
   );
-  const resolvedChain = preferredRequestedChain
-    ?? (!selectedCodexIsStaleDefault ? selectedRuntimeChain : null)
-    ?? providerProfileState.defaultChain
-    ?? selectedRuntimeChain
-    ?? requestedRuntimeChain
-    ?? (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix))
-    ?? getModelRouteChain(params.tier);
+  const configuredVisionChain = [
+    ...providerProfileState.visionChain,
+    ...getConfiguredVisionRouteChain(),
+  ].reduce<FallbackChainEntry[]>((chain, entry) => {
+    pushUnique(chain, entry);
+    return chain;
+  }, []);
+  const resolvedChain = params.requiredCapabilities?.includes("vision")
+    ? [
+        ...(preferredRequestedChain ?? [])
+          .filter((entry) => modelSupportsCapability(entry.model, "vision"))
+          .filter((entry) => hasConfiguredVisionProvider(entry, configuredVisionChain))
+          .map(normalizeVisionRouteEntry),
+        ...(selectedRuntimeChain ?? [])
+          .filter((entry) => modelSupportsCapability(entry.model, "vision"))
+          .filter((entry) => hasConfiguredVisionProvider(entry, configuredVisionChain))
+          .map(normalizeVisionRouteEntry),
+        ...configuredVisionChain,
+      ].reduce<FallbackChainEntry[]>((chain, entry) => {
+        pushUnique(chain, entry);
+        return chain;
+      }, [])
+    : preferredRequestedChain
+      ?? (!selectedCodexIsStaleDefault ? selectedRuntimeChain : null)
+      ?? providerProfileState.defaultChain
+      ?? selectedRuntimeChain
+      ?? requestedRuntimeChain
+      ?? (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix))
+      ?? getModelRouteChain(params.tier);
   const excludedProviders = new Set(params.excludedProviders ?? []);
-  const chain = resolvedChain.filter((entry) => !excludedProviders.has(entry.providerName));
+  const requiredCapabilities = params.requiredCapabilities ?? [];
+  const chain = resolvedChain
+    .filter((entry) =>
+      !excludedProviders.has(entry.providerName)
+      && requiredCapabilities.every((capability) =>
+        (capability === "vision" && entry.supportsVision)
+        || modelSupportsCapability(entry.model, capability)
+      ),
+    )
+    .map((entry) => requiredCapabilities.includes("vision")
+      ? { ...entry, fallbackOnCredentialError: true }
+      : entry);
   if (chain.length === 0) {
+    if (requiredCapabilities.length > 0) {
+      throw new Error(
+        `No configured model provider supports the required capabilities: ${requiredCapabilities.join(", ")}.`,
+      );
+    }
     throw new Error(
       "No model providers configured. Enable ChatGPT/Codex OAuth or another explicitly approved provider variable.",
     );

@@ -62,6 +62,13 @@
       ],
       "expo-font",
       "expo-web-browser",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Jarvis to choose photos you want to share in chat.",
+          "cameraPermission": "Allow Jarvis to take photos you want to share in chat."
+        }
+      ],
       "./plugins/withJarvisAndroidDaemon"
     ],
     "experiments": {
