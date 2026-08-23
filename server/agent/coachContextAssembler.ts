@@ -97,6 +97,10 @@ export function stripServerContext(content: string): string {
   return identity;
 }
 
+function messageComparisonKey(message: { role: "user" | "assistant"; content: string }): string {
+  return `${message.role}\u0000${boundMessageContent(stripServerContext(message.content))}`;
+}
+
 function sameMessage(
   left: { role: "user" | "assistant"; content: string },
   right: { role: "user" | "assistant"; content: string },
@@ -135,18 +139,19 @@ export function reconcileCoachMessages(
   completeMessages: unknown[],
   providerMessages: unknown[],
 ): Array<{ role: "user" | "assistant"; content: string }> {
-  const complete = normalizeVisibleMessages(completeMessages.slice(-MAX_RECONCILE_MESSAGES), true);
-  const provider = normalizeVisibleMessages(providerMessages.slice(-MAX_RECONCILE_MESSAGES), true);
+  const complete = normalizeVisibleMessages(completeMessages.slice(-MAX_RECONCILE_MESSAGES), true)
+    .map((message) => ({ ...message, content: boundContextMessageContent(message.content, MAX_SINGLE_MESSAGE_CHARS) }));
+  const provider = normalizeVisibleMessages(providerMessages.slice(-MAX_RECONCILE_MESSAGES), true)
+    .map((message) => ({ ...message, content: boundContextMessageContent(message.content, MAX_SINGLE_MESSAGE_CHARS) }));
+  const completeKeys = complete.map(messageComparisonKey);
+  const providerKeys = provider.map(messageComparisonKey);
   const remainingMatches = Array.from(
     { length: complete.length + 1 },
     () => Array<number>(provider.length + 1).fill(0),
   );
   for (let completeIndex = complete.length - 1; completeIndex >= 0; completeIndex--) {
     for (let providerIndex = provider.length - 1; providerIndex >= 0; providerIndex--) {
-      remainingMatches[completeIndex][providerIndex] = sameMessage(
-        complete[completeIndex],
-        provider[providerIndex],
-      )
+      remainingMatches[completeIndex][providerIndex] = completeKeys[completeIndex] === providerKeys[providerIndex]
         ? remainingMatches[completeIndex + 1][providerIndex + 1] + 1
         : Math.max(
             remainingMatches[completeIndex + 1][providerIndex],
@@ -164,7 +169,7 @@ export function reconcileCoachMessages(
     let matchIndex = -1;
     let bestRemainingMatches = -1;
     for (let index = completeIndex; index < complete.length; index++) {
-      if (!sameMessage(complete[index], providerMessage)) continue;
+      if (completeKeys[index] !== providerKeys[providerIndex]) continue;
       const candidateMatches = remainingMatches[index + 1][providerIndex + 1];
       if (
         candidateMatches > bestRemainingMatches ||

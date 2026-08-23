@@ -59,6 +59,8 @@ assert.match(routeSource, /hasProviderReferenceContext[\s\S]*?<youtube_transcrip
 assert.ok(routeSource.includes("reconcileCoachMessages"), "session recovery should reconcile complete app and provider transcripts");
 assert.ok(coachContextSource.includes("MAX_RECONCILE_MESSAGES = 500"), "history reconciliation should cap both transcripts before allocating its match matrix");
 assert.equal((coachContextSource.match(/slice\(-MAX_RECONCILE_MESSAGES\)/g) || []).length, 2, "both reconciliation histories should be trimmed before normalization");
+assert.equal((coachContextSource.match(/\.map\(messageComparisonKey\)/g) || []).length, 2, "reconciliation comparison keys should be computed once per bounded message");
+assert.ok(coachContextSource.includes("boundContextMessageContent(message.content, MAX_SINGLE_MESSAGE_CHARS)"), "reconciliation messages should be bounded before key computation");
 assert.ok(attachmentSource.includes("MAX_CHAT_ATTACHMENTS = 4"), "server should bound attachment count");
 assert.ok(attachmentSource.includes("MAX_CHAT_ATTACHMENTS_TOTAL_BYTES"), "server should bound total attachment bytes");
 assert.ok(attachmentSource.indexOf("validated.push({ name, mimeType, buffer })") < attachmentSource.indexOf("extractDocumentText(buffer"), "all attachments should be validated before extraction");
@@ -116,7 +118,8 @@ assert.ok(chatSource.includes("const contextMessages = historyBeforeRequest.slic
 assert.match(routeSource, /if \(!clientDisconnected\) \{[\s\S]*?res\.write\('data: \[DONE\]\\n\\n'\);[\s\S]*?res\.end\(\);\n      \}\n      cleanupRun\(\);/, "successful final synthesis should emit completion before aborting its lifecycle controller");
 
 assert.ok(chatSource.includes("if (asset.size == null)"), "files with unknown size must be rejected before reading bytes");
-assert.ok(chatSource.indexOf("if (asset.size == null)") < chatSource.indexOf("const data = await readAttachmentBase64(asset.uri)"), "unknown-size validation must run before file materialization");
+const filePickerStart = chatSource.indexOf("const pickFiles = useCallback");
+assert.ok(chatSource.indexOf("if (asset.size == null)", filePickerStart) < chatSource.indexOf("const data = await readAttachmentBase64(asset.uri)", filePickerStart), "unknown-size validation must run before file materialization");
 
 assert.ok(documentSource.includes("routeModelTurn({"), "image extraction must use the configured model route without forcing a raw model");
 assert.ok(!documentSource.includes('model: "gpt-4o"'), "image extraction must not force an unconfigured OpenAI-compatible model");
