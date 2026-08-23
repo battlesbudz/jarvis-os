@@ -1045,6 +1045,17 @@ function normalizeVisionRouteEntry(entry: FallbackChainEntry): FallbackChainEntr
     : entry;
 }
 
+function hasConfiguredVisionProvider(
+  entry: FallbackChainEntry,
+  configuredChain: FallbackChainEntry[],
+): boolean {
+  return configuredChain.some((configured) =>
+    configured.providerName === entry.providerName
+      && (entry.providerName !== "openai-compatible"
+        || (entry.model.startsWith("openrouter/") && configured.model.startsWith("openrouter/"))),
+  );
+}
+
 async function getUserProviderProfileRouteState(
   userId: string | undefined,
   tier: ModelExecutionTier,
@@ -1316,16 +1327,24 @@ async function prepareModelTurn(
   console.log(
     `${logPrefix} route_input requested=${params.requestedModel ?? "none"} requestedEntry=${describeRouteChain(requestedChain)} selected=${describeRouteChain(selectedChain)} selectedExplicit=${selectedRoute?.isExplicit ? "true" : "false"} preferRequested=${params.preferRequestedModel ? "true" : "false"}`,
   );
+  const configuredVisionChain = [
+    ...providerProfileState.visionChain,
+    ...getConfiguredVisionRouteChain(),
+  ].reduce<FallbackChainEntry[]>((chain, entry) => {
+    pushUnique(chain, entry);
+    return chain;
+  }, []);
   const resolvedChain = params.requiredCapabilities?.includes("vision")
     ? [
         ...(preferredRequestedChain ?? [])
           .filter((entry) => modelSupportsCapability(entry.model, "vision"))
+          .filter((entry) => hasConfiguredVisionProvider(entry, configuredVisionChain))
           .map(normalizeVisionRouteEntry),
         ...(selectedRuntimeChain ?? [])
           .filter((entry) => modelSupportsCapability(entry.model, "vision"))
+          .filter((entry) => hasConfiguredVisionProvider(entry, configuredVisionChain))
           .map(normalizeVisionRouteEntry),
-        ...providerProfileState.visionChain,
-        ...getConfiguredVisionRouteChain(),
+        ...configuredVisionChain,
       ].reduce<FallbackChainEntry[]>((chain, entry) => {
         pushUnique(chain, entry);
         return chain;

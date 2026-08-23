@@ -553,6 +553,8 @@ async function runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion():
     "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
     "PROVIDER_FALLBACK_CHAIN",
     "GROQ_API_KEY",
+    "OPENAI_API_KEY",
+    "AI_INTEGRATIONS_OPENAI_API_KEY",
   ]) {
     previousEnv.set(key, process.env[key]);
   }
@@ -594,6 +596,8 @@ async function runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion():
     process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
     delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
     delete process.env.PROVIDER_FALLBACK_CHAIN;
+    delete process.env.OPENAI_API_KEY;
+    delete process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
     process.env.GROQ_API_KEY = "test-groq-key";
     _overrideProviderForTesting("google", new CapturingGoogleProvider());
     _overrideProviderForTesting("chatgpt-codex-oauth", new CapturingCodexProvider());
@@ -665,6 +669,20 @@ async function runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion():
     assert.equal(visionResult.providerName, "google");
     assert.equal(capturedVisionRequest?.userId, "user-default-gemini");
     console.log("OK: vision routing uses the account's image-capable provider and skips configured text models");
+
+    selectedModel = "openai/gpt-4.1-mini";
+    captured = null;
+    const disconnectedSelectionResult = await routeModelTurn({
+      tier: "balanced",
+      messages: [{ role: "user", content: "Describe the image." }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-default-gemini",
+      requiredCapabilities: ["vision"],
+      logPrefix: "[ModelRouterDisconnectedVisionSelectionTest]",
+    });
+    assert.equal(disconnectedSelectionResult.providerName, "google");
+    console.log("OK: an unconnected selected vision model does not block a connected vision provider");
   } finally {
     _setOpenAIProviderStatusResolverForTesting(null);
     _setUserSelectedModelResolverForTesting(null);

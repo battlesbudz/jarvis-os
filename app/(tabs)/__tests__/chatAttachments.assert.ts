@@ -72,6 +72,7 @@ assert.ok(modelRouterSource.includes('preferredAuthType: "api_key",\n      allow
 assert.ok(modelRouterSource.includes(".map(normalizeVisionRouteEntry)"), "selected OpenAI vision routes should be pinned before deduplication");
 assert.equal((providerFallbackSource.match(/allowEnvironmentCredentialFallback: entry\.allowEnvironmentCredentialFallback/g) || []).length, 2, "credential-source intent should survive streaming and non-streaming fallback");
 assert.ok(openAIProviderSource.includes("params.allowEnvironmentCredentialFallback"), "OpenAI routing should use an explicitly allowed environment-key fallback");
+assert.ok(modelRouterSource.includes("hasConfiguredVisionProvider(entry, configuredVisionChain)"), "unconnected selected models should not block configured vision providers");
 assert.ok(!documentSource.includes("hasDirectOpenAIProvider"), "image extraction should not require a direct OpenAI key");
 assert.ok(documentSource.includes("signal,"), "image analysis should receive the chat cancellation signal");
 assert.ok(documentSource.includes("extractFromPdf(buffer, maxChars, signal)"), "PDF extraction should receive its output limit and cancellation signal");
