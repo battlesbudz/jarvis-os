@@ -44,6 +44,6 @@ assert.match(gateway, /delete input\.cancelRequestedAt/);
 assert.match(gateway, /delete input\.resourcePause/);
 assert.match(jobQueue, /delete inputPatch\.cancelRequestedAt/);
 assert.match(jobQueue, /agentJobs\.input\} \|\| \$\{JSON\.stringify\(inputPatch\)\}::jsonb/);
-assert.match(repository, /while \(!await reconcileAgentJobsForUserPass\(userId, opts\)\)/);
+assert.match(repository, /pass < MAX_RECONCILIATION_PASSES/);
 
 console.log("Live Action migration and authenticated route ownership assertions passed.");

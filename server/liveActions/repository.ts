@@ -9,6 +9,7 @@ import { agentJobLineageKey, agentJobRetryGeneration, loadAgentJobRetryFamily } 
 const ACTIVE_STATUSES: LiveActionStatus[] = ["created", "queued", "running", "waiting_approval", "waiting_user", "paused"];
 const ACTIVE_AGENT_JOB_STATUSES = ["queued", "running", "cancelling", "resource_paused"];
 const MAX_EVENTS_PER_ACTION = 200;
+const MAX_RECONCILIATION_PASSES = 10;
 
 function sourceStatusesFor(status: LiveActionStatus): string[] {
   switch (status) {
@@ -611,9 +612,10 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
   projectId?: string;
   limit?: number;
 } = {}): Promise<void> {
-  while (!await reconcileAgentJobsForUserPass(userId, opts)) {
+  for (let pass = 0; pass < MAX_RECONCILIATION_PASSES; pass += 1) {
+    if (await reconcileAgentJobsForUserPass(userId, opts)) break;
     // A refreshed projection left or moved within the requested window. Refill
-    // from the next bounded page until the visible top-N is canonical.
+    // from the next bounded page without letting concurrent updates starve reads.
   }
 }
 
