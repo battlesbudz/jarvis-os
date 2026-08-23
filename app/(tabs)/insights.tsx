@@ -180,6 +180,13 @@ function generateId(): string {
   return Date.now().toString() + Math.random().toString(36).substr(2, 9);
 }
 
+async function getAttachmentFileSize(uri: string, reportedSize?: number | null): Promise<number | null> {
+  if (typeof reportedSize === 'number' && Number.isFinite(reportedSize) && reportedSize >= 0) return reportedSize;
+  if (Platform.OS === 'web') return null;
+  const info = await FileSystem.getInfoAsync(uri, { size: true });
+  return info.exists && typeof info.size === 'number' ? info.size : null;
+}
+
 async function readAttachmentBase64(uri: string): Promise<string> {
   if (Platform.OS !== 'web') {
     return FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
@@ -2897,11 +2904,11 @@ export default function InsightsScreen() {
         }
       }
       const result = camera
-        ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8, base64: true })
+        ? await ImagePicker.launchCameraAsync({ mediaTypes: ['images'], quality: 0.8, base64: false })
         : await ImagePicker.launchImageLibraryAsync({
             mediaTypes: ['images'],
             quality: 0.8,
-            base64: true,
+            base64: false,
             allowsMultipleSelection: true,
             selectionLimit: available,
           });
@@ -2914,8 +2921,11 @@ export default function InsightsScreen() {
           Alert.alert('Unsupported image', 'Jarvis supports JPEG, PNG, WebP, and GIF images.');
           continue;
         }
-        const data = asset.base64 || await readAttachmentBase64(asset.uri);
-        const size = asset.fileSize ?? Math.floor(data.length * 0.75);
+        const size = await getAttachmentFileSize(asset.uri, asset.fileSize);
+        if (size == null) {
+          Alert.alert('Could not verify image size', `${asset.fileName || 'This image'} does not report a size. Save it locally and try again.`);
+          continue;
+        }
         if (size > MAX_CHAT_ATTACHMENT_BYTES) {
           Alert.alert('Image too large', `${asset.fileName || 'This image'} is larger than 10MB.`);
           continue;
@@ -2924,6 +2934,7 @@ export default function InsightsScreen() {
           Alert.alert('Attachments too large', 'Attachments can be up to 20MB combined.');
           break;
         }
+        const data = await readAttachmentBase64(asset.uri);
         incoming.push({
           id: generateId(),
           name: asset.fileName || `photo-${Date.now()}.jpg`,

@@ -128,13 +128,15 @@ export function mergeOverlappingCoachMessages(
   return [...older, ...recent.slice(overlap)];
 }
 
+const MAX_RECONCILE_MESSAGES = 500;
+
 /** Reconcile a complete app transcript with a provider log that may omit runtime-only turns. */
 export function reconcileCoachMessages(
   completeMessages: unknown[],
   providerMessages: unknown[],
 ): Array<{ role: "user" | "assistant"; content: string }> {
-  const complete = normalizeVisibleMessages(completeMessages, true);
-  const provider = normalizeVisibleMessages(providerMessages, true);
+  const complete = normalizeVisibleMessages(completeMessages.slice(-MAX_RECONCILE_MESSAGES), true);
+  const provider = normalizeVisibleMessages(providerMessages.slice(-MAX_RECONCILE_MESSAGES), true);
   const remainingMatches = Array.from(
     { length: complete.length + 1 },
     () => Array<number>(provider.length + 1).fill(0),

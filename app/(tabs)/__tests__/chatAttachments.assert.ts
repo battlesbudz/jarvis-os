@@ -13,6 +13,7 @@ const modelCatalogSource = fs.readFileSync("shared/modelProviderCatalog.ts", "ut
 const providerFallbackSource = fs.readFileSync("server/agent/providers/fallback.ts", "utf8");
 const openAIProviderSource = fs.readFileSync("server/agent/providers/openai.ts", "utf8");
 const coachSessionRouteSource = fs.readFileSync("server/routes/coachSessionRoutes.ts", "utf8");
+const coachContextSource = fs.readFileSync("server/agent/coachContextAssembler.ts", "utf8");
 const profileSource = fs.readFileSync("app/(tabs)/profile.tsx", "utf8");
 
 assert.ok(chatSource.includes("launchCameraAsync"), "chat should support taking a photo");
@@ -27,6 +28,8 @@ assert.ok(chatSource.indexOf("previewUri: _previewUri") < chatSource.indexOf("fu
 assert.ok(chatSource.includes("attachments.map(({ data: _data, ...attachment })"), "live sent messages should retain image previews");
 assert.ok(chatSource.includes("MAX_CHAT_ATTACHMENTS_TOTAL_BYTES = 20 * 1024 * 1024"), "client should enforce the combined attachment limit");
 assert.equal((chatSource.match(/result\.assets\.slice\(0, available\)/g) || []).length, 2, "image and file pickers should only read available attachment slots");
+assert.equal((chatSource.match(/base64: false/g) || []).length, 2, "camera and gallery pickers should not encode images before size validation");
+assert.ok(chatSource.indexOf("getAttachmentFileSize(asset.uri, asset.fileSize)") < chatSource.indexOf("const data = await readAttachmentBase64(asset.uri)"), "image size validation should run before base64 materialization");
 assert.ok(chatSource.includes("selectionLimit: available"), "gallery selection should respect remaining attachment slots");
 assert.equal((chatSource.match(/if \(size > MAX_CHAT_ATTACHMENT_BYTES\)/g) || []).length, 2, "decoded images and files should enforce the per-file limit");
 assert.ok(!chatSource.includes("'image/*'"), "file picker should not accept unsupported image formats");
@@ -54,6 +57,8 @@ assert.match(routeSource, /if \(\s*!hasProviderReferenceContext &&\s*appNotifica
 assert.ok(routeSource.includes('const deterministicNotificationOpenCall = !hasProviderReferenceContext'), "reference-backed turns should bypass deterministic notification opens");
 assert.match(routeSource, /hasProviderReferenceContext[\s\S]*?<youtube_transcripts>/, "recovered YouTube context should use the same early-route guard");
 assert.ok(routeSource.includes("reconcileCoachMessages"), "session recovery should reconcile complete app and provider transcripts");
+assert.ok(coachContextSource.includes("MAX_RECONCILE_MESSAGES = 500"), "history reconciliation should cap both transcripts before allocating its match matrix");
+assert.equal((coachContextSource.match(/slice\(-MAX_RECONCILE_MESSAGES\)/g) || []).length, 2, "both reconciliation histories should be trimmed before normalization");
 assert.ok(attachmentSource.includes("MAX_CHAT_ATTACHMENTS = 4"), "server should bound attachment count");
 assert.ok(attachmentSource.includes("MAX_CHAT_ATTACHMENTS_TOTAL_BYTES"), "server should bound total attachment bytes");
 assert.ok(attachmentSource.indexOf("validated.push({ name, mimeType, buffer })") < attachmentSource.indexOf("extractDocumentText(buffer"), "all attachments should be validated before extraction");
