@@ -32,6 +32,7 @@ import { listGatewayEvents, onGatewayEvent, recordGatewayEvent } from "./eventBu
 import { listGatewayNodes, routeCapability } from "./nodeRegistry";
 import * as schema from "@shared/schema";
 import { cancellationStatusForAgentJobStatus } from "../agent/voiceRuntimeResourceCore";
+import { cancellationUpdateForAgentJob } from "../agent/jobCancellation";
 
 type RpcId = string | number | null;
 type RpcParams = Record<string, unknown>;
@@ -271,8 +272,11 @@ async function jobCreate(userId: string, params: RpcParams) {
 
   const { submitAgentJob } = await import("../agent/jobClient");
   const input = typeof params.input === "object" && params.input
-    ? params.input as Record<string, unknown>
+    ? { ...(params.input as Record<string, unknown>) }
     : {};
+  delete input.retryOfJobId;
+  delete input.liveActionLineageKey;
+  delete input.retriedAt;
   const result = await submitAgentJob({
     userId,
     agentType: agentType as any,
@@ -303,7 +307,7 @@ async function jobCancel(userId: string, params: RpcParams) {
   const nextStatus = cancellationStatusForAgentJobStatus(row.status);
   if (!nextStatus) throw new Error(`Job is already ${row.status}`);
   const [updated] = await db.update(schema.agentJobs)
-    .set({ status: nextStatus, ...(nextStatus === "cancelled" ? { completedAt: new Date() } : {}) })
+    .set(cancellationUpdateForAgentJob(nextStatus))
     .where(and(eq(schema.agentJobs.id, jobId), eq(schema.agentJobs.userId, userId)))
     .returning({ id: schema.agentJobs.id, status: schema.agentJobs.status });
   recordGatewayEvent({

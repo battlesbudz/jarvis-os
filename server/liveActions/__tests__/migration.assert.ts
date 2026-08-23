@@ -7,6 +7,7 @@ const routes = fs.readFileSync("server/routes/liveActionRoutes.ts", "utf8");
 const mutationRoutes = fs.readFileSync("server/routes/agentJobMutationRoutes.ts", "utf8");
 const cancellation = fs.readFileSync("server/agent/jobCancellation.ts", "utf8");
 const requeue = fs.readFileSync("server/agent/jobRequeue.ts", "utf8");
+const gateway = fs.readFileSync("server/gateway/controlPlane.ts", "utf8");
 
 assert.match(migration, /CREATE TABLE IF NOT EXISTS "live_actions"/);
 assert.match(migration, /live_actions_user_lineage_uidx/);
@@ -21,5 +22,7 @@ assert.match(mutationRoutes, /delete jobInput\.retryOfJobId/);
 assert.match(mutationRoutes, /delete jobInput\.liveActionLineageKey/);
 assert.match(cancellation, /agentJobs\.input\} \|\| jsonb_build_object/);
 assert.match(requeue, /jsonb_build_object\('requeuedAt'/);
+assert.match(gateway, /\.set\(cancellationUpdateForAgentJob\(nextStatus\)\)/);
+assert.match(gateway, /delete input\.liveActionLineageKey/);
 
 console.log("Live Action migration and authenticated route ownership assertions passed.");
