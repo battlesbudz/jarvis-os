@@ -172,7 +172,6 @@ async function extractFromImage(buffer: Buffer, mimeType: string, prompt?: strin
     userId,
     disableRuntimeStateCard: true,
     requiredCapabilities: ["vision"],
-    excludedProviders: ["chatgpt-codex-oauth", "android-local-gemma"],
   });
 
   return response.textContent;

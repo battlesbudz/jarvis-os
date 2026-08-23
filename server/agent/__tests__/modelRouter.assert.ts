@@ -552,6 +552,7 @@ async function runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion():
     "CHATGPT_CODEX_OAUTH_ENABLED",
     "JARVIS_TEST_ALLOW_DIRECT_PROVIDER",
     "PROVIDER_FALLBACK_CHAIN",
+    "GROQ_API_KEY",
   ]) {
     previousEnv.set(key, process.env[key]);
   }
@@ -579,17 +580,28 @@ async function runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion():
     }
   }
 
+  class UnexpectedTextProvider extends BaseProvider {
+    async initialize(): Promise<void> {}
+    async cleanup(): Promise<void> {}
+    async *query(): AsyncGenerator<ProviderChunk> {
+      throw new Error("vision routing must not call a text-only provider");
+    }
+  }
+
   try {
     process.env.JARVIS_MODEL_PROVIDER = "chatgpt-codex-oauth";
     process.env.JARVIS_CODEX_OAUTH_ENABLED = "true";
     process.env.JARVIS_TEST_ALLOW_DIRECT_PROVIDER = "true";
     delete process.env.CHATGPT_CODEX_OAUTH_ENABLED;
     delete process.env.PROVIDER_FALLBACK_CHAIN;
+    process.env.GROQ_API_KEY = "test-groq-key";
     _overrideProviderForTesting("google", new CapturingGoogleProvider());
     _overrideProviderForTesting("chatgpt-codex-oauth", new CapturingCodexProvider());
+    _overrideProviderForTesting("openai-compatible", new UnexpectedTextProvider());
+    let selectedModel: string | null = null;
     _setUserSelectedModelResolverForTesting(async ({ userId }) => {
       assert.equal(userId, "user-default-gemini");
-      return null;
+      return selectedModel;
     });
     _setOpenAIProviderStatusResolverForTesting(async ({ userId }) => {
       assert.equal(userId, "user-default-gemini");
@@ -634,6 +646,25 @@ async function runUserDefaultProviderProfileOverridesRuntimeDefaultsAssertion():
     assert.equal(capturedRequest?.model, "gemini-2.5-flash");
     assert.equal(capturedRequest?.userId, "user-default-gemini");
     console.log("OK: a connected default Gemini profile overrides strict Codex environment defaults");
+
+    selectedModel = CODEX_MODEL;
+    captured = null;
+    const visionResult = await routeModelTurn({
+      tier: "balanced",
+      messages: [{
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA==" } }],
+      }],
+      toolChoice: "none",
+      maxCompletionTokens: 64,
+      userId: "user-default-gemini",
+      requiredCapabilities: ["vision"],
+      logPrefix: "[ModelRouterVisionProviderProfileTest]",
+    });
+    const capturedVisionRequest = captured as ProviderQueryParams | null;
+    assert.equal(visionResult.providerName, "google");
+    assert.equal(capturedVisionRequest?.userId, "user-default-gemini");
+    console.log("OK: vision routing uses the account's image-capable provider and skips configured text models");
   } finally {
     _setOpenAIProviderStatusResolverForTesting(null);
     _setUserSelectedModelResolverForTesting(null);

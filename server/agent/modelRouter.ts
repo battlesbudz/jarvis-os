@@ -135,6 +135,7 @@ interface SelectedModelPreferenceState {
 
 interface UserProviderProfileRouteState {
   defaultChain: FallbackChainEntry[] | null;
+  visionChain: FallbackChainEntry[];
   hasOpenAIOAuthProfile: boolean;
 }
 
@@ -994,18 +995,57 @@ function getDefaultProviderProfileRouteChainFromStatus(
   return null;
 }
 
+function getVisionProviderProfileRouteChainFromStatus(
+  status: ProviderStatus,
+  tier: ModelExecutionTier,
+): FallbackChainEntry[] {
+  const chain: FallbackChainEntry[] = [];
+  for (const providerId of ["google", "anthropic", "openai"]) {
+    const provider = status.providers[providerId];
+    if (!provider?.authTypes.api_key.connected) continue;
+    const route = providerId === "openai"
+      ? { providerName: "openai" as const, model: getProviderEnvValue("JARVIS_OPENAI_VISION_MODEL") ?? "gpt-4.1-mini" }
+      : defaultRouteForProviderProfile(providerId, "api_key", tier);
+    if (route) pushUnique(chain, route);
+  }
+  return chain;
+}
+
+function getConfiguredVisionRouteChain(): FallbackChainEntry[] {
+  const chain: FallbackChainEntry[] = [];
+  if (hasDirectOpenAIProvider()) {
+    pushUnique(chain, {
+      providerName: "openai",
+      model: getProviderEnvValue("JARVIS_OPENAI_VISION_MODEL") ?? "gpt-4.1-mini",
+    });
+  }
+  if (hasProviderEnvValue("GEMINI_API_KEY", "GOOGLE_AI_API_KEY", "AI_INTEGRATIONS_GEMINI_API_KEY")) {
+    pushUnique(chain, { providerName: "google", model: "gemini-2.5-flash" });
+  }
+  if (hasProviderEnvValue("ANTHROPIC_API_KEY", "AI_INTEGRATIONS_ANTHROPIC_API_KEY")) {
+    pushUnique(chain, { providerName: "anthropic", model: "claude-sonnet-4-5" });
+  }
+  if (hasProviderEnvValue("OPENROUTER_API_KEY", "AI_INTEGRATIONS_OPENROUTER_API_KEY")) {
+    const model = getProviderEnvValue("OPENROUTER_VISION_MODEL", "AI_INTEGRATIONS_OPENROUTER_VISION_MODEL")
+      ?? "openai/gpt-4o-mini";
+    pushUnique(chain, { providerName: "openai-compatible", model: `openrouter/${model.replace(/^openrouter\//, "")}` });
+  }
+  return chain;
+}
+
 async function getUserProviderProfileRouteState(
   userId: string | undefined,
   tier: ModelExecutionTier,
   logPrefix: string,
 ): Promise<UserProviderProfileRouteState> {
-  if (!userId) return { defaultChain: null, hasOpenAIOAuthProfile: false };
+  if (!userId) return { defaultChain: null, visionChain: [], hasOpenAIOAuthProfile: false };
 
   const resolver = providerStatusResolverForTesting ?? getProviderStatus;
   try {
     const status = await resolver({ userId });
     return {
       defaultChain: getDefaultProviderProfileRouteChainFromStatus(status, tier),
+      visionChain: getVisionProviderProfileRouteChainFromStatus(status, tier),
       hasOpenAIOAuthProfile: hasConnectedOpenAIOAuthProfile(status),
     };
   } catch (err) {
@@ -1013,7 +1053,7 @@ async function getUserProviderProfileRouteState(
     console.warn(`${logPrefix} provider_profile_status_unavailable: ${message.slice(0, 160)}`);
   }
 
-  return { defaultChain: null, hasOpenAIOAuthProfile: false };
+  return { defaultChain: null, visionChain: [], hasOpenAIOAuthProfile: false };
 }
 
 export async function getUserSelectedModelRouteChain(
@@ -1250,10 +1290,11 @@ async function prepareModelTurn(
   const needsProviderProfileState =
     selectedCodexMayBeStale ||
     selectedOrRequestedCodexOnly ||
-    (!selectedChain && (!requestedChain || requestedCodexOnly));
+    (!selectedChain && (!requestedChain || requestedCodexOnly)) ||
+    params.requiredCapabilities?.includes("vision") === true;
   const providerProfileState = needsProviderProfileState
     ? await getUserProviderProfileRouteState(params.userId, params.tier, logPrefix)
-    : { defaultChain: null, hasOpenAIOAuthProfile: false };
+    : { defaultChain: null, visionChain: [], hasOpenAIOAuthProfile: false };
   const selectedRuntimeChain = resolveCodexSubscriptionChain(selectedChain, providerProfileState, params.tier);
   const requestedRuntimeChain = resolveCodexSubscriptionChain(requestedChain, providerProfileState, params.tier);
   const preferredRequestedChain = params.preferRequestedModel ? requestedRuntimeChain : requestedNonCodexChain;
@@ -1263,13 +1304,23 @@ async function prepareModelTurn(
   console.log(
     `${logPrefix} route_input requested=${params.requestedModel ?? "none"} requestedEntry=${describeRouteChain(requestedChain)} selected=${describeRouteChain(selectedChain)} selectedExplicit=${selectedRoute?.isExplicit ? "true" : "false"} preferRequested=${params.preferRequestedModel ? "true" : "false"}`,
   );
-  const resolvedChain = preferredRequestedChain
-    ?? (!selectedCodexIsStaleDefault ? selectedRuntimeChain : null)
-    ?? providerProfileState.defaultChain
-    ?? selectedRuntimeChain
-    ?? requestedRuntimeChain
-    ?? (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix))
-    ?? getModelRouteChain(params.tier);
+  const resolvedChain = params.requiredCapabilities?.includes("vision")
+    ? [
+        ...(preferredRequestedChain ?? []).filter((entry) => modelSupportsCapability(entry.model, "vision")),
+        ...(selectedRuntimeChain ?? []).filter((entry) => modelSupportsCapability(entry.model, "vision")),
+        ...providerProfileState.visionChain,
+        ...getConfiguredVisionRouteChain(),
+      ].reduce<FallbackChainEntry[]>((chain, entry) => {
+        pushUnique(chain, entry);
+        return chain;
+      }, [])
+    : preferredRequestedChain
+      ?? (!selectedCodexIsStaleDefault ? selectedRuntimeChain : null)
+      ?? providerProfileState.defaultChain
+      ?? selectedRuntimeChain
+      ?? requestedRuntimeChain
+      ?? (await getUserOpenAIRouteChain(params.userId, params.tier, logPrefix))
+      ?? getModelRouteChain(params.tier);
   const excludedProviders = new Set(params.excludedProviders ?? []);
   const requiredCapabilities = params.requiredCapabilities ?? [];
   const chain = resolvedChain.filter((entry) =>

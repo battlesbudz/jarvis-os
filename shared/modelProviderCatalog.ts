@@ -163,6 +163,7 @@ export const MODEL_DEFAULTS: Record<ModelCategory, string> = {
 };
 
 const VISION_CAPABLE_MODELS = new Set([
+  "gpt-4o-mini",
   "gpt-4.1-mini",
   "gpt-4.1",
   "claude-sonnet-4-5",
