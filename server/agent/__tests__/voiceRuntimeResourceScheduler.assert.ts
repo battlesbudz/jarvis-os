@@ -152,6 +152,11 @@ function testResourcePausedJobsCountAsActiveDuplicates() {
   );
   assert.match(
     schedulerSource,
+    /message: "Resumed after the local voice session ended\.",\s*now: new Date\(resumedAt\)/,
+    "resource resume worker events should reuse the recorded durable transition timestamp",
+  );
+  assert.match(
+    schedulerSource,
     /withResourcePauseHeartbeat\(job,\s*pausedAt\)/,
     "voice heartbeat should refresh existing voice-resource-paused jobs before stale recovery can requeue them",
   );
