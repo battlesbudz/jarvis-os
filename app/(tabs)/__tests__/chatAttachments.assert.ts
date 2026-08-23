@@ -33,6 +33,9 @@ assert.ok(chatSource.indexOf("getAttachmentFileSize(asset.uri, asset.fileSize)")
 assert.ok(chatSource.includes("selectionLimit: available"), "gallery selection should respect remaining attachment slots");
 assert.equal((chatSource.match(/if \(size > MAX_CHAT_ATTACHMENT_BYTES\)/g) || []).length, 2, "decoded images and files should enforce the per-file limit");
 assert.ok(!chatSource.includes("'image/*'"), "file picker should not accept unsupported image formats");
+assert.ok(chatSource.includes("'application/json'"), "chat picker should advertise JSON attachments");
+assert.ok(chatSource.includes("inferImageMimeType(asset.mimeType, asset.fileName, asset.uri)"), "image selection should derive missing MIME types instead of assuming JPEG");
+assert.ok(!chatSource.includes("asset.mimeType || 'image/jpeg'"), "missing image MIME types should never be mislabeled as JPEG");
 const attachmentCleanupGuard = "if (streamCompleted && attachments.length && (!gotConfirmRequired || confirmTurnPersisted))";
 assert.ok(chatSource.indexOf(attachmentCleanupGuard) < chatSource.indexOf("setPendingAttachments(current => current.filter"), "attachments should remain retryable until the stream completes");
 assert.ok(chatSource.indexOf("if (streamErrorMessage)") < chatSource.indexOf(attachmentCleanupGuard), "stream errors should retain attachments for retry");
@@ -103,6 +106,9 @@ assert.ok(documentSource.includes('addEventListener("abort", abortLoading'), "PD
 assert.ok(!documentSource.includes("\nconst openai = new OpenAI"), "image extraction should not create an unusable module-level OpenAI client");
 assert.ok(!documentSource.includes("application/msword"), "legacy Word files should not be advertised without a compatible parser");
 assert.ok(!profileSource.includes("application/msword"), "profile uploads should not advertise unsupported legacy Word files");
+assert.ok(profileSource.includes("'application/json'"), "profile document uploads should advertise JSON");
+assert.ok(documentSource.includes('| "application/json"'), "server attachment MIME types should include JSON");
+assert.ok(documentSource.includes('".json"'), "server attachment extensions should include JSON");
 assert.equal((routeSource.match(/content: lastUserContentForSession/g) || []).length, 5, "session paths should persist enriched attachment context");
 
 console.log("OK: camera, gallery, and file attachments flow into bounded coach context");

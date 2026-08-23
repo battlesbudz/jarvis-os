@@ -165,6 +165,7 @@ const SUPPORTED_CHAT_ATTACHMENT_MIME_TYPES = [
   'text/plain',
   'text/markdown',
   'text/csv',
+  'application/json',
   'image/jpeg',
   'image/png',
   'image/webp',
@@ -185,6 +186,17 @@ async function getAttachmentFileSize(uri: string, reportedSize?: number | null):
   if (Platform.OS === 'web') return null;
   const info = await FileSystem.getInfoAsync(uri, { size: true });
   return info.exists && typeof info.size === 'number' ? info.size : null;
+}
+
+function inferImageMimeType(mimeType?: string | null, fileName?: string | null, uri = ''): string {
+  const declared = mimeType?.trim().toLowerCase();
+  if (declared) return declared;
+  const path = (fileName || uri).toLowerCase().split(/[?#]/, 1)[0];
+  if (/\.jpe?g$/.test(path)) return 'image/jpeg';
+  if (/\.png$/.test(path)) return 'image/png';
+  if (/\.webp$/.test(path)) return 'image/webp';
+  if (/\.gif$/.test(path)) return 'image/gif';
+  return '';
 }
 
 async function readAttachmentBase64(uri: string): Promise<string> {
@@ -2916,7 +2928,7 @@ export default function InsightsScreen() {
       const incoming: PendingChatAttachment[] = [];
       let totalBytes = currentAttachments.reduce((sum, attachment) => sum + (attachment.size ?? 0), 0);
       for (const asset of result.assets.slice(0, available)) {
-        const mimeType = (asset.mimeType || 'image/jpeg').toLowerCase();
+        const mimeType = inferImageMimeType(asset.mimeType, asset.fileName, asset.uri);
         if (!SUPPORTED_CHAT_ATTACHMENT_MIME_TYPE_SET.has(mimeType)) {
           Alert.alert('Unsupported image', 'Jarvis supports JPEG, PNG, WebP, and GIF images.');
           continue;

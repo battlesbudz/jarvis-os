@@ -20,6 +20,7 @@ type SupportedMime =
   | "text/plain"
   | "text/markdown"
   | "text/csv"
+  | "application/json"
   | "image/jpeg"
   | "image/png"
   | "image/webp"
@@ -31,13 +32,14 @@ export const SUPPORTED_MIME_TYPES: SupportedMime[] = [
   "text/plain",
   "text/markdown",
   "text/csv",
+  "application/json",
   "image/jpeg",
   "image/png",
   "image/webp",
   "image/gif",
 ];
 
-export const SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".txt", ".md", ".csv", ".jpg", ".jpeg", ".png", ".webp", ".gif"];
+export const SUPPORTED_EXTENSIONS = [".pdf", ".docx", ".txt", ".md", ".csv", ".json", ".jpg", ".jpeg", ".png", ".webp", ".gif"];
 
 async function extractFromPdfWithPdfjs(buffer: Buffer, maxChars: number, signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted();

@@ -66,6 +66,7 @@ const SUPPORTED_DOC_TYPES = [
   'text/plain',
   'text/markdown',
   'text/csv',
+  'application/json',
   'image/jpeg',
   'image/png',
   'image/webp',
