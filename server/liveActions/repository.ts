@@ -412,7 +412,11 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
     retainedJobs.push(...page.map((entry) => entry.job));
     if (page.length < 500) break;
     const retainedTerminalJobs = retainedJobs.filter((job) => !ACTIVE_AGENT_JOB_STATUSES.includes(job.status));
-    const discoveredFamily = await loadAgentJobRetryFamily(userId, retainedTerminalJobs);
+    const discoveredFamily = await loadAgentJobRetryFamily(
+      userId,
+      retainedTerminalJobs,
+      retainedTerminalJobs.map((job) => job.id),
+    );
     const discoveredTerminalLineages = new Set(retainedTerminalJobs
       .map((job) => agentJobLineageKey(job, discoveredFamily)));
     if (opts.status) {
@@ -457,7 +461,7 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
   ].map((job) => [job.id, job])).values()];
   const descendantRoots = opts.sourceLineageKey
     ? [opts.sourceLineageKey]
-    : opts.status ? filteredLineageKeys : [];
+    : opts.status ? filteredLineageKeys : retainedJobs.map((job) => job.id);
   const jobsById = await loadAgentJobRetryFamily(userId, seedJobs, descendantRoots);
   const jobs = [...jobsById.values()];
   const retryGenerations = new Map(jobs.map((job) => [job.id, agentJobRetryGeneration(job, jobsById)]));

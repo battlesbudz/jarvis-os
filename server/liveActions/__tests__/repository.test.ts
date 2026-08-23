@@ -348,20 +348,25 @@ async function main(): Promise<void> {
       .filter((action) => historicalIds.includes(action.source.id));
     assert.equal(failedHistoricalActions.length, 0, "filtered reconciliation includes later retry descendants");
 
-    const pagingRetryIds = Array.from({ length: 500 }, (_, index) => `${marker}-paging-retry-${index}`);
+    const pagingProjectId = `${marker}-paging-project`;
+    const pagingRetryIds = Array.from(
+      { length: 500 },
+      (_, index) => `${marker}-paging-retry-${String(999 - index).padStart(3, "0")}`,
+    );
     const pagingNewestAt = new Date(createdAt.getTime() - 10 * 60_000);
     await db.insert(schema.agentJobs).values(pagingRetryIds.map((id, index) => {
-      const attemptAt = new Date(pagingNewestAt.getTime() - index * 60_000);
       return {
         id,
         userId,
         agentType: "research",
         title: "Dense retry lineage",
         prompt: `Attempt ${index}`,
-        input: index === 0 ? {} : { retryOfJobId: pagingRetryIds[index - 1] },
+        input: index === 0
+          ? { projectId: pagingProjectId }
+          : { retryOfJobId: pagingRetryIds[index - 1], projectId: pagingProjectId },
         status: "complete",
-        createdAt: attemptAt,
-        completedAt: attemptAt,
+        createdAt: pagingNewestAt,
+        completedAt: pagingNewestAt,
       };
     }));
     const pagingSecondTerminalId = `${marker}-paging-second-terminal`;
@@ -372,6 +377,7 @@ async function main(): Promise<void> {
       agentType: "research",
       title: "Second terminal lineage",
       prompt: "Remain discoverable beyond a dense retry page",
+      input: { projectId: pagingProjectId },
       status: "complete",
       createdAt: pagingSecondTerminalAt,
       completedAt: pagingSecondTerminalAt,
@@ -391,6 +397,31 @@ async function main(): Promise<void> {
       (await listLiveActionsForUser({ userId, limit: 25 }))
         .some((action) => action.source.id === pagingSecondTerminalId),
       "terminal paging does not let active lineages hide a newer terminal lineage beyond a dense retry page",
+    );
+
+    const boundaryRetryId = `${marker}-paging-retry-000`;
+    await db.insert(schema.agentJobs).values({
+      id: boundaryRetryId,
+      userId,
+      agentType: "research",
+      title: "Dense retry lineage",
+      prompt: "Attempt beyond the first source page",
+      input: { retryOfJobId: pagingRetryIds.at(-1)!, projectId: pagingProjectId },
+      status: "complete",
+      createdAt: pagingNewestAt,
+      completedAt: pagingNewestAt,
+    });
+    await db.delete(schema.liveActions)
+      .where(eq(schema.liveActions.sourceLineageKey, pagingRetryIds[0]));
+    await reconcileAgentJobsForUser(userId, { projectId: pagingProjectId, limit: 1 });
+    const [boundaryRetryAction] = await db.select({ sourceId: schema.liveActions.sourceId })
+      .from(schema.liveActions)
+      .where(eq(schema.liveActions.sourceLineageKey, pagingRetryIds[0]))
+      .limit(1);
+    assert.equal(
+      boundaryRetryAction?.sourceId,
+      boundaryRetryId,
+      "unfiltered paging loads retry descendants beyond an equal-timestamp source boundary",
     );
 
     const [filteredRunningJob] = await db.insert(schema.agentJobs).values({
