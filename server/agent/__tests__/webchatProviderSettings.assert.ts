@@ -90,7 +90,7 @@ assert.match(routes, /streamCoachModelTurn/);
 assert.match(routes, /const finalTurn = await streamCoachModelTurn\(/);
 assert.match(
   routes,
-  /const shouldRunToolLoop = useToolFocusedLoop[\s\S]{0,120}\|\| useMetadataToolLoop/,
+  /const shouldRunToolLoop = androidActive[\s\S]{0,160}\|\| useToolFocusedLoop[\s\S]{0,160}\|\| useMetadataToolLoop/,
   "ordinary chat should bypass the buffered tool-selection turn",
 );
 assert.match(routes, /selectRelevantToolNames\([\s\S]{0,220}requestTools\.flatMap/);
