@@ -122,6 +122,34 @@ async function main(): Promise<void> {
       "an equal-timestamp pending snapshot cannot regress a resolved approval",
     );
 
+    const approvalAgentId = `${marker}-approval-agent`;
+    const pendingGateId = `${marker}-pending-gate`;
+    await db.insert(schema.discordAgents).values({ id: approvalAgentId, userId, name: "Approval test agent" });
+    await db.insert(schema.agentApprovalGates).values({
+      id: pendingGateId,
+      agentId: approvalAgentId,
+      userId,
+      toolName: "approval_test",
+      description: "Confirm the equal-timestamp transition",
+      expiresAt: new Date(createdAt.getTime() + 60_000),
+    });
+    const genuineApprovalRace = {
+      ...approvalRace,
+      sourceId: `${marker}-pending-approval-job`,
+      sourceLineageKey: `${marker}-pending-approval-lineage`,
+    };
+    const genuineRunningAction = await persistAgentJobProjection(genuineApprovalRace);
+    await persistAgentJobProjection({
+      ...genuineApprovalRace,
+      status: "waiting_approval",
+      attention: { kind: "approval", reason: "Approval required", referenceId: pendingGateId },
+    });
+    assert.equal(
+      (await getLiveActionForUser(userId, genuineRunningAction.id))?.status,
+      "waiting_approval",
+      "a canonical pending gate permits a genuine equal-timestamp approval transition",
+    );
+
     const oldCreatedAt = new Date(createdAt.getTime() - 31 * 24 * 60 * 60 * 1_000);
     const [oldJob] = await db.insert(schema.agentJobs).values({
       id: `${marker}-old-job`,

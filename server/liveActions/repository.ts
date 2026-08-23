@@ -182,10 +182,26 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
     }
 
     if (!wasInserted) {
-      const sameTimestampApprovalRegression = row.updatedAt.getTime() === values.updatedAt.getTime()
+      const sameTimestampApprovalTransition = row.updatedAt.getTime() === values.updatedAt.getTime()
         && row.status === "running"
         && values.status === "waiting_approval";
-      const staleProjection = row.updatedAt.getTime() > values.updatedAt.getTime() || sameTimestampApprovalRegression;
+      const approvalGateId = sameTimestampApprovalTransition && projection.attention?.kind === "approval"
+        ? projection.attention.referenceId
+        : undefined;
+      const [pendingApprovalGate] = approvalGateId
+        ? await tx
+            .select({ id: schema.agentApprovalGates.id })
+            .from(schema.agentApprovalGates)
+            .where(and(
+              eq(schema.agentApprovalGates.id, approvalGateId),
+              eq(schema.agentApprovalGates.userId, projection.userId),
+              eq(schema.agentApprovalGates.status, "pending"),
+            ))
+            .limit(1)
+            .for("update")
+        : [];
+      const staleProjection = row.updatedAt.getTime() > values.updatedAt.getTime()
+        || (sameTimestampApprovalTransition && !pendingApprovalGate);
       if (!staleProjection && (projectionChanged(row, values) || insertedEventCount > 0)) {
         [row] = await tx
           .update(schema.liveActions)
