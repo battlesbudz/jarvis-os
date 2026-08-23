@@ -435,11 +435,38 @@ async function main(): Promise<void> {
       status: "queued",
       createdAt: new Date(createdAt.getTime() + index * 1_000),
     })));
+    const freshestActiveId = `${marker}-active-bound-freshest-event`;
+    const freshestActiveRuntime = appendWorkerRuntimeEvent(
+      buildInitialWorkerRuntime({
+        agentType: "research",
+        title: "Older job with fresh progress",
+        now: new Date(createdAt.getTime() - 24 * 60 * 60 * 1_000),
+      }),
+      buildWorkerRuntimeEvent({
+        type: "progress",
+        workerType: "research",
+        message: "Fresh progress",
+        now: new Date(createdAt.getTime() + 60_000),
+        userVisible: true,
+      }),
+    );
+    await db.insert(schema.agentJobs).values({
+      id: freshestActiveId,
+      userId,
+      agentType: "research",
+      title: "Older job with fresh progress",
+      prompt: "Rank by progress recency",
+      input: { projectId: activeBoundProjectId, workerRuntime: freshestActiveRuntime },
+      status: "running",
+      createdAt: new Date(createdAt.getTime() - 24 * 60 * 60 * 1_000),
+      startedAt: new Date(createdAt.getTime() - 24 * 60 * 60 * 1_000),
+    });
     await reconcileAgentJobsForUser(userId, { projectId: activeBoundProjectId, limit: 2 });
-    assert.equal(
-      (await listLiveActionsForUser({ userId, projectId: activeBoundProjectId, limit: 100 })).length,
-      2,
-      "active reconciliation is bounded by the requested snapshot size",
+    const boundedActiveActions = await listLiveActionsForUser({ userId, projectId: activeBoundProjectId, limit: 100 });
+    assert.equal(boundedActiveActions.length, 2, "active reconciliation is bounded by the requested snapshot size");
+    assert.ok(
+      boundedActiveActions.some((action) => action.source.id === freshestActiveId),
+      "cold active reconciliation ranks candidates by projected event recency",
     );
     await reconcileAgentJobsForUser(userId, { status: "succeeded", projectId: activeBoundProjectId, limit: 1 });
     assert.equal(

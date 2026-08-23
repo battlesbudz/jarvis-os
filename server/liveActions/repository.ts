@@ -380,12 +380,28 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
     .where(and(...projectedActionConditions))
     .orderBy(desc(schema.liveActions.updatedAt), desc(schema.liveActions.id))
     .limit(targetLineages);
+  const activeProjectionUpdatedAt = sql<string>`greatest(
+    to_char(${schema.agentJobs.createdAt}, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    coalesce(to_char(${schema.agentJobs.startedAt}, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'), ''),
+    coalesce((
+      SELECT max(runtime_event->>'createdAt')
+      FROM jsonb_array_elements(
+        CASE
+          WHEN jsonb_typeof(${schema.agentJobs.input}->'workerRuntime'->'events') = 'array'
+            THEN ${schema.agentJobs.input}->'workerRuntime'->'events'
+          ELSE '[]'::jsonb
+        END
+      ) AS runtime_event
+      WHERE runtime_event->>'createdAt'
+        ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[.][0-9]{3}Z$'
+    ), '')
+  )`;
   const activeJobs = activeSourceStatuses.length > 0
     ? await db.select().from(schema.agentJobs).where(and(
         ...scope,
         inArray(schema.agentJobs.status, activeSourceStatuses),
       ))
-      .orderBy(desc(schema.agentJobs.createdAt), desc(schema.agentJobs.id))
+      .orderBy(desc(activeProjectionUpdatedAt), desc(schema.agentJobs.id))
       .limit(targetLineages)
     : [];
   const retainedJobs: Array<typeof schema.agentJobs.$inferSelect> = [];
