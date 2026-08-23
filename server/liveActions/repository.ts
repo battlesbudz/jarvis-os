@@ -3,7 +3,7 @@ import * as schema from "@shared/schema";
 import type { LiveAction, LiveActionEvent, LiveActionStatus } from "@shared/liveActions";
 import { db } from "../db";
 import { getWorkerRuntimeFromInput } from "../agent/workerRuntime";
-import { projectAgentJob, type AgentJobLiveActionProjection } from "./adapters/agentJob";
+import { projectAgentJob, type AgentJobLiveActionProjection, type AgentJobRow } from "./adapters/agentJob";
 import { agentJobLineageKey, agentJobRetryGeneration, loadAgentJobRetryFamily } from "./agentJobLineage";
 
 const ACTIVE_STATUSES: LiveActionStatus[] = ["created", "queued", "running", "waiting_approval", "waiting_user", "paused"];
@@ -141,6 +141,49 @@ function projectionChanged(row: schema.LiveActionRow, values: ReturnType<typeof 
     || row.startedAt?.getTime() !== values.startedAt?.getTime()
     || row.updatedAt.getTime() !== values.updatedAt.getTime()
     || row.completedAt?.getTime() !== values.completedAt?.getTime();
+}
+
+async function countCanonicalMatchingLineages(
+  userId: string,
+  status: LiveActionStatus,
+  seedJobs: AgentJobRow[],
+): Promise<number> {
+  const jobsById = await loadAgentJobRetryFamily(userId, seedJobs, seedJobs.map((job) => job.id));
+  const retryGenerations = new Map([...jobsById.values()]
+    .map((job) => [job.id, agentJobRetryGeneration(job, jobsById)]));
+  const canonicalByLineage = new Map<string, AgentJobRow>();
+  for (const job of jobsById.values()) {
+    const lineageKey = agentJobLineageKey(job, jobsById);
+    const current = canonicalByLineage.get(lineageKey);
+    if (!current || (retryGenerations.get(job.id) ?? 0) > (retryGenerations.get(current.id) ?? 0)
+      || ((retryGenerations.get(job.id) ?? 0) === (retryGenerations.get(current.id) ?? 0)
+        && (job.createdAt.getTime() > current.createdAt.getTime()
+          || (job.createdAt.getTime() === current.createdAt.getTime() && job.id > current.id)))) {
+      canonicalByLineage.set(lineageKey, job);
+    }
+  }
+  const canonicalJobs = [...canonicalByLineage.entries()];
+  const gateIds = [...new Set(canonicalJobs.flatMap(([, job]) => {
+    const input = job.input && typeof job.input === "object" && !Array.isArray(job.input)
+      ? job.input as Record<string, unknown>
+      : {};
+    return getWorkerRuntimeFromInput(input)?.approvalCheckpoints.flatMap((checkpoint) =>
+      checkpoint.gateId ? [checkpoint.gateId] : []) ?? [];
+  }))];
+  const gates = gateIds.length > 0
+    ? await db.select({
+        id: schema.agentApprovalGates.id,
+        status: schema.agentApprovalGates.status,
+        resolvedAt: schema.agentApprovalGates.resolvedAt,
+      }).from(schema.agentApprovalGates).where(and(
+        eq(schema.agentApprovalGates.userId, userId),
+        inArray(schema.agentApprovalGates.id, gateIds),
+      ))
+    : [];
+  const pendingGateIds = new Set(gates.filter((gate) => gate.status === "pending").map((gate) => gate.id));
+  const gatesById = new Map(gates.map((gate) => [gate.id, gate]));
+  return canonicalJobs.filter(([lineageKey, job]) =>
+    projectAgentJob(job, pendingGateIds, lineageKey, gatesById).status === status).length;
 }
 
 export async function persistAgentJobProjection(projection: AgentJobLiveActionProjection): Promise<LiveAction> {
@@ -390,7 +433,11 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
     const discoveredFamily = await loadAgentJobRetryFamily(userId, retainedTerminalJobs);
     const discoveredTerminalLineages = new Set(retainedTerminalJobs
       .map((job) => agentJobLineageKey(job, discoveredFamily)));
-    if (!opts.status && discoveredTerminalLineages.size >= targetLineages) break;
+    if (opts.status) {
+      if (await countCanonicalMatchingLineages(userId, opts.status, retainedJobs) >= targetLineages) break;
+    } else if (discoveredTerminalLineages.size >= targetLineages) {
+      break;
+    }
     const last = page.at(-1)!;
     sourceCursor = { id: last.job.id, updatedAt: last.updatedAt };
   } while (sourceCursor);

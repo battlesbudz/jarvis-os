@@ -20,6 +20,7 @@ export function sanitizeLiveActionText(value: unknown, maxLength = 500): string 
     .replace(/\b(?:chain[- ]of[- ]thought|hidden reasoning|internal reasoning|model thoughts?)\s*:[\s\S]*/gi, "[reasoning redacted]")
     .replace(/\b(?:authorization|proxy-authorization)\s*:\s*[^\r\n]+/gi, "authorization: [redacted]")
     .replace(/\b(?:cookie|set-cookie)\s*[:=]\s*[^\r\n]+/gi, "cookie: [redacted]")
+    .replace(/\bcommand failed\s*:\s*[^\r\n]*/gi, "Command failed: [redacted]")
     .replace(/\b(?:shell\s+)?command\s*:\s*[^\r\n]+/gi, "command: [redacted]")
     .replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s\/:@]+:[^\s\/@]+@/gi, "$1[credentials redacted]@")
     .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+=*/gi, "Bearer [redacted]")
