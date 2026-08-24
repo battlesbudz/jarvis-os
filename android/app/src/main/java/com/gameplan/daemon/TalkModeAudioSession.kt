@@ -185,7 +185,8 @@ internal class TalkModeAudioSessionStateMachine {
         snapshot = snapshot.copy(
             state = when {
                 snapshot.state == TalkModeAudioState.PAUSED -> TalkModeAudioState.PAUSED
-                snapshot.captureOwner == null -> TalkModeAudioState.IDLE
+                snapshot.state == TalkModeAudioState.ENDED -> TalkModeAudioState.ENDED
+                snapshot.sessionId == 0L -> TalkModeAudioState.IDLE
                 else -> TalkModeAudioState.LISTENING
             },
             mode = restoredMode,
@@ -204,7 +205,7 @@ internal class TalkModeAudioSessionStateMachine {
             state = when (snapshot.state) {
                 TalkModeAudioState.PAUSED -> TalkModeAudioState.PAUSED
                 TalkModeAudioState.ENDED -> TalkModeAudioState.ENDED
-                else -> if (snapshot.captureOwner == null) TalkModeAudioState.IDLE else TalkModeAudioState.LISTENING
+                else -> if (snapshot.sessionId == 0L) TalkModeAudioState.IDLE else TalkModeAudioState.LISTENING
             },
             playbackOwner = null,
             mode = restoredMode,

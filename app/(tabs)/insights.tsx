@@ -2069,6 +2069,7 @@ export default function InsightsScreen() {
       const playbackRouteOwnerId = `${Date.now()}-${++nativeVoiceRouteSeqRef.current}`;
       let playbackLifecycleStarted = false;
       let playbackRejectedByCompetingOwner = false;
+      let allowTurnBasedFallback = true;
       try {
         await acquireAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
         const session = await beginAndroidTalkModePlayback(playbackRouteOwnerId, trimmedText).catch(() => null);
@@ -2078,6 +2079,7 @@ export default function InsightsScreen() {
         ) {
           playbackRejectedByCompetingOwner = !!session?.playbackOwner &&
             session.playbackOwner !== `react_tts:${playbackRouteOwnerId}`;
+          allowTurnBasedFallback = !session || session.state === 'idle';
           throw new Error('Talk Mode audio session rejected playback startup.');
         }
         playbackLifecycleStarted = true;
@@ -2179,7 +2181,7 @@ export default function InsightsScreen() {
           releaseAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
         }
         if (abortController.signal.aborted || speakAbortRef.current !== abortController) return;
-        if (playbackRejectedByCompetingOwner) {
+        if (playbackRejectedByCompetingOwner || !allowTurnBasedFallback) {
           onError();
           return;
         }
