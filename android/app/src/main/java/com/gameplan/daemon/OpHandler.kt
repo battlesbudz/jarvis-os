@@ -41,10 +41,29 @@ object JarvisVoicePlaybackController {
     @Volatile private var currentFile: File? = null
 
     @Synchronized
-    fun register(player: android.media.MediaPlayer, file: File) {
+    fun startPlayback(player: android.media.MediaPlayer, file: File, spokenText: String): Boolean {
         stopActivePlayback(rearmTalkMode = false)
         currentPlayer = player
         currentFile = file
+        val session = TalkModeAudioSession.beginTurnBasedPlayback("daemon_audio", spokenText)
+        if (session.playbackOwner != "daemon_audio" || session.state != TalkModeAudioState.SPEAKING) {
+            currentPlayer = null
+            currentFile = null
+            releasePlayer(player)
+            file.delete()
+            return false
+        }
+        try {
+            player.start()
+        } catch (error: Throwable) {
+            currentPlayer = null
+            currentFile = null
+            TalkModeAudioSession.stopTalking()
+            releasePlayer(player)
+            file.delete()
+            throw error
+        }
+        return true
     }
 
     @Synchronized
@@ -1645,12 +1664,19 @@ object OpHandler {
                 DaemonLog.add("voice_speak_audio: asynchronous playback error what=$what extra=$extra rearmed=$shouldRearm")
                 true
             }
-            JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)
             // MediaPlayer playback pauses wake-word capture, so expose this surface as
             // turn-based instead of promising interruption capture that is not armed.
-            TalkModeAudioSession.beginTurnBasedPlayback("daemon_audio", op.optString("spokenText", ""))
+            if (!JarvisVoicePlaybackController.startPlayback(
+                    mediaPlayer,
+                    playbackFile,
+                    op.optString("spokenText", ""),
+                )
+            ) {
+                tmpFile = null
+                DaemonLog.add("voice_speak_audio: session rejected playback at atomic start")
+                return OpResult(false, error = "voice session is paused or ended")
+            }
             OutsideAppVoiceSessionService.markPlaybackSpeaking()
-            mediaPlayer.start()
             DaemonLog.add("voice_speak_audio: playing ${bytes.size} bytes")
             OpResult(true, data = JSONObject().put("playing", true).put("bytes", bytes.size))
         } catch (e: Exception) {
