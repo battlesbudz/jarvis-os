@@ -48,6 +48,7 @@ assert.doesNotMatch(mutationRoutes, /return \{ \.\.\.submitted, status: "queued"
 assert.match(mutationRoutes, /liveActionRetryValidated: true/);
 assert.match(mutationRoutes, /input\}->>'liveActionRetryValidated' = 'true'/);
 assert.match(cancellation, /agentJobs\.input\} \|\| jsonb_build_object/);
+assert.match(cancellation, /now\.toISOString\(\)\}::text/g);
 assert.match(jobClient, /set\(cancellationUpdateForAgentJob\("cancelled", cancelledAt\)\)/);
 assert.match(requeue, /jsonb_path_query_array/);
 assert.match(requeue, /requeueHistory/);

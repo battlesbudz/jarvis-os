@@ -7,10 +7,10 @@ export function cancellationUpdateForAgentJob(status: AgentJobCancellationStatus
     ? {
         status,
         completedAt: now,
-        input: sql`${schema.agentJobs.input} || jsonb_build_object('cancelRequestedAt', ${now.toISOString()})`,
+        input: sql`${schema.agentJobs.input} || jsonb_build_object('cancelRequestedAt', ${now.toISOString()}::text)`,
       }
     : {
         status,
-        input: sql`${schema.agentJobs.input} || jsonb_build_object('cancelRequestedAt', ${now.toISOString()})`,
+        input: sql`${schema.agentJobs.input} || jsonb_build_object('cancelRequestedAt', ${now.toISOString()}::text)`,
       };
 }
