@@ -14,6 +14,7 @@ const workerRuntimeJobEvents = fs.readFileSync("server/agent/workerRuntimeJobEve
 const repository = fs.readFileSync("server/liveActions/repository.ts", "utf8");
 const agentJobProjection = fs.readFileSync("server/liveActions/adapters/agentJob.ts", "utf8");
 const service = fs.readFileSync("server/liveActions/service.ts", "utf8");
+const sanitizer = fs.readFileSync("server/liveActions/sanitize.ts", "utf8");
 
 assert.match(migration, /CREATE TABLE IF NOT EXISTS "live_actions"/);
 assert.match(migration, /"progress_value" real/);
@@ -63,5 +64,6 @@ assert.match(agentJobProjection, /update\(JSON\.stringify\(event\)\)/);
 assert.match(agentJobProjection, /if \(job\.status === "queued"\)/);
 assert.match(service, /getLiveActionLineageForUser\(userId, actionId\)/);
 assert.match(service, /actions: fullyReconciled \? await listLiveActionsForUser\(input\) : \[\]/);
+assert.match(sanitizer, /BEGIN \(\?:\[A-Z0-9\]\+ \)\*PRIVATE KEY/);
 
 console.log("Live Action migration and authenticated route ownership assertions passed.");

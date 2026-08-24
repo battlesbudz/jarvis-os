@@ -50,6 +50,18 @@ assert.equal(sanitizeLiveActionText("Shell command: curl https://private.example
 assert.equal(sanitizeLiveActionText("$ rm -rf /home/justin/private"), "[command redacted]");
 assert.equal(sanitizeLiveActionText("Command failed: git push origin secret-branch"), "Command failed: [redacted]");
 assert.equal(
+  sanitizeLiveActionText("Provider error:\n-----BEGIN EC PRIVATE KEY-----\nMHQCAQEEIBogus\n-----END EC PRIVATE KEY-----\nRetry disabled"),
+  "Provider error: [private key redacted] Retry disabled",
+);
+assert.equal(
+  sanitizeLiveActionText("escaped=-----BEGIN PRIVATE KEY-----\\nMIIEvQIBADANBg\\n-----END PRIVATE KEY-----"),
+  "escaped=[private key redacted]",
+);
+assert.equal(
+  sanitizeLiveActionText("-----BEGIN OPENSSH PRIVATE KEY-----\nunterminated-secret-material"),
+  "[private key redacted]",
+);
+assert.equal(
   sanitizeLiveActionText("Error: Command failed: npm run private-task\nprivate file contents without a token"),
   "Error: Command failed: [redacted]",
 );

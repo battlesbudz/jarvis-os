@@ -16,6 +16,7 @@ const RAW_COMMAND_PATTERN = /^\s*(?:\$|>|sudo\b|rm\b|cp\b|mv\b|chmod\b|chown\b|c
 export function sanitizeLiveActionText(value: unknown, maxLength = 500): string | null {
   if (typeof value !== "string") return null;
   let text = value
+    .replace(/-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----[\s\S]*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|$)/gi, "[private key redacted]")
     .replace(/<(?:thinking|analysis|reasoning)>[\s\S]*?<\/(?:thinking|analysis|reasoning)>/gi, "[reasoning redacted]")
     .replace(/\b(?:chain[- ]of[- ]thought|hidden reasoning|internal reasoning|model thoughts?)\s*:[\s\S]*/gi, "[reasoning redacted]")
     .replace(/\b(?:authorization|proxy-authorization)\s*:\s*[^\r\n]+/gi, "authorization: [redacted]")
