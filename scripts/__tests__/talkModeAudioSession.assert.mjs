@@ -72,6 +72,7 @@ assert.match(bridge, /snapshot\(\)\.state == TalkModeAudioState\.INTERRUPTED[\s\
 assert.match(bridge, /val participatesInTalkMode[\s\S]*?if \(participatesInTalkMode\)[\s\S]*?TalkModeAudioSession\.acquireCapture/);
 assert.match(bridge, /currentSession\.state == TalkModeAudioState\.PAUSED[\s\S]*?E_NATIVE_STT_PAUSED[\s\S]*?return@runOnMain/);
 assert.match(bridge, /onError\(error: Int\)[\s\S]*?wasInterruption[\s\S]*?TalkModeAudioSession\.rejectInterruption\(\)[\s\S]*?playbackBridge\.resumeAfterRejectedInterruption\(\)/);
+assert.match(bridge, /fun cancelRecognizer[\s\S]*?TalkModeAudioState\.INTERRUPTED[\s\S]*?TalkModeAudioSession\.rejectInterruption\(\)[\s\S]*?playbackBridge\.resumeAfterRejectedInterruption\(\)/);
 
 const wrapper = fs.readFileSync("lib/android-daemon-native.ts", "utf8");
 assert.match(wrapper, /AndroidTalkModeAudioSessionStatus/);

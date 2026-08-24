@@ -459,6 +459,7 @@ internal class NativeSpeechRecognitionBridge(
 
     private fun cancelRecognizer(emitCancelled: Boolean) {
         if (TalkModeAudioSession.snapshot().state == TalkModeAudioState.INTERRUPTED) {
+            TalkModeAudioSession.rejectInterruption()
             playbackBridge.resumeAfterRejectedInterruption()
         }
         rejectPendingStart(
