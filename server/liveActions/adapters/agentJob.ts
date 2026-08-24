@@ -242,8 +242,11 @@ export function projectAgentJob(
   const errorSummary = sanitizeLiveActionText(job.error);
   const fallbackEvent = canonicalEvent(job, status, input);
   const isRequeue = job.status === "queued" && !!dateValue(input.requeuedAt);
+  const isAutomaticRetryQueue = job.status === "queued"
+    && (runtime?.events ?? []).some((event) => event.type === "retrying");
   const hasMatchingFallback = projectedWorkerEvents.some((event) => event.type === fallbackEvent.type
     && (fallbackEvent.type !== "action.queued"
+      || (!isRequeue && !isAutomaticRetryQueue)
       || event.createdAt.getTime() === fallbackEvent.createdAt.getTime()));
   const baseEvents = hasMatchingFallback
     ? projectedWorkerEvents

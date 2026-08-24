@@ -89,6 +89,14 @@ assert.equal(queued.sourceLineageKey, "job-1");
 assert.equal(queued.progress?.value, 0);
 assert.ok(queued.events.every((event) => event.userVisible));
 assert.equal(queued.events.filter((event) => event.type === "action.queued").length, 1);
+const queuedAfterInsertTimestamp = projectAgentJob(job({
+  createdAt: new Date("2026-08-23T12:00:00.250Z"),
+}));
+assert.equal(
+  queuedAfterInsertTimestamp.events.filter((event) => event.type === "action.queued").length,
+  1,
+  "the pre-insert worker queue event represents the initial database queue transition",
+);
 assert.ok(queued.capabilities.some((capability) => capability.type === "cancel" && capability.enabled));
 assert.ok(
   projectAgentJob(job({ status: "resource_paused" })).capabilities
