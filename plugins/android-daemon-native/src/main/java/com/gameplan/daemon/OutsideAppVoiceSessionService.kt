@@ -272,11 +272,13 @@ class OutsideAppVoiceSessionService : Service() {
                     return START_NOT_STICKY
                 }
                 ownsVoiceCapture = true
+                val playbackWasActive = TalkModeAudioSession.snapshot().playbackOwner != null
+                if (playbackWasActive) JarvisDaemonModule.stopActiveNativeTalkModePlayback()
                 TalkModeAudioSession.acquireCapture(this, "outside_app_capture")
                 if (
                     state == OutsideAppVoiceState.LISTENING ||
                     state == OutsideAppVoiceState.APPROVAL ||
-                    TalkModeAudioSession.snapshot().playbackOwner != null
+                    playbackWasActive
                 ) {
                     resumeWakeCapture()
                 }

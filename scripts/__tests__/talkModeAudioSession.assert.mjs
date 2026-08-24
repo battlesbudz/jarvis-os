@@ -59,6 +59,7 @@ assert.match(bridge, /putBoolean\("committed", false\)/);
 assert.match(bridge, /TalkModeAudioSession\.commitTranscript/);
 assert.match(bridge, /resultConfidenceScores/);
 assert.match(bridge, /snapshot\(\)\.state == TalkModeAudioState\.INTERRUPTED[\s\S]*?resumeAfterRejectedInterruption\(\)/);
+assert.match(bridge, /val participatesInTalkMode[\s\S]*?if \(participatesInTalkMode\)[\s\S]*?TalkModeAudioSession\.acquireCapture/);
 
 const wrapper = fs.readFileSync("lib/android-daemon-native.ts", "utf8");
 assert.match(wrapper, /AndroidTalkModeAudioSessionStatus/);
