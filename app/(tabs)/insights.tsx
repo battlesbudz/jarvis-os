@@ -2077,6 +2077,7 @@ export default function InsightsScreen() {
           if (abortController.signal.aborted) return;
           let playbackFinished = false;
           let interruptionTranscript = '';
+          let recoverableRecognitionFailures = 0;
           const monitor = continuousCapture
             ? (async () => {
                 while (!playbackFinished && !abortController.signal.aborted && isSpeakingRef.current) {
@@ -2088,7 +2089,9 @@ export default function InsightsScreen() {
                       timeoutMs: 60_000,
                       takeInAppCapture: true,
                       onEvent: (event) => {
-                        if (event.type === 'partial' && event.sessionState === 'interrupted' && event.text) {
+                        if (event.type === 'echo_rejected') {
+                          setInput('');
+                        } else if (event.type === 'partial' && event.sessionState === 'interrupted' && event.text) {
                           setInput(event.text);
                         }
                       },
@@ -2103,10 +2106,16 @@ export default function InsightsScreen() {
                     const recoverable = (error as Error & { recoverable?: boolean })?.recoverable === true;
                     if (
                       recoverable &&
+                      recoverableRecognitionFailures < 5 &&
                       !playbackFinished &&
                       !abortController.signal.aborted &&
                       isSpeakingRef.current
                     ) {
+                      recoverableRecognitionFailures += 1;
+                      await new Promise(resolve => setTimeout(
+                        resolve,
+                        Math.min(250 * 2 ** recoverableRecognitionFailures, 2_000),
+                      ));
                       continue;
                     }
                     if (!playbackFinished && !abortController.signal.aborted) {

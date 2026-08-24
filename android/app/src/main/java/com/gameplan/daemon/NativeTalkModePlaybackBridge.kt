@@ -35,7 +35,11 @@ internal class NativeTalkModePlaybackBridge(
             acknowledgedOffset = 0
             tentativeInterruption = false
             pendingPromise = promise
-            TalkModeAudioSession.beginPlayback(ownerId, spokenText)
+            val session = TalkModeAudioSession.beginPlayback(ownerId, spokenText)
+            if (session.playbackOwner != ownerId || session.state != TalkModeAudioState.SPEAKING) {
+                finish(if (session.state == TalkModeAudioState.ENDED) "ended" else "stopped")
+                return@runOnMain
+            }
             ensureTts { engine -> speakRemaining(engine) }
         }
     }
