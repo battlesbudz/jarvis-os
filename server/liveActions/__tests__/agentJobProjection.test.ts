@@ -136,8 +136,18 @@ assert.deepEqual(waiting.attention, {
   referenceId: "gate-1",
 });
 assert.equal(waiting.events.filter((event) => event.type === "action.waiting_approval").length, 1);
+assert.deepEqual(
+  waiting.capabilities.find((capability) => capability.type === "open_approval"),
+  { type: "open_approval", enabled: true, targetRoute: "/api/agents/approvals" },
+  "pending approval attention exposes the existing approval surface",
+);
 assert.doesNotMatch(JSON.stringify(waiting), /very-secret|abc\.def\.ghi|curl private/);
-assert.equal(projectAgentJob(approvalJob).status, "running", "resolved approval checkpoints do not leave stale attention");
+const resolvedApprovalProjection = projectAgentJob(approvalJob);
+assert.equal(resolvedApprovalProjection.status, "running", "resolved approval checkpoints do not leave stale attention");
+assert.ok(
+  !resolvedApprovalProjection.capabilities.some((capability) => capability.type === "open_approval"),
+  "resolved approval checkpoints do not leave a stale approval control",
+);
 const collidingEventAt = new Date("2026-08-23T12:01:30.000Z");
 const firstCollidingEvent = buildWorkerRuntimeEvent({
   type: "progress",

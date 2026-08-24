@@ -154,8 +154,11 @@ function isWorkflowOwned(job: AgentJobRow): boolean {
   return typeof workflowId === "string" && !!workflowId.trim();
 }
 
-function capabilities(job: AgentJobRow): LiveActionControlCapability[] {
+function capabilities(job: AgentJobRow, pendingApprovalGateId?: string): LiveActionControlCapability[] {
   const result: LiveActionControlCapability[] = [];
+  if (pendingApprovalGateId) {
+    result.push({ type: "open_approval", enabled: true, targetRoute: "/api/agents/approvals" });
+  }
   if (job.status === "queued" || job.status === "resource_paused") {
     result.push({
       type: "cancel",
@@ -178,7 +181,10 @@ export function projectAgentJob(
   const input = inputOf(job);
   const runtime = getWorkerRuntimeFromInput(input);
   const checkpoint = runtime?.approvalCheckpoints.at(-1);
-  const status = normalizedStatus(job.status, !!checkpoint?.gateId && pendingApprovalGateIds.has(checkpoint.gateId));
+  const pendingApprovalGateId = checkpoint?.gateId && pendingApprovalGateIds.has(checkpoint.gateId)
+    ? checkpoint.gateId
+    : undefined;
+  const status = normalizedStatus(job.status, !!pendingApprovalGateId);
   const pause = input.resourcePause && typeof input.resourcePause === "object"
     ? input.resourcePause as Record<string, unknown>
     : null;
@@ -340,7 +346,7 @@ export function projectAgentJob(
     status,
     progress,
     attention,
-    capabilities: capabilities(job),
+    capabilities: capabilities(job, pendingApprovalGateId),
     artifacts: [],
     error: status === "failed" && errorSummary
       ? { category: classifyError(job.error ?? ""), summary: errorSummary, retryEligible: !isWorkflowOwned(job) }
