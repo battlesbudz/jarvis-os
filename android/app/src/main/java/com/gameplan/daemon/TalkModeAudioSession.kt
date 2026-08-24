@@ -237,6 +237,12 @@ internal class TalkModeAudioSessionStateMachine {
     }
 
     @Synchronized
+    fun rejectInterruption(): TalkModeAudioSnapshot {
+        if (snapshot.state == TalkModeAudioState.INTERRUPTED) resumeAfterRejectedInterruption()
+        return snapshot
+    }
+
+    @Synchronized
     fun recover(owner: String, routeState: String, error: String? = null): TalkModeAudioSnapshot {
         if (
             snapshot.state == TalkModeAudioState.IDLE ||
@@ -393,6 +399,7 @@ internal object TalkModeAudioSession {
     fun finishPlayback(owner: String): TalkModeAudioSnapshot = machine.finishPlayback(owner)
     fun stopTalking(): TalkModeAudioSnapshot = machine.stopTalking()
     fun stopListening(): TalkModeAudioSnapshot = machine.stopListening()
+    fun rejectInterruption(): TalkModeAudioSnapshot = machine.rejectInterruption()
     fun recover(owner: String, routeState: String, error: String? = null) = machine.recover(owner, routeState, error)
     fun recovered(owner: String, routeState: String) = machine.recovered(owner, routeState)
     fun fallBack(error: String): TalkModeAudioSnapshot = machine.fallBack(error)

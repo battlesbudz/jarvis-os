@@ -34,6 +34,7 @@ for (const root of roots) {
   assert.match(session, /fun recovered[\s\S]*?TalkModeAudioState\.IDLE[\s\S]*?TalkModeAudioState\.PAUSED[\s\S]*?TalkModeAudioState\.ENDED[\s\S]*?return snapshot/);
   assert.match(session, /fun recover[\s\S]*?snapshot\.state == TalkModeAudioState\.INTERRUPTED -> TalkModeAudioState\.INTERRUPTED/);
   assert.match(session, /fun recovered[\s\S]*?snapshot\.state == TalkModeAudioState\.INTERRUPTED -> TalkModeAudioState\.INTERRUPTED/);
+  assert.match(session, /fun rejectInterruption[\s\S]*?TalkModeAudioState\.INTERRUPTED[\s\S]*?resumeAfterRejectedInterruption\(\)/);
   assert.match(session, /AcousticEchoCanceler\.isAvailable/);
   assert.match(session, /NoiseSuppressor\.isAvailable/);
   assert.match(session, /AutomaticGainControl\.isAvailable/);
@@ -70,6 +71,7 @@ assert.match(bridge, /resultConfidenceScores/);
 assert.match(bridge, /snapshot\(\)\.state == TalkModeAudioState\.INTERRUPTED[\s\S]*?resumeAfterRejectedInterruption\(\)/);
 assert.match(bridge, /val participatesInTalkMode[\s\S]*?if \(participatesInTalkMode\)[\s\S]*?TalkModeAudioSession\.acquireCapture/);
 assert.match(bridge, /currentSession\.state == TalkModeAudioState\.PAUSED[\s\S]*?E_NATIVE_STT_PAUSED[\s\S]*?return@runOnMain/);
+assert.match(bridge, /onError\(error: Int\)[\s\S]*?wasInterruption[\s\S]*?TalkModeAudioSession\.rejectInterruption\(\)[\s\S]*?playbackBridge\.resumeAfterRejectedInterruption\(\)/);
 
 const wrapper = fs.readFileSync("lib/android-daemon-native.ts", "utf8");
 assert.match(wrapper, /AndroidTalkModeAudioSessionStatus/);

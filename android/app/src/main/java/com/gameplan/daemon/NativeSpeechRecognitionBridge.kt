@@ -181,7 +181,10 @@ internal class NativeSpeechRecognitionBridge(
                             TalkModeAudioSession.fallBack(name)
                         }
                     }
-                    if (participatesInTalkMode && wasInterruption) playbackBridge.resumeAfterRejectedInterruption()
+                    if (participatesInTalkMode && wasInterruption) {
+                        TalkModeAudioSession.rejectInterruption()
+                        playbackBridge.resumeAfterRejectedInterruption()
+                    }
                     cleanupRecognizer(startGeneration)
                     emit("error") {
                         putInt("errorCode", error)
