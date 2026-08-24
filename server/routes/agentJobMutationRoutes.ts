@@ -112,6 +112,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
           .from(schema.agentJobs)
           .where(and(
             eq(schema.agentJobs.userId, userId),
+            sql`${schema.agentJobs.input}->>'liveActionRetryValidated' = 'true'`,
             sql`${schema.agentJobs.input}->>'retryOfJobId' = ${job.id}`,
           ))
           .orderBy(desc(schema.agentJobs.createdAt))
