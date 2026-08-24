@@ -5,6 +5,7 @@ import * as schema from "@shared/schema";
 import { submitAgentJob } from "../jobQueue";
 import type { AgentJobType } from "../jobQueue";
 import { cancellationStatusForAgentJobStatus } from "../voiceRuntimeResourceCore";
+import { cancellationUpdateForAgentJob } from "../jobCancellation";
 
 export const sessionsListTool: AgentTool = {
   name: "sessions_list",
@@ -372,13 +373,22 @@ export const sessionsCancelTool: AgentTool = {
           label: "sessions_cancel: already finished",
         };
       }
-      await db
+      const [cancelled] = await db
         .update(schema.agentJobs)
-        .set({
-          status: newStatus,
-          completedAt: newStatus === "cancelled" ? new Date() : undefined,
-        })
-        .where(eq(schema.agentJobs.id, jobId));
+        .set(cancellationUpdateForAgentJob(newStatus))
+        .where(and(
+          eq(schema.agentJobs.id, jobId),
+          eq(schema.agentJobs.userId, ctx.userId),
+          eq(schema.agentJobs.status, job.status),
+        ))
+        .returning({ status: schema.agentJobs.status });
+      if (!cancelled) {
+        return {
+          ok: false,
+          content: `Job "${job.title}" changed status before cancellation; refresh and try again.`,
+          label: "sessions_cancel: conflict",
+        };
+      }
 
       const msg =
         newStatus === "cancelled"

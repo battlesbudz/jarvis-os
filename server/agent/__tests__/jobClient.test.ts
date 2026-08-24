@@ -281,8 +281,9 @@ async function run(): Promise<void> {
       now: new Date("2026-07-06T11:00:00.000Z"),
       ttlMs: null,
     });
+    let result: Awaited<ReturnType<typeof submitAgentJob>> | undefined;
     try {
-      await submitAgentJob(
+      result = await submitAgentJob(
         makeInput({
           userId: "u-voice",
           agentType: "app_project",
@@ -303,6 +304,11 @@ async function run(): Promise<void> {
     assert(
       !!resourcePauseMetadata(insertStub.lastValues!.input),
       "MR-5: resource-paused voice jobs include deterministic resourcePause metadata",
+    );
+    assertEquals(
+      result?.status,
+      RESOURCE_PAUSED_STATUS,
+      "MR-6: submission returns the actual resource-paused status",
     );
   }
 

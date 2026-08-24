@@ -32,6 +32,7 @@ import { listGatewayEvents, onGatewayEvent, recordGatewayEvent } from "./eventBu
 import { listGatewayNodes, routeCapability } from "./nodeRegistry";
 import * as schema from "@shared/schema";
 import { cancellationStatusForAgentJobStatus } from "../agent/voiceRuntimeResourceCore";
+import { cancellationUpdateForAgentJob } from "../agent/jobCancellation";
 
 type RpcId = string | number | null;
 type RpcParams = Record<string, unknown>;
@@ -271,8 +272,16 @@ async function jobCreate(userId: string, params: RpcParams) {
 
   const { submitAgentJob } = await import("../agent/jobClient");
   const input = typeof params.input === "object" && params.input
-    ? params.input as Record<string, unknown>
+    ? { ...(params.input as Record<string, unknown>) }
     : {};
+  delete input.retryOfJobId;
+  delete input.liveActionLineageKey;
+  delete input.liveActionRetryValidated;
+  delete input.retriedAt;
+  delete input.requeuedAt;
+  delete input.requeueHistory;
+  delete input.cancelRequestedAt;
+  delete input.resourcePause;
   const result = await submitAgentJob({
     userId,
     agentType: agentType as any,
@@ -303,9 +312,14 @@ async function jobCancel(userId: string, params: RpcParams) {
   const nextStatus = cancellationStatusForAgentJobStatus(row.status);
   if (!nextStatus) throw new Error(`Job is already ${row.status}`);
   const [updated] = await db.update(schema.agentJobs)
-    .set({ status: nextStatus, ...(nextStatus === "cancelled" ? { completedAt: new Date() } : {}) })
-    .where(and(eq(schema.agentJobs.id, jobId), eq(schema.agentJobs.userId, userId)))
+    .set(cancellationUpdateForAgentJob(nextStatus))
+    .where(and(
+      eq(schema.agentJobs.id, jobId),
+      eq(schema.agentJobs.userId, userId),
+      eq(schema.agentJobs.status, row.status),
+    ))
     .returning({ id: schema.agentJobs.id, status: schema.agentJobs.status });
+  if (!updated) throw new Error("Job status changed before cancellation; refresh and try again");
   recordGatewayEvent({
     userId,
     type: "job.cancelled",
@@ -315,7 +329,7 @@ async function jobCancel(userId: string, params: RpcParams) {
     subjectId: jobId,
     metadata: { status: nextStatus },
   }).catch(() => {});
-  return { ok: Boolean(updated), job: updated };
+  return { ok: true, job: updated };
 }
 
 async function daemonPing(userId: string, params: RpcParams) {

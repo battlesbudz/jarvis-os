@@ -84,7 +84,10 @@ const DEFAULT_RETRY_POLICIES: Record<CloudWorkerType, WorkerRetryPolicy> = {
   goal_task: { maxAttempts: 2, backoffMs: 10000 },
 };
 
-const MAX_EVENTS = 50;
+// This is the durable source history for Live Actions, so keep it aligned with
+// the projector's per-action retention instead of evicting recoverable events
+// before the next read-time reconciliation.
+const MAX_EVENTS = 200;
 
 function iso(now?: Date): string {
   return (now ?? new Date()).toISOString();

@@ -161,18 +161,30 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
     // Policy check failure is non-blocking — fall through to global logic
   }
 
-  await db.insert(agentApprovalGates).values({
-    id,
-    agentId: req.agentId,
-    userId: req.userId,
-    toolName: req.toolName,
-    toolArgs: req.toolArgs,
-    description: req.description,
-    status: autoApprove ? "approved" : "pending",
-    initiatedBy: req.initiatedBy ?? "user",
-    createdAt: now,
-    expiresAt,
-    ...(autoApprove ? { resolvedAt: now, resolvedBy: autoApprove && policyApplied !== "global" ? `policy:${policyApplied}` : "jarvis_triage" } : {}),
+  await db.transaction(async (tx) => {
+    await tx.insert(agentApprovalGates).values({
+      id,
+      agentId: req.agentId,
+      userId: req.userId,
+      toolName: req.toolName,
+      toolArgs: req.toolArgs,
+      description: req.description,
+      status: autoApprove ? "approved" : "pending",
+      initiatedBy: req.initiatedBy ?? "user",
+      createdAt: now,
+      expiresAt,
+      ...(autoApprove ? { resolvedAt: now, resolvedBy: autoApprove && policyApplied !== "global" ? `policy:${policyApplied}` : "jarvis_triage" } : {}),
+    });
+    if (!autoApprove && req.workerJobId) {
+      const { appendWorkerApprovalCheckpointToJob } = await import("./workerRuntimeJobEvents");
+      const associated = await appendWorkerApprovalCheckpointToJob({
+        jobId: req.workerJobId,
+        gateId: id,
+        toolName: req.toolName,
+        reason: req.description,
+      }, tx);
+      if (!associated) throw new Error(`Worker job ${req.workerJobId} was not found for approval gate ${id}`);
+    }
   });
 
   // Only create a deliverable for gates that require user review.
@@ -201,19 +213,6 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
     } catch (delivErr) {
       // Non-fatal: gate still exists and is visible via /api/agents/approvals
       console.warn("[AgentApproval] failed to create deliverable for gate:", delivErr);
-    }
-    if (req.workerJobId) {
-      try {
-        const { appendWorkerApprovalCheckpointToJob } = await import("./workerRuntimeJobEvents");
-        await appendWorkerApprovalCheckpointToJob({
-          jobId: req.workerJobId,
-          gateId: id,
-          toolName: req.toolName,
-          reason: req.description,
-        });
-      } catch (err) {
-        console.warn("[AgentApproval] failed to append worker approval checkpoint:", err);
-      }
     }
   }
 

@@ -42,6 +42,7 @@ import {
 } from "./buildFeatureJobCore";
 import { recoverStaleResourcePausedJobsAfterVoice } from "./voiceRuntimeResourceScheduler";
 import { requestsReportFile } from "./backgroundJobHandoff";
+import { staleJobRequeueUpdate } from "./jobRequeue";
 
 // Re-export from the shared client so existing callers don't break.
 export type { NotifyJobCompleteDeps } from "./notifyJobCompleteCore";
@@ -843,25 +844,45 @@ async function appendWorkerEventToJob(opts: {
   retryAttempt?: number;
   metadata?: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
-  const workerType = resolveWorkerType({ agentType: opts.agentType, input: opts.input });
-  const nextInput = withWorkerRuntimeEvent(
-    opts.input,
-    buildWorkerRuntimeEvent({
-      type: opts.type,
-      workerType,
-      message: opts.message,
-      userVisible: opts.userVisible ?? false,
-      progress: opts.progress,
-      checkpoint: opts.checkpoint,
-      retryAttempt: opts.retryAttempt,
-      metadata: opts.metadata,
-    }),
-  );
-  await db
-    .update(schema.agentJobs)
-    .set({ input: nextInput })
-    .where(eq(schema.agentJobs.id, opts.jobId));
-  return nextInput;
+  return db.transaction(async (tx) => {
+    const [job] = await tx
+      .select({ input: schema.agentJobs.input })
+      .from(schema.agentJobs)
+      .where(eq(schema.agentJobs.id, opts.jobId))
+      .limit(1)
+      .for("update");
+    const currentInput = job?.input && typeof job.input === "object" && !Array.isArray(job.input)
+      ? job.input as Record<string, unknown>
+      : opts.input;
+    const workerType = resolveWorkerType({ agentType: opts.agentType, input: currentInput });
+    const nextInput = withWorkerRuntimeEvent(
+      currentInput,
+      buildWorkerRuntimeEvent({
+        type: opts.type,
+        workerType,
+        message: opts.message,
+        userVisible: opts.userVisible ?? false,
+        progress: opts.progress,
+        checkpoint: opts.checkpoint,
+        retryAttempt: opts.retryAttempt,
+        metadata: opts.metadata,
+      }),
+    );
+    if (!job) return nextInput;
+
+    const inputPatch = {
+      workerRuntime: nextInput.workerRuntime,
+      workerType: nextInput.workerType,
+    };
+    const [updated] = await tx
+      .update(schema.agentJobs)
+      .set({ input: sql`${schema.agentJobs.input} || ${JSON.stringify(inputPatch)}::jsonb` })
+      .where(eq(schema.agentJobs.id, opts.jobId))
+      .returning({ input: schema.agentJobs.input });
+    return updated?.input && typeof updated.input === "object" && !Array.isArray(updated.input)
+      ? updated.input as Record<string, unknown>
+      : nextInput;
+  });
 }
 
 async function appendWorkerProgressToJob(opts: {
@@ -1733,11 +1754,11 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
 
       /** Persist progress state into agent_jobs.input (merge, not replace). */
       const persistProgress = async (updates: Record<string, unknown>): Promise<void> => {
-        const merged = { ...jobInput, ...updates };
-        await db.update(schema.agentJobs)
-          .set({ input: merged })
-          .where(eq(schema.agentJobs.id, job.id));
-        Object.assign(jobInput, updates);
+        const [updated] = await db.update(schema.agentJobs)
+          .set({ input: sql`${schema.agentJobs.input} || ${JSON.stringify(updates)}::jsonb` })
+          .where(eq(schema.agentJobs.id, job.id))
+          .returning({ input: schema.agentJobs.input });
+        jobInput = updated ? jobInputOf(updated) : { ...jobInput, ...updates };
       };
 
       /** Fire a brief progress notification to the origin channel. */
@@ -2781,12 +2802,15 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     let cloudBackgroundEstimatedSpentUsd = cloudBackgroundEstimatedSpendOf(jobInput);
     const persistCloudBackgroundEstimatedSpend = async (spentUsd: number) => {
       cloudBackgroundEstimatedSpentUsd = Math.round(Math.max(0, spentUsd) * 100) / 100;
-      jobInput = withCloudBackgroundEstimatedSpend(jobInput, cloudBackgroundEstimatedSpentUsd);
-      latestJobInput = jobInput;
-      await db
+      const spendInput = withCloudBackgroundEstimatedSpend(jobInput, cloudBackgroundEstimatedSpentUsd);
+      const inputPatch = { cloudBackgroundTask: spendInput.cloudBackgroundTask };
+      const [updated] = await db
         .update(schema.agentJobs)
-        .set({ input: jobInput })
-        .where(eq(schema.agentJobs.id, job.id));
+        .set({ input: sql`${schema.agentJobs.input} || ${JSON.stringify(inputPatch)}::jsonb` })
+        .where(eq(schema.agentJobs.id, job.id))
+        .returning({ input: schema.agentJobs.input });
+      jobInput = updated ? jobInputOf(updated) : { ...jobInput, ...inputPatch };
+      latestJobInput = jobInput;
     };
     const cloudBackgroundBudgetGuardForRun = () =>
       cloudBackgroundTask && cloudBackgroundTask.providerAuthType === "api_key"
@@ -3119,27 +3143,44 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     if (recovery.action === "requeue") {
       console.log(`[JobQueue] re-queuing job ${job.id} (attempt ${recovery.nextRetryCount}/${MAX_RETRIES}) after error: ${msg}`);
       try {
-        const retryInput = await appendWorkerEventToJob({
-          jobId: job.id,
-          agentType: job.agentType,
-          title: job.title,
-          input: recovery.nextInput ?? jobInput,
-          type: "retrying",
-          message: `Retrying after failure: ${msg.slice(0, 160)}`,
-          userVisible: true,
-          progress: { currentStep: `Retrying (${recovery.nextRetryCount}/${MAX_RETRIES})` },
-          retryAttempt: recovery.nextRetryCount,
-          metadata: { error: msg.slice(0, 1000) },
-        }).catch(() => recovery.nextInput ?? jobInput);
-        await db
+        const retryBaseInput = recovery.nextInput ?? jobInput;
+        const retryInput = withWorkerRuntimeEvent(
+          retryBaseInput,
+          buildWorkerRuntimeEvent({
+            type: "retrying",
+            workerType: resolveWorkerType({ agentType: job.agentType, input: retryBaseInput }),
+            message: `Retrying after failure: ${msg.slice(0, 160)}`,
+            userVisible: true,
+            progress: { currentStep: `Retrying (${recovery.nextRetryCount}/${MAX_RETRIES})` },
+            retryAttempt: recovery.nextRetryCount,
+            metadata: { error: msg.slice(0, 1000) },
+          }),
+        );
+        const retryInputPatch = {
+          workerRuntime: retryInput.workerRuntime,
+          workerType: retryInput.workerType,
+          ...(Object.hasOwn(retryInput, "retryCount") ? { retryCount: retryInput.retryCount } : {}),
+          ...(Object.hasOwn(retryInput, "providerThrottleCount")
+            ? { providerThrottleCount: retryInput.providerThrottleCount }
+            : {}),
+        };
+        const [requeued] = await db
           .update(schema.agentJobs)
           .set({
             status: "queued",
             startedAt: null,
             error: recovery.persistedError,
-            input: retryInput,
+            input: sql`${schema.agentJobs.input} || ${JSON.stringify(retryInputPatch)}::jsonb`,
           })
-          .where(eq(schema.agentJobs.id, job.id));
+          .where(and(eq(schema.agentJobs.id, job.id), eq(schema.agentJobs.status, "running")))
+          .returning({ id: schema.agentJobs.id });
+        if (!requeued) {
+          console.log(`[JobQueue] skipped retry for ${job.id} because its status changed`);
+          await db
+            .update(schema.agentJobs)
+            .set({ status: "cancelled", completedAt: new Date() })
+            .where(and(eq(schema.agentJobs.id, job.id), eq(schema.agentJobs.status, "cancelling")));
+        }
       } catch (retryErr) {
         console.error(`[JobQueue] failed to re-queue job ${job.id}:`, retryErr);
         await failJob(job.id, msg, job.userId);
@@ -3185,7 +3226,7 @@ async function recoverStaleJobs(): Promise<void> {
     // Jobs stuck in 'running' when the process died — re-queue them.
     const requeued = await db
       .update(schema.agentJobs)
-      .set({ status: "queued", startedAt: null })
+      .set(staleJobRequeueUpdate())
       .where(eq(schema.agentJobs.status, "running"))
       .returning({ id: schema.agentJobs.id });
     if (requeued.length > 0) {

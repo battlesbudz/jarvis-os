@@ -15,6 +15,7 @@ import {
   shouldAutoResumeResourcePausedJob,
   shouldRecoverStaleResourcePausedJob,
 } from "../voiceRuntimeResourceCore";
+import { cancellationUpdateForAgentJob } from "../jobCancellation";
 import {
   runLocalVoiceRuntimeHarnessTurn,
   ScriptedFakeLocalGemmaProvider,
@@ -50,10 +51,28 @@ function testResourcePauseClassification() {
     ),
     true,
   );
+  const heartbeatPause = { ...resourcePause, heartbeatAt: "2026-07-06T09:00:00.000Z" };
+  assert.equal(
+    shouldRecoverStaleResourcePausedJob(
+      { status: RESOURCE_PAUSED_STATUS, input: { resourcePause: heartbeatPause } } as any,
+      new Date("2026-07-06T10:00:00.000Z"),
+    ),
+    false,
+    "pause recovery uses the heartbeat without moving the original transition",
+  );
   assert.equal(cancellationStatusForAgentJobStatus("queued"), "cancelled");
   assert.equal(cancellationStatusForAgentJobStatus(RESOURCE_PAUSED_STATUS), "cancelled");
   assert.equal(cancellationStatusForAgentJobStatus("running"), "cancelling");
   assert.equal(cancellationStatusForAgentJobStatus("complete"), null);
+  const cancelRequestedAt = new Date("2026-07-06T08:05:00.000Z");
+  const cancellationUpdate = cancellationUpdateForAgentJob("cancelling", cancelRequestedAt);
+  assert.equal(cancellationUpdate.status, "cancelling");
+  assert.ok("input" in cancellationUpdate, "running cancellation atomically merges its request timestamp");
+  const terminalCancellationUpdate = cancellationUpdateForAgentJob("cancelled", cancelRequestedAt);
+  assert.equal(terminalCancellationUpdate.status, "cancelled");
+  assert.ok("completedAt" in terminalCancellationUpdate);
+  assert.equal(terminalCancellationUpdate.completedAt, cancelRequestedAt);
+  assert.ok("input" in terminalCancellationUpdate, "terminal cancellation atomically merges its request timestamp");
   console.log("OK: voice resource scheduler distinguishes resource-paused jobs from user-paused jobs");
 }
 
@@ -138,8 +157,23 @@ function testResourcePausedJobsCountAsActiveDuplicates() {
   );
   assert.match(
     schedulerSource,
+    /message: "Resumed after the local voice session ended\.",\s*now: new Date\(resumedAt\)/,
+    "resource resume worker events should reuse the recorded durable transition timestamp",
+  );
+  assert.match(
+    schedulerSource,
     /withResourcePauseHeartbeat\(job,\s*pausedAt\)/,
     "voice heartbeat should refresh existing voice-resource-paused jobs before stale recovery can requeue them",
+  );
+  assert.match(
+    schedulerSource,
+    /transition:\s*"resource_paused"/,
+    "voice pause should retain a durable transition after a later pause replaces scalar metadata",
+  );
+  assert.match(
+    schedulerSource,
+    /transition:\s*"resource_resumed"/,
+    "voice resume should retain a durable transition after a subsequent pause replaces scalar metadata",
   );
   assert.doesNotMatch(
     schedulerSource,
@@ -148,8 +182,8 @@ function testResourcePausedJobsCountAsActiveDuplicates() {
   );
   assert.match(
     schedulerSource,
-    /resourcePause'->>'pausedAt' = \$\{pause\.pausedAt\}/,
-    "stale recovery should only requeue a job when the stored pausedAt still matches the stale snapshot",
+    /resourcePause'->>'heartbeatAt'[\s\S]*?pause\.heartbeatAt \?\? pause\.pausedAt/,
+    "stale recovery should only requeue a job when the stored heartbeat still matches the stale snapshot",
   );
   assert.match(
     schedulerSource,

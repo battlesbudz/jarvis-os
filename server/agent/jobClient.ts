@@ -13,6 +13,7 @@ import {
   RESOURCE_PAUSED_STATUS,
   isLocalHeavyBackgroundJob,
 } from "./voiceRuntimeResourceCore";
+import { cancellationUpdateForAgentJob } from "./jobCancellation";
 import {
   buildVoiceResourcePausedJobInput,
   isVoiceRuntimeResourceActiveForUser,
@@ -46,6 +47,8 @@ export interface SubmitJobDeps {
   db?: Pick<typeof db, "select" | "insert">;
   /** Duplicate-check function. Defaults to the real findDuplicateJob. */
   findDuplicate?: typeof findDuplicateJob;
+  /** Trusted callers may skip title dedupe after validating a specific retry source. */
+  skipDuplicateCheck?: boolean;
   /**
    * DB insert function. Defaults to the real drizzle insert.
    * Tests can stub this to verify insertion behaviour without a database.
@@ -135,6 +138,8 @@ export interface SubmitJobResult {
    *   - `isDuplicate: true`  → "Already on it!"
    */
   isDuplicate: boolean;
+  /** Actual status assigned to a newly inserted job. */
+  status?: "queued" | typeof RESOURCE_PAUSED_STATUS;
 }
 
 /**
@@ -170,7 +175,7 @@ export async function submitAgentJob(
     !Array.isArray(cloudBackgroundTask);
 
   // ── Deduplication check ────────────────────────────────────────────────────
-  if (!isCloudBackgroundJob) {
+  if (!isCloudBackgroundJob && !deps.skipDuplicateCheck) {
     try {
       const existing = await guardFn(
         input.userId,
@@ -191,10 +196,12 @@ export async function submitAgentJob(
         dupErr,
       );
     }
-  } else {
+  } else if (isCloudBackgroundJob) {
     console.log(
       `[JobQueue] duplicate guard bypassed for approved cloud background job type=${input.agentType} user=${input.userId} title="${input.title.slice(0, 60)}"`,
     );
+  } else {
+    console.log(`[JobQueue] duplicate guard bypassed for validated retry type=${input.agentType} user=${input.userId}`);
   }
 
   // Auto-inject the routed model when the caller has not provided one.
@@ -244,7 +251,7 @@ export async function submitAgentJob(
   console.log(
     `[JobQueue] ${status === RESOURCE_PAUSED_STATUS ? "resource-paused" : "queued"} job ${id} type=${input.agentType} model=${model} user=${input.userId} title="${input.title.slice(0, 60)}"`,
   );
-  return { id, isDuplicate: false };
+  return { id, isDuplicate: false, status };
 }
 
 // ── Cancel-all helper ─────────────────────────────────────────────────────────
@@ -266,9 +273,10 @@ export interface CancelAllResult {
 export async function cancelAllForUser(
   userId: string,
 ): Promise<CancelAllResult> {
+  const cancelledAt = new Date();
   const cancelled = await db
     .update(schema.agentJobs)
-    .set({ status: "cancelled", completedAt: new Date() })
+    .set(cancellationUpdateForAgentJob("cancelled", cancelledAt))
     .where(
       and(
         eq(schema.agentJobs.userId, userId),
@@ -279,7 +287,7 @@ export async function cancelAllForUser(
 
   const cancelling = await db
     .update(schema.agentJobs)
-    .set({ status: "cancelling" })
+    .set(cancellationUpdateForAgentJob("cancelling", cancelledAt))
     .where(
       and(
         eq(schema.agentJobs.userId, userId),

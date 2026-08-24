@@ -14,6 +14,7 @@ export interface VoiceResourcePauseMetadata {
   reason: typeof RESOURCE_PAUSE_REASON;
   pausedBy: "voice_runtime";
   pausedAt: string;
+  heartbeatAt?: string;
   resumedAt?: string;
 }
 
@@ -93,7 +94,7 @@ export function shouldRecoverStaleResourcePausedJob(
 ): boolean {
   const pause = resourcePauseMetadata(job.input);
   if (job.status !== RESOURCE_PAUSED_STATUS || !pause) return false;
-  const pausedAtMs = Date.parse(pause.pausedAt);
+  const pausedAtMs = Date.parse(pause.heartbeatAt ?? pause.pausedAt);
   if (!Number.isFinite(pausedAtMs)) return false;
   return now.getTime() - pausedAtMs >= RESOURCE_PAUSE_STARTUP_RECOVERY_MS;
 }

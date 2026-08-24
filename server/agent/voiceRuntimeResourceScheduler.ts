@@ -95,7 +95,7 @@ export function buildVoiceResourcePausedJobInput(opts: {
       message: "Paused while local voice is active.",
       userVisible: true,
       progress: { currentStep: "Paused for voice stability" },
-      metadata: { reason: RESOURCE_PAUSE_REASON },
+      metadata: { reason: RESOURCE_PAUSE_REASON, transition: "resource_paused" },
     }),
   );
 }
@@ -108,7 +108,7 @@ function withResourcePauseEvent(job: AgentJobRow, pausedAt: string): Record<stri
   });
 }
 
-function withResourcePauseHeartbeat(job: AgentJobRow, pausedAt: string): Record<string, unknown> {
+function withResourcePauseHeartbeat(job: AgentJobRow, heartbeatAt: string): Record<string, unknown> {
   const input = recordFromInput(job.input);
   const pause = resourcePauseMetadata(input);
   return {
@@ -116,7 +116,8 @@ function withResourcePauseHeartbeat(job: AgentJobRow, pausedAt: string): Record<
     resourcePause: {
       reason: RESOURCE_PAUSE_REASON,
       pausedBy: pause?.pausedBy ?? "voice_runtime",
-      pausedAt,
+      pausedAt: pause?.pausedAt ?? heartbeatAt,
+      heartbeatAt,
     } satisfies VoiceResourcePauseMetadata,
   };
 }
@@ -134,9 +135,10 @@ function withResourceResumeEvent(job: AgentJobRow, resumedAt: string): Record<st
       type: "progress",
       workerType,
       message: "Resumed after the local voice session ended.",
+      now: new Date(resumedAt),
       userVisible: true,
       progress: { currentStep: "Resumed" },
-      metadata: { reason: RESOURCE_PAUSE_REASON },
+      metadata: { reason: RESOURCE_PAUSE_REASON, transition: "resource_resumed" },
     }),
   );
 }
@@ -283,7 +285,7 @@ export async function recoverStaleResourcePausedJobsAfterVoice(opts: { now?: Dat
         and(
           eq(schema.agentJobs.id, job.id),
           eq(schema.agentJobs.status, RESOURCE_PAUSED_STATUS),
-          sql`${schema.agentJobs.input}->'resourcePause'->>'pausedAt' = ${pause.pausedAt}`,
+          sql`coalesce(${schema.agentJobs.input}->'resourcePause'->>'heartbeatAt', ${schema.agentJobs.input}->'resourcePause'->>'pausedAt') = ${pause.heartbeatAt ?? pause.pausedAt}`,
         ),
       )
       .returning();

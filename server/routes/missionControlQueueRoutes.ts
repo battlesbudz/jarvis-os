@@ -3,6 +3,7 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import * as schema from "@shared/schema";
 import type { db as dbType } from "../db";
 import { cancellationStatusForAgentJobStatus } from "../agent/voiceRuntimeResourceCore";
+import { cancellationUpdateForAgentJob } from "../agent/jobCancellation";
 
 type Db = typeof dbType;
 
@@ -79,10 +80,18 @@ export function registerMissionControlQueueRoutes(app: Express, deps: MissionCon
       if (!newStatus) {
         return res.status(400).json({ error: "Job is already finished" });
       }
-      await db
+      const [cancelled] = await db
         .update(schema.agentJobs)
-        .set({ status: newStatus, completedAt: newStatus === "cancelled" ? new Date() : undefined })
-        .where(eq(schema.agentJobs.id, id));
+        .set(cancellationUpdateForAgentJob(newStatus))
+        .where(and(
+          eq(schema.agentJobs.id, id),
+          eq(schema.agentJobs.userId, userId),
+          eq(schema.agentJobs.status, job.status),
+        ))
+        .returning({ status: schema.agentJobs.status });
+      if (!cancelled) {
+        return res.status(409).json({ error: "Job status changed before cancellation; refresh and try again" });
+      }
 
       res.json({ ok: true, status: newStatus });
     } catch (err) {

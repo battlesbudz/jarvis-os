@@ -25,6 +25,7 @@ import { registerJarvisObservabilityRoutes } from "./jarvisObservabilityRoutes";
 import { registerJarvisSystemStateRoutes } from "./jarvisSystemStateRoutes";
 import { registerLocalWorkerRoutes } from "./localWorkerRoutes";
 import { registerLiveActionBaselineRoutes } from "./liveActionBaselineRoutes";
+import { registerLiveActionRoutes } from "./liveActionRoutes";
 import { registerMcpRoutes } from "./mcpRoutes";
 import { registerMorningVoiceNoteRoutes } from "./morningVoiceNoteRoutes";
 import { registerNervousSystemWatchRoutes } from "./nervousSystemWatchRoutes";
@@ -95,6 +96,7 @@ export async function registerPostCoachRoutes(app: Express, { openai, authMiddle
   registerIntegrationsStatusRoutes(app);
   registerDiagnosticsRoutes(app);
   registerLiveActionBaselineRoutes(app);
+  registerLiveActionRoutes(app);
   registerLocalWorkerRoutes(app);
   registerMcpRoutes(app, authMiddleware);
   registerVoiceRoutes(app, authMiddleware);
