@@ -107,7 +107,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
         }
 
         const [existingRetry] = await tx
-          .select({ id: schema.agentJobs.id })
+          .select({ id: schema.agentJobs.id, status: schema.agentJobs.status })
           .from(schema.agentJobs)
           .where(and(
             eq(schema.agentJobs.userId, userId),
@@ -115,7 +115,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
           ))
           .orderBy(desc(schema.agentJobs.createdAt))
           .limit(1);
-        if (existingRetry) return { id: existingRetry.id, isDuplicate: true } as const;
+        if (existingRetry) return { id: existingRetry.id, status: existingRetry.status, isDuplicate: true } as const;
 
         const input = job.input && typeof job.input === "object" && !Array.isArray(job.input)
           ? { ...(job.input as Record<string, unknown>) }
@@ -128,7 +128,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
         delete input.retriedAt;
         const { resolveAgentJobLineageKey } = await import("../liveActions/agentJobLineage");
         const { submitAgentJob } = await import("../agent/jobQueue");
-        return submitAgentJob({
+        const submitted = await submitAgentJob({
           userId,
           agentType: job.agentType as any,
           title: job.title,
@@ -140,10 +140,11 @@ export function registerAgentJobMutationRoutes(app: Express): void {
             retriedAt: new Date().toISOString(),
           },
         }, { db: tx, skipDuplicateCheck: true });
+        return { ...submitted, status: "queued" } as const;
       });
       if ("error" in retry) return res.status(retry.statusCode).json({ error: retry.error });
 
-      res.json({ ok: true, jobId: retry.id, isDuplicate: retry.isDuplicate, status: "queued" });
+      res.json({ ok: true, jobId: retry.id, isDuplicate: retry.isDuplicate, status: retry.status });
     } catch (err) {
       console.error("Error retrying agent job:", err);
       res.status(500).json({ error: "Failed to retry job" });

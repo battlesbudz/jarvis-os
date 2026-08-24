@@ -37,6 +37,8 @@ assert.match(mutationRoutes, /retryOfJobId/);
 assert.match(mutationRoutes, /delete input\.resourcePause/);
 assert.match(mutationRoutes, /skipDuplicateCheck: true/);
 assert.match(mutationRoutes, /eq\(schema\.agentJobs\.status, job\.status\)/);
+assert.match(mutationRoutes, /status: existingRetry\.status/);
+assert.match(mutationRoutes, /status: retry\.status/);
 assert.match(cancellation, /agentJobs\.input\} \|\| jsonb_build_object/);
 assert.match(requeue, /jsonb_path_query_array/);
 assert.match(requeue, /requeueHistory/);
