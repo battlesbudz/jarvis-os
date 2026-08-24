@@ -18,7 +18,7 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.json.JSONObject
 import java.util.Locale
 
-class NativeSpeechRecognitionBridge(
+internal class NativeSpeechRecognitionBridge(
     private val reactContext: ReactApplicationContext,
     private val playbackBridge: NativeTalkModePlaybackBridge,
 ) {

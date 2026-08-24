@@ -85,6 +85,19 @@ class TalkModeAudioSessionStateMachineTest {
     }
 
     @Test
+    fun `capture recovery preserves active playback and interruption handling`() {
+        val machine = TalkModeAudioSessionStateMachine()
+        machine.beginSession("app", continuousSupported = true, echoControls = effects)
+        machine.beginPlayback("tts", "Your report is ready")
+
+        assertEquals(TalkModeAudioState.SPEAKING, machine.recover("app", "recovering").state)
+        val recovered = machine.recovered("app", "speaker_and_mic")
+        assertEquals(TalkModeAudioState.SPEAKING, recovered.state)
+        assertEquals("tts", recovered.playbackOwner)
+        assertEquals(TalkModeAudioState.INTERRUPTED, machine.speechStarted("app").state)
+    }
+
+    @Test
     fun `ending releases capture and playback ownership`() {
         val machine = TalkModeAudioSessionStateMachine()
         machine.beginSession("app", continuousSupported = true, echoControls = effects)

@@ -198,7 +198,7 @@ internal class TalkModeAudioSessionStateMachine {
     fun recovered(owner: String, routeState: String): TalkModeAudioSnapshot {
         ensureSession(owner)
         snapshot = snapshot.copy(
-            state = TalkModeAudioState.LISTENING,
+            state = if (snapshot.playbackOwner == null) TalkModeAudioState.LISTENING else TalkModeAudioState.SPEAKING,
             captureOwner = snapshot.captureOwner ?: owner,
             routeState = routeState,
             lastError = null,

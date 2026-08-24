@@ -18,6 +18,7 @@ for (const root of roots) {
   assert.match(session, /committedTranscript/);
   assert.match(session, /isProbablePlaybackEcho/);
   assert.match(session, /TalkModeAudioMode\.TURN_BASED/);
+  assert.match(session, /state = if \(snapshot\.playbackOwner == null\) TalkModeAudioState\.LISTENING else TalkModeAudioState\.SPEAKING/);
   assert.match(session, /AcousticEchoCanceler\.isAvailable/);
   assert.match(session, /NoiseSuppressor\.isAvailable/);
   assert.match(session, /AutomaticGainControl\.isAvailable/);
@@ -40,6 +41,7 @@ assert.equal(
 );
 
 const bridge = fs.readFileSync(roots[0] + "/NativeSpeechRecognitionBridge.kt", "utf8");
+assert.match(bridge, /internal class NativeSpeechRecognitionBridge/);
 assert.match(bridge, /TalkModeAudioSession\.updatePartial/);
 assert.match(bridge, /putBoolean\("committed", false\)/);
 assert.match(bridge, /TalkModeAudioSession\.commitTranscript/);
@@ -59,5 +61,6 @@ assert.match(screen, /normalizedControl === 'stop listening'[\s\S]*?pauseAndroid
 assert.match(screen, /beginAndroidTalkModePlayback\(playbackRouteOwnerId, trimmedText\)/);
 assert.match(screen, /recognizeAndroidSpeechOnce\([\s\S]*?speakAndroidTalkModeText\(playbackRouteOwnerId, trimmedText\)/);
 assert.match(screen, /finishAndroidTalkModePlayback\(playbackRouteOwnerId\)/);
+assert.match(screen, /playbackResult\.status === 'stopped'[\s\S]*?playbackResult\.status === 'ended'[\s\S]*?onError\(\)/);
 
 console.log("Talk Mode Android audio-session contract passed.");

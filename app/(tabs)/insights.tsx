@@ -2102,6 +2102,11 @@ export default function InsightsScreen() {
           }
           if (playbackResult.status === 'done' && isSpeakingRef.current) {
             onPlaybackEnd();
+          } else if (
+            (playbackResult.status === 'stopped' || playbackResult.status === 'ended') &&
+            isSpeakingRef.current
+          ) {
+            onError();
           } else if (playbackResult.status === 'interrupted' && interruptionTranscript) {
             markAssistantSpeechStopped(assistantId);
             onError();
