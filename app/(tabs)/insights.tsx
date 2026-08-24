@@ -2067,6 +2067,8 @@ export default function InsightsScreen() {
         return;
       }
       const playbackRouteOwnerId = `${Date.now()}-${++nativeVoiceRouteSeqRef.current}`;
+      let playbackLifecycleStarted = false;
+      let playbackRejectedByCompetingOwner = false;
       try {
         await acquireAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
         const session = await beginAndroidTalkModePlayback(playbackRouteOwnerId, trimmedText).catch(() => null);
@@ -2074,8 +2076,11 @@ export default function InsightsScreen() {
           session?.state !== 'speaking' ||
           session.playbackOwner !== `react_tts:${playbackRouteOwnerId}`
         ) {
+          playbackRejectedByCompetingOwner = !!session?.playbackOwner &&
+            session.playbackOwner !== `react_tts:${playbackRouteOwnerId}`;
           throw new Error('Talk Mode audio session rejected playback startup.');
         }
+        playbackLifecycleStarted = true;
         const continuousCapture = talkModeRef.current && session?.mode === 'continuous';
         await setAudioModeAsync({ allowsRecording: continuousCapture, playsInSilentMode: true }).catch(() => {});
         setIsTTSLoading(false);
@@ -2170,7 +2175,14 @@ export default function InsightsScreen() {
           }
         }
       } catch (error) {
+        if (!playbackLifecycleStarted) {
+          releaseAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
+        }
         if (abortController.signal.aborted || speakAbortRef.current !== abortController) return;
+        if (playbackRejectedByCompetingOwner) {
+          onError();
+          return;
+        }
         console.warn('[speakText] Continuous Android TTS failed; using turn-based device TTS:', error);
         Speech.speak(trimmedText, {
           rate: 0.96,

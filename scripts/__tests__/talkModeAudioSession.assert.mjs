@@ -84,6 +84,8 @@ assert.match(screen, /ownsCurrentPlayback[\s\S]*?cancelAndroidNativeSpeechRecogn
 assert.match(screen, /recoverableRecognitionFailures < 5[\s\S]*?setTimeout/);
 assert.match(screen, /event\.type === 'echo_rejected'[\s\S]*?current === interruptionPreview/);
 assert.match(screen, /session\?\.state !== 'speaking'[\s\S]*?session\.playbackOwner !== `react_tts:/);
+assert.match(screen, /playbackRejectedByCompetingOwner[\s\S]*?if \(playbackRejectedByCompetingOwner\)[\s\S]*?onError\(\)/);
+assert.match(screen, /if \(!playbackLifecycleStarted\)[\s\S]*?releaseAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)/);
 assert.match(screen, /interruptionPreview = event\.text/);
 assert.match(screen, /current === interruptionPreview \? '' : current/);
 assert.match(screen, /normalizedControl === 'stop talking'[\s\S]*?scheduleTalkModeRecordingStartRef\.current\(400\)/);
