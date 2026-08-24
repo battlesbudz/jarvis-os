@@ -687,7 +687,7 @@ export async function listLiveActionEvents(actionId: string): Promise<LiveAction
     .select()
     .from(schema.liveActionEvents)
     .where(eq(schema.liveActionEvents.actionId, actionId))
-    .orderBy(schema.liveActionEvents.createdAt, schema.liveActionEvents.sourceEventKey);
+    .orderBy(schema.liveActionEvents.sequence);
   return rows.map(rowToEvent);
 }
 

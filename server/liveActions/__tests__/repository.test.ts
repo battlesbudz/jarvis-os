@@ -121,11 +121,11 @@ async function main(): Promise<void> {
       "an overlapping stale reconciliation cannot regress canonical state",
     );
     const completedEvents = await listLiveActionEvents(first.id);
-    const completedSequences = completedEvents.map((event) => event.sequence).sort((a, b) => a - b);
+    const completedSequences = completedEvents.map((event) => event.sequence);
     assert.deepEqual(
       completedSequences,
-      completedSequences.map((_, index) => index + 1),
-      "newly discovered events receive monotonic sequences",
+      [...completedSequences].sort((a, b) => a - b),
+      "detail events are returned in monotonic sequence order after historical backfill",
     );
 
     const retentionProjection = {

@@ -312,8 +312,13 @@ async function jobCancel(userId: string, params: RpcParams) {
   if (!nextStatus) throw new Error(`Job is already ${row.status}`);
   const [updated] = await db.update(schema.agentJobs)
     .set(cancellationUpdateForAgentJob(nextStatus))
-    .where(and(eq(schema.agentJobs.id, jobId), eq(schema.agentJobs.userId, userId)))
+    .where(and(
+      eq(schema.agentJobs.id, jobId),
+      eq(schema.agentJobs.userId, userId),
+      eq(schema.agentJobs.status, row.status),
+    ))
     .returning({ id: schema.agentJobs.id, status: schema.agentJobs.status });
+  if (!updated) throw new Error("Job status changed before cancellation; refresh and try again");
   recordGatewayEvent({
     userId,
     type: "job.cancelled",
@@ -323,7 +328,7 @@ async function jobCancel(userId: string, params: RpcParams) {
     subjectId: jobId,
     metadata: { status: nextStatus },
   }).catch(() => {});
-  return { ok: Boolean(updated), job: updated };
+  return { ok: true, job: updated };
 }
 
 async function daemonPing(userId: string, params: RpcParams) {

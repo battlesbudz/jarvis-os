@@ -373,10 +373,22 @@ export const sessionsCancelTool: AgentTool = {
           label: "sessions_cancel: already finished",
         };
       }
-      await db
+      const [cancelled] = await db
         .update(schema.agentJobs)
         .set(cancellationUpdateForAgentJob(newStatus))
-        .where(eq(schema.agentJobs.id, jobId));
+        .where(and(
+          eq(schema.agentJobs.id, jobId),
+          eq(schema.agentJobs.userId, ctx.userId),
+          eq(schema.agentJobs.status, job.status),
+        ))
+        .returning({ status: schema.agentJobs.status });
+      if (!cancelled) {
+        return {
+          ok: false,
+          content: `Job "${job.title}" changed status before cancellation; refresh and try again.`,
+          label: "sessions_cancel: conflict",
+        };
+      }
 
       const msg =
         newStatus === "cancelled"

@@ -35,6 +35,7 @@ assert.match(mutationRoutes, /pg_advisory_xact_lock/);
 assert.match(mutationRoutes, /retryOfJobId/);
 assert.match(mutationRoutes, /delete input\.resourcePause/);
 assert.match(mutationRoutes, /skipDuplicateCheck: true/);
+assert.match(mutationRoutes, /eq\(schema\.agentJobs\.status, job\.status\)/);
 assert.match(cancellation, /agentJobs\.input\} \|\| jsonb_build_object/);
 assert.match(requeue, /jsonb_path_query_array/);
 assert.match(requeue, /requeueHistory/);
@@ -49,6 +50,7 @@ assert.match(jobQueue, /agentJobs\.input\} \|\| \$\{JSON\.stringify\(inputPatch\
 assert.match(repository, /pass < MAX_RECONCILIATION_PASSES/);
 assert.match(repository, /const terminalPageSize = targetLineages/);
 assert.match(repository, /orderBy\(desc\(schema\.liveActions\.updatedAt\), desc\(schema\.liveActions\.id\)\)/);
+assert.match(repository, /orderBy\(schema\.liveActionEvents\.sequence\)/);
 assert.match(repository, /return false/);
 assert.match(repository, /Math\.fround\(value\)/);
 assert.match(agentJobProjection, /update\(JSON\.stringify\(event\)\)/);
