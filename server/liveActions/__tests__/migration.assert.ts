@@ -12,6 +12,7 @@ const gateway = fs.readFileSync("server/gateway/controlPlane.ts", "utf8");
 const jobQueue = fs.readFileSync("server/agent/jobQueue.ts", "utf8");
 const jobClient = fs.readFileSync("server/agent/jobClient.ts", "utf8");
 const workerRuntimeJobEvents = fs.readFileSync("server/agent/workerRuntimeJobEvents.ts", "utf8");
+const agentApproval = fs.readFileSync("server/agent/agentApproval.ts", "utf8");
 const repository = fs.readFileSync("server/liveActions/repository.ts", "utf8");
 const agentJobProjection = fs.readFileSync("server/liveActions/adapters/agentJob.ts", "utf8");
 const service = fs.readFileSync("server/liveActions/service.ts", "utf8");
@@ -67,6 +68,10 @@ assert.match(jobQueue, /where\(and\(eq\(schema\.agentJobs\.id, job\.id\), eq\(sc
 assert.match(jobQueue, /set\(\{ status: "cancelled", completedAt: new Date\(\) \}\)[\s\S]*eq\(schema\.agentJobs\.status, "cancelling"\)/);
 assert.match(workerRuntimeJobEvents, /workerRuntime: nextInput\.workerRuntime/);
 assert.match(workerRuntimeJobEvents, /agentJobs\.input\} \|\| \$\{JSON\.stringify\(inputPatch\)\}::jsonb/);
+assert.match(workerRuntimeJobEvents, /\.for\("update"\)/);
+assert.match(agentApproval, /db\.transaction\(async \(tx\)/);
+assert.match(agentApproval, /appendWorkerApprovalCheckpointToJob\([\s\S]*\}, tx\)/);
+assert.doesNotMatch(agentApproval, /failed to append worker approval checkpoint/);
 assert.match(repository, /pass < MAX_RECONCILIATION_PASSES/);
 assert.match(repository, /const terminalPageSize = targetLineages/);
 assert.match(repository, /activePendingApprovalPriority/);
