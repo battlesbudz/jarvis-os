@@ -30,6 +30,11 @@ class JarvisDaemonModule(
         private const val IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX = "in_app_voice_playback:"
 
         @Volatile private var activeReactContext: ReactApplicationContext? = null
+        @Volatile private var activeNativeTalkModePlaybackBridge: NativeTalkModePlaybackBridge? = null
+
+        fun stopActiveNativeTalkModePlayback() {
+            activeNativeTalkModePlaybackBridge?.stop()
+        }
 
         fun emitVoiceSessionControl(actionName: String, state: String, confirmationToken: String?): Boolean {
             val context = activeReactContext ?: return false
@@ -54,6 +59,7 @@ class JarvisDaemonModule(
     override fun initialize() {
         super.initialize()
         activeReactContext = reactApplicationContext
+        activeNativeTalkModePlaybackBridge = nativeTalkModePlaybackBridge
     }
 
     override fun invalidate() {
@@ -63,6 +69,9 @@ class JarvisDaemonModule(
         nativeVoicePlaybackOwners.forEach(WearableAudioRouteManager::release)
         nativeVoicePlaybackOwners.clear()
         if (activeReactContext === reactApplicationContext) activeReactContext = null
+        if (activeNativeTalkModePlaybackBridge === nativeTalkModePlaybackBridge) {
+            activeNativeTalkModePlaybackBridge = null
+        }
         super.invalidate()
     }
 

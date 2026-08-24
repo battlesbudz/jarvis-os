@@ -173,6 +173,19 @@ assert.match(
 assert.match(talkMode, /microphone ownership returned to the in-app recognizer/);
 assert.match(outsideVoice, /ACTION_TAKE_CAPTURE/);
 assert.match(outsideVoice, /ownsVoiceCapture/);
+assert.match(
+  outsideVoice,
+  /ACTION_TAKE_CAPTURE[\s\S]*?TalkModeAudioSession\.snapshot\(\)\.playbackOwner != null[\s\S]*?resumeWakeCapture\(\)/,
+);
+assert.match(
+  outsideVoice,
+  /private fun pauseWakeCapture\(\)[\s\S]*?JarvisDaemonModule\.stopActiveNativeTalkModePlayback\(\)/,
+);
+assert.match(
+  outsideVoice,
+  /private fun endSession\(\)[\s\S]*?JarvisDaemonModule\.stopActiveNativeTalkModePlayback\(\)/,
+);
+assert.match(daemonModule, /fun stopActiveNativeTalkModePlayback\(\)/);
 assert.match(outsideVoice, /fun prepareForInAppCapture\(\)/);
 assert.match(
   outsideVoice,

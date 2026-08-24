@@ -273,7 +273,11 @@ class OutsideAppVoiceSessionService : Service() {
                 }
                 ownsVoiceCapture = true
                 TalkModeAudioSession.acquireCapture(this, "outside_app_capture")
-                if (state == OutsideAppVoiceState.LISTENING || state == OutsideAppVoiceState.APPROVAL) {
+                if (
+                    state == OutsideAppVoiceState.LISTENING ||
+                    state == OutsideAppVoiceState.APPROVAL ||
+                    TalkModeAudioSession.snapshot().playbackOwner != null
+                ) {
                     resumeWakeCapture()
                 }
                 startForegroundCompat()
@@ -380,6 +384,7 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private fun pauseWakeCapture() {
+        JarvisDaemonModule.stopActiveNativeTalkModePlayback()
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         WakeWordService.pauseForUserControl()
         TalkModeAudioSession.stopListening()
@@ -436,6 +441,7 @@ class OutsideAppVoiceSessionService : Service() {
         expectedStop = true
         endedSessionBlocksPlayback = true
         ownsVoiceCapture = false
+        JarvisDaemonModule.stopActiveNativeTalkModePlayback()
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         endTalkModeCapture()
         TalkModeAudioSession.end()
