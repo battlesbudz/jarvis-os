@@ -276,7 +276,7 @@ export async function cancelAllForUser(
   const cancelledAt = new Date();
   const cancelled = await db
     .update(schema.agentJobs)
-    .set({ status: "cancelled", completedAt: cancelledAt })
+    .set(cancellationUpdateForAgentJob("cancelled", cancelledAt))
     .where(
       and(
         eq(schema.agentJobs.userId, userId),

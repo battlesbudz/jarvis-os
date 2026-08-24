@@ -68,6 +68,11 @@ function testResourcePauseClassification() {
   const cancellationUpdate = cancellationUpdateForAgentJob("cancelling", cancelRequestedAt);
   assert.equal(cancellationUpdate.status, "cancelling");
   assert.ok("input" in cancellationUpdate, "running cancellation atomically merges its request timestamp");
+  const terminalCancellationUpdate = cancellationUpdateForAgentJob("cancelled", cancelRequestedAt);
+  assert.equal(terminalCancellationUpdate.status, "cancelled");
+  assert.ok("completedAt" in terminalCancellationUpdate);
+  assert.equal(terminalCancellationUpdate.completedAt, cancelRequestedAt);
+  assert.ok("input" in terminalCancellationUpdate, "terminal cancellation atomically merges its request timestamp");
   console.log("OK: voice resource scheduler distinguishes resource-paused jobs from user-paused jobs");
 }
 

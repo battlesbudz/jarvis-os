@@ -10,6 +10,7 @@ const cancellation = fs.readFileSync("server/agent/jobCancellation.ts", "utf8");
 const requeue = fs.readFileSync("server/agent/jobRequeue.ts", "utf8");
 const gateway = fs.readFileSync("server/gateway/controlPlane.ts", "utf8");
 const jobQueue = fs.readFileSync("server/agent/jobQueue.ts", "utf8");
+const jobClient = fs.readFileSync("server/agent/jobClient.ts", "utf8");
 const workerRuntimeJobEvents = fs.readFileSync("server/agent/workerRuntimeJobEvents.ts", "utf8");
 const repository = fs.readFileSync("server/liveActions/repository.ts", "utf8");
 const agentJobProjection = fs.readFileSync("server/liveActions/adapters/agentJob.ts", "utf8");
@@ -47,6 +48,7 @@ assert.doesNotMatch(mutationRoutes, /return \{ \.\.\.submitted, status: "queued"
 assert.match(mutationRoutes, /liveActionRetryValidated: true/);
 assert.match(mutationRoutes, /input\}->>'liveActionRetryValidated' = 'true'/);
 assert.match(cancellation, /agentJobs\.input\} \|\| jsonb_build_object/);
+assert.match(jobClient, /set\(cancellationUpdateForAgentJob\("cancelled", cancelledAt\)\)/);
 assert.match(requeue, /jsonb_path_query_array/);
 assert.match(requeue, /requeueHistory/);
 assert.match(gateway, /\.set\(cancellationUpdateForAgentJob\(nextStatus\)\)/);
