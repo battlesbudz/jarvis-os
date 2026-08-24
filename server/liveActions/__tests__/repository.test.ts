@@ -142,7 +142,7 @@ async function main(): Promise<void> {
       })),
     };
     const retentionAction = await persistAgentJobProjection(retentionProjection);
-    await persistAgentJobProjection({
+    const lateHistoricalProjection = {
       ...retentionProjection,
       events: [{
         sourceEventKey: `${marker}-retention-late-old`,
@@ -152,7 +152,8 @@ async function main(): Promise<void> {
         userVisible: true,
         createdAt: new Date(createdAt.getTime() - 1_000),
       }],
-    });
+    };
+    const afterFirstLateReplay = await persistAgentJobProjection(lateHistoricalProjection);
     const retainedEvents = await listLiveActionEvents(retentionAction.id);
     assert.equal(retainedEvents.length, 200);
     assert.ok(
@@ -163,6 +164,12 @@ async function main(): Promise<void> {
       retainedEvents.map((event) => event.sequence),
       retainedEvents.map((_, index) => index + 1),
       "discarding a late historical event does not disturb assigned sequences",
+    );
+    const afterSecondLateReplay = await persistAgentJobProjection(lateHistoricalProjection);
+    assert.equal(
+      afterSecondLateReplay.version,
+      afterFirstLateReplay.version,
+      "replaying an event outside the retention window does not advance the action version",
     );
     const retainedSequences = new Map(retainedEvents.map((event) => [event.id, event.sequence]));
     await persistAgentJobProjection({

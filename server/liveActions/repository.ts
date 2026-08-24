@@ -235,11 +235,25 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
     if (!row) throw new Error("Live Action projection insert returned no row");
 
     const existingEvents = await tx
-      .select({ sourceEventKey: schema.liveActionEvents.sourceEventKey })
+      .select({
+        sourceEventKey: schema.liveActionEvents.sourceEventKey,
+        createdAt: schema.liveActionEvents.createdAt,
+      })
       .from(schema.liveActionEvents)
-      .where(eq(schema.liveActionEvents.actionId, row.id));
+      .where(eq(schema.liveActionEvents.actionId, row.id))
+      .orderBy(desc(schema.liveActionEvents.createdAt), desc(schema.liveActionEvents.sourceEventKey))
+      .limit(MAX_EVENTS_PER_ACTION);
     const existingKeys = new Set(existingEvents.map((event) => event.sourceEventKey));
-    const newEvents = projection.events.filter((event) => !existingKeys.has(event.sourceEventKey));
+    const retentionBoundary = existingEvents.length === MAX_EVENTS_PER_ACTION
+      ? existingEvents.at(-1)
+      : undefined;
+    const newEvents = projection.events.filter((event) => {
+      if (existingKeys.has(event.sourceEventKey)) return false;
+      if (!retentionBoundary) return true;
+      const timestampDelta = event.createdAt.getTime() - retentionBoundary.createdAt.getTime();
+      return timestampDelta > 0
+        || (timestampDelta === 0 && event.sourceEventKey > retentionBoundary.sourceEventKey);
+    });
     let insertedEventCount = 0;
 
     if (newEvents.length > 0) {
