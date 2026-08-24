@@ -180,7 +180,9 @@ export function projectAgentJob(
 ): AgentJobLiveActionProjection {
   const input = inputOf(job);
   const runtime = getWorkerRuntimeFromInput(input);
-  const checkpoint = runtime?.approvalCheckpoints.at(-1);
+  const checkpoint = runtime?.approvalCheckpoints.findLast((candidate) =>
+    !!candidate.gateId && pendingApprovalGateIds.has(candidate.gateId)
+  ) ?? runtime?.approvalCheckpoints.at(-1);
   const pendingApprovalGateId = checkpoint?.gateId && pendingApprovalGateIds.has(checkpoint.gateId)
     ? checkpoint.gateId
     : undefined;

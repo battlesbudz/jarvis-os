@@ -239,6 +239,21 @@ const secondApprovalRuntime = withWorkerRuntimeEvent(approvalRuntime, buildWorke
   userVisible: true,
   checkpoint: { id: "gate-2", gateId: "gate-2", reason: "Approve second step", requiredFor: "research" },
 }));
+const olderParallelApprovalPending = projectAgentJob(
+  job({ input: secondApprovalRuntime, status: "running", startedAt: now }),
+  new Set(["gate-1"]),
+  undefined,
+  new Map([
+    ["gate-1", { status: "pending", resolvedAt: null }],
+    ["gate-2", { status: "approved", resolvedAt: new Date("2026-08-23T12:02:30.000Z") }],
+  ]),
+);
+assert.equal(olderParallelApprovalPending.status, "waiting_approval");
+assert.equal(olderParallelApprovalPending.attention?.referenceId, "gate-1");
+assert.ok(
+  olderParallelApprovalPending.capabilities.some((capability) => capability.type === "open_approval" && capability.enabled),
+  "an older parallel gate remains actionable after a newer gate resolves",
+);
 const resolvedApprovals = projectAgentJob(
   job({ input: secondApprovalRuntime, status: "running", startedAt: now }),
   new Set(),
