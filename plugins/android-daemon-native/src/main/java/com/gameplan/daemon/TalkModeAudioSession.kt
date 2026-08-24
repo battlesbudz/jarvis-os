@@ -262,7 +262,6 @@ internal class TalkModeAudioSessionStateMachine {
         val playbackWords = normalizedWords(playback)
         if (candidateWords.isEmpty() || playbackWords.isEmpty()) return false
         if (candidateWords.joinToString(" ") == playbackWords.joinToString(" ")) return true
-        if (candidateWords.size < 3) return false
         val matched = candidateWords.count { it in playbackWords }
         return matched.toDouble() / candidateWords.size >= 0.8
     }

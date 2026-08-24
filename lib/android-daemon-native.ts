@@ -442,7 +442,10 @@ export async function recognizeAndroidSpeechOnce(
         finish(() => resolve({ text, alternatives }));
       } else if (eventType === "error") {
         const message = event.message || event.error || "Android on-device speech recognition failed.";
-        finish(() => reject(new Error(message)));
+        const recognitionError = Object.assign(new Error(message), {
+          recoverable: event.recoverable === true,
+        });
+        finish(() => reject(recognitionError));
       } else if (eventType === "cancelled") {
         finish(() => reject(new Error("Android speech recognition was cancelled.")));
       }
@@ -450,7 +453,9 @@ export async function recognizeAndroidSpeechOnce(
 
     timeout = setTimeout(() => {
       cancelAndroidNativeSpeechRecognition().catch(() => {});
-      finish(() => reject(new Error("Android speech recognition timed out.")));
+      finish(() => reject(Object.assign(new Error("Android speech recognition timed out."), {
+        recoverable: true,
+      })));
     }, timeoutMs + 2_000);
 
     startAndroidNativeSpeechRecognition({

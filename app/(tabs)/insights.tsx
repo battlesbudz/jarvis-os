@@ -1112,6 +1112,7 @@ export default function InsightsScreen() {
   const nativeSpeechManualFinishRef = useRef(false);
   const nativeSpeechCancelledRef = useRef(false);
   const startRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const scheduleTalkModeRecordingStartRef = useRef<(delayMs?: number) => void>(() => {});
   const stopRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const stopRecordingSilentlyRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const speakTextRef = useRef<(text: string, assistantId?: string) => void>(() => {});
@@ -1265,6 +1266,8 @@ export default function InsightsScreen() {
       soundRef.current?.remove();
       speakAbortRef.current?.abort();
       if (Platform.OS === 'android') {
+        cancelAndroidNativeSpeechRecognition().catch(() => {});
+        stopAndroidTalkModeSpeech().catch(() => {});
         Speech.stop().catch(() => {});
       }
       if (Platform.OS === 'web') {
@@ -1342,6 +1345,7 @@ export default function InsightsScreen() {
       if (normalizedControl === 'stop talking') {
         stopAndroidTalkModeSpeech().catch(() => {});
         setInput('');
+        scheduleTalkModeRecordingStartRef.current(400);
         return;
       }
       if (normalizedControl === 'stop listening') {
@@ -1892,6 +1896,7 @@ export default function InsightsScreen() {
       startRecordingRef.current();
     }, delayMs);
   }, []);
+  scheduleTalkModeRecordingStartRef.current = scheduleTalkModeRecordingStart;
 
   const abortActiveChatTurn = useCallback(async () => {
     const runId = chatRunIdRef.current;
@@ -2081,6 +2086,15 @@ export default function InsightsScreen() {
                       return;
                     }
                   } catch (error) {
+                    const recoverable = (error as Error & { recoverable?: boolean })?.recoverable === true;
+                    if (
+                      recoverable &&
+                      !playbackFinished &&
+                      !abortController.signal.aborted &&
+                      isSpeakingRef.current
+                    ) {
+                      continue;
+                    }
                     if (!playbackFinished && !abortController.signal.aborted) {
                       console.warn('[voice] continuous interruption monitor fell back to turn-taking:', error);
                     }

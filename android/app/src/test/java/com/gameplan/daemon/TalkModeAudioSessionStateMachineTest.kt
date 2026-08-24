@@ -39,6 +39,21 @@ class TalkModeAudioSessionStateMachineTest {
     }
 
     @Test
+    fun `short fragments of Jarvis playback are rejected as echo`() {
+        val machine = TalkModeAudioSessionStateMachine()
+        machine.beginSession("app", continuousSupported = true, echoControls = effects)
+        machine.beginPlayback("tts", "Your report is ready for review")
+        machine.speechStarted("app")
+
+        assertFalse(machine.commitTranscript("app", "report review"))
+        assertEquals(TalkModeAudioState.SPEAKING, machine.snapshot().state)
+
+        machine.speechStarted("app")
+        assertFalse(machine.commitTranscript("app", "review"))
+        assertEquals(TalkModeAudioState.SPEAKING, machine.snapshot().state)
+    }
+
+    @Test
     fun `content bearing interruption commits and stops obsolete playback`() {
         val machine = TalkModeAudioSessionStateMachine()
         machine.beginSession("app", continuousSupported = true, echoControls = effects)

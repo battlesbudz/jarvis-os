@@ -17,6 +17,7 @@ for (const root of roots) {
   assert.match(session, /partialTranscript/);
   assert.match(session, /committedTranscript/);
   assert.match(session, /isProbablePlaybackEcho/);
+  assert.doesNotMatch(session, /candidateWords\.size < 3/);
   assert.match(session, /TalkModeAudioMode\.TURN_BASED/);
   assert.match(session, /state = if \(snapshot\.playbackOwner == null\) TalkModeAudioState\.LISTENING else TalkModeAudioState\.SPEAKING/);
   assert.match(session, /AcousticEchoCanceler\.isAvailable/);
@@ -53,6 +54,7 @@ assert.match(wrapper, /beginAndroidTalkModePlayback/);
 assert.match(wrapper, /speakAndroidTalkModeText/);
 assert.match(wrapper, /pauseAndroidTalkModeListening/);
 assert.match(wrapper, /endAndroidTalkModeAudioSession/);
+assert.match(wrapper, /recoverable: event\.recoverable === true/);
 
 const screen = fs.readFileSync("app/(tabs)/insights.tsx", "utf8");
 assert.match(screen, /event\.type === 'partial'[\s\S]*?setInput/);
@@ -62,5 +64,8 @@ assert.match(screen, /beginAndroidTalkModePlayback\(playbackRouteOwnerId, trimme
 assert.match(screen, /recognizeAndroidSpeechOnce\([\s\S]*?speakAndroidTalkModeText\(playbackRouteOwnerId, trimmedText\)/);
 assert.match(screen, /finishAndroidTalkModePlayback\(playbackRouteOwnerId\)/);
 assert.match(screen, /playbackResult\.status === 'stopped'[\s\S]*?playbackResult\.status === 'ended'[\s\S]*?onError\(\)/);
+assert.match(screen, /normalizedControl === 'stop talking'[\s\S]*?scheduleTalkModeRecordingStartRef\.current\(400\)/);
+assert.match(screen, /recoverable[\s\S]*?continue;/);
+assert.match(screen, /speakAbortRef\.current\?\.abort\(\)[\s\S]*?cancelAndroidNativeSpeechRecognition\(\)[\s\S]*?stopAndroidTalkModeSpeech\(\)/);
 
 console.log("Talk Mode Android audio-session contract passed.");
