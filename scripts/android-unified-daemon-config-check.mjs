@@ -436,7 +436,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "Deny", source);
   assertIncludes(contents, "TYPE_APPLICATION_OVERLAY", source);
   assertIncludes(contents, "START_NOT_STICKY", source);
-  assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = true)", source);
+  assertIncludes(contents, "OutsideAppVoiceOverlayTapAction.INTERRUPT_AND_LISTEN", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)", source);
   assertIncludes(contents, "WakeWordService.endTalkModeForUserControl()", source);
   assertIncludes(contents, "@Volatile private var state: OutsideAppVoiceState", source);

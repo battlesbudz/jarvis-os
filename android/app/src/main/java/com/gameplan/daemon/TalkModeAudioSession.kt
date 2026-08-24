@@ -80,7 +80,11 @@ internal class TalkModeAudioSessionStateMachine {
         ensureSession(owner)
         snapshot = snapshot.copy(
             captureOwner = owner,
-            state = if (snapshot.playbackOwner == null) TalkModeAudioState.LISTENING else snapshot.state,
+            state = when {
+                snapshot.state == TalkModeAudioState.PAUSED -> TalkModeAudioState.PAUSED
+                snapshot.playbackOwner == null -> TalkModeAudioState.LISTENING
+                else -> snapshot.state
+            },
             lastError = null,
         )
         return snapshot

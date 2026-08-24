@@ -21,6 +21,7 @@ for (const root of roots) {
   assert.doesNotMatch(session, /candidateWords\.count \{ it in playbackWords \}/);
   assert.doesNotMatch(session, /candidateWords\.size < 3/);
   assert.match(session, /snapshot\.state == TalkModeAudioState\.IDLE[\s\S]*?snapshot\.state == TalkModeAudioState\.PAUSED/);
+  assert.match(session, /fun acquireCapture[\s\S]*?snapshot\.state == TalkModeAudioState\.PAUSED -> TalkModeAudioState\.PAUSED/);
   assert.match(session, /snapshot\.playbackOwner != null && snapshot\.playbackOwner != owner/);
   assert.match(session, /TalkModeAudioMode\.TURN_BASED/);
   assert.match(session, /state = if \(snapshot\.playbackOwner == null\) TalkModeAudioState\.LISTENING else TalkModeAudioState\.SPEAKING/);
