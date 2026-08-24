@@ -22,6 +22,7 @@ for (const root of roots) {
   assert.match(session, /TalkModeAudioMode\.TURN_BASED/);
   assert.match(session, /state = if \(snapshot\.playbackOwner == null\) TalkModeAudioState\.LISTENING else TalkModeAudioState\.SPEAKING/);
   assert.match(session, /snapshot\.captureOwner == null -> TalkModeAudioState\.IDLE/);
+  assert.match(session, /modeBeforePlaybackOverride/);
   assert.match(session, /AcousticEchoCanceler\.isAvailable/);
   assert.match(session, /NoiseSuppressor\.isAvailable/);
   assert.match(session, /AutomaticGainControl\.isAvailable/);
@@ -31,6 +32,7 @@ for (const root of roots) {
   assert.match(playback, /stopForInterruption/);
   assert.match(playback, /resumeAfterRejectedInterruption/);
   assert.match(playback, /tts = null[\s\S]*?engine\?\.shutdown\(\)/);
+  assert.match(playback, /if \(initializing\) return[\s\S]*?tts\?\.let/);
 }
 
 assert.equal(

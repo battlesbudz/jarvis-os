@@ -50,6 +50,7 @@ data class TalkModeAudioSnapshot(
 internal class TalkModeAudioSessionStateMachine {
     private var nextSessionId = 0L
     private var snapshot = emptySnapshot()
+    private var modeBeforePlaybackOverride: TalkModeAudioMode? = null
 
     @Synchronized
     fun snapshot(): TalkModeAudioSnapshot = snapshot
@@ -70,6 +71,7 @@ internal class TalkModeAudioSessionStateMachine {
             captureOwner = owner,
             echoControls = echoControls,
         )
+        modeBeforePlaybackOverride = null
         return snapshot
     }
 
@@ -124,8 +126,11 @@ internal class TalkModeAudioSessionStateMachine {
             resumeAfterRejectedInterruption()
             return false
         }
+        val restoredMode = modeBeforePlaybackOverride ?: snapshot.mode
+        modeBeforePlaybackOverride = null
         snapshot = snapshot.copy(
             state = TalkModeAudioState.RESPONDING,
+            mode = restoredMode,
             partialTranscript = "",
             committedTranscript = committed,
             playbackOwner = null,
@@ -149,9 +154,17 @@ internal class TalkModeAudioSessionStateMachine {
             snapshot.state == TalkModeAudioState.PAUSED ||
             snapshot.state == TalkModeAudioState.ENDED
         ) return snapshot
+        val playbackMode = if (turnBased) {
+            if (modeBeforePlaybackOverride == null) modeBeforePlaybackOverride = snapshot.mode
+            TalkModeAudioMode.TURN_BASED
+        } else {
+            val restoredMode = modeBeforePlaybackOverride ?: snapshot.mode
+            modeBeforePlaybackOverride = null
+            restoredMode
+        }
         snapshot = snapshot.copy(
             state = TalkModeAudioState.SPEAKING,
-            mode = if (turnBased) TalkModeAudioMode.TURN_BASED else snapshot.mode,
+            mode = playbackMode,
             playbackOwner = owner,
             playbackText = text.trim(),
             speechSuppressed = false,
@@ -162,12 +175,15 @@ internal class TalkModeAudioSessionStateMachine {
     @Synchronized
     fun finishPlayback(owner: String): TalkModeAudioSnapshot {
         if (snapshot.playbackOwner != owner) return snapshot
+        val restoredMode = modeBeforePlaybackOverride ?: snapshot.mode
+        modeBeforePlaybackOverride = null
         snapshot = snapshot.copy(
             state = when {
                 snapshot.state == TalkModeAudioState.PAUSED -> TalkModeAudioState.PAUSED
                 snapshot.captureOwner == null -> TalkModeAudioState.IDLE
                 else -> TalkModeAudioState.LISTENING
             },
+            mode = restoredMode,
             playbackOwner = null,
             playbackText = "",
             partialTranscript = "",
@@ -177,9 +193,12 @@ internal class TalkModeAudioSessionStateMachine {
 
     @Synchronized
     fun stopTalking(): TalkModeAudioSnapshot {
+        val restoredMode = modeBeforePlaybackOverride ?: snapshot.mode
+        modeBeforePlaybackOverride = null
         snapshot = snapshot.copy(
             state = if (snapshot.captureOwner == null) TalkModeAudioState.IDLE else TalkModeAudioState.LISTENING,
             playbackOwner = null,
+            mode = restoredMode,
             playbackText = "",
             speechSuppressed = true,
         )
@@ -217,6 +236,7 @@ internal class TalkModeAudioSessionStateMachine {
 
     @Synchronized
     fun fallBack(error: String): TalkModeAudioSnapshot {
+        modeBeforePlaybackOverride = null
         snapshot = snapshot.copy(
             state = if (snapshot.playbackOwner == null) TalkModeAudioState.RECOVERING else TalkModeAudioState.SPEAKING,
             mode = TalkModeAudioMode.TURN_BASED,
@@ -227,6 +247,7 @@ internal class TalkModeAudioSessionStateMachine {
 
     @Synchronized
     fun end(): TalkModeAudioSnapshot {
+        modeBeforePlaybackOverride = null
         snapshot = snapshot.copy(
             state = TalkModeAudioState.ENDED,
             captureOwner = null,

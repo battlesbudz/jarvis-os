@@ -81,12 +81,11 @@ internal class NativeTalkModePlaybackBridge(
     }
 
     private fun ensureTts(ready: (TextToSpeech) -> Unit) {
+        // The callback from the in-flight initialization reads the latest owner/text,
+        // so replacement utterances only need to wait for that callback.
+        if (initializing) return
         tts?.let {
             ready(it)
-            return
-        }
-        if (initializing) {
-            mainHandler.postDelayed({ ensureTts(ready) }, 25L)
             return
         }
         initializing = true

@@ -113,6 +113,10 @@ class TalkModeAudioSessionStateMachineTest {
         val playback = machine.beginPlayback("daemon_audio", "Here is the result", turnBased = true)
         assertEquals(TalkModeAudioMode.TURN_BASED, playback.mode)
         assertEquals(TalkModeAudioState.SPEAKING, playback.state)
+
+        val finished = machine.finishPlayback("daemon_audio")
+        assertEquals(TalkModeAudioMode.CONTINUOUS, finished.mode)
+        assertEquals(TalkModeAudioState.LISTENING, finished.state)
     }
 
     @Test
