@@ -298,8 +298,23 @@ internal class TalkModeAudioSessionStateMachine {
         val playbackWords = normalizedWords(playback)
         if (candidateWords.isEmpty() || playbackWords.isEmpty()) return false
         if (candidateWords.joinToString(" ") == playbackWords.joinToString(" ")) return true
-        val matched = candidateWords.count { it in playbackWords }
-        return matched.toDouble() / candidateWords.size >= 0.8
+        // Preserve order when comparing partial recognition. An unordered bag-of-words
+        // match can discard a real barge-in such as "send the timer" when playback
+        // previously said "stop the timer, then send the report".
+        val longestOrderedMatch = IntArray(playbackWords.size + 1)
+        candidateWords.forEach { candidateWord ->
+            var diagonal = 0
+            playbackWords.forEachIndexed { index, playbackWord ->
+                val previous = longestOrderedMatch[index + 1]
+                longestOrderedMatch[index + 1] = if (candidateWord == playbackWord) {
+                    diagonal + 1
+                } else {
+                    maxOf(longestOrderedMatch[index + 1], longestOrderedMatch[index])
+                }
+                diagonal = previous
+            }
+        }
+        return longestOrderedMatch.last().toDouble() / candidateWords.size >= 0.8
     }
 
     private fun normalizedWords(value: String): List<String> = value

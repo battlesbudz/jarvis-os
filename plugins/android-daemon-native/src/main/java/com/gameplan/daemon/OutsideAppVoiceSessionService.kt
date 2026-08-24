@@ -356,6 +356,7 @@ class OutsideAppVoiceSessionService : Service() {
         when (OutsideAppVoiceSessionStateMachine.overlayTapAction(state)) {
             OutsideAppVoiceOverlayTapAction.INTERRUPT_AND_LISTEN -> {
                 ownsVoiceCapture = true
+                JarvisDaemonModule.stopActiveNativeTalkModePlayback()
                 JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = true)
                 sendVoiceSessionEvent("interrupt")
                 setState(OutsideAppVoiceState.LISTENING)

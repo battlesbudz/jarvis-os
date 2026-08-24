@@ -17,6 +17,8 @@ for (const root of roots) {
   assert.match(session, /partialTranscript/);
   assert.match(session, /committedTranscript/);
   assert.match(session, /isProbablePlaybackEcho/);
+  assert.match(session, /longestOrderedMatch/);
+  assert.doesNotMatch(session, /candidateWords\.count \{ it in playbackWords \}/);
   assert.doesNotMatch(session, /candidateWords\.size < 3/);
   assert.match(session, /snapshot\.state == TalkModeAudioState\.IDLE[\s\S]*?snapshot\.state == TalkModeAudioState\.PAUSED/);
   assert.match(session, /TalkModeAudioMode\.TURN_BASED/);

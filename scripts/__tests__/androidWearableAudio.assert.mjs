@@ -185,6 +185,10 @@ assert.match(
   outsideVoice,
   /private fun endSession\(\)[\s\S]*?JarvisDaemonModule\.stopActiveNativeTalkModePlayback\(\)/,
 );
+assert.match(
+  outsideVoice,
+  /OutsideAppVoiceOverlayTapAction\.INTERRUPT_AND_LISTEN[\s\S]*?JarvisDaemonModule\.stopActiveNativeTalkModePlayback\(\)/,
+);
 assert.match(daemonModule, /fun stopActiveNativeTalkModePlayback\(\)/);
 assert.match(outsideVoice, /fun prepareForInAppCapture\(\)/);
 assert.match(
