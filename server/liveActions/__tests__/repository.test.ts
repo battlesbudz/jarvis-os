@@ -665,6 +665,35 @@ async function main(): Promise<void> {
       "status-filtered polling backfills after a full stale window leaves the result",
     );
 
+    const cappedWindowProjectId = `${marker}-capped-window-project`;
+    const cappedWindowJobs = await db.insert(schema.agentJobs).values(Array.from({ length: 11 }, (_, index) => ({
+      id: `${marker}-capped-window-${index}`,
+      userId,
+      agentType: "research",
+      title: `Capped stale window ${index}`,
+      prompt: "Complete before a bounded filtered poll",
+      input: { projectId: cappedWindowProjectId },
+      status: "running",
+      createdAt: new Date(createdAt.getTime() + index * 1_000),
+      startedAt: new Date(createdAt.getTime() + index * 1_000),
+    }))).returning();
+    for (const cappedWindowJob of cappedWindowJobs) {
+      await persistAgentJobProjection(projectAgentJob(cappedWindowJob));
+    }
+    await db.update(schema.agentJobs).set({ status: "complete", completedAt: new Date() })
+      .where(inArray(schema.agentJobs.id, cappedWindowJobs.map((job) => job.id)));
+    const cappedSnapshot = await liveActionReadService.getSnapshot({
+      userId,
+      status: "running",
+      projectId: cappedWindowProjectId,
+      limit: 1,
+    });
+    assert.equal(
+      cappedSnapshot.actions.length,
+      0,
+      "a bounded reconciliation omits its unreconciled window instead of returning stale status",
+    );
+
     const oldCreatedAt = new Date(createdAt.getTime() - 31 * 24 * 60 * 60 * 1_000);
     const [oldJob] = await db.insert(schema.agentJobs).values({
       id: `${marker}-old-job`,

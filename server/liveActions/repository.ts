@@ -621,12 +621,13 @@ export async function reconcileAgentJobsForUser(userId: string, opts: {
   status?: LiveActionStatus;
   projectId?: string;
   limit?: number;
-} = {}): Promise<void> {
+} = {}): Promise<boolean> {
   for (let pass = 0; pass < MAX_RECONCILIATION_PASSES; pass += 1) {
-    if (await reconcileAgentJobsForUserPass(userId, opts)) break;
+    if (await reconcileAgentJobsForUserPass(userId, opts)) return true;
     // A refreshed projection left or moved within the requested window. Refill
     // from the next bounded page without letting concurrent updates starve reads.
   }
+  return false;
 }
 
 export async function listLiveActionsForUser(opts: {

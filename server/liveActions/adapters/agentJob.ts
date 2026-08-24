@@ -109,11 +109,14 @@ function canonicalEvent(job: AgentJobRow, status: LiveActionStatus, input: Recor
     ? input.resourcePause as Record<string, unknown>
     : null;
   const requeuedAt = sourceStatus === "queued" ? dateValue(input.requeuedAt) : null;
+  const automaticRetryAt = sourceStatus === "queued" && !requeuedAt
+    ? dateValue(getWorkerRuntimeFromInput(input)?.events.findLast((event) => event.type === "retrying")?.createdAt)
+    : null;
   const at = sourceStatus === "cancelling"
     ? dateValue(input.cancelRequestedAt) ?? job.startedAt ?? job.createdAt
     : sourceStatus === "resource_paused"
       ? dateValue(pause?.pausedAt) ?? job.createdAt
-      : requeuedAt ?? job.completedAt ?? job.startedAt ?? job.createdAt;
+      : requeuedAt ?? automaticRetryAt ?? job.completedAt ?? job.startedAt ?? job.createdAt;
   const sourceEventKey = sourceStatus === "cancelling"
     ? `job:${job.id}:cancel_requested:${at.toISOString()}`
     : requeuedAt
@@ -220,6 +223,18 @@ export function projectAgentJob(
       createdAt: new Date(event.createdAt),
     }))
     .filter((event) => !Number.isNaN(event.createdAt.getTime()));
+  const automaticRetryQueuedEvents = (runtime?.events ?? [])
+    .filter((event) => event.userVisible && event.type === "retrying")
+    .map((event): ProjectedLiveActionEvent => ({
+      sourceEventKey: `${stableWorkerEventKey(job.id, event)}:queued`,
+      type: "action.queued",
+      message: "Job queued for retry",
+      safeMetadata: sanitizeLiveActionMetadata({ workerType: event.workerType, retryAttempt: event.retryAttempt }),
+      userVisible: true,
+      createdAt: new Date(event.createdAt),
+    }))
+    .filter((event) => !Number.isNaN(event.createdAt.getTime()));
+  const projectedWorkerEvents = [...workerEvents, ...automaticRetryQueuedEvents];
   const rawSourceLineageKey = typeof input.retryOfJobId === "string"
     ? typeof input.liveActionLineageKey === "string" ? input.liveActionLineageKey : input.retryOfJobId
     : job.id;
@@ -227,9 +242,10 @@ export function projectAgentJob(
   const errorSummary = sanitizeLiveActionText(job.error);
   const fallbackEvent = canonicalEvent(job, status, input);
   const isRequeue = job.status === "queued" && !!dateValue(input.requeuedAt);
-  const baseEvents = workerEvents.some((event) => event.type === fallbackEvent.type) && !isRequeue
-    ? workerEvents
-    : [...workerEvents, fallbackEvent];
+  const baseEvents = projectedWorkerEvents.some((event) => event.type === fallbackEvent.type
+      && event.createdAt.getTime() === fallbackEvent.createdAt.getTime())
+    ? projectedWorkerEvents
+    : [...projectedWorkerEvents, fallbackEvent];
   const requeuedAt = dateValue(input.requeuedAt);
   const historicalRequeueEvents = Array.isArray(input.requeueHistory)
     ? input.requeueHistory.flatMap((value) => {

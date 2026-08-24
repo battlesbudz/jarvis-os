@@ -19,18 +19,22 @@ export interface LiveActionReadService {
 
 export const liveActionReadService: LiveActionReadService = {
   async getSnapshot(input) {
-    await reconcileAgentJobsForUser(input.userId, { status: input.status, projectId: input.projectId, limit: input.limit });
+    const fullyReconciled = await reconcileAgentJobsForUser(input.userId, {
+      status: input.status,
+      projectId: input.projectId,
+      limit: input.limit,
+    });
     return LiveActionSnapshotSchema.parse({
       schemaVersion: 1,
       generatedAt: new Date().toISOString(),
-      actions: await listLiveActionsForUser(input),
+      actions: fullyReconciled ? await listLiveActionsForUser(input) : [],
     });
   },
 
   async getDetail(userId, actionId) {
     const sourceLineageKey = await getLiveActionLineageForUser(userId, actionId);
     if (!sourceLineageKey) return null;
-    await reconcileAgentJobsForUser(userId, { sourceLineageKey });
+    if (!await reconcileAgentJobsForUser(userId, { sourceLineageKey })) return null;
     const action = await getLiveActionForUser(userId, actionId);
     if (!action) return null;
     return LiveActionDetailSchema.parse({

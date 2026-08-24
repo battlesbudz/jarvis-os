@@ -137,6 +137,35 @@ assert.equal(
   2,
   "same-millisecond worker events retain distinct full-payload identities",
 );
+const automaticRetryAt = new Date("2026-08-23T12:01:45.000Z");
+const automaticRetryRuntime = withWorkerRuntimeEvent(
+  job().input as Record<string, unknown>,
+  buildWorkerRuntimeEvent({
+    type: "retrying",
+    workerType: "research",
+    message: "Retrying after failure",
+    now: automaticRetryAt,
+    userVisible: true,
+    progress: { currentStep: "Retrying", percent: 25 },
+    retryAttempt: 1,
+  }),
+);
+const queuedAutomaticRetry = projectAgentJob(job({ input: automaticRetryRuntime, status: "queued" }));
+assert.equal(
+  queuedAutomaticRetry.events.filter((event) => event.type === "action.queued").length,
+  2,
+  "an automatic retry records its queue re-entry in addition to the initial queue",
+);
+const startedAutomaticRetry = projectAgentJob(job({
+  input: automaticRetryRuntime,
+  status: "running",
+  startedAt: new Date("2026-08-23T12:02:00.000Z"),
+}));
+assert.equal(
+  startedAutomaticRetry.events.filter((event) => event.message === "Job queued for retry").length,
+  1,
+  "automatic retry queue history survives after the next attempt starts",
+);
 const secondApprovalRuntime = withWorkerRuntimeEvent(approvalRuntime, buildWorkerRuntimeEvent({
   type: "approval_required",
   workerType: "research",
