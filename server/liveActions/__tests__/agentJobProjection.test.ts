@@ -206,6 +206,23 @@ assert.ok(
 );
 assert.equal(failedWorkflowStep.error?.retryEligible, false);
 
+const completedAt = new Date("2026-08-23T12:02:45.000Z");
+const completedWithoutRuntime = projectAgentJob(job({
+  input: {},
+  status: "complete",
+  completedAt,
+}));
+const deliveredWithoutRuntime = projectAgentJob(job({
+  input: {},
+  status: "delivered",
+  completedAt,
+}));
+assert.equal(
+  completedWithoutRuntime.events.at(-1)?.sourceEventKey,
+  deliveredWithoutRuntime.events.at(-1)?.sourceEventKey,
+  "completion and delivery reuse one success-transition identity",
+);
+
 const retry = projectAgentJob(job({
   id: "job-2",
   input: {
