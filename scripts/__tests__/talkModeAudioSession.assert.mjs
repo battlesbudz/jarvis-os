@@ -23,6 +23,8 @@ for (const root of roots) {
   assert.match(session, /state = if \(snapshot\.playbackOwner == null\) TalkModeAudioState\.LISTENING else TalkModeAudioState\.SPEAKING/);
   assert.match(session, /snapshot\.captureOwner == null -> TalkModeAudioState\.IDLE/);
   assert.match(session, /modeBeforePlaybackOverride/);
+  assert.match(session, /fun recover[\s\S]*?TalkModeAudioState\.IDLE \|\| snapshot\.state == TalkModeAudioState\.ENDED\) return snapshot/);
+  assert.match(session, /fun recovered[\s\S]*?TalkModeAudioState\.IDLE \|\| snapshot\.state == TalkModeAudioState\.ENDED\) return snapshot/);
   assert.match(session, /AcousticEchoCanceler\.isAvailable/);
   assert.match(session, /NoiseSuppressor\.isAvailable/);
   assert.match(session, /AutomaticGainControl\.isAvailable/);

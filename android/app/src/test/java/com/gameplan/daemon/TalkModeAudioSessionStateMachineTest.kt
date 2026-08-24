@@ -19,6 +19,17 @@ class TalkModeAudioSessionStateMachineTest {
     }
 
     @Test
+    fun `generic route updates cannot create a Talk Mode session`() {
+        val machine = TalkModeAudioSessionStateMachine()
+
+        assertEquals(TalkModeAudioState.IDLE, machine.recover("route", "failed").state)
+        val unchanged = machine.recovered("route", "phone_fallback")
+        assertEquals(TalkModeAudioState.IDLE, unchanged.state)
+        assertEquals(0L, unchanged.sessionId)
+        assertNull(unchanged.captureOwner)
+    }
+
+    @Test
     fun `partial transcript remains transient until commit`() {
         val machine = TalkModeAudioSessionStateMachine()
         machine.beginSession("app", continuousSupported = true, echoControls = effects)
