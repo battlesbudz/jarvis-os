@@ -49,6 +49,13 @@ internal class NativeSpeechRecognitionBridge(
                 val timeoutMs = options.optLong("timeoutMs", DEFAULT_TIMEOUT_MS).coerceAtLeast(5_000L)
                 val takeInAppCapture = options.optBoolean("takeInAppCapture", false)
                 val currentSession = TalkModeAudioSession.snapshot()
+                if (currentSession.state == TalkModeAudioState.PAUSED) {
+                    promise.reject(
+                        "E_NATIVE_STT_PAUSED",
+                        "Talk Mode listening is paused. Resume listening before starting recognition.",
+                    )
+                    return@runOnMain
+                }
                 val participatesInTalkMode = currentSession.state != TalkModeAudioState.IDLE &&
                     currentSession.state != TalkModeAudioState.ENDED
 
