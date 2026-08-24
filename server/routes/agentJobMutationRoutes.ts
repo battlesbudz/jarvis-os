@@ -143,7 +143,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
             retriedAt: new Date().toISOString(),
           },
         }, { db: tx, skipDuplicateCheck: true });
-        return { ...submitted, status: "queued" } as const;
+        return submitted;
       });
       if ("error" in retry) return res.status(retry.statusCode).json({ error: retry.error });
 

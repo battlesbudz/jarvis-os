@@ -42,6 +42,8 @@ assert.match(mutationRoutes, /skipDuplicateCheck: true/);
 assert.match(mutationRoutes, /eq\(schema\.agentJobs\.status, job\.status\)/);
 assert.match(mutationRoutes, /status: existingRetry\.status/);
 assert.match(mutationRoutes, /status: retry\.status/);
+assert.match(mutationRoutes, /return submitted;/);
+assert.doesNotMatch(mutationRoutes, /return \{ \.\.\.submitted, status: "queued" \}/);
 assert.match(mutationRoutes, /liveActionRetryValidated: true/);
 assert.match(mutationRoutes, /input\}->>'liveActionRetryValidated' = 'true'/);
 assert.match(cancellation, /agentJobs\.input\} \|\| jsonb_build_object/);

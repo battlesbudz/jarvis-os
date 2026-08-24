@@ -138,6 +138,8 @@ export interface SubmitJobResult {
    *   - `isDuplicate: true`  → "Already on it!"
    */
   isDuplicate: boolean;
+  /** Actual status assigned to a newly inserted job. */
+  status?: "queued" | typeof RESOURCE_PAUSED_STATUS;
 }
 
 /**
@@ -249,7 +251,7 @@ export async function submitAgentJob(
   console.log(
     `[JobQueue] ${status === RESOURCE_PAUSED_STATUS ? "resource-paused" : "queued"} job ${id} type=${input.agentType} model=${model} user=${input.userId} title="${input.title.slice(0, 60)}"`,
   );
-  return { id, isDuplicate: false };
+  return { id, isDuplicate: false, status };
 }
 
 // ── Cancel-all helper ─────────────────────────────────────────────────────────
