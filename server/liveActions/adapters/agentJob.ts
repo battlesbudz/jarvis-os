@@ -156,7 +156,7 @@ function isWorkflowOwned(job: AgentJobRow): boolean {
 
 function capabilities(job: AgentJobRow): LiveActionControlCapability[] {
   const result: LiveActionControlCapability[] = [];
-  if (job.status === "queued") {
+  if (job.status === "queued" || job.status === "resource_paused") {
     result.push({
       type: "cancel",
       enabled: true,

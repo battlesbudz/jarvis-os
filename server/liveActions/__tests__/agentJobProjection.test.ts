@@ -91,6 +91,11 @@ assert.ok(queued.events.every((event) => event.userVisible));
 assert.equal(queued.events.filter((event) => event.type === "action.queued").length, 1);
 assert.ok(queued.capabilities.some((capability) => capability.type === "cancel" && capability.enabled));
 assert.ok(
+  projectAgentJob(job({ status: "resource_paused" })).capabilities
+    .some((capability) => capability.type === "cancel" && capability.enabled),
+  "resource-paused jobs expose their supported immediate cancellation",
+);
+assert.ok(
   !projectAgentJob(job({ status: "running", startedAt: now })).capabilities
     .some((capability) => capability.type === "cancel"),
   "running jobs do not advertise cancellation until workers can honor it",

@@ -3131,23 +3131,27 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     if (recovery.action === "requeue") {
       console.log(`[JobQueue] re-queuing job ${job.id} (attempt ${recovery.nextRetryCount}/${MAX_RETRIES}) after error: ${msg}`);
       try {
-        const retryInput = await appendWorkerEventToJob({
-          jobId: job.id,
-          agentType: job.agentType,
-          title: job.title,
-          input: recovery.nextInput ?? jobInput,
-          type: "retrying",
-          message: `Retrying after failure: ${msg.slice(0, 160)}`,
-          userVisible: true,
-          progress: { currentStep: `Retrying (${recovery.nextRetryCount}/${MAX_RETRIES})` },
-          retryAttempt: recovery.nextRetryCount,
-          metadata: { error: msg.slice(0, 1000) },
-        }).catch(() => recovery.nextInput ?? jobInput);
-        const retryInputPatch = { ...retryInput };
-        delete retryInputPatch.requeuedAt;
-        delete retryInputPatch.requeueHistory;
-        delete retryInputPatch.cancelRequestedAt;
-        delete retryInputPatch.resourcePause;
+        const retryBaseInput = recovery.nextInput ?? jobInput;
+        const retryInput = withWorkerRuntimeEvent(
+          retryBaseInput,
+          buildWorkerRuntimeEvent({
+            type: "retrying",
+            workerType: resolveWorkerType({ agentType: job.agentType, input: retryBaseInput }),
+            message: `Retrying after failure: ${msg.slice(0, 160)}`,
+            userVisible: true,
+            progress: { currentStep: `Retrying (${recovery.nextRetryCount}/${MAX_RETRIES})` },
+            retryAttempt: recovery.nextRetryCount,
+            metadata: { error: msg.slice(0, 1000) },
+          }),
+        );
+        const retryInputPatch = {
+          workerRuntime: retryInput.workerRuntime,
+          workerType: retryInput.workerType,
+          ...(Object.hasOwn(retryInput, "retryCount") ? { retryCount: retryInput.retryCount } : {}),
+          ...(Object.hasOwn(retryInput, "providerThrottleCount")
+            ? { providerThrottleCount: retryInput.providerThrottleCount }
+            : {}),
+        };
         const [requeued] = await db
           .update(schema.agentJobs)
           .set({
