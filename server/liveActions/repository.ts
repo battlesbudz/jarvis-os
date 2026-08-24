@@ -484,6 +484,7 @@ async function reconcileAgentJobsForUserPass(userId: string, opts: {
     }
   }
   const retainedJobs: Array<typeof schema.agentJobs.$inferSelect> = [];
+  const terminalPageSize = targetLineages;
   const sourceUpdatedAt = sql<Date>`greatest(${schema.agentJobs.createdAt}, coalesce(${schema.agentJobs.completedAt}, ${schema.agentJobs.createdAt}))`;
   let sourceCursor: { id: string; updatedAt: Date } | undefined;
   do {
@@ -500,9 +501,9 @@ async function reconcileAgentJobsForUserPass(userId: string, opts: {
         lt(sourceUpdatedAt, sourceCursor.updatedAt),
         and(eq(sourceUpdatedAt, sourceCursor.updatedAt), lt(schema.agentJobs.id, sourceCursor.id)),
       )!] : []),
-    )).orderBy(desc(sourceUpdatedAt), desc(schema.agentJobs.id)).limit(500);
+    )).orderBy(desc(sourceUpdatedAt), desc(schema.agentJobs.id)).limit(terminalPageSize);
     retainedJobs.push(...page.map((entry) => entry.job));
-    if (page.length < 500) break;
+    if (page.length < terminalPageSize) break;
     const retainedTerminalJobs = retainedJobs.filter((job) => !ACTIVE_AGENT_JOB_STATUSES.includes(job.status));
     const discoveredFamily = await loadAgentJobRetryFamily(
       userId,
