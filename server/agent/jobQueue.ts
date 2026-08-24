@@ -1742,11 +1742,11 @@ Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`
 
       /** Persist progress state into agent_jobs.input (merge, not replace). */
       const persistProgress = async (updates: Record<string, unknown>): Promise<void> => {
-        const merged = { ...jobInput, ...updates };
-        await db.update(schema.agentJobs)
-          .set({ input: merged })
-          .where(eq(schema.agentJobs.id, job.id));
-        Object.assign(jobInput, updates);
+        const [updated] = await db.update(schema.agentJobs)
+          .set({ input: sql`${schema.agentJobs.input} || ${JSON.stringify(updates)}::jsonb` })
+          .where(eq(schema.agentJobs.id, job.id))
+          .returning({ input: schema.agentJobs.input });
+        jobInput = updated ? jobInputOf(updated) : { ...jobInput, ...updates };
       };
 
       /** Fire a brief progress notification to the origin channel. */
@@ -2790,12 +2790,15 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
     let cloudBackgroundEstimatedSpentUsd = cloudBackgroundEstimatedSpendOf(jobInput);
     const persistCloudBackgroundEstimatedSpend = async (spentUsd: number) => {
       cloudBackgroundEstimatedSpentUsd = Math.round(Math.max(0, spentUsd) * 100) / 100;
-      jobInput = withCloudBackgroundEstimatedSpend(jobInput, cloudBackgroundEstimatedSpentUsd);
-      latestJobInput = jobInput;
-      await db
+      const spendInput = withCloudBackgroundEstimatedSpend(jobInput, cloudBackgroundEstimatedSpentUsd);
+      const inputPatch = { cloudBackgroundTask: spendInput.cloudBackgroundTask };
+      const [updated] = await db
         .update(schema.agentJobs)
-        .set({ input: jobInput })
-        .where(eq(schema.agentJobs.id, job.id));
+        .set({ input: sql`${schema.agentJobs.input} || ${JSON.stringify(inputPatch)}::jsonb` })
+        .where(eq(schema.agentJobs.id, job.id))
+        .returning({ input: schema.agentJobs.input });
+      jobInput = updated ? jobInputOf(updated) : { ...jobInput, ...inputPatch };
+      latestJobInput = jobInput;
     };
     const cloudBackgroundBudgetGuardForRun = () =>
       cloudBackgroundTask && cloudBackgroundTask.providerAuthType === "api_key"
@@ -3140,15 +3143,24 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           retryAttempt: recovery.nextRetryCount,
           metadata: { error: msg.slice(0, 1000) },
         }).catch(() => recovery.nextInput ?? jobInput);
-        await db
+        const retryInputPatch = { ...retryInput };
+        delete retryInputPatch.requeuedAt;
+        delete retryInputPatch.requeueHistory;
+        delete retryInputPatch.cancelRequestedAt;
+        delete retryInputPatch.resourcePause;
+        const [requeued] = await db
           .update(schema.agentJobs)
           .set({
             status: "queued",
             startedAt: null,
             error: recovery.persistedError,
-            input: retryInput,
+            input: sql`${schema.agentJobs.input} || ${JSON.stringify(retryInputPatch)}::jsonb`,
           })
-          .where(eq(schema.agentJobs.id, job.id));
+          .where(and(eq(schema.agentJobs.id, job.id), eq(schema.agentJobs.status, "running")))
+          .returning({ id: schema.agentJobs.id });
+        if (!requeued) {
+          console.log(`[JobQueue] skipped retry for ${job.id} because its status changed`);
+        }
       } catch (retryErr) {
         console.error(`[JobQueue] failed to re-queue job ${job.id}:`, retryErr);
         await failJob(job.id, msg, job.userId);
