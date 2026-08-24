@@ -91,5 +91,6 @@ const opHandler = fs.readFileSync(`${roots[0]}/OpHandler.kt`, "utf8");
 assert.match(opHandler, /beginTurnBasedPlayback\("daemon_audio"/);
 assert.match(opHandler, /currentPlayer \?: run[\s\S]*?playbackOwner == "daemon_audio"[\s\S]*?TalkModeAudioSession\.stopTalking\(\)/);
 assert.match(opHandler, /@Synchronized\s+fun startPlayback[\s\S]*?beginTurnBasedPlayback\("daemon_audio"[\s\S]*?session\.playbackOwner != "daemon_audio"[\s\S]*?player\.start\(\)/);
+assert.match(opHandler, /existingOwner != null && existingOwner != "daemon_audio"/);
 
 console.log("Talk Mode Android audio-session contract passed.");

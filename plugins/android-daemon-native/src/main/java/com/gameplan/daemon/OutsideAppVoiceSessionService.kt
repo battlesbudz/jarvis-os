@@ -319,7 +319,10 @@ class OutsideAppVoiceSessionService : Service() {
 
     override fun onDestroy() {
         if (!expectedStop && sessionActive && state != OutsideAppVoiceState.IDLE) {
+            JarvisDaemonModule.stopActiveNativeTalkModePlayback()
+            JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
             endTalkModeCapture()
+            TalkModeAudioSession.end()
             sendVoiceSessionEvent("crash")
             endedSessionBlocksPlayback = true
         }

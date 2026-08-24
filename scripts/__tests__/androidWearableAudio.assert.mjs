@@ -172,6 +172,7 @@ assert.match(
 );
 assert.match(talkMode, /microphone ownership returned to the in-app recognizer/);
 assert.match(outsideVoice, /ACTION_TAKE_CAPTURE/);
+assert.match(outsideVoice, /override fun onDestroy\(\)[\s\S]*?stopActiveNativeTalkModePlayback\(\)[\s\S]*?stopActivePlayback\(rearmTalkMode = false\)[\s\S]*?TalkModeAudioSession\.end\(\)/);
 assert.match(outsideVoice, /ownsVoiceCapture/);
 assert.match(
   outsideVoice,

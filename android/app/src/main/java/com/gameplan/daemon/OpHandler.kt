@@ -43,6 +43,12 @@ object JarvisVoicePlaybackController {
     @Synchronized
     fun startPlayback(player: android.media.MediaPlayer, file: File, spokenText: String): Boolean {
         stopActivePlayback(rearmTalkMode = false)
+        val existingOwner = TalkModeAudioSession.snapshot().playbackOwner
+        if (existingOwner != null && existingOwner != "daemon_audio") {
+            releasePlayer(player)
+            file.delete()
+            return false
+        }
         currentPlayer = player
         currentFile = file
         val session = TalkModeAudioSession.beginTurnBasedPlayback("daemon_audio", spokenText)
