@@ -30,6 +30,7 @@ internal class NativeTalkModePlaybackBridge(
     fun speak(ownerId: String, text: String, promise: Promise) {
         runOnMain {
             if (consumeSuppression(ownerId)) {
+                TalkModeAudioSession.finishPlayback(ownerId)
                 promise.resolve(Arguments.createMap().apply {
                     putString("status", "stopped")
                     putInt("acknowledgedOffset", 0)

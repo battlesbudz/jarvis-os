@@ -44,7 +44,7 @@ for (const root of roots) {
   assert.match(playback, /if \(initializing\) return[\s\S]*?tts\?\.let/);
   assert.match(playback, /ensureTts \{ engine -> if \(!tentativeInterruption\) speakRemaining\(engine\) \}/);
   assert.match(playback, /session\.playbackOwner != ownerId \|\| session\.state != TalkModeAudioState\.SPEAKING/);
-  assert.match(playback, /consumeSuppression\(ownerId\)[\s\S]*?putString\("status", "stopped"\)/);
+  assert.match(playback, /consumeSuppression\(ownerId\)[\s\S]*?TalkModeAudioSession\.finishPlayback\(ownerId\)[\s\S]*?putString\("status", "stopped"\)/);
   assert.match(playback, /status != "interrupted"[\s\S]*?playbackOwner == completedOwner[\s\S]*?stopTalking\(\)/);
 }
 
