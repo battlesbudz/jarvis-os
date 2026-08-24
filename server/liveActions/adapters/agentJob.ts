@@ -156,11 +156,10 @@ function isWorkflowOwned(job: AgentJobRow): boolean {
 
 function capabilities(job: AgentJobRow): LiveActionControlCapability[] {
   const result: LiveActionControlCapability[] = [];
-  if (["queued", "running", "resource_paused", "cancelling"].includes(job.status)) {
+  if (job.status === "queued") {
     result.push({
       type: "cancel",
-      enabled: job.status !== "cancelling",
-      disabledReason: job.status === "cancelling" ? "Cancellation is already pending" : undefined,
+      enabled: true,
       targetRoute: `/api/agent-jobs/${job.id}/cancel`,
     });
   }

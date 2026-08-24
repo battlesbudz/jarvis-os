@@ -51,6 +51,7 @@ assert.match(repository, /const terminalPageSize = targetLineages/);
 assert.match(repository, /return false/);
 assert.match(repository, /Math\.fround\(value\)/);
 assert.match(agentJobProjection, /update\(JSON\.stringify\(event\)\)/);
+assert.match(agentJobProjection, /if \(job\.status === "queued"\)/);
 assert.match(service, /getLiveActionLineageForUser\(userId, actionId\)/);
 assert.match(service, /actions: fullyReconciled \? await listLiveActionsForUser\(input\) : \[\]/);
 
