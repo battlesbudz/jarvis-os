@@ -276,6 +276,7 @@ async function jobCreate(userId: string, params: RpcParams) {
     : {};
   delete input.retryOfJobId;
   delete input.liveActionLineageKey;
+  delete input.liveActionRetryValidated;
   delete input.retriedAt;
   delete input.requeuedAt;
   delete input.requeueHistory;

@@ -235,7 +235,7 @@ export function projectAgentJob(
     }))
     .filter((event) => !Number.isNaN(event.createdAt.getTime()));
   const projectedWorkerEvents = [...workerEvents, ...automaticRetryQueuedEvents];
-  const rawSourceLineageKey = typeof input.retryOfJobId === "string"
+  const rawSourceLineageKey = input.liveActionRetryValidated === true && typeof input.retryOfJobId === "string"
     ? typeof input.liveActionLineageKey === "string" ? input.liveActionLineageKey : input.retryOfJobId
     : job.id;
   const sourceLineageKey = (resolvedLineageKey?.trim() || rawSourceLineageKey.trim() || job.id).slice(0, 200);

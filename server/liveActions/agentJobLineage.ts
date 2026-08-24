@@ -10,7 +10,9 @@ function inputOf(job: AgentJobRow): Record<string, unknown> {
 }
 
 function retryParentId(job: AgentJobRow): string | null {
-  const value = inputOf(job).retryOfJobId;
+  const input = inputOf(job);
+  if (input.liveActionRetryValidated !== true) return null;
+  const value = input.retryOfJobId;
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
@@ -74,6 +76,7 @@ export async function loadAgentJobRetryFamily(
     while (parentIds.length > 0) {
       const descendants = await db.select().from(schema.agentJobs).where(and(
         eq(schema.agentJobs.userId, userId),
+        sql`${schema.agentJobs.input}->>'liveActionRetryValidated' = 'true'`,
         inArray(sql<string>`${schema.agentJobs.input}->>'retryOfJobId'`, parentIds),
       ));
       parentIds = [];

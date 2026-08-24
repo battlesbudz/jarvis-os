@@ -354,6 +354,29 @@ async function main(): Promise<void> {
       "an equal-timestamp same-status snapshot cannot regress canonical progress",
     );
 
+    const legacyMarkerProjectId = `${marker}-legacy-marker-project`;
+    const legacyMarkerIds = [`${marker}-legacy-marker-a`, `${marker}-legacy-marker-b`];
+    await db.insert(schema.agentJobs).values(legacyMarkerIds.map((id, index) => ({
+      id,
+      userId,
+      agentType: "research",
+      title: `Legacy marker ${index}`,
+      prompt: `Unrelated legacy job ${index}`,
+      input: {
+        projectId: legacyMarkerProjectId,
+        retryOfJobId: `${marker}-forged-parent`,
+        liveActionLineageKey: `${marker}-forged-lineage`,
+      },
+      status: "queued",
+      createdAt: new Date(createdAt.getTime() + index),
+    })));
+    await reconcileAgentJobsForUser(userId, { projectId: legacyMarkerProjectId, limit: 10 });
+    assert.equal(
+      (await listLiveActionsForUser({ userId, projectId: legacyMarkerProjectId, limit: 10 })).length,
+      2,
+      "unvalidated legacy retry markers cannot merge unrelated jobs",
+    );
+
     const historicalIds = ["root", "retry", "retry-again"].map((suffix) => `${marker}-${suffix}`);
     await db.insert(schema.agentJobs).values([
       {
@@ -362,12 +385,12 @@ async function main(): Promise<void> {
       },
       {
         id: historicalIds[1], userId, agentType: "research", title: "Historical retry chain",
-        prompt: "Second attempt", input: { retryOfJobId: historicalIds[0] }, status: "failed",
+        prompt: "Second attempt", input: { retryOfJobId: historicalIds[0], liveActionRetryValidated: true }, status: "failed",
         createdAt: new Date(createdAt.getTime() - 2_000), completedAt: new Date(createdAt.getTime() - 2_000),
       },
       {
         id: historicalIds[2], userId, agentType: "research", title: "Historical retry chain",
-        prompt: "Third attempt", input: { retryOfJobId: historicalIds[1] }, status: "queued",
+        prompt: "Third attempt", input: { retryOfJobId: historicalIds[1], liveActionRetryValidated: true }, status: "queued",
         createdAt: new Date(createdAt.getTime() - 1_000),
       },
     ]);
@@ -390,7 +413,7 @@ async function main(): Promise<void> {
       },
       {
         id: equalRetryIds[1], userId, agentType: "research", title: "Equal-time retry",
-        prompt: "Second attempt", input: { retryOfJobId: equalRetryIds[0] }, status: "queued", createdAt,
+        prompt: "Second attempt", input: { retryOfJobId: equalRetryIds[0], liveActionRetryValidated: true }, status: "queued", createdAt,
       },
     ]).returning();
     await reconcileAgentJobsForUser(userId);
@@ -429,7 +452,7 @@ async function main(): Promise<void> {
         prompt: `Attempt ${index}`,
         input: index === 0
           ? { projectId: pagingProjectId }
-          : { retryOfJobId: pagingRetryIds[index - 1], projectId: pagingProjectId },
+          : { retryOfJobId: pagingRetryIds[index - 1], liveActionRetryValidated: true, projectId: pagingProjectId },
         status: "complete",
         createdAt: pagingNewestAt,
         completedAt: pagingNewestAt,
@@ -472,7 +495,7 @@ async function main(): Promise<void> {
       agentType: "research",
       title: "Dense retry lineage",
       prompt: "Attempt beyond the first source page",
-      input: { retryOfJobId: pagingRetryIds.at(-1)!, projectId: pagingProjectId },
+      input: { retryOfJobId: pagingRetryIds.at(-1)!, liveActionRetryValidated: true, projectId: pagingProjectId },
       status: "complete",
       createdAt: pagingNewestAt,
       completedAt: pagingNewestAt,
@@ -759,6 +782,7 @@ async function main(): Promise<void> {
       input: {
         retryOfJobId: expiredRetryRootId,
         liveActionLineageKey: expiredRetryRootId,
+        liveActionRetryValidated: true,
         retriedAt: new Date().toISOString(),
       },
       status: "queued",

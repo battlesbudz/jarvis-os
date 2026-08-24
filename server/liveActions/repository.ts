@@ -276,6 +276,7 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
                     AND NOT EXISTS (
                       SELECT 1 FROM agent_jobs parent
                       WHERE parent.user_id = ${projection.userId}
+                        AND job.input->>'liveActionRetryValidated' = 'true'
                         AND parent.id = job.input->>'retryOfJobId'
                     )
                   )
@@ -285,6 +286,7 @@ export async function persistAgentJobProjection(projection: AgentJobLiveActionPr
               FROM agent_jobs child
               JOIN retry_family parent ON child.input->>'retryOfJobId' = parent.id
               WHERE child.user_id = ${projection.userId}
+                AND child.input->>'liveActionRetryValidated' = 'true'
                 AND NOT child.id = ANY(parent.path)
             )
             SELECT id FROM retry_family ORDER BY generation DESC, created_at DESC, id DESC LIMIT 1
@@ -367,8 +369,14 @@ async function reconcileAgentJobsForUserPass(userId: string, opts: {
   const lineageCondition = opts.sourceLineageKey
     ? or(
         eq(schema.agentJobs.id, opts.sourceLineageKey),
-        sql`${schema.agentJobs.input}->>'liveActionLineageKey' = ${opts.sourceLineageKey}`,
-        sql`${schema.agentJobs.input}->>'retryOfJobId' = ${opts.sourceLineageKey}`,
+        and(
+          sql`${schema.agentJobs.input}->>'liveActionRetryValidated' = 'true'`,
+          sql`${schema.agentJobs.input}->>'liveActionLineageKey' = ${opts.sourceLineageKey}`,
+        ),
+        and(
+          sql`${schema.agentJobs.input}->>'liveActionRetryValidated' = 'true'`,
+          sql`${schema.agentJobs.input}->>'retryOfJobId' = ${opts.sourceLineageKey}`,
+        ),
       )
     : undefined;
   const scope = [eq(schema.agentJobs.userId, userId)];
@@ -559,8 +567,13 @@ async function reconcileAgentJobsForUserPass(userId: string, opts: {
         eq(schema.agentJobs.userId, userId),
         or(
           inArray(schema.agentJobs.id, filteredLineageKeys),
-          inArray(sql<string>`${schema.agentJobs.input}->>'liveActionLineageKey'`, filteredLineageKeys),
-          inArray(sql<string>`${schema.agentJobs.input}->>'retryOfJobId'`, filteredLineageKeys),
+          and(
+            sql`${schema.agentJobs.input}->>'liveActionRetryValidated' = 'true'`,
+            or(
+              inArray(sql<string>`${schema.agentJobs.input}->>'liveActionLineageKey'`, filteredLineageKeys),
+              inArray(sql<string>`${schema.agentJobs.input}->>'retryOfJobId'`, filteredLineageKeys),
+            ),
+          ),
         ),
         or(
           inArray(schema.agentJobs.status, ["queued", "running", "cancelling", "resource_paused"]),

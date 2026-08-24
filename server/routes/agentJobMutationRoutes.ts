@@ -28,6 +28,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
       const jobInput = { ...(input || {}) };
       delete jobInput.retryOfJobId;
       delete jobInput.liveActionLineageKey;
+      delete jobInput.liveActionRetryValidated;
       delete jobInput.retriedAt;
       delete jobInput.requeuedAt;
       delete jobInput.requeueHistory;
@@ -136,6 +137,7 @@ export function registerAgentJobMutationRoutes(app: Express): void {
           input: {
             ...input,
             liveActionLineageKey: await resolveAgentJobLineageKey(userId, job),
+            liveActionRetryValidated: true,
             retryOfJobId: job.id,
             retriedAt: new Date().toISOString(),
           },

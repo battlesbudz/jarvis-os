@@ -252,6 +252,7 @@ const retry = projectAgentJob(job({
     ...(job().input as Record<string, unknown>),
     retryOfJobId: "job-1",
     liveActionLineageKey: "job-root",
+    liveActionRetryValidated: true,
     retriedAt: "2026-08-23T12:02:00.000Z",
   },
 }));
