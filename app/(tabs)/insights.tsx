@@ -2092,13 +2092,16 @@ export default function InsightsScreen() {
           let playbackFinished = false;
           let interruptionTranscript = '';
           let interruptionPreview = '';
+          let interruptionComposerDraft: string | null = null;
           let interruptionSpeechDetected = false;
           const clearInterruptionPreview = () => {
             const abandonedPreview = interruptionPreview;
+            const composerDraft = interruptionComposerDraft;
             interruptionPreview = '';
+            interruptionComposerDraft = null;
             interruptionSpeechDetected = false;
             if (abandonedPreview) {
-              setInput(current => current === abandonedPreview ? '' : current);
+              setInput(current => current === abandonedPreview ? composerDraft ?? '' : current);
             }
           };
           let recoverableRecognitionFailures = 0;
@@ -2119,6 +2122,7 @@ export default function InsightsScreen() {
                         if (event.type === 'echo_rejected') {
                           clearInterruptionPreview();
                         } else if (event.type === 'partial' && event.sessionState === 'interrupted' && event.text) {
+                          if (interruptionComposerDraft === null) interruptionComposerDraft = inputRef.current;
                           interruptionPreview = event.text;
                           setInput(event.text);
                         }
