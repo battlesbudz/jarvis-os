@@ -2192,6 +2192,15 @@ export default function InsightsScreen() {
           releaseAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
           if (ownsCurrentPlayback) {
             setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+            if (
+              talkModeRef.current &&
+              !insightsFocusedRef.current &&
+              outsideAppVoiceStateRef.current !== 'paused'
+            ) {
+              handoffAndroidOutsideAppVoiceCapture().catch((error) => {
+                console.warn('[voice] background playback capture handoff failed:', error);
+              });
+            }
           }
         }
       } catch (error) {

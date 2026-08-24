@@ -86,6 +86,7 @@ assert.match(screen, /finishAndroidTalkModePlayback\(playbackRouteOwnerId\)/);
 assert.match(screen, /playbackResult\.status === 'stopped'[\s\S]*?playbackResult\.status === 'ended'[\s\S]*?onError\(\)/);
 assert.match(screen, /speakAndroidTalkModeText\(playbackRouteOwnerId, trimmedText\)[\s\S]*?speakAbortRef\.current !== abortController\) return/);
 assert.match(screen, /ownsCurrentPlayback[\s\S]*?cancelAndroidNativeSpeechRecognition[\s\S]*?if \(ownsCurrentPlayback\)[\s\S]*?setAudioModeAsync/);
+assert.match(screen, /if \(ownsCurrentPlayback\)[\s\S]*?!insightsFocusedRef\.current[\s\S]*?handoffAndroidOutsideAppVoiceCapture\(\)/);
 assert.match(screen, /recoverableRecognitionFailures < 5[\s\S]*?setTimeout/);
 assert.match(screen, /event\.type === 'speech_start' \|\| event\.type === 'partial'[\s\S]*?interruptionSpeechDetected = true[\s\S]*?status === 'interrupted' \|\| interruptionSpeechDetected[\s\S]*?await monitor/);
 assert.match(screen, /event\.type === 'echo_rejected'[\s\S]*?clearInterruptionPreview\(\)/);
