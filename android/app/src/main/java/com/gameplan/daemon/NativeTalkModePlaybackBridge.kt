@@ -94,6 +94,8 @@ internal class NativeTalkModePlaybackBridge(
             initializing = false
             val engine = tts
             if (status != TextToSpeech.SUCCESS || engine == null) {
+                tts = null
+                runCatching { engine?.shutdown() }
                 finish("error", "Android text-to-speech could not initialize.")
                 return@TextToSpeech
             }

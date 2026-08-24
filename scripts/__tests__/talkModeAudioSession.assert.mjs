@@ -30,6 +30,7 @@ for (const root of roots) {
   assert.match(playback, /onRangeStart/);
   assert.match(playback, /stopForInterruption/);
   assert.match(playback, /resumeAfterRejectedInterruption/);
+  assert.match(playback, /tts = null[\s\S]*?engine\?\.shutdown\(\)/);
 }
 
 assert.equal(
@@ -70,5 +71,8 @@ assert.match(screen, /playbackResult\.status === 'stopped'[\s\S]*?playbackResult
 assert.match(screen, /normalizedControl === 'stop talking'[\s\S]*?scheduleTalkModeRecordingStartRef\.current\(400\)/);
 assert.match(screen, /recoverable[\s\S]*?continue;/);
 assert.match(screen, /speakAbortRef\.current\?\.abort\(\)[\s\S]*?cancelAndroidNativeSpeechRecognition\(\)[\s\S]*?stopAndroidTalkModeSpeech\(\)/);
+
+const opHandler = fs.readFileSync(`${roots[0]}/OpHandler.kt`, "utf8");
+assert.match(opHandler, /beginTurnBasedPlayback\("daemon_audio"/);
 
 console.log("Talk Mode Android audio-session contract passed.");

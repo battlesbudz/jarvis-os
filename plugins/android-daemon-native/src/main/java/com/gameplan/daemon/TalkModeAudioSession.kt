@@ -143,7 +143,7 @@ internal class TalkModeAudioSessionStateMachine {
     }
 
     @Synchronized
-    fun beginPlayback(owner: String, text: String): TalkModeAudioSnapshot {
+    fun beginPlayback(owner: String, text: String, turnBased: Boolean = false): TalkModeAudioSnapshot {
         if (
             snapshot.state == TalkModeAudioState.IDLE ||
             snapshot.state == TalkModeAudioState.PAUSED ||
@@ -151,6 +151,7 @@ internal class TalkModeAudioSessionStateMachine {
         ) return snapshot
         snapshot = snapshot.copy(
             state = TalkModeAudioState.SPEAKING,
+            mode = if (turnBased) TalkModeAudioMode.TURN_BASED else snapshot.mode,
             playbackOwner = owner,
             playbackText = text.trim(),
             speechSuppressed = false,
@@ -306,6 +307,8 @@ internal object TalkModeAudioSession {
     fun commitTranscript(owner: String, text: String): Boolean = machine.commitTranscript(owner, text)
     fun beginResponse(): TalkModeAudioSnapshot = machine.beginResponse()
     fun beginPlayback(owner: String, text: String): TalkModeAudioSnapshot = machine.beginPlayback(owner, text)
+    fun beginTurnBasedPlayback(owner: String, text: String): TalkModeAudioSnapshot =
+        machine.beginPlayback(owner, text, turnBased = true)
     fun finishPlayback(owner: String): TalkModeAudioSnapshot = machine.finishPlayback(owner)
     fun stopTalking(): TalkModeAudioSnapshot = machine.stopTalking()
     fun stopListening(): TalkModeAudioSnapshot = machine.stopListening()

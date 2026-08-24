@@ -106,6 +106,16 @@ class TalkModeAudioSessionStateMachineTest {
     }
 
     @Test
+    fun `daemon playback explicitly downgrades the session to turn based`() {
+        val machine = TalkModeAudioSessionStateMachine()
+        machine.beginSession("outside", continuousSupported = true, echoControls = effects)
+
+        val playback = machine.beginPlayback("daemon_audio", "Here is the result", turnBased = true)
+        assertEquals(TalkModeAudioMode.TURN_BASED, playback.mode)
+        assertEquals(TalkModeAudioState.SPEAKING, playback.state)
+    }
+
+    @Test
     fun `route failure falls back and recovers without ending session`() {
         val machine = TalkModeAudioSessionStateMachine()
         machine.beginSession("app", continuousSupported = true, echoControls = effects)

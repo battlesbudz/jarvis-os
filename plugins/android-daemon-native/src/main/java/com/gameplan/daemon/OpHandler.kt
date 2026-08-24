@@ -1644,7 +1644,9 @@ object OpHandler {
                 true
             }
             JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)
-            TalkModeAudioSession.beginPlayback("daemon_audio", op.optString("spokenText", ""))
+            // MediaPlayer playback pauses wake-word capture, so expose this surface as
+            // turn-based instead of promising interruption capture that is not armed.
+            TalkModeAudioSession.beginTurnBasedPlayback("daemon_audio", op.optString("spokenText", ""))
             OutsideAppVoiceSessionService.markPlaybackSpeaking()
             mediaPlayer.start()
             DaemonLog.add("voice_speak_audio: playing ${bytes.size} bytes")
