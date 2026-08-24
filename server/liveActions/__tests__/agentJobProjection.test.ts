@@ -49,6 +49,18 @@ assert.equal(sanitizeLiveActionText("https://example.test?key=AIzaSyA1234567890a
 assert.equal(sanitizeLiveActionText("Shell command: curl https://private.example"), "command: [redacted]");
 assert.equal(sanitizeLiveActionText("$ rm -rf /home/justin/private"), "[command redacted]");
 assert.equal(sanitizeLiveActionText("Command failed: git push origin secret-branch"), "Command failed: [redacted]");
+for (const command of [
+  "bash deploy.sh --token secret",
+  "python3 worker.py --api-key secret",
+  "node task.js --password secret",
+  "docker compose up private-service",
+]) {
+  assert.equal(sanitizeLiveActionText(`Job failed: ${command}`), "[command redacted]");
+}
+assert.equal(
+  sanitizeLiveActionText("Job failed: Error: curl https://private.example?access_token=secret"),
+  "[command redacted]",
+);
 assert.equal(
   sanitizeLiveActionText("Provider error:\n-----BEGIN EC PRIVATE KEY-----\nMHQCAQEEIBogus\n-----END EC PRIVATE KEY-----\nRetry disabled"),
   "Provider error: [private key redacted] Retry disabled",

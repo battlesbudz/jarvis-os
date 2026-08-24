@@ -11,7 +11,7 @@ const SAFE_METADATA_KEYS = new Set([
   "workerType",
 ]);
 
-const RAW_COMMAND_PATTERN = /^\s*(?:\$|>|sudo\b|rm\b|cp\b|mv\b|chmod\b|chown\b|curl\b|wget\b|ssh\b|git\s+(?:clone|push|reset|checkout)\b|npm\s+(?:run|exec)\b|npx\b|powershell\b|cmd(?:\.exe)?\b)/i;
+const RAW_COMMAND_PATTERN = /^\s*(?:(?:job failed|error|failed|retrying after failure)\s*:\s*)*(?:\$|>|sudo\b|rm\b|cp\b|mv\b|chmod\b|chown\b|curl\b|wget\b|ssh\b|git\s+(?:clone|push|reset|checkout)\b|(?:npm|pnpm|yarn)\s+(?:run|exec)\b|npx\b|(?:ba|z|k)?sh\b|python(?:3(?:\.\d+)?)?\b|node\b|deno\b|bun\b|docker(?:\s+compose)?\b|podman\b|powershell\b|cmd(?:\.exe)?\b)/i;
 
 export function sanitizeLiveActionText(value: unknown, maxLength = 500): string | null {
   if (typeof value !== "string") return null;
