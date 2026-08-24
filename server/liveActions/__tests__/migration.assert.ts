@@ -54,6 +54,7 @@ assert.match(jobQueue, /agentJobs\.input\} \|\| \$\{JSON\.stringify\(inputPatch\
 assert.doesNotMatch(jobQueue, /\.set\(\{ input: (?:merged|jobInput) \}\)/);
 assert.match(jobQueue, /retryInputPatch = \{[\s\S]*workerRuntime: retryInput\.workerRuntime/);
 assert.match(jobQueue, /where\(and\(eq\(schema\.agentJobs\.id, job\.id\), eq\(schema\.agentJobs\.status, "running"\)\)\)/);
+assert.match(jobQueue, /set\(\{ status: "cancelled", completedAt: new Date\(\) \}\)[\s\S]*eq\(schema\.agentJobs\.status, "cancelling"\)/);
 assert.match(workerRuntimeJobEvents, /workerRuntime: nextInput\.workerRuntime/);
 assert.match(workerRuntimeJobEvents, /agentJobs\.input\} \|\| \$\{JSON\.stringify\(inputPatch\)\}::jsonb/);
 assert.match(repository, /pass < MAX_RECONCILIATION_PASSES/);

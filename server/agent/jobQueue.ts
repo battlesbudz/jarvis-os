@@ -3164,6 +3164,10 @@ Keep the plan minimal: 2-5 steps for most features. Each step is one focused cod
           .returning({ id: schema.agentJobs.id });
         if (!requeued) {
           console.log(`[JobQueue] skipped retry for ${job.id} because its status changed`);
+          await db
+            .update(schema.agentJobs)
+            .set({ status: "cancelled", completedAt: new Date() })
+            .where(and(eq(schema.agentJobs.id, job.id), eq(schema.agentJobs.status, "cancelling")));
         }
       } catch (retryErr) {
         console.error(`[JobQueue] failed to re-queue job ${job.id}:`, retryErr);
