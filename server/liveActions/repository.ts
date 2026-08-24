@@ -398,13 +398,18 @@ async function reconcileAgentJobsForUserPass(userId: string, opts: {
     ...(opts.projectId ? [eq(schema.liveActions.projectId, opts.projectId)] : []),
     ...(opts.sourceLineageKey ? [eq(schema.liveActions.sourceLineageKey, opts.sourceLineageKey)] : []),
   ];
+  const projectedApprovalPriority = sql<number>`CASE WHEN ${schema.liveActions.status} = 'waiting_approval' THEN 1 ELSE 0 END`;
   const matchingProjectedActions = await db.select({
     id: schema.liveActions.id,
     sourceId: schema.liveActions.sourceId,
     updatedAt: schema.liveActions.updatedAt,
   }).from(schema.liveActions)
     .where(and(...projectedActionConditions))
-    .orderBy(desc(schema.liveActions.updatedAt), desc(schema.liveActions.id))
+    .orderBy(
+      ...(!opts.status ? [desc(projectedApprovalPriority)] : []),
+      desc(schema.liveActions.updatedAt),
+      desc(schema.liveActions.id),
+    )
     .limit(targetLineages);
   const projectedActionIdsBefore = matchingProjectedActions.map((action) => action.id);
   const activeProjectionUpdatedAt = sql<string>`greatest(
@@ -448,6 +453,20 @@ async function reconcileAgentJobsForUserPass(userId: string, opts: {
         AND approval_gate.user_id = ${schema.agentJobs.userId}
     ), '')
   )`;
+  const activePendingApprovalPriority = sql<number>`CASE WHEN EXISTS (
+    SELECT 1
+    FROM jsonb_array_elements(
+      CASE
+        WHEN jsonb_typeof(${schema.agentJobs.input}->'workerRuntime'->'approvalCheckpoints') = 'array'
+          THEN ${schema.agentJobs.input}->'workerRuntime'->'approvalCheckpoints'
+        ELSE '[]'::jsonb
+      END
+    ) AS approval_checkpoint
+    JOIN agent_approval_gates approval_gate
+      ON approval_gate.id = approval_checkpoint->>'gateId'
+      AND approval_gate.user_id = ${schema.agentJobs.userId}
+      AND approval_gate.status = 'pending'
+  ) THEN 1 ELSE 0 END`;
   let activeJobs: AgentJobRow[] = [];
   if (activeSourceStatuses.length > 0) {
     if (!opts.status) {
@@ -455,7 +474,11 @@ async function reconcileAgentJobsForUserPass(userId: string, opts: {
           ...scope,
           inArray(schema.agentJobs.status, activeSourceStatuses),
         ))
-        .orderBy(desc(activeProjectionUpdatedAt), desc(schema.agentJobs.id))
+        .orderBy(
+          desc(activePendingApprovalPriority),
+          desc(activeProjectionUpdatedAt),
+          desc(schema.agentJobs.id),
+        )
         .limit(targetLineages);
     } else {
       const activeCandidates: AgentJobRow[] = [];
@@ -610,7 +633,11 @@ async function reconcileAgentJobsForUserPass(userId: string, opts: {
   const projectedActionIdsAfter = (await db.select({ id: schema.liveActions.id })
     .from(schema.liveActions)
     .where(and(...projectedActionConditions))
-    .orderBy(desc(schema.liveActions.updatedAt), desc(schema.liveActions.id))
+    .orderBy(
+      ...(!opts.status ? [desc(projectedApprovalPriority)] : []),
+      desc(schema.liveActions.updatedAt),
+      desc(schema.liveActions.id),
+    )
     .limit(targetLineages))
     .map((action) => action.id);
   return projectedActionIdsBefore.length === projectedActionIdsAfter.length
@@ -649,7 +676,13 @@ export async function listLiveActionsForUser(opts: {
     .select()
     .from(schema.liveActions)
     .where(and(...conditions))
-    .orderBy(desc(schema.liveActions.updatedAt), desc(schema.liveActions.id))
+    .orderBy(
+      ...(!opts.status
+        ? [desc(sql<number>`CASE WHEN ${schema.liveActions.status} = 'waiting_approval' THEN 1 ELSE 0 END`)]
+        : []),
+      desc(schema.liveActions.updatedAt),
+      desc(schema.liveActions.id),
+    )
     .limit(Math.min(Math.max(opts.limit ?? 25, 1), 100));
   return rows.map(rowToAction);
 }

@@ -608,6 +608,11 @@ async function main(): Promise<void> {
         .some((action) => action.source.id === freshestCancellationId),
       "active candidate recency includes durable cancellation requests",
     );
+    assert.ok(
+      (await listLiveActionsForUser({ userId, projectId: activeBoundProjectId, limit: 2 }))
+        .some((action) => action.source.id === olderWaitingId),
+      "default snapshots reserve space for older actions blocked on approval",
+    );
 
     const [filteredRunningJob] = await db.insert(schema.agentJobs).values({
       id: `${marker}-filtered-running`,
