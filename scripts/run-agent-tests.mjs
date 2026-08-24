@@ -15,6 +15,7 @@ const tests = [
   { file: "scripts/__tests__/railpackBrowserRuntime.test.mjs" },
   { file: "scripts/__tests__/androidDaemonUpdateConfig.test.mjs" },
   { file: "scripts/__tests__/androidWearableAudio.assert.mjs" },
+  { file: "scripts/__tests__/talkModeAudioSession.assert.mjs" },
   { file: "scripts/android-wake-word-resource-guard.mjs" },
   { file: "scripts/voice-runtime-regression-gate.mjs" },
   { file: "scripts/__tests__/dashboardProjectsNavigation.test.mjs" },

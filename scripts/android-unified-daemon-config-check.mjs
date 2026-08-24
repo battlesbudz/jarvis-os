@@ -630,7 +630,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "fun resumeAfterLocalValidation(captureWasRequested: Boolean)", source);
   assertIncludes(contents, "@Volatile private var localInferencePaused = false", source);
   assertIncludes(contents, "if (!listeningRequested || active || localInferencePaused) return", source);
-  assertIncludes(contents, "if (!listeningRequested || active || localInferencePaused) return@post", source);
+  assertIncludes(contents, "if (!listeningRequested || localInferencePaused)", source);
+  assertIncludes(contents, "if (active) return@post", source);
   assertIncludes(contents, "LOCAL_INFERENCE_TALK_MODE_RECOVERY_DELAY_MS = 10_000L", source);
   assertIncludes(contents, "scheduleTalkModeRecoveryAfterLocalInference()", source);
   assertIncludes(contents, "OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(", source);

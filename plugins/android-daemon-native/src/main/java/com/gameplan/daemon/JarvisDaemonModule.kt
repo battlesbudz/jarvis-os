@@ -18,7 +18,11 @@ import org.json.JSONObject
 class JarvisDaemonModule(
     private val reactApplicationContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactApplicationContext) {
-    private val nativeSpeechRecognitionBridge = NativeSpeechRecognitionBridge(reactApplicationContext)
+    private val nativeTalkModePlaybackBridge = NativeTalkModePlaybackBridge(reactApplicationContext)
+    private val nativeSpeechRecognitionBridge = NativeSpeechRecognitionBridge(
+        reactApplicationContext,
+        nativeTalkModePlaybackBridge,
+    )
     private val nativeVoicePlaybackOwners = linkedSetOf<String>()
 
     companion object {
@@ -54,6 +58,8 @@ class JarvisDaemonModule(
 
     override fun invalidate() {
         nativeSpeechRecognitionBridge.destroy()
+        nativeTalkModePlaybackBridge.destroy()
+        TalkModeAudioSession.end()
         nativeVoicePlaybackOwners.forEach(WearableAudioRouteManager::release)
         nativeVoicePlaybackOwners.clear()
         if (activeReactContext === reactApplicationContext) activeReactContext = null
@@ -306,6 +312,60 @@ class JarvisDaemonModule(
     }
 
     @ReactMethod
+    fun getNativeTalkModeAudioSessionStatus(promise: Promise) {
+        promise.resolve(buildTalkModeAudioStatusMap(TalkModeAudioSession.snapshot()))
+    }
+
+    @ReactMethod
+    fun beginNativeTalkModeResponse(promise: Promise) {
+        promise.resolve(buildTalkModeAudioStatusMap(TalkModeAudioSession.beginResponse()))
+    }
+
+    @ReactMethod
+    fun beginNativeTalkModePlayback(ownerId: String, spokenText: String, promise: Promise) {
+        promise.resolve(
+            buildTalkModeAudioStatusMap(
+                TalkModeAudioSession.beginPlayback("react_tts:$ownerId", spokenText),
+            ),
+        )
+    }
+
+    @ReactMethod
+    fun speakNativeTalkModeText(ownerId: String, spokenText: String, promise: Promise) {
+        nativeTalkModePlaybackBridge.speak("react_tts:$ownerId", spokenText, promise)
+    }
+
+    @ReactMethod
+    fun finishNativeTalkModePlayback(ownerId: String, promise: Promise) {
+        promise.resolve(
+            buildTalkModeAudioStatusMap(
+                TalkModeAudioSession.finishPlayback("react_tts:$ownerId"),
+            ),
+        )
+    }
+
+    @ReactMethod
+    fun stopNativeTalkModeSpeech(promise: Promise) {
+        nativeTalkModePlaybackBridge.stop()
+        promise.resolve(buildTalkModeAudioStatusMap(TalkModeAudioSession.stopTalking()))
+    }
+
+    @ReactMethod
+    fun pauseNativeTalkModeListening(promise: Promise) {
+        nativeSpeechRecognitionBridge.cancelForOutsideAppHandoff()
+        promise.resolve(buildTalkModeAudioStatusMap(TalkModeAudioSession.stopListening()))
+    }
+
+    @ReactMethod
+    fun endNativeTalkModeAudioSession(promise: Promise) {
+        nativeSpeechRecognitionBridge.cancelForOutsideAppHandoff()
+        nativeTalkModePlaybackBridge.stop()
+        nativeVoicePlaybackOwners.forEach(WearableAudioRouteManager::release)
+        nativeVoicePlaybackOwners.clear()
+        promise.resolve(buildTalkModeAudioStatusMap(TalkModeAudioSession.end()))
+    }
+
+    @ReactMethod
     fun acquireNativeVoicePlaybackRoute(ownerId: String, promise: Promise) {
         val owner = IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX + ownerId
         nativeVoicePlaybackOwners.add(owner)
@@ -334,6 +394,25 @@ class JarvisDaemonModule(
             JSONObject(optionsJson)
         } catch (_: Exception) {
             JSONObject()
+        }
+    }
+
+    private fun buildTalkModeAudioStatusMap(session: TalkModeAudioSnapshot): WritableMap {
+        return Arguments.createMap().apply {
+            putDouble("sessionId", session.sessionId.toDouble())
+            putString("state", session.state.wireName)
+            putString("mode", session.mode.wireName)
+            putString("captureOwner", session.captureOwner)
+            putString("playbackOwner", session.playbackOwner)
+            putString("partialTranscript", session.partialTranscript)
+            putString("committedTranscript", session.committedTranscript)
+            putBoolean("speechSuppressed", session.speechSuppressed)
+            putString("routeState", session.routeState)
+            putString("lastError", session.lastError)
+            putBoolean("acousticEchoCancellationAvailable", session.echoControls.acousticEchoCancellationAvailable)
+            putBoolean("noiseSuppressionAvailable", session.echoControls.noiseSuppressionAvailable)
+            putBoolean("automaticGainControlAvailable", session.echoControls.automaticGainControlAvailable)
+            putBoolean("echoControlsPlatformManaged", session.echoControls.platformManaged)
         }
     }
 

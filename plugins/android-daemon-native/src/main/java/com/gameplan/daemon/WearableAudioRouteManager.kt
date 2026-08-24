@@ -186,6 +186,7 @@ internal object WearableAudioRouteManager {
         if (selected != null && WearableAudioRoutePolicy.isWearableCommunicationType(selected.type)) {
             routeState = "active"
             lastError = null
+            TalkModeAudioSession.recovered(currentTalkModeCaptureOwner(), routeState)
             finishRouteRecovery(success = true, "device=${selected.productName} type=${WearableAudioRoutePolicy.typeName(selected.type)}")
             completePending(snapshot(context))
             return
@@ -195,6 +196,7 @@ internal object WearableAudioRouteManager {
         if (device == null) {
             routeState = "not_connected"
             lastError = null
+            TalkModeAudioSession.recovered(currentTalkModeCaptureOwner(), "phone_fallback")
             finishRouteRecovery(success = false, "no wearable communication device is available")
             completePending(snapshot(context))
             return
@@ -231,6 +233,7 @@ internal object WearableAudioRouteManager {
                 routeState = "failed"
                 if (lastError == null) lastError = "Android rejected the communication route request."
                 routeRecoveryPending = true
+                TalkModeAudioSession.recover(currentTalkModeCaptureOwner(), routeState, lastError)
                 DaemonLog.add(
                     "wearable_audio: communication route request rejected; ${lastError ?: "unknown error"}; retry scheduled",
                 )
@@ -269,6 +272,7 @@ internal object WearableAudioRouteManager {
                 if (activeDevice?.id == deviceId) {
                     routeState = "active"
                     lastError = null
+                    TalkModeAudioSession.recovered(currentTalkModeCaptureOwner(), routeState)
                     finishRouteRecovery(
                         success = true,
                         "device=${activeDevice.productName} type=${WearableAudioRoutePolicy.typeName(activeDevice.type)}",
@@ -280,6 +284,7 @@ internal object WearableAudioRouteManager {
                     routeState = "failed"
                     lastError = "Android did not confirm the Bluetooth audio route within ${ROUTE_CONFIRM_TIMEOUT_MS / 1_000} seconds."
                     routeRecoveryPending = true
+                    TalkModeAudioSession.recover(currentTalkModeCaptureOwner(), routeState, lastError)
                     DaemonLog.add("wearable_audio: communication route confirmation timed out; retry scheduled")
                     completePending(snapshot(context))
                     scheduleRouteRecovery(expectLegacy = false)
@@ -440,6 +445,7 @@ internal object WearableAudioRouteManager {
             requestedDeviceId = device.id
             routeState = "active"
             lastError = null
+            TalkModeAudioSession.recovered(currentTalkModeCaptureOwner(), routeState)
             finishRouteRecovery(success = true, "device=${device.productName} type=${WearableAudioRoutePolicy.typeName(device.type)}")
             appContext?.let { completePending(snapshot(it)) }
             return
@@ -449,6 +455,7 @@ internal object WearableAudioRouteManager {
         routeGeneration += 1
         routeState = "failed"
         lastError = "Android switched the active communication route away from the Bluetooth wearable."
+        TalkModeAudioSession.recover(currentTalkModeCaptureOwner(), routeState, lastError)
         routeRecoveryPending = true
         DaemonLog.add(
             "wearable_audio: communication route lost; active=${device?.productName ?: "none"} " +
@@ -557,6 +564,9 @@ internal object WearableAudioRouteManager {
             }
         }
     }
+
+    private fun currentTalkModeCaptureOwner(): String =
+        TalkModeAudioSession.snapshot().captureOwner ?: "talk_mode_session"
 
     private fun ensureInitialized(context: Context) {
         val applicationContext = context.applicationContext

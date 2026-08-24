@@ -54,6 +54,7 @@ object JarvisVoicePlaybackController {
         currentFile = null
         releasePlayer(player)
         file.delete()
+        TalkModeAudioSession.finishPlayback("daemon_audio")
         if (rearmTalkMode) {
             OutsideAppVoiceSessionService.resumeWakeCaptureAfterPlayback()
             OutsideAppVoiceSessionService.markPlaybackListening()
@@ -62,7 +63,10 @@ object JarvisVoicePlaybackController {
 
     @Synchronized
     fun stopActivePlayback(rearmTalkMode: Boolean = true): Boolean {
-        val player = currentPlayer ?: return false
+        val player = currentPlayer ?: run {
+            TalkModeAudioSession.stopTalking()
+            return false
+        }
         val file = currentFile
         currentPlayer = null
         currentFile = null
@@ -71,6 +75,7 @@ object JarvisVoicePlaybackController {
         }.onFailure { Log.w(TAG, "Failed to stop active voice playback", it) }
         releasePlayer(player)
         file?.delete()
+        TalkModeAudioSession.stopTalking()
         if (rearmTalkMode) {
             OutsideAppVoiceSessionService.resumeWakeCaptureAfterPlayback()
             OutsideAppVoiceSessionService.markPlaybackListening()
@@ -1639,6 +1644,7 @@ object OpHandler {
                 true
             }
             JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)
+            TalkModeAudioSession.beginPlayback("daemon_audio", op.optString("spokenText", ""))
             OutsideAppVoiceSessionService.markPlaybackSpeaking()
             mediaPlayer.start()
             DaemonLog.add("voice_speak_audio: playing ${bytes.size} bytes")

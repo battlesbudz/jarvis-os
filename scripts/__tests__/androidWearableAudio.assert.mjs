@@ -191,8 +191,9 @@ assert.match(androidDaemonNative, /acquireAndroidNativeVoicePlaybackRoute/);
 assert.match(androidDaemonNative, /releaseAndroidNativeVoicePlaybackRoute/);
 assert.match(
   insights,
-  /acquireAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)[\s\S]*?abortController\.signal\.aborted[\s\S]*?Speech\.speak\([\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)/,
+  /acquireAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)[\s\S]*?abortController\.signal\.aborted[\s\S]*?speakAndroidTalkModeText\([\s\S]*?finally \{[\s\S]*?releaseAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)/,
 );
+assert.match(insights, /Continuous Android TTS failed; using turn-based device TTS:[\s\S]*?Speech\.speak\(/);
 assert.match(
   insights,
   /acquireAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)[\s\S]*?shouldCancelTalkModeStart\(\)[\s\S]*?releaseAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)[\s\S]*?while \([\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?takeInAppCapture: true[\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)/,

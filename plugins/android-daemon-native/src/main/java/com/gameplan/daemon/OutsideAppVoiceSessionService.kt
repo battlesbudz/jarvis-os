@@ -141,6 +141,7 @@ class OutsideAppVoiceSessionService : Service() {
         }
 
         fun markPlaybackListening() {
+            TalkModeAudioSession.finishPlayback("daemon_audio")
             instance?.setStateFromAnyThread(OutsideAppVoiceState.LISTENING)
         }
 
@@ -221,6 +222,7 @@ class OutsideAppVoiceSessionService : Service() {
             ACTION_START -> {
                 expectedStop = false
                 endedSessionBlocksPlayback = false
+                TalkModeAudioSession.begin(this, "talk_mode_session")
                 if (sessionActive && state != OutsideAppVoiceState.IDLE) {
                     startForegroundCompat()
                     updateOverlay()
@@ -233,12 +235,14 @@ class OutsideAppVoiceSessionService : Service() {
                 if (!sessionActive) sessionActive = true
                 ownsVoiceCapture = true
                 pauseWakeCapture()
+                TalkModeAudioSession.stopListening()
                 setState(OutsideAppVoiceState.PAUSED)
             }
             ACTION_RESUME -> {
                 if (!sessionActive) sessionActive = true
                 ownsVoiceCapture = true
                 resumeWakeCapture()
+                TalkModeAudioSession.acquireCapture(this, "outside_app_capture")
                 setState(OutsideAppVoiceState.LISTENING, "resume")
             }
             ACTION_SET_STATE -> {
@@ -268,6 +272,7 @@ class OutsideAppVoiceSessionService : Service() {
                     return START_NOT_STICKY
                 }
                 ownsVoiceCapture = true
+                TalkModeAudioSession.acquireCapture(this, "outside_app_capture")
                 if (state == OutsideAppVoiceState.LISTENING || state == OutsideAppVoiceState.APPROVAL) {
                     resumeWakeCapture()
                 }
@@ -338,6 +343,7 @@ class OutsideAppVoiceSessionService : Service() {
 
     private fun releaseCaptureToApp() {
         ownsVoiceCapture = false
+        TalkModeAudioSession.releaseCapture("outside_app_capture")
         WakeWordService.pauseForInAppCapture()
         DaemonLog.add("outside_app_voice: microphone ownership returned to app")
     }
@@ -376,11 +382,13 @@ class OutsideAppVoiceSessionService : Service() {
     private fun pauseWakeCapture() {
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         WakeWordService.pauseForUserControl()
+        TalkModeAudioSession.stopListening()
         DaemonLog.add("outside_app_voice: wake capture paused")
     }
 
     private fun resumeWakeCapture() {
         WakeWordService.onTtsFinished()
+        TalkModeAudioSession.acquireCapture(this, "outside_app_capture")
         DaemonLog.add("outside_app_voice: wake capture resumed")
     }
 
@@ -413,6 +421,12 @@ class OutsideAppVoiceSessionService : Service() {
             approvalToken = ""
         }
         state = nextState
+        when (nextState) {
+            OutsideAppVoiceState.WORKING, OutsideAppVoiceState.APPROVAL -> TalkModeAudioSession.beginResponse()
+            OutsideAppVoiceState.PAUSED -> TalkModeAudioSession.stopListening()
+            OutsideAppVoiceState.IDLE -> TalkModeAudioSession.end()
+            else -> Unit
+        }
         startForegroundCompat()
         updateOverlay()
         sendVoiceSessionEvent(actionName)
@@ -424,6 +438,7 @@ class OutsideAppVoiceSessionService : Service() {
         ownsVoiceCapture = false
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         endTalkModeCapture()
+        TalkModeAudioSession.end()
         sendVoiceSessionEvent("end")
         approvalPrompt = ""
         approvalToken = ""
