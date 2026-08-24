@@ -44,6 +44,7 @@ for (const root of roots) {
   assert.match(playback, /if \(initializing\) return[\s\S]*?tts\?\.let/);
   assert.match(playback, /ensureTts \{ engine -> if \(!tentativeInterruption\) speakRemaining\(engine\) \}/);
   assert.match(playback, /session\.playbackOwner != ownerId \|\| session\.state != TalkModeAudioState\.SPEAKING/);
+  assert.match(playback, /consumeSuppression\(ownerId\)[\s\S]*?putString\("status", "stopped"\)/);
   assert.match(playback, /status != "interrupted"[\s\S]*?playbackOwner == completedOwner[\s\S]*?stopTalking\(\)/);
 }
 
@@ -96,6 +97,7 @@ assert.match(screen, /const clearInterruptionPreview[\s\S]*?interruptionSpeechDe
 assert.match(screen, /session\?\.state !== 'speaking'[\s\S]*?session\.playbackOwner !== `react_tts:/);
 assert.match(screen, /allowTurnBasedFallback = !session \|\| session\.state === 'idle'[\s\S]*?playbackRejectedByCompetingOwner \|\| !allowTurnBasedFallback/);
 assert.match(screen, /if \(!playbackLifecycleStarted\)[\s\S]*?releaseAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)/);
+assert.match(screen, /if \(playbackLifecycleStarted\)[\s\S]*?onError\(\)[\s\S]*?if \(options\.nativeOnly\) throw error[\s\S]*?return;/);
 assert.match(screen, /interruptionPreview = event\.text/);
 assert.match(screen, /current === abandonedPreview \? '' : current/);
 assert.match(screen, /normalizedControl === 'stop talking'[\s\S]*?scheduleTalkModeRecordingStartRef\.current\(400\)/);

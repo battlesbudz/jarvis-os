@@ -2208,6 +2208,11 @@ export default function InsightsScreen() {
           releaseAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
         }
         if (abortController.signal.aborted || speakAbortRef.current !== abortController) return;
+        if (playbackLifecycleStarted) {
+          onError();
+          if (options.nativeOnly) throw error;
+          return;
+        }
         if (playbackRejectedByCompetingOwner || !allowTurnBasedFallback) {
           onError();
           return;

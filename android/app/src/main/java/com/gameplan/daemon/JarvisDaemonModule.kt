@@ -19,13 +19,16 @@ import java.util.concurrent.ConcurrentHashMap
 class JarvisDaemonModule(
     private val reactApplicationContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactApplicationContext) {
-    private val nativeTalkModePlaybackBridge = NativeTalkModePlaybackBridge(reactApplicationContext)
+    private val suppressedNativeVoicePlaybackOwners = ConcurrentHashMap.newKeySet<String>()
+    private val nativeTalkModePlaybackBridge = NativeTalkModePlaybackBridge(
+        reactApplicationContext,
+        ::consumeNativeTalkModePlaybackSuppression,
+    )
     private val nativeSpeechRecognitionBridge = NativeSpeechRecognitionBridge(
         reactApplicationContext,
         nativeTalkModePlaybackBridge,
     )
     private val nativeVoicePlaybackOwners = linkedSetOf<String>()
-    private val suppressedNativeVoicePlaybackOwners = ConcurrentHashMap.newKeySet<String>()
 
     companion object {
         private const val VOICE_SESSION_CONTROL_EVENT = "JarvisVoiceSessionControl"
@@ -421,6 +424,11 @@ class JarvisDaemonModule(
     private fun stopNativeTalkModePlaybackAndSuppressPending() {
         suppressedNativeVoicePlaybackOwners.addAll(nativeVoicePlaybackOwners)
         nativeTalkModePlaybackBridge.stop()
+    }
+
+    private fun consumeNativeTalkModePlaybackSuppression(playbackOwner: String): Boolean {
+        val ownerId = playbackOwner.removePrefix("react_tts:")
+        return suppressedNativeVoicePlaybackOwners.remove(IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX + ownerId)
     }
 
     @ReactMethod

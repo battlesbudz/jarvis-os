@@ -14,6 +14,7 @@ import java.util.Locale
 /** Android TTS owner used by continuous Talk Mode so capture and playback share one lifecycle. */
 internal class NativeTalkModePlaybackBridge(
     private val context: ReactApplicationContext,
+    private val consumeSuppression: (String) -> Boolean = { false },
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var tts: TextToSpeech? = null
@@ -28,6 +29,13 @@ internal class NativeTalkModePlaybackBridge(
 
     fun speak(ownerId: String, text: String, promise: Promise) {
         runOnMain {
+            if (consumeSuppression(ownerId)) {
+                promise.resolve(Arguments.createMap().apply {
+                    putString("status", "stopped")
+                    putInt("acknowledgedOffset", 0)
+                })
+                return@runOnMain
+            }
             stopInternal("replaced")
             owner = ownerId
             spokenText = text.trim()
