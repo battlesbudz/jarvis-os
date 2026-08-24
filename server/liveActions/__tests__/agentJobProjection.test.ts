@@ -168,6 +168,30 @@ assert.equal(
   2,
   "same-millisecond worker events retain distinct full-payload identities",
 );
+const priorAttemptStartedAt = new Date("2026-08-23T12:01:40.000Z");
+const currentAttemptStartedAt = new Date("2026-08-23T12:01:41.000Z");
+const priorAttemptRuntime = withWorkerRuntimeEvent(
+  job().input as Record<string, unknown>,
+  buildWorkerRuntimeEvent({
+    type: "started",
+    workerType: "research",
+    message: "Started prior attempt",
+    now: priorAttemptStartedAt,
+    userVisible: true,
+  }),
+);
+const currentAttemptWithoutWorkerStart = projectAgentJob(job({
+  input: priorAttemptRuntime,
+  status: "running",
+  startedAt: currentAttemptStartedAt,
+}));
+assert.deepEqual(
+  currentAttemptWithoutWorkerStart.events
+    .filter((event) => event.type === "action.started")
+    .map((event) => event.createdAt.toISOString()),
+  [priorAttemptStartedAt.toISOString(), currentAttemptStartedAt.toISOString()],
+  "a prior attempt start cannot suppress the current canonical start fallback",
+);
 const automaticRetryAt = new Date("2026-08-23T12:01:45.000Z");
 const automaticRetryRuntime = withWorkerRuntimeEvent(
   job().input as Record<string, unknown>,

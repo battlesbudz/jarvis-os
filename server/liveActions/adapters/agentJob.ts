@@ -244,10 +244,14 @@ export function projectAgentJob(
   const isRequeue = job.status === "queued" && !!dateValue(input.requeuedAt);
   const isAutomaticRetryQueue = job.status === "queued"
     && (runtime?.events ?? []).some((event) => event.type === "retrying");
-  const hasMatchingFallback = projectedWorkerEvents.some((event) => event.type === fallbackEvent.type
-    && (fallbackEvent.type !== "action.queued"
-      || (!isRequeue && !isAutomaticRetryQueue)
-      || event.createdAt.getTime() === fallbackEvent.createdAt.getTime()));
+  const hasMatchingFallback = projectedWorkerEvents.some((event) => {
+    if (event.type !== fallbackEvent.type) return false;
+    const matchesTransitionTime = event.createdAt.getTime() === fallbackEvent.createdAt.getTime();
+    if (fallbackEvent.type === "action.queued") {
+      return (!isRequeue && !isAutomaticRetryQueue) || matchesTransitionTime;
+    }
+    return fallbackEvent.type !== "action.started" || matchesTransitionTime;
+  });
   const baseEvents = hasMatchingFallback
     ? projectedWorkerEvents
     : [...projectedWorkerEvents, fallbackEvent];
