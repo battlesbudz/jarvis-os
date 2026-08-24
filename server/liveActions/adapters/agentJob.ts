@@ -159,7 +159,7 @@ function capabilities(job: AgentJobRow, pendingApprovalGateId?: string): LiveAct
   if (pendingApprovalGateId) {
     result.push({ type: "open_approval", enabled: true, targetRoute: "/api/agents/approvals" });
   }
-  if (job.status === "queued" || job.status === "resource_paused") {
+  if ((job.status === "queued" || job.status === "resource_paused") && !isWorkflowOwned(job)) {
     result.push({
       type: "cancel",
       enabled: true,

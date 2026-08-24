@@ -108,6 +108,11 @@ assert.ok(
     .some((capability) => capability.type === "cancel"),
   "running jobs do not advertise cancellation until workers can honor it",
 );
+assert.ok(
+  !projectAgentJob(job({ input: { workflowId: "workflow-1", workflowStepIndex: 0 } })).capabilities
+    .some((capability) => capability.type === "cancel"),
+  "workflow-owned queued jobs do not expose a cancellation that would strand the workflow",
+);
 
 const approvalRuntime = withWorkerRuntimeEvent(
   (job().input as Record<string, unknown>),

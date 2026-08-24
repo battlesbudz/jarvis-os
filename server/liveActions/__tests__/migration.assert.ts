@@ -81,7 +81,7 @@ assert.match(repository, /orderBy\(schema\.liveActionEvents\.sequence\)/);
 assert.match(repository, /return false/);
 assert.match(repository, /Math\.fround\(value\)/);
 assert.match(agentJobProjection, /update\(JSON\.stringify\(event\)\)/);
-assert.match(agentJobProjection, /if \(job\.status === "queued" \|\| job\.status === "resource_paused"\)/);
+assert.match(agentJobProjection, /\(job\.status === "queued" \|\| job\.status === "resource_paused"\) && !isWorkflowOwned\(job\)/);
 assert.match(agentJobProjection, /input\.liveActionRetryValidated === true/);
 assert.match(lineage, /if \(input\.liveActionRetryValidated !== true\) return null/);
 assert.match(service, /getLiveActionLineageForUser\(userId, actionId\)/);
