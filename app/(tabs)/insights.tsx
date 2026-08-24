@@ -2081,6 +2081,7 @@ export default function InsightsScreen() {
             ? (async () => {
                 while (!playbackFinished && !abortController.signal.aborted && isSpeakingRef.current) {
                   try {
+                    nativeSpeechActiveRef.current = true;
                     const result = await recognizeAndroidSpeechOnce({
                       locale: 'en-US',
                       interimResults: true,
@@ -2091,6 +2092,8 @@ export default function InsightsScreen() {
                           setInput(event.text);
                         }
                       },
+                    }).finally(() => {
+                      nativeSpeechActiveRef.current = false;
                     });
                     if (result.text.trim()) {
                       interruptionTranscript = result.text.trim();
