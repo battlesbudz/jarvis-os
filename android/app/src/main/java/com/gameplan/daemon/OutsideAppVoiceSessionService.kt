@@ -242,7 +242,7 @@ class OutsideAppVoiceSessionService : Service() {
                 if (!sessionActive) sessionActive = true
                 ownsVoiceCapture = true
                 resumeWakeCapture()
-                TalkModeAudioSession.acquireCapture(this, "outside_app_capture")
+                TalkModeAudioSession.resumeCapture(this, "outside_app_capture")
                 setState(OutsideAppVoiceState.LISTENING, "resume")
             }
             ACTION_SET_STATE -> {
@@ -383,6 +383,7 @@ class OutsideAppVoiceSessionService : Service() {
     internal fun onOverlayResume() {
         ownsVoiceCapture = true
         resumeWakeCapture()
+        TalkModeAudioSession.resumeCapture(this, "outside_app_capture")
         setState(OutsideAppVoiceState.LISTENING, "resume")
     }
 

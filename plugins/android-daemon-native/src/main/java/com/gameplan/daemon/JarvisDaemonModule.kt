@@ -14,6 +14,7 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 
 class JarvisDaemonModule(
     private val reactApplicationContext: ReactApplicationContext,
@@ -24,6 +25,7 @@ class JarvisDaemonModule(
         nativeTalkModePlaybackBridge,
     )
     private val nativeVoicePlaybackOwners = linkedSetOf<String>()
+    private val suppressedNativeVoicePlaybackOwners = ConcurrentHashMap.newKeySet<String>()
 
     companion object {
         private const val VOICE_SESSION_CONTROL_EVENT = "JarvisVoiceSessionControl"
@@ -31,10 +33,11 @@ class JarvisDaemonModule(
 
         @Volatile private var activeReactContext: ReactApplicationContext? = null
         @Volatile private var activeNativeTalkModePlaybackBridge: NativeTalkModePlaybackBridge? = null
+        @Volatile private var activeJarvisDaemonModule: JarvisDaemonModule? = null
         @Volatile private var activeNativeSpeechRecognitionBridge: NativeSpeechRecognitionBridge? = null
 
         fun stopActiveNativeTalkModePlayback() {
-            activeNativeTalkModePlaybackBridge?.stop()
+            activeJarvisDaemonModule?.stopNativeTalkModePlaybackAndSuppressPending()
         }
 
         fun cancelActiveNativeSpeechRecognition() {
@@ -65,6 +68,7 @@ class JarvisDaemonModule(
         super.initialize()
         activeReactContext = reactApplicationContext
         activeNativeTalkModePlaybackBridge = nativeTalkModePlaybackBridge
+        activeJarvisDaemonModule = this
         activeNativeSpeechRecognitionBridge = nativeSpeechRecognitionBridge
     }
 
@@ -74,10 +78,12 @@ class JarvisDaemonModule(
         if (!OutsideAppVoiceSessionService.isActive()) TalkModeAudioSession.end()
         nativeVoicePlaybackOwners.forEach(WearableAudioRouteManager::release)
         nativeVoicePlaybackOwners.clear()
+        suppressedNativeVoicePlaybackOwners.clear()
         if (activeReactContext === reactApplicationContext) activeReactContext = null
         if (activeNativeTalkModePlaybackBridge === nativeTalkModePlaybackBridge) {
             activeNativeTalkModePlaybackBridge = null
         }
+        if (activeJarvisDaemonModule === this) activeJarvisDaemonModule = null
         if (activeNativeSpeechRecognitionBridge === nativeSpeechRecognitionBridge) {
             activeNativeSpeechRecognitionBridge = null
         }
@@ -341,6 +347,11 @@ class JarvisDaemonModule(
 
     @ReactMethod
     fun beginNativeTalkModePlayback(ownerId: String, spokenText: String, promise: Promise) {
+        val routeOwner = IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX + ownerId
+        if (suppressedNativeVoicePlaybackOwners.remove(routeOwner)) {
+            promise.resolve(buildTalkModeAudioStatusMap(TalkModeAudioSession.snapshot()))
+            return
+        }
         promise.resolve(
             buildTalkModeAudioStatusMap(
                 TalkModeAudioSession.beginPlayback("react_tts:$ownerId", spokenText),
@@ -384,6 +395,7 @@ class JarvisDaemonModule(
         nativeTalkModePlaybackBridge.stop()
         nativeVoicePlaybackOwners.forEach(WearableAudioRouteManager::release)
         nativeVoicePlaybackOwners.clear()
+        suppressedNativeVoicePlaybackOwners.clear()
         promise.resolve(buildTalkModeAudioStatusMap(TalkModeAudioSession.end()))
     }
 
@@ -401,8 +413,14 @@ class JarvisDaemonModule(
     fun releaseNativeVoicePlaybackRoute(ownerId: String, promise: Promise) {
         val owner = IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX + ownerId
         nativeVoicePlaybackOwners.remove(owner)
+        suppressedNativeVoicePlaybackOwners.remove(owner)
         WearableAudioRouteManager.release(owner)
         promise.resolve(null)
+    }
+
+    private fun stopNativeTalkModePlaybackAndSuppressPending() {
+        suppressedNativeVoicePlaybackOwners.addAll(nativeVoicePlaybackOwners)
+        nativeTalkModePlaybackBridge.stop()
     }
 
     @ReactMethod

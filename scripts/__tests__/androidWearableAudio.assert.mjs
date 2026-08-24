@@ -199,12 +199,17 @@ assert.match(
   /OutsideAppVoiceOverlayTapAction\.INTERRUPT_AND_LISTEN[\s\S]*?JarvisDaemonModule\.stopActiveNativeTalkModePlayback\(\)[\s\S]*?stopActivePlayback\(rearmTalkMode = false\)[\s\S]*?resumeWakeCapture\(\)/,
 );
 assert.match(daemonModule, /fun stopActiveNativeTalkModePlayback\(\)/);
+assert.match(daemonModule, /stopActiveNativeTalkModePlayback[\s\S]*?stopNativeTalkModePlaybackAndSuppressPending/);
+assert.match(daemonModule, /suppressedNativeVoicePlaybackOwners\.addAll\(nativeVoicePlaybackOwners\)[\s\S]*?nativeTalkModePlaybackBridge\.stop\(\)/);
+assert.match(daemonModule, /beginNativeTalkModePlayback[\s\S]*?suppressedNativeVoicePlaybackOwners\.remove\(routeOwner\)[\s\S]*?TalkModeAudioSession\.snapshot\(\)/);
 assert.match(daemonModule, /fun stopNativeTalkModeSpeech[\s\S]*?playbackOwner\?\.startsWith\("react_tts:"\) == true[\s\S]*?TalkModeAudioSession\.stopTalking\(\)/);
 assert.match(daemonModule, /fun cancelActiveNativeSpeechRecognition\(\)[\s\S]*?cancelForOutsideAppHandoff\(\)/);
 assert.match(outsideVoice, /private fun pauseWakeCapture\(\)[\s\S]*?cancelActiveNativeSpeechRecognition\(\)[\s\S]*?stopActiveNativeTalkModePlayback\(\)/);
 assert.match(outsideVoice, /private fun endSession\(\)[\s\S]*?cancelActiveNativeSpeechRecognition\(\)[\s\S]*?stopActiveNativeTalkModePlayback\(\)/);
 assert.match(outsideVoice, /override fun onDestroy\(\)[\s\S]*?cancelActiveNativeSpeechRecognition\(\)[\s\S]*?stopActiveNativeTalkModePlayback\(\)/);
 assert.match(outsideVoice, /fun prepareForInAppCapture\(\)/);
+assert.match(outsideVoice, /ACTION_RESUME[\s\S]*?TalkModeAudioSession\.resumeCapture\(this, "outside_app_capture"\)/);
+assert.match(outsideVoice, /fun onOverlayResume\(\)[\s\S]*?TalkModeAudioSession\.resumeCapture\(this, "outside_app_capture"\)/);
 assert.match(
   outsideVoice,
   /fun resumeWakeCaptureAfterPlayback\(\): Boolean[\s\S]*?!service\.ownsVoiceCapture[\s\S]*?return false[\s\S]*?WakeWordService\.onTtsFinished\(\)/,

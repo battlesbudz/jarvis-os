@@ -91,6 +91,17 @@ internal class TalkModeAudioSessionStateMachine {
     }
 
     @Synchronized
+    fun resumeCapture(owner: String): TalkModeAudioSnapshot {
+        ensureSession(owner)
+        snapshot = snapshot.copy(
+            captureOwner = owner,
+            state = if (snapshot.playbackOwner == null) TalkModeAudioState.LISTENING else TalkModeAudioState.SPEAKING,
+            lastError = null,
+        )
+        return snapshot
+    }
+
+    @Synchronized
     fun releaseCapture(owner: String): TalkModeAudioSnapshot {
         if (snapshot.captureOwner == owner) snapshot = snapshot.copy(captureOwner = null)
         return snapshot
@@ -356,6 +367,11 @@ internal object TalkModeAudioSession {
     fun acquireCapture(context: Context, owner: String): TalkModeAudioSnapshot {
         begin(context, owner)
         return machine.acquireCapture(owner)
+    }
+
+    fun resumeCapture(context: Context, owner: String): TalkModeAudioSnapshot {
+        begin(context, owner)
+        return machine.resumeCapture(owner)
     }
 
     fun releaseCapture(owner: String): TalkModeAudioSnapshot = machine.releaseCapture(owner)
