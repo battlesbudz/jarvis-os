@@ -10,6 +10,15 @@ class TalkModeAudioSessionStateMachineTest {
     private val effects = TalkModeEchoControlStatus(true, true, true, true)
 
     @Test
+    fun `ordinary playback cannot create a Talk Mode session`() {
+        val machine = TalkModeAudioSessionStateMachine()
+
+        val unchanged = machine.beginPlayback("tts", "Read this aloud")
+        assertEquals(TalkModeAudioState.IDLE, unchanged.state)
+        assertNull(unchanged.playbackOwner)
+    }
+
+    @Test
     fun `partial transcript remains transient until commit`() {
         val machine = TalkModeAudioSessionStateMachine()
         machine.beginSession("app", continuousSupported = true, echoControls = effects)
@@ -82,6 +91,18 @@ class TalkModeAudioSessionStateMachineTest {
         val listeningStopped = machine.stopListening()
         assertEquals(TalkModeAudioState.PAUSED, listeningStopped.state)
         assertNull(listeningStopped.captureOwner)
+    }
+
+    @Test
+    fun `completed playback returns an active capture session to listening`() {
+        val machine = TalkModeAudioSessionStateMachine()
+        machine.beginSession("app", continuousSupported = true, echoControls = effects)
+        machine.beginPlayback("tts", "Done soon")
+
+        val finished = machine.finishPlayback("tts")
+        assertEquals(TalkModeAudioState.LISTENING, finished.state)
+        assertEquals("app", finished.captureOwner)
+        assertNull(finished.playbackOwner)
     }
 
     @Test

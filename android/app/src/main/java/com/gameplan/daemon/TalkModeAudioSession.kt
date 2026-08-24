@@ -144,7 +144,11 @@ internal class TalkModeAudioSessionStateMachine {
 
     @Synchronized
     fun beginPlayback(owner: String, text: String): TalkModeAudioSnapshot {
-        if (snapshot.state == TalkModeAudioState.PAUSED || snapshot.state == TalkModeAudioState.ENDED) return snapshot
+        if (
+            snapshot.state == TalkModeAudioState.IDLE ||
+            snapshot.state == TalkModeAudioState.PAUSED ||
+            snapshot.state == TalkModeAudioState.ENDED
+        ) return snapshot
         snapshot = snapshot.copy(
             state = TalkModeAudioState.SPEAKING,
             playbackOwner = owner,
@@ -158,7 +162,11 @@ internal class TalkModeAudioSessionStateMachine {
     fun finishPlayback(owner: String): TalkModeAudioSnapshot {
         if (snapshot.playbackOwner != owner) return snapshot
         snapshot = snapshot.copy(
-            state = if (snapshot.playbackOwner == null) TalkModeAudioState.LISTENING else snapshot.state,
+            state = when {
+                snapshot.state == TalkModeAudioState.PAUSED -> TalkModeAudioState.PAUSED
+                snapshot.captureOwner == null -> TalkModeAudioState.IDLE
+                else -> TalkModeAudioState.LISTENING
+            },
             playbackOwner = null,
             playbackText = "",
             partialTranscript = "",

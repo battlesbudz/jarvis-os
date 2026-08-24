@@ -18,8 +18,10 @@ for (const root of roots) {
   assert.match(session, /committedTranscript/);
   assert.match(session, /isProbablePlaybackEcho/);
   assert.doesNotMatch(session, /candidateWords\.size < 3/);
+  assert.match(session, /snapshot\.state == TalkModeAudioState\.IDLE[\s\S]*?snapshot\.state == TalkModeAudioState\.PAUSED/);
   assert.match(session, /TalkModeAudioMode\.TURN_BASED/);
   assert.match(session, /state = if \(snapshot\.playbackOwner == null\) TalkModeAudioState\.LISTENING else TalkModeAudioState\.SPEAKING/);
+  assert.match(session, /snapshot\.captureOwner == null -> TalkModeAudioState\.IDLE/);
   assert.match(session, /AcousticEchoCanceler\.isAvailable/);
   assert.match(session, /NoiseSuppressor\.isAvailable/);
   assert.match(session, /AutomaticGainControl\.isAvailable/);
@@ -61,6 +63,7 @@ assert.match(screen, /event\.type === 'partial'[\s\S]*?setInput/);
 assert.match(screen, /normalizedControl === 'stop talking'[\s\S]*?stopAndroidTalkModeSpeech/);
 assert.match(screen, /normalizedControl === 'stop listening'[\s\S]*?pauseAndroidTalkModeListening/);
 assert.match(screen, /beginAndroidTalkModePlayback\(playbackRouteOwnerId, trimmedText\)/);
+assert.match(screen, /if \(!talkModeRef\.current\)[\s\S]*?Speech\.speak\(trimmedText/);
 assert.match(screen, /recognizeAndroidSpeechOnce\([\s\S]*?speakAndroidTalkModeText\(playbackRouteOwnerId, trimmedText\)/);
 assert.match(screen, /finishAndroidTalkModePlayback\(playbackRouteOwnerId\)/);
 assert.match(screen, /playbackResult\.status === 'stopped'[\s\S]*?playbackResult\.status === 'ended'[\s\S]*?onError\(\)/);

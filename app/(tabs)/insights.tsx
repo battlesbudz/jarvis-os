@@ -2055,6 +2055,17 @@ export default function InsightsScreen() {
     const trimmedText = text.slice(0, 4000);
 
     if (Platform.OS === 'android') {
+      if (!talkModeRef.current) {
+        setIsTTSLoading(false);
+        Speech.speak(trimmedText, {
+          rate: 0.96,
+          pitch: 1,
+          onDone: onPlaybackEnd,
+          onStopped: onError,
+          onError,
+        });
+        return;
+      }
       const playbackRouteOwnerId = `${Date.now()}-${++nativeVoiceRouteSeqRef.current}`;
       try {
         await acquireAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
