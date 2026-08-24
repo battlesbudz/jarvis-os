@@ -245,7 +245,11 @@ internal class TalkModeAudioSessionStateMachine {
         ) return snapshot
         ensureSession(owner)
         snapshot = snapshot.copy(
-            state = if (snapshot.playbackOwner == null) TalkModeAudioState.RECOVERING else TalkModeAudioState.SPEAKING,
+            state = when {
+                snapshot.state == TalkModeAudioState.INTERRUPTED -> TalkModeAudioState.INTERRUPTED
+                snapshot.playbackOwner == null -> TalkModeAudioState.RECOVERING
+                else -> TalkModeAudioState.SPEAKING
+            },
             routeState = routeState,
             lastError = error,
         )
@@ -261,7 +265,11 @@ internal class TalkModeAudioSessionStateMachine {
         ) return snapshot
         ensureSession(owner)
         snapshot = snapshot.copy(
-            state = if (snapshot.playbackOwner == null) TalkModeAudioState.LISTENING else TalkModeAudioState.SPEAKING,
+            state = when {
+                snapshot.state == TalkModeAudioState.INTERRUPTED -> TalkModeAudioState.INTERRUPTED
+                snapshot.playbackOwner == null -> TalkModeAudioState.LISTENING
+                else -> TalkModeAudioState.SPEAKING
+            },
             captureOwner = snapshot.captureOwner ?: owner,
             routeState = routeState,
             lastError = null,
