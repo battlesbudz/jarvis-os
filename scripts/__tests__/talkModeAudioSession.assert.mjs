@@ -17,7 +17,7 @@ for (const root of roots) {
   assert.match(session, /partialTranscript/);
   assert.match(session, /committedTranscript/);
   assert.match(session, /isProbablePlaybackEcho/);
-  assert.match(session, /longestOrderedMatch/);
+  assert.match(session, /longestContiguousMatch/);
   assert.doesNotMatch(session, /candidateWords\.count \{ it in playbackWords \}/);
   assert.doesNotMatch(session, /candidateWords\.size < 3/);
   assert.match(session, /snapshot\.state == TalkModeAudioState\.IDLE[\s\S]*?snapshot\.state == TalkModeAudioState\.PAUSED/);
@@ -83,12 +83,13 @@ assert.match(screen, /playbackResult\.status === 'stopped'[\s\S]*?playbackResult
 assert.match(screen, /speakAndroidTalkModeText\(playbackRouteOwnerId, trimmedText\)[\s\S]*?speakAbortRef\.current !== abortController\) return/);
 assert.match(screen, /ownsCurrentPlayback[\s\S]*?cancelAndroidNativeSpeechRecognition[\s\S]*?if \(ownsCurrentPlayback\)[\s\S]*?setAudioModeAsync/);
 assert.match(screen, /recoverableRecognitionFailures < 5[\s\S]*?setTimeout/);
-assert.match(screen, /event\.type === 'echo_rejected'[\s\S]*?current === interruptionPreview/);
+assert.match(screen, /event\.type === 'echo_rejected'[\s\S]*?clearInterruptionPreview\(\)/);
+assert.match(screen, /const clearInterruptionPreview[\s\S]*?current === abandonedPreview[\s\S]*?if \(result\.text\.trim\(\)\)[\s\S]*?clearInterruptionPreview\(\)[\s\S]*?catch \(error\)[\s\S]*?clearInterruptionPreview\(\)/);
 assert.match(screen, /session\?\.state !== 'speaking'[\s\S]*?session\.playbackOwner !== `react_tts:/);
 assert.match(screen, /allowTurnBasedFallback = !session \|\| session\.state === 'idle'[\s\S]*?playbackRejectedByCompetingOwner \|\| !allowTurnBasedFallback/);
 assert.match(screen, /if \(!playbackLifecycleStarted\)[\s\S]*?releaseAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)/);
 assert.match(screen, /interruptionPreview = event\.text/);
-assert.match(screen, /current === interruptionPreview \? '' : current/);
+assert.match(screen, /current === abandonedPreview \? '' : current/);
 assert.match(screen, /normalizedControl === 'stop talking'[\s\S]*?scheduleTalkModeRecordingStartRef\.current\(400\)/);
 assert.match(screen, /recoverable[\s\S]*?continue;/);
 assert.match(screen, /nativeSpeechActiveRef\.current = true;[\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?\.finally\(\(\) => \{[\s\S]*?nativeSpeechActiveRef\.current = false;/);

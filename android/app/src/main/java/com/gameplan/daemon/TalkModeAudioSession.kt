@@ -308,23 +308,20 @@ internal class TalkModeAudioSessionStateMachine {
         val playbackWords = normalizedWords(playback)
         if (candidateWords.isEmpty() || playbackWords.isEmpty()) return false
         if (candidateWords.joinToString(" ") == playbackWords.joinToString(" ")) return true
-        // Preserve order when comparing partial recognition. An unordered bag-of-words
-        // match can discard a real barge-in such as "send the timer" when playback
-        // previously said "stop the timer, then send the report".
-        val longestOrderedMatch = IntArray(playbackWords.size + 1)
+        // Require a contiguous phrase from playback. Merely finding all short-command
+        // words in order can discard a real barge-in such as "stop talking" when the
+        // response said "stop the music and keep talking".
+        val contiguousMatches = IntArray(playbackWords.size + 1)
+        var longestContiguousMatch = 0
         candidateWords.forEach { candidateWord ->
-            var diagonal = 0
-            playbackWords.forEachIndexed { index, playbackWord ->
-                val previous = longestOrderedMatch[index + 1]
-                longestOrderedMatch[index + 1] = if (candidateWord == playbackWord) {
-                    diagonal + 1
-                } else {
-                    maxOf(longestOrderedMatch[index + 1], longestOrderedMatch[index])
-                }
-                diagonal = previous
+            for (index in playbackWords.indices.reversed()) {
+                contiguousMatches[index + 1] = if (candidateWord == playbackWords[index]) {
+                    contiguousMatches[index] + 1
+                } else 0
+                longestContiguousMatch = maxOf(longestContiguousMatch, contiguousMatches[index + 1])
             }
         }
-        return longestOrderedMatch.last().toDouble() / candidateWords.size >= 0.8
+        return longestContiguousMatch.toDouble() / candidateWords.size >= 0.8
     }
 
     private fun normalizedWords(value: String): List<String> = value

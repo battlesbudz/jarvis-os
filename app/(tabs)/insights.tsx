@@ -2091,6 +2091,13 @@ export default function InsightsScreen() {
           let playbackFinished = false;
           let interruptionTranscript = '';
           let interruptionPreview = '';
+          const clearInterruptionPreview = () => {
+            const abandonedPreview = interruptionPreview;
+            interruptionPreview = '';
+            if (abandonedPreview) {
+              setInput(current => current === abandonedPreview ? '' : current);
+            }
+          };
           let recoverableRecognitionFailures = 0;
           const monitor = continuousCapture
             ? (async () => {
@@ -2104,7 +2111,7 @@ export default function InsightsScreen() {
                       takeInAppCapture: true,
                       onEvent: (event) => {
                         if (event.type === 'echo_rejected') {
-                          setInput(current => current === interruptionPreview ? '' : current);
+                          clearInterruptionPreview();
                         } else if (event.type === 'partial' && event.sessionState === 'interrupted' && event.text) {
                           interruptionPreview = event.text;
                           setInput(event.text);
@@ -2117,7 +2124,9 @@ export default function InsightsScreen() {
                       interruptionTranscript = result.text.trim();
                       return;
                     }
+                    clearInterruptionPreview();
                   } catch (error) {
+                    clearInterruptionPreview();
                     const recoverable = (error as Error & { recoverable?: boolean })?.recoverable === true;
                     if (
                       recoverable &&
