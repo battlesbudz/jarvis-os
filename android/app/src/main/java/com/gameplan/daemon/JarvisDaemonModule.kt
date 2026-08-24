@@ -422,7 +422,11 @@ class JarvisDaemonModule(
     }
 
     private fun stopNativeTalkModePlaybackAndSuppressPending() {
-        suppressedNativeVoicePlaybackOwners.addAll(nativeVoicePlaybackOwners)
+        val playbackOwners = nativeVoicePlaybackOwners.toList()
+        suppressedNativeVoicePlaybackOwners.addAll(playbackOwners)
+        playbackOwners.forEach { owner ->
+            if (nativeVoicePlaybackOwners.remove(owner)) WearableAudioRouteManager.release(owner)
+        }
         nativeTalkModePlaybackBridge.stop()
     }
 

@@ -200,7 +200,7 @@ assert.match(
 );
 assert.match(daemonModule, /fun stopActiveNativeTalkModePlayback\(\)/);
 assert.match(daemonModule, /stopActiveNativeTalkModePlayback[\s\S]*?stopNativeTalkModePlaybackAndSuppressPending/);
-assert.match(daemonModule, /suppressedNativeVoicePlaybackOwners\.addAll\(nativeVoicePlaybackOwners\)[\s\S]*?nativeTalkModePlaybackBridge\.stop\(\)/);
+assert.match(daemonModule, /suppressedNativeVoicePlaybackOwners\.addAll\(playbackOwners\)[\s\S]*?nativeVoicePlaybackOwners\.remove\(owner\)[\s\S]*?WearableAudioRouteManager\.release\(owner\)[\s\S]*?nativeTalkModePlaybackBridge\.stop\(\)/);
 assert.match(daemonModule, /nativeVoicePlaybackOwners = ConcurrentHashMap\.newKeySet<String>\(\)/);
 assert.match(daemonModule, /beginNativeTalkModePlayback[\s\S]*?suppressedNativeVoicePlaybackOwners\.remove\(routeOwner\)[\s\S]*?TalkModeAudioSession\.snapshot\(\)/);
 assert.match(daemonModule, /NativeTalkModePlaybackBridge\([\s\S]*?::consumeNativeTalkModePlaybackSuppression/);
