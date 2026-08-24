@@ -290,7 +290,9 @@ export function projectAgentJob(
         createdAt: cancelRequestedAt,
       }
     : null;
-  const retriedAt = typeof input.retryOfJobId === "string" ? dateValue(input.retriedAt) : null;
+  const retriedAt = input.liveActionRetryValidated === true && typeof input.retryOfJobId === "string"
+    ? dateValue(input.retriedAt)
+    : null;
   const retryEvent: ProjectedLiveActionEvent | null = retriedAt
     ? {
         sourceEventKey: `job:${job.id}:retry:${retriedAt.toISOString()}`,

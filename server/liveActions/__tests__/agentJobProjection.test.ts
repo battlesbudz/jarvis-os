@@ -320,6 +320,15 @@ const retry = projectAgentJob(job({
 }));
 assert.equal(retry.sourceLineageKey, "job-root");
 assert.equal(retry.events.filter((event) => event.type === "action.retry_scheduled").length, 1);
+const unvalidatedRetry = projectAgentJob(job({
+  id: "legacy-client-job",
+  input: {
+    retryOfJobId: "job-1",
+    retriedAt: "2026-08-23T12:02:00.000Z",
+  },
+}));
+assert.equal(unvalidatedRetry.sourceLineageKey, "legacy-client-job");
+assert.equal(unvalidatedRetry.events.filter((event) => event.type === "action.retry_scheduled").length, 0);
 assert.equal(projectAgentJob(job({ input: { liveActionLineageKey: "forged-lineage" } })).sourceLineageKey, "job-1");
 
 const cancelRequestedAt = "2026-08-23T12:03:00.000Z";
