@@ -65,12 +65,23 @@ class TalkModeAudioSessionStateMachineTest {
         machine.beginPlayback("tts", "Your report is ready for review")
         machine.speechStarted("app")
 
-        assertFalse(machine.commitTranscript("app", "report review"))
+        assertFalse(machine.commitTranscript("app", "ready for"))
         assertEquals(TalkModeAudioState.SPEAKING, machine.snapshot().state)
 
         machine.speechStarted("app")
         assertFalse(machine.commitTranscript("app", "review"))
         assertEquals(TalkModeAudioState.SPEAKING, machine.snapshot().state)
+    }
+
+    @Test
+    fun `noncontiguous playback words remain a valid barge in`() {
+        val machine = TalkModeAudioSessionStateMachine()
+        machine.beginSession("app", continuousSupported = true, echoControls = effects)
+        machine.beginPlayback("tts", "Your report is ready for review")
+        machine.speechStarted("app")
+
+        assertTrue(machine.commitTranscript("app", "report review"))
+        assertEquals(TalkModeAudioState.RESPONDING, machine.snapshot().state)
     }
 
     @Test
