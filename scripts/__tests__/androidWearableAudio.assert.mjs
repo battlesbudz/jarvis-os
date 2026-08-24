@@ -183,6 +183,10 @@ assert.match(
 );
 assert.match(
   outsideVoice,
+  /playbackWasActive[\s\S]*?JarvisVoicePlaybackController\.stopActivePlayback\(rearmTalkMode = false\)[\s\S]*?resumeWakeCapture\(\)/,
+);
+assert.match(
+  outsideVoice,
   /private fun pauseWakeCapture\(\)[\s\S]*?JarvisDaemonModule\.stopActiveNativeTalkModePlayback\(\)/,
 );
 assert.match(

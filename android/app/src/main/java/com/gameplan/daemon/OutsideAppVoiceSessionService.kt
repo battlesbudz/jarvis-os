@@ -273,7 +273,10 @@ class OutsideAppVoiceSessionService : Service() {
                 }
                 ownsVoiceCapture = true
                 val playbackWasActive = TalkModeAudioSession.snapshot().playbackOwner != null
-                if (playbackWasActive) JarvisDaemonModule.stopActiveNativeTalkModePlayback()
+                if (playbackWasActive) {
+                    JarvisDaemonModule.stopActiveNativeTalkModePlayback()
+                    JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
+                }
                 TalkModeAudioSession.acquireCapture(this, "outside_app_capture")
                 if (
                     state == OutsideAppVoiceState.LISTENING ||
