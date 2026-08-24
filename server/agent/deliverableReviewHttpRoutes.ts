@@ -480,6 +480,14 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
         ? { ...(job.input as Record<string, unknown>) }
         : {};
       delete baseInput.retryCount;
+      delete baseInput.retryOfJobId;
+      delete baseInput.liveActionLineageKey;
+      delete baseInput.liveActionRetryValidated;
+      delete baseInput.retriedAt;
+      delete baseInput.requeuedAt;
+      delete baseInput.requeueHistory;
+      delete baseInput.cancelRequestedAt;
+      delete baseInput.resourcePause;
       const preserveDownloadableArtifact = deliverableMeta(d).hasDownloadableArtifact === true;
 
       const revisionPrompt = [
@@ -558,7 +566,7 @@ export function registerDeliverableReviewRoutes(app: Express, deps: DeliverableR
           .where(and(eq(schema.agentJobs.id, d.jobId), eq(schema.agentJobs.status, "complete")));
       }
 
-      res.json({ ok: true, jobId: revision.id, isDuplicate: revision.isDuplicate, status: "queued" });
+      res.json({ ok: true, jobId: revision.id, isDuplicate: revision.isDuplicate, status: revision.status });
     } catch (err) {
       console.error("Error requesting deliverable revision:", err);
       res.status(500).json({ error: "Failed to request revision" });

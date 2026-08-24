@@ -114,7 +114,7 @@ async function run(): Promise<void> {
       revisionTransactionPassed = transaction !== undefined;
       revisionDuplicateCheckSkipped = options?.skipDuplicateCheck === true;
       await onSubmitAgentJob?.();
-      return { id: "revision_job_1", isDuplicate: false };
+      return { id: "revision_job_1", isDuplicate: false, status: "queued" };
     },
   });
 
@@ -377,7 +377,19 @@ async function run(): Promise<void> {
         agentType: "planning",
         title: "Original operating plan",
         prompt: "Create the first operating plan",
-        input: { retryCount: 2, originChannel: "App Chat", model: "test-model" },
+        input: {
+          retryCount: 2,
+          retryOfJobId: "failed-job",
+          liveActionLineageKey: "retry-root",
+          liveActionRetryValidated: true,
+          retriedAt: "2026-08-24T04:00:00.000Z",
+          requeuedAt: "2026-08-24T04:01:00.000Z",
+          requeueHistory: ["2026-08-24T04:01:00.000Z"],
+          cancelRequestedAt: "2026-08-24T04:02:00.000Z",
+          resourcePause: { pausedAt: "2026-08-24T04:03:00.000Z" },
+          originChannel: "App Chat",
+          model: "test-model",
+        },
         status: "complete",
       })
       .returning();
@@ -406,6 +418,7 @@ async function run(): Promise<void> {
     onSubmitAgentJob = undefined;
     assert.equal(reviseResponse.status, 200, "HTTP route queues revision jobs");
     assert.equal(reviseResponse.body.jobId, "revision_job_1");
+    assert.equal(reviseResponse.body.status, "queued", "revision route returns the submitted job status");
     assert.equal(submittedJobs.length, 1, "revision route submits one new job");
     assert.equal(revisionTransactionPassed, true, "revision route inserts the job through its locking transaction");
     assert.equal(revisionDuplicateCheckSkipped, true, "revision route never reuses another deliverable's revision job");
@@ -420,6 +433,18 @@ async function run(): Promise<void> {
     assert.equal(submittedJobs[0].input?.revisionInstructions, "Add exact owners and next operational actions.");
     assert.equal(submittedJobs[0].input?.originChannel, "App Chat");
     assert.equal(submittedJobs[0].input?.retryCount, undefined, "revision route removes retryCount from inherited input");
+    for (const marker of [
+      "retryOfJobId",
+      "liveActionLineageKey",
+      "liveActionRetryValidated",
+      "retriedAt",
+      "requeuedAt",
+      "requeueHistory",
+      "cancelRequestedAt",
+      "resourcePause",
+    ]) {
+      assert.equal(submittedJobs[0].input?.[marker], undefined, `revision route removes inherited ${marker}`);
+    }
     const [revisionSourceAfter] = await db
       .select({ status: deliverables.status, triageNote: deliverables.triageNote })
       .from(deliverables)
