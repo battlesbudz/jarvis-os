@@ -14,18 +14,38 @@ import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
 
 class JarvisDaemonModule(
     private val reactApplicationContext: ReactApplicationContext,
 ) : ReactContextBaseJavaModule(reactApplicationContext) {
-    private val nativeSpeechRecognitionBridge = NativeSpeechRecognitionBridge(reactApplicationContext)
-    private val nativeVoicePlaybackOwners = linkedSetOf<String>()
+    private val suppressedNativeVoicePlaybackOwners = ConcurrentHashMap.newKeySet<String>()
+    private val nativeTalkModePlaybackBridge = NativeTalkModePlaybackBridge(
+        reactApplicationContext,
+        ::consumeNativeTalkModePlaybackSuppression,
+    )
+    private val nativeSpeechRecognitionBridge = NativeSpeechRecognitionBridge(
+        reactApplicationContext,
+        nativeTalkModePlaybackBridge,
+    )
+    private val nativeVoicePlaybackOwners = ConcurrentHashMap.newKeySet<String>()
 
     companion object {
         private const val VOICE_SESSION_CONTROL_EVENT = "JarvisVoiceSessionControl"
         private const val IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX = "in_app_voice_playback:"
 
         @Volatile private var activeReactContext: ReactApplicationContext? = null
+        @Volatile private var activeNativeTalkModePlaybackBridge: NativeTalkModePlaybackBridge? = null
+        @Volatile private var activeJarvisDaemonModule: JarvisDaemonModule? = null
+        @Volatile private var activeNativeSpeechRecognitionBridge: NativeSpeechRecognitionBridge? = null
+
+        fun stopActiveNativeTalkModePlayback() {
+            activeJarvisDaemonModule?.stopNativeTalkModePlaybackAndSuppressPending()
+        }
+
+        fun cancelActiveNativeSpeechRecognition() {
+            activeNativeSpeechRecognitionBridge?.cancelForOutsideAppHandoff()
+        }
 
         fun emitVoiceSessionControl(actionName: String, state: String, confirmationToken: String?): Boolean {
             val context = activeReactContext ?: return false
@@ -50,13 +70,40 @@ class JarvisDaemonModule(
     override fun initialize() {
         super.initialize()
         activeReactContext = reactApplicationContext
+        activeNativeTalkModePlaybackBridge = nativeTalkModePlaybackBridge
+        activeJarvisDaemonModule = this
+        activeNativeSpeechRecognitionBridge = nativeSpeechRecognitionBridge
     }
 
     override fun invalidate() {
+        val shouldReturnCaptureToOutsideApp = OutsideAppVoiceSessionService.isActive()
         nativeSpeechRecognitionBridge.destroy()
+        nativeTalkModePlaybackBridge.destroy()
+        if (shouldReturnCaptureToOutsideApp) {
+            runCatching {
+                reactApplicationContext.startService(
+                    OutsideAppVoiceSessionService.controlIntent(
+                        reactApplicationContext,
+                        OutsideAppVoiceSessionService.ACTION_TAKE_CAPTURE,
+                    ),
+                )
+            }.onFailure { err ->
+                DaemonLog.add("outside_app_voice: React invalidation capture handoff failed: ${err.message}")
+            }
+        } else {
+            TalkModeAudioSession.end()
+        }
         nativeVoicePlaybackOwners.forEach(WearableAudioRouteManager::release)
         nativeVoicePlaybackOwners.clear()
+        suppressedNativeVoicePlaybackOwners.clear()
         if (activeReactContext === reactApplicationContext) activeReactContext = null
+        if (activeNativeTalkModePlaybackBridge === nativeTalkModePlaybackBridge) {
+            activeNativeTalkModePlaybackBridge = null
+        }
+        if (activeJarvisDaemonModule === this) activeJarvisDaemonModule = null
+        if (activeNativeSpeechRecognitionBridge === nativeSpeechRecognitionBridge) {
+            activeNativeSpeechRecognitionBridge = null
+        }
         super.invalidate()
     }
 
@@ -306,6 +353,70 @@ class JarvisDaemonModule(
     }
 
     @ReactMethod
+    fun getNativeTalkModeAudioSessionStatus(promise: Promise) {
+        promise.resolve(buildTalkModeAudioStatusMap(TalkModeAudioSession.snapshot()))
+    }
+
+    @ReactMethod
+    fun beginNativeTalkModeResponse(promise: Promise) {
+        promise.resolve(buildTalkModeAudioStatusMap(TalkModeAudioSession.beginResponse()))
+    }
+
+    @ReactMethod
+    fun beginNativeTalkModePlayback(ownerId: String, spokenText: String, promise: Promise) {
+        val routeOwner = IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX + ownerId
+        if (suppressedNativeVoicePlaybackOwners.remove(routeOwner)) {
+            promise.resolve(buildTalkModeAudioStatusMap(TalkModeAudioSession.snapshot()))
+            return
+        }
+        promise.resolve(
+            buildTalkModeAudioStatusMap(
+                TalkModeAudioSession.beginPlayback("react_tts:$ownerId", spokenText),
+            ),
+        )
+    }
+
+    @ReactMethod
+    fun speakNativeTalkModeText(ownerId: String, spokenText: String, promise: Promise) {
+        nativeTalkModePlaybackBridge.speak("react_tts:$ownerId", spokenText, promise)
+    }
+
+    @ReactMethod
+    fun finishNativeTalkModePlayback(ownerId: String, promise: Promise) {
+        promise.resolve(
+            buildTalkModeAudioStatusMap(
+                TalkModeAudioSession.finishPlayback("react_tts:$ownerId"),
+            ),
+        )
+    }
+
+    @ReactMethod
+    fun stopNativeTalkModeSpeech(promise: Promise) {
+        nativeTalkModePlaybackBridge.stop()
+        val session = TalkModeAudioSession.snapshot()
+        val stopped = if (session.playbackOwner?.startsWith("react_tts:") == true) {
+            TalkModeAudioSession.stopTalking()
+        } else session
+        promise.resolve(buildTalkModeAudioStatusMap(stopped))
+    }
+
+    @ReactMethod
+    fun pauseNativeTalkModeListening(promise: Promise) {
+        nativeSpeechRecognitionBridge.cancelForOutsideAppHandoff()
+        promise.resolve(buildTalkModeAudioStatusMap(TalkModeAudioSession.stopListening()))
+    }
+
+    @ReactMethod
+    fun endNativeTalkModeAudioSession(promise: Promise) {
+        nativeSpeechRecognitionBridge.cancelForOutsideAppHandoff()
+        nativeTalkModePlaybackBridge.stop()
+        nativeVoicePlaybackOwners.forEach(WearableAudioRouteManager::release)
+        nativeVoicePlaybackOwners.clear()
+        suppressedNativeVoicePlaybackOwners.clear()
+        promise.resolve(buildTalkModeAudioStatusMap(TalkModeAudioSession.end()))
+    }
+
+    @ReactMethod
     fun acquireNativeVoicePlaybackRoute(ownerId: String, promise: Promise) {
         val owner = IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX + ownerId
         nativeVoicePlaybackOwners.add(owner)
@@ -319,8 +430,23 @@ class JarvisDaemonModule(
     fun releaseNativeVoicePlaybackRoute(ownerId: String, promise: Promise) {
         val owner = IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX + ownerId
         nativeVoicePlaybackOwners.remove(owner)
+        suppressedNativeVoicePlaybackOwners.remove(owner)
         WearableAudioRouteManager.release(owner)
         promise.resolve(null)
+    }
+
+    private fun stopNativeTalkModePlaybackAndSuppressPending() {
+        val playbackOwners = nativeVoicePlaybackOwners.toList()
+        suppressedNativeVoicePlaybackOwners.addAll(playbackOwners)
+        playbackOwners.forEach { owner ->
+            if (nativeVoicePlaybackOwners.remove(owner)) WearableAudioRouteManager.release(owner)
+        }
+        nativeTalkModePlaybackBridge.stop()
+    }
+
+    private fun consumeNativeTalkModePlaybackSuppression(playbackOwner: String): Boolean {
+        val ownerId = playbackOwner.removePrefix("react_tts:")
+        return suppressedNativeVoicePlaybackOwners.remove(IN_APP_VOICE_PLAYBACK_AUDIO_OWNER_PREFIX + ownerId)
     }
 
     @ReactMethod
@@ -334,6 +460,25 @@ class JarvisDaemonModule(
             JSONObject(optionsJson)
         } catch (_: Exception) {
             JSONObject()
+        }
+    }
+
+    private fun buildTalkModeAudioStatusMap(session: TalkModeAudioSnapshot): WritableMap {
+        return Arguments.createMap().apply {
+            putDouble("sessionId", session.sessionId.toDouble())
+            putString("state", session.state.wireName)
+            putString("mode", session.mode.wireName)
+            putString("captureOwner", session.captureOwner)
+            putString("playbackOwner", session.playbackOwner)
+            putString("partialTranscript", session.partialTranscript)
+            putString("committedTranscript", session.committedTranscript)
+            putBoolean("speechSuppressed", session.speechSuppressed)
+            putString("routeState", session.routeState)
+            putString("lastError", session.lastError)
+            putBoolean("acousticEchoCancellationAvailable", session.echoControls.acousticEchoCancellationAvailable)
+            putBoolean("noiseSuppressionAvailable", session.echoControls.noiseSuppressionAvailable)
+            putBoolean("automaticGainControlAvailable", session.echoControls.automaticGainControlAvailable)
+            putBoolean("echoControlsPlatformManaged", session.echoControls.platformManaged)
         }
     }
 

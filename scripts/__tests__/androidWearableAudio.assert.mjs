@@ -172,8 +172,47 @@ assert.match(
 );
 assert.match(talkMode, /microphone ownership returned to the in-app recognizer/);
 assert.match(outsideVoice, /ACTION_TAKE_CAPTURE/);
+assert.match(outsideVoice, /override fun onDestroy\(\)[\s\S]*?stopActiveNativeTalkModePlayback\(\)[\s\S]*?stopActivePlayback\(rearmTalkMode = false\)[\s\S]*?TalkModeAudioSession\.end\(\)/);
 assert.match(outsideVoice, /ownsVoiceCapture/);
+assert.match(
+  outsideVoice,
+  /ACTION_TAKE_CAPTURE[\s\S]*?TalkModeAudioSession\.snapshot\(\)\.playbackOwner != null[\s\S]*?resumeWakeCapture\(\)/,
+);
+assert.match(
+  outsideVoice,
+  /playbackWasActive[\s\S]*?stopActiveNativeTalkModePlayback\(\)[\s\S]*?resumeWakeCapture\(\)/,
+);
+assert.match(
+  outsideVoice,
+  /playbackWasActive[\s\S]*?JarvisVoicePlaybackController\.stopActivePlayback\(rearmTalkMode = false\)[\s\S]*?resumeWakeCapture\(\)/,
+);
+assert.match(
+  outsideVoice,
+  /private fun pauseWakeCapture\(\)[\s\S]*?JarvisDaemonModule\.stopActiveNativeTalkModePlayback\(\)/,
+);
+assert.match(
+  outsideVoice,
+  /private fun endSession\(\)[\s\S]*?JarvisDaemonModule\.stopActiveNativeTalkModePlayback\(\)/,
+);
+assert.match(
+  outsideVoice,
+  /OutsideAppVoiceOverlayTapAction\.INTERRUPT_AND_LISTEN[\s\S]*?JarvisDaemonModule\.stopActiveNativeTalkModePlayback\(\)[\s\S]*?stopActivePlayback\(rearmTalkMode = false\)[\s\S]*?resumeWakeCapture\(\)/,
+);
+assert.match(daemonModule, /fun stopActiveNativeTalkModePlayback\(\)/);
+assert.match(daemonModule, /stopActiveNativeTalkModePlayback[\s\S]*?stopNativeTalkModePlaybackAndSuppressPending/);
+assert.match(daemonModule, /suppressedNativeVoicePlaybackOwners\.addAll\(playbackOwners\)[\s\S]*?nativeVoicePlaybackOwners\.remove\(owner\)[\s\S]*?WearableAudioRouteManager\.release\(owner\)[\s\S]*?nativeTalkModePlaybackBridge\.stop\(\)/);
+assert.match(daemonModule, /nativeVoicePlaybackOwners = ConcurrentHashMap\.newKeySet<String>\(\)/);
+assert.match(daemonModule, /beginNativeTalkModePlayback[\s\S]*?suppressedNativeVoicePlaybackOwners\.remove\(routeOwner\)[\s\S]*?TalkModeAudioSession\.snapshot\(\)/);
+assert.match(daemonModule, /NativeTalkModePlaybackBridge\([\s\S]*?::consumeNativeTalkModePlaybackSuppression/);
+assert.match(routeManager, /private fun clearRoute\(\)[\s\S]*?routeState = "idle"[\s\S]*?completePending\(clearedSnapshot\)/);
+assert.match(daemonModule, /fun stopNativeTalkModeSpeech[\s\S]*?playbackOwner\?\.startsWith\("react_tts:"\) == true[\s\S]*?TalkModeAudioSession\.stopTalking\(\)/);
+assert.match(daemonModule, /fun cancelActiveNativeSpeechRecognition\(\)[\s\S]*?cancelForOutsideAppHandoff\(\)/);
+assert.match(outsideVoice, /private fun pauseWakeCapture\(\)[\s\S]*?cancelActiveNativeSpeechRecognition\(\)[\s\S]*?stopActiveNativeTalkModePlayback\(\)/);
+assert.match(outsideVoice, /private fun endSession\(\)[\s\S]*?cancelActiveNativeSpeechRecognition\(\)[\s\S]*?stopActiveNativeTalkModePlayback\(\)/);
+assert.match(outsideVoice, /override fun onDestroy\(\)[\s\S]*?cancelActiveNativeSpeechRecognition\(\)[\s\S]*?stopActiveNativeTalkModePlayback\(\)/);
 assert.match(outsideVoice, /fun prepareForInAppCapture\(\)/);
+assert.match(outsideVoice, /ACTION_RESUME[\s\S]*?TalkModeAudioSession\.resumeCapture\(this, "outside_app_capture"\)/);
+assert.match(outsideVoice, /fun onOverlayResume\(\)[\s\S]*?TalkModeAudioSession\.resumeCapture\(this, "outside_app_capture"\)/);
 assert.match(
   outsideVoice,
   /fun resumeWakeCaptureAfterPlayback\(\): Boolean[\s\S]*?!service\.ownsVoiceCapture[\s\S]*?return false[\s\S]*?WakeWordService\.onTtsFinished\(\)/,
@@ -185,14 +224,15 @@ assert.match(daemonModule, /fun acquireNativeVoicePlaybackRoute\(ownerId: String
 assert.match(daemonModule, /fun releaseNativeVoicePlaybackRoute\(ownerId: String, promise: Promise\)/);
 assert.match(
   daemonModule,
-  /override fun invalidate\(\)[\s\S]*?nativeVoicePlaybackOwners\.forEach\(WearableAudioRouteManager::release\)/,
+  /override fun invalidate\(\)[\s\S]*?shouldReturnCaptureToOutsideApp[\s\S]*?ACTION_TAKE_CAPTURE[\s\S]*?else \{[\s\S]*?TalkModeAudioSession\.end\(\)[\s\S]*?nativeVoicePlaybackOwners\.forEach\(WearableAudioRouteManager::release\)/,
 );
 assert.match(androidDaemonNative, /acquireAndroidNativeVoicePlaybackRoute/);
 assert.match(androidDaemonNative, /releaseAndroidNativeVoicePlaybackRoute/);
 assert.match(
   insights,
-  /acquireAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)[\s\S]*?abortController\.signal\.aborted[\s\S]*?Speech\.speak\([\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)/,
+  /acquireAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)[\s\S]*?abortController\.signal\.aborted[\s\S]*?speakAndroidTalkModeText\([\s\S]*?finally \{[\s\S]*?releaseAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)/,
 );
+assert.match(insights, /Continuous Android TTS failed; using turn-based device TTS:[\s\S]*?Speech\.speak\(/);
 assert.match(
   insights,
   /acquireAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)[\s\S]*?shouldCancelTalkModeStart\(\)[\s\S]*?releaseAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)[\s\S]*?while \([\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?takeInAppCapture: true[\s\S]*?finally \{\s+releaseAndroidNativeVoicePlaybackRoute\(captureRouteOwnerId\)/,

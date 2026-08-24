@@ -18,8 +18,9 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
 import org.json.JSONObject
 import java.util.Locale
 
-class NativeSpeechRecognitionBridge(
+internal class NativeSpeechRecognitionBridge(
     private val reactContext: ReactApplicationContext,
+    private val playbackBridge: NativeTalkModePlaybackBridge,
 ) {
     companion object {
         const val EVENT_NAME = "JarvisNativeSpeechRecognition"
@@ -47,6 +48,16 @@ class NativeSpeechRecognitionBridge(
                 val interimResults = options.optBoolean("interimResults", true)
                 val timeoutMs = options.optLong("timeoutMs", DEFAULT_TIMEOUT_MS).coerceAtLeast(5_000L)
                 val takeInAppCapture = options.optBoolean("takeInAppCapture", false)
+                val currentSession = TalkModeAudioSession.snapshot()
+                if (currentSession.state == TalkModeAudioState.PAUSED) {
+                    promise.reject(
+                        "E_NATIVE_STT_PAUSED",
+                        "Talk Mode listening is paused. Resume listening before starting recognition.",
+                    )
+                    return@runOnMain
+                }
+                val participatesInTalkMode = currentSession.state != TalkModeAudioState.IDLE &&
+                    currentSession.state != TalkModeAudioState.ENDED
 
                 if (!hasRecordAudioPermission()) {
                     promise.reject(
@@ -75,6 +86,9 @@ class NativeSpeechRecognitionBridge(
                 val startGeneration = ++generation
                 pendingStartPromise = promise
                 pendingStartGeneration = startGeneration
+                if (participatesInTalkMode) {
+                    TalkModeAudioSession.acquireCapture(reactContext, WEARABLE_AUDIO_OWNER)
+                }
                 WearableAudioRouteManager.acquire(reactContext, WEARABLE_AUDIO_OWNER) { wearableRoute ->
                     if (!isCurrent(startGeneration)) return@acquire
                     if (takeInAppCapture) OutsideAppVoiceSessionService.prepareForInAppCapture()
@@ -84,6 +98,7 @@ class NativeSpeechRecognitionBridge(
                         timeoutMs = timeoutMs,
                         startGeneration = startGeneration,
                         wearableRoute = wearableRoute,
+                        participatesInTalkMode = participatesInTalkMode,
                     )
                 }
             } catch (err: Throwable) {
@@ -110,6 +125,7 @@ class NativeSpeechRecognitionBridge(
         timeoutMs: Long,
         startGeneration: Int,
         wearableRoute: WearableAudioRouteSnapshot,
+        participatesInTalkMode: Boolean,
     ) {
         try {
             val recognizer = SpeechRecognizer.createOnDeviceSpeechRecognizer(reactContext)
@@ -117,6 +133,9 @@ class NativeSpeechRecognitionBridge(
             recognizer.setRecognitionListener(object : RecognitionListener {
                 override fun onReadyForSpeech(params: Bundle?) {
                     if (!isCurrent(startGeneration)) return
+                    if (participatesInTalkMode) {
+                        TalkModeAudioSession.recovered(WEARABLE_AUDIO_OWNER, wearableRoute.state)
+                    }
                     emit("ready") {
                         putString("locale", resolveLocaleTag(localeTag))
                         putBoolean("wearableAudioActive", wearableRoute.active)
@@ -126,7 +145,15 @@ class NativeSpeechRecognitionBridge(
 
                 override fun onBeginningOfSpeech() {
                     if (!isCurrent(startGeneration)) return
-                    emit("speech_start")
+                    val session = if (participatesInTalkMode) {
+                        TalkModeAudioSession.speechStarted(WEARABLE_AUDIO_OWNER)
+                    } else {
+                        TalkModeAudioSession.snapshot()
+                    }
+                    if (session.state == TalkModeAudioState.INTERRUPTED) {
+                        playbackBridge.stopForInterruption()
+                    }
+                    emit(if (session.state == TalkModeAudioState.INTERRUPTED) "interruption_candidate" else "speech_start")
                 }
 
                 override fun onRmsChanged(rmsdB: Float) {
@@ -146,6 +173,18 @@ class NativeSpeechRecognitionBridge(
                 override fun onError(error: Int) {
                     if (!isCurrent(startGeneration)) return
                     val name = errorName(error)
+                    val wasInterruption = TalkModeAudioSession.snapshot().state == TalkModeAudioState.INTERRUPTED
+                    if (participatesInTalkMode) {
+                        if (isRecoverableError(error)) {
+                            TalkModeAudioSession.recover(WEARABLE_AUDIO_OWNER, wearableRoute.state, name)
+                        } else {
+                            TalkModeAudioSession.fallBack(name)
+                        }
+                    }
+                    if (participatesInTalkMode && wasInterruption) {
+                        TalkModeAudioSession.rejectInterruption()
+                        playbackBridge.resumeAfterRejectedInterruption()
+                    }
                     cleanupRecognizer(startGeneration)
                     emit("error") {
                         putInt("errorCode", error)
@@ -159,10 +198,30 @@ class NativeSpeechRecognitionBridge(
                     if (!isCurrent(startGeneration)) return
                     val best = bestResult(results)
                     val alternatives = resultAlternatives(results)
+                    val wasInterruption = TalkModeAudioSession.snapshot().state == TalkModeAudioState.INTERRUPTED
+                    val accepted = if (participatesInTalkMode) {
+                        TalkModeAudioSession.commitTranscript(WEARABLE_AUDIO_OWNER, best)
+                    } else {
+                        true
+                    }
+                    if (!accepted && wasInterruption) {
+                        playbackBridge.resumeAfterRejectedInterruption()
+                    }
+                    if (!accepted && best.isNotBlank()) {
+                        emit("echo_rejected") {
+                            putString("text", best)
+                            putBoolean("committed", false)
+                        }
+                    }
+                    if (participatesInTalkMode && accepted && TalkModeAudioSession.snapshot().playbackOwner == null) {
+                        playbackBridge.commitInterruption()
+                    }
                     cleanupRecognizer(startGeneration)
                     emit("final") {
-                        putString("text", best)
+                        putString("text", if (accepted) best else "")
                         putArray("alternatives", alternatives)
+                        putArray("confidenceScores", resultConfidenceScores(results))
+                        putBoolean("committed", accepted)
                     }
                 }
 
@@ -170,9 +229,17 @@ class NativeSpeechRecognitionBridge(
                     if (!isCurrent(startGeneration)) return
                     val best = bestResult(partialResults)
                     if (best.isBlank()) return
+                    val session = if (participatesInTalkMode) {
+                        TalkModeAudioSession.updatePartial(WEARABLE_AUDIO_OWNER, best)
+                    } else {
+                        TalkModeAudioSession.snapshot()
+                    }
                     emit("partial") {
                         putString("text", best)
                         putArray("alternatives", resultAlternatives(partialResults))
+                        putArray("confidenceScores", resultConfidenceScores(partialResults))
+                        putBoolean("committed", false)
+                        putString("sessionState", session.state.wireName)
                     }
                 }
 
@@ -314,6 +381,7 @@ class NativeSpeechRecognitionBridge(
         map.putString("ttsProvider", "android-system")
         map.putString("locale", resolveLocaleTag(localeTag))
         putWearableAudioStatus(map, WearableAudioRouteManager.snapshot(reactContext))
+        putTalkModeAudioStatus(map, TalkModeAudioSession.snapshot())
         map.putString(
             "status",
             when {
@@ -370,6 +438,13 @@ class NativeSpeechRecognitionBridge(
                 }
         }
 
+    private fun resultConfidenceScores(results: Bundle?) =
+        Arguments.createArray().apply {
+            results
+                ?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)
+                ?.forEach { pushDouble(it.toDouble()) }
+        }
+
     private fun cleanupRecognizer(startGeneration: Int) {
         if (!isCurrent(startGeneration)) return
         try {
@@ -379,9 +454,14 @@ class NativeSpeechRecognitionBridge(
         speechRecognizer = null
         listening = false
         WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
+        TalkModeAudioSession.releaseCapture(WEARABLE_AUDIO_OWNER)
     }
 
     private fun cancelRecognizer(emitCancelled: Boolean) {
+        if (TalkModeAudioSession.snapshot().state == TalkModeAudioState.INTERRUPTED) {
+            TalkModeAudioSession.rejectInterruption()
+            playbackBridge.resumeAfterRejectedInterruption()
+        }
         rejectPendingStart(
             "E_NATIVE_STT_CANCELLED",
             "Android speech recognition was cancelled before startup completed.",
@@ -398,6 +478,7 @@ class NativeSpeechRecognitionBridge(
         }
         speechRecognizer = null
         WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
+        TalkModeAudioSession.releaseCapture(WEARABLE_AUDIO_OWNER)
         if (emitCancelled) emit("cancelled")
     }
 
@@ -430,6 +511,7 @@ class NativeSpeechRecognitionBridge(
         val payload = Arguments.createMap()
         payload.putString("type", type)
         payload.putBoolean("onDevice", true)
+        payload.putString("sessionState", TalkModeAudioSession.snapshot().state.wireName)
         payload.block()
         reactContext
             .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
@@ -459,6 +541,20 @@ class NativeSpeechRecognitionBridge(
         map.putString("wearableAudioDeviceType", route.deviceType)
         map.putString("wearableAudioMessage", route.message)
         map.putString("wearableAudioLastError", route.lastError)
+    }
+
+    private fun putTalkModeAudioStatus(map: WritableMap, session: TalkModeAudioSnapshot) {
+        map.putDouble("talkModeSessionId", session.sessionId.toDouble())
+        map.putString("talkModeAudioState", session.state.wireName)
+        map.putString("talkModeAudioMode", session.mode.wireName)
+        map.putString("talkModeCaptureOwner", session.captureOwner)
+        map.putString("talkModePlaybackOwner", session.playbackOwner)
+        map.putString("talkModePartialTranscript", session.partialTranscript)
+        map.putBoolean("talkModeSpeechSuppressed", session.speechSuppressed)
+        map.putBoolean("acousticEchoCancellationAvailable", session.echoControls.acousticEchoCancellationAvailable)
+        map.putBoolean("noiseSuppressionAvailable", session.echoControls.noiseSuppressionAvailable)
+        map.putBoolean("automaticGainControlAvailable", session.echoControls.automaticGainControlAvailable)
+        map.putBoolean("echoControlsPlatformManaged", session.echoControls.platformManaged)
     }
 
     private fun isRecoverableError(error: Int): Boolean {

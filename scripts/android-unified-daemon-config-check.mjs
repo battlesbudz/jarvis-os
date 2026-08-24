@@ -436,7 +436,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "Deny", source);
   assertIncludes(contents, "TYPE_APPLICATION_OVERLAY", source);
   assertIncludes(contents, "START_NOT_STICKY", source);
-  assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = true)", source);
+  assertIncludes(contents, "OutsideAppVoiceOverlayTapAction.INTERRUPT_AND_LISTEN", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)", source);
   assertIncludes(contents, "WakeWordService.endTalkModeForUserControl()", source);
   assertIncludes(contents, "@Volatile private var state: OutsideAppVoiceState", source);
@@ -444,7 +444,7 @@ for (const [contents, source] of [
   assertIncludes(contents, "@Volatile private var endedSessionBlocksPlayback", source);
   assertIncludes(contents, "@Volatile private var expectedStop", source);
   assertIncludes(contents, "if (!expectedStop && sessionActive && state != OutsideAppVoiceState.IDLE)", source);
-  assertIncludes(contents, "endTalkModeCapture()\n            sendVoiceSessionEvent(\"crash\")", source);
+  assertIncludes(contents, "endTalkModeCapture()\n            TalkModeAudioSession.end()\n            sendVoiceSessionEvent(\"crash\")", source);
   assertIncludes(contents, "private fun endTalkModeCapture()", source);
   assertIncludes(contents, "private fun pauseWakeCapture()", source);
   assertIncludes(contents, "private fun resumeWakeCapture()", source);
@@ -500,7 +500,7 @@ for (const [contents, source] of [
   assertIncludes(contents, '\"android_list_apps\" -> handleListApps(context)', source);
   assertIncludes(contents, "private fun handleListApps(context: Context)", source);
   assertIncludes(contents, "pm.queryIntentActivities(launcherIntent, 0)", source);
-  assertIncludes(contents, "JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)", source);
+  assertIncludes(contents, "JarvisVoicePlaybackController.startPlayback(", source);
   assertIncludes(contents, "JarvisVoicePlaybackController.completePlayback(mp, playbackFile, rearmTalkMode = shouldRearm)", source);
   assertIncludes(contents, "OutsideAppVoiceSessionService.shouldAcceptPlaybackForCurrentSession()", source);
   assertIncludes(contents, "voice_speak_audio: dropped stale playback", source);
@@ -630,7 +630,8 @@ for (const [contents, source] of [
   assertIncludes(contents, "fun resumeAfterLocalValidation(captureWasRequested: Boolean)", source);
   assertIncludes(contents, "@Volatile private var localInferencePaused = false", source);
   assertIncludes(contents, "if (!listeningRequested || active || localInferencePaused) return", source);
-  assertIncludes(contents, "if (!listeningRequested || active || localInferencePaused) return@post", source);
+  assertIncludes(contents, "if (!listeningRequested || localInferencePaused)", source);
+  assertIncludes(contents, "if (active) return@post", source);
   assertIncludes(contents, "LOCAL_INFERENCE_TALK_MODE_RECOVERY_DELAY_MS = 10_000L", source);
   assertIncludes(contents, "scheduleTalkModeRecoveryAfterLocalInference()", source);
   assertIncludes(contents, "OutsideAppVoiceSessionStateMachine.shouldRecoverTalkModeAfterLocalInference(", source);

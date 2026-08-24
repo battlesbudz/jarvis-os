@@ -141,6 +141,7 @@ class OutsideAppVoiceSessionService : Service() {
         }
 
         fun markPlaybackListening() {
+            TalkModeAudioSession.finishPlayback("daemon_audio")
             instance?.setStateFromAnyThread(OutsideAppVoiceState.LISTENING)
         }
 
@@ -221,6 +222,7 @@ class OutsideAppVoiceSessionService : Service() {
             ACTION_START -> {
                 expectedStop = false
                 endedSessionBlocksPlayback = false
+                TalkModeAudioSession.begin(this, "talk_mode_session")
                 if (sessionActive && state != OutsideAppVoiceState.IDLE) {
                     startForegroundCompat()
                     updateOverlay()
@@ -233,12 +235,14 @@ class OutsideAppVoiceSessionService : Service() {
                 if (!sessionActive) sessionActive = true
                 ownsVoiceCapture = true
                 pauseWakeCapture()
+                TalkModeAudioSession.stopListening()
                 setState(OutsideAppVoiceState.PAUSED)
             }
             ACTION_RESUME -> {
                 if (!sessionActive) sessionActive = true
                 ownsVoiceCapture = true
                 resumeWakeCapture()
+                TalkModeAudioSession.resumeCapture(this, "outside_app_capture")
                 setState(OutsideAppVoiceState.LISTENING, "resume")
             }
             ACTION_SET_STATE -> {
@@ -268,7 +272,17 @@ class OutsideAppVoiceSessionService : Service() {
                     return START_NOT_STICKY
                 }
                 ownsVoiceCapture = true
-                if (state == OutsideAppVoiceState.LISTENING || state == OutsideAppVoiceState.APPROVAL) {
+                val playbackWasActive = TalkModeAudioSession.snapshot().playbackOwner != null
+                if (playbackWasActive) {
+                    JarvisDaemonModule.stopActiveNativeTalkModePlayback()
+                    JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
+                }
+                TalkModeAudioSession.acquireCapture(this, "outside_app_capture")
+                if (
+                    state == OutsideAppVoiceState.LISTENING ||
+                    state == OutsideAppVoiceState.APPROVAL ||
+                    playbackWasActive
+                ) {
                     resumeWakeCapture()
                 }
                 startForegroundCompat()
@@ -305,7 +319,11 @@ class OutsideAppVoiceSessionService : Service() {
 
     override fun onDestroy() {
         if (!expectedStop && sessionActive && state != OutsideAppVoiceState.IDLE) {
+            JarvisDaemonModule.cancelActiveNativeSpeechRecognition()
+            JarvisDaemonModule.stopActiveNativeTalkModePlayback()
+            JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
             endTalkModeCapture()
+            TalkModeAudioSession.end()
             sendVoiceSessionEvent("crash")
             endedSessionBlocksPlayback = true
         }
@@ -338,6 +356,7 @@ class OutsideAppVoiceSessionService : Service() {
 
     private fun releaseCaptureToApp() {
         ownsVoiceCapture = false
+        TalkModeAudioSession.releaseCapture("outside_app_capture")
         WakeWordService.pauseForInAppCapture()
         DaemonLog.add("outside_app_voice: microphone ownership returned to app")
     }
@@ -346,7 +365,9 @@ class OutsideAppVoiceSessionService : Service() {
         when (OutsideAppVoiceSessionStateMachine.overlayTapAction(state)) {
             OutsideAppVoiceOverlayTapAction.INTERRUPT_AND_LISTEN -> {
                 ownsVoiceCapture = true
-                JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = true)
+                JarvisDaemonModule.stopActiveNativeTalkModePlayback()
+                JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
+                resumeWakeCapture()
                 sendVoiceSessionEvent("interrupt")
                 setState(OutsideAppVoiceState.LISTENING)
             }
@@ -362,6 +383,7 @@ class OutsideAppVoiceSessionService : Service() {
     internal fun onOverlayResume() {
         ownsVoiceCapture = true
         resumeWakeCapture()
+        TalkModeAudioSession.resumeCapture(this, "outside_app_capture")
         setState(OutsideAppVoiceState.LISTENING, "resume")
     }
 
@@ -374,13 +396,17 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private fun pauseWakeCapture() {
+        JarvisDaemonModule.cancelActiveNativeSpeechRecognition()
+        JarvisDaemonModule.stopActiveNativeTalkModePlayback()
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         WakeWordService.pauseForUserControl()
+        TalkModeAudioSession.stopListening()
         DaemonLog.add("outside_app_voice: wake capture paused")
     }
 
     private fun resumeWakeCapture() {
         WakeWordService.onTtsFinished()
+        TalkModeAudioSession.acquireCapture(this, "outside_app_capture")
         DaemonLog.add("outside_app_voice: wake capture resumed")
     }
 
@@ -413,6 +439,12 @@ class OutsideAppVoiceSessionService : Service() {
             approvalToken = ""
         }
         state = nextState
+        when (nextState) {
+            OutsideAppVoiceState.WORKING, OutsideAppVoiceState.APPROVAL -> TalkModeAudioSession.beginResponse()
+            OutsideAppVoiceState.PAUSED -> TalkModeAudioSession.stopListening()
+            OutsideAppVoiceState.IDLE -> TalkModeAudioSession.end()
+            else -> Unit
+        }
         startForegroundCompat()
         updateOverlay()
         sendVoiceSessionEvent(actionName)
@@ -422,8 +454,11 @@ class OutsideAppVoiceSessionService : Service() {
         expectedStop = true
         endedSessionBlocksPlayback = true
         ownsVoiceCapture = false
+        JarvisDaemonModule.cancelActiveNativeSpeechRecognition()
+        JarvisDaemonModule.stopActiveNativeTalkModePlayback()
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         endTalkModeCapture()
+        TalkModeAudioSession.end()
         sendVoiceSessionEvent("end")
         approvalPrompt = ""
         approvalToken = ""

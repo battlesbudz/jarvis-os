@@ -73,16 +73,22 @@ import { useWakeWord } from '@/lib/wake-word-context';
 import {
   addAndroidOutsideAppVoiceControlListener,
   acquireAndroidNativeVoicePlaybackRoute,
+  beginAndroidTalkModePlayback,
   cancelAndroidNativeSpeechRecognition,
+  endAndroidTalkModeAudioSession,
   endAndroidOutsideAppVoiceSession,
+  finishAndroidTalkModePlayback,
   getAndroidDaemonStatus,
   handoffAndroidOutsideAppVoiceCapture,
   recognizeAndroidSpeechOnce,
   releaseAndroidNativeVoicePlaybackRoute,
+  pauseAndroidTalkModeListening,
   setAndroidOutsideAppVoiceApproval,
   setAndroidOutsideAppVoiceSessionState,
   startAndroidOutsideAppVoiceSession,
   stopAndroidNativeSpeechRecognition,
+  stopAndroidTalkModeSpeech,
+  speakAndroidTalkModeText,
 } from '@/lib/android-daemon-native';
 import {
   buildDiagnosticConversationMessages,
@@ -1106,6 +1112,7 @@ export default function InsightsScreen() {
   const nativeSpeechManualFinishRef = useRef(false);
   const nativeSpeechCancelledRef = useRef(false);
   const startRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const scheduleTalkModeRecordingStartRef = useRef<(delayMs?: number) => void>(() => {});
   const stopRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const stopRecordingSilentlyRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const speakTextRef = useRef<(text: string, assistantId?: string) => void>(() => {});
@@ -1259,6 +1266,8 @@ export default function InsightsScreen() {
       soundRef.current?.remove();
       speakAbortRef.current?.abort();
       if (Platform.OS === 'android') {
+        cancelAndroidNativeSpeechRecognition().catch(() => {});
+        stopAndroidTalkModeSpeech().catch(() => {});
         Speech.stop().catch(() => {});
       }
       if (Platform.OS === 'web') {
@@ -1332,6 +1341,22 @@ export default function InsightsScreen() {
 
     setIsTranscribing(false);
     if (talkModeRef.current) {
+      const normalizedControl = transcriptText.toLowerCase().replace(/[^a-z\s]/g, '').replace(/\s+/g, ' ').trim();
+      if (normalizedControl === 'stop talking') {
+        stopAndroidTalkModeSpeech().catch(() => {});
+        setInput('');
+        scheduleTalkModeRecordingStartRef.current(400);
+        return;
+      }
+      if (normalizedControl === 'stop listening') {
+        nativeVoiceStateSyncHeldRef.current = true;
+        talkModeStartSeqRef.current += 1;
+        outsideAppVoiceStateRef.current = 'paused';
+        pauseAndroidTalkModeListening().catch(() => {});
+        setAndroidOutsideAppVoiceSessionState('paused').catch(() => {});
+        setInput('');
+        return;
+      }
       setInput(transcriptText);
       const now = new Date().toISOString();
       setTimeout(() => {
@@ -1535,6 +1560,9 @@ export default function InsightsScreen() {
                   if (event.type === 'speech_start' || event.type === 'partial') {
                     continuationSpeechDetected = true;
                     clearContinuationTimer();
+                  }
+                  if (event.type === 'partial' && talkModeRef.current && event.text) {
+                    setInput([continuationState.transcript, event.text].filter(Boolean).join(' ').trim());
                   }
                 },
               });
@@ -1836,6 +1864,7 @@ export default function InsightsScreen() {
       webAudioCtxRef.current?.close().catch(() => {});
       webAudioCtxRef.current = null;
     } else if (Platform.OS === 'android') {
+      stopAndroidTalkModeSpeech().catch(() => {});
       Speech.stop().catch(() => {});
       soundRef.current?.pause();
       soundRef.current?.remove();
@@ -1868,6 +1897,7 @@ export default function InsightsScreen() {
       startRecordingRef.current();
     }, delayMs);
   }, []);
+  scheduleTalkModeRecordingStartRef.current = scheduleTalkModeRecordingStart;
 
   const abortActiveChatTurn = useCallback(async () => {
     const runId = chatRunIdRef.current;
@@ -2026,46 +2056,185 @@ export default function InsightsScreen() {
     const trimmedText = text.slice(0, 4000);
 
     if (Platform.OS === 'android') {
+      if (!talkModeRef.current) {
+        setIsTTSLoading(false);
+        Speech.speak(trimmedText, {
+          rate: 0.96,
+          pitch: 1,
+          onDone: onPlaybackEnd,
+          onStopped: onError,
+          onError,
+        });
+        return;
+      }
       const playbackRouteOwnerId = `${Date.now()}-${++nativeVoiceRouteSeqRef.current}`;
+      let playbackLifecycleStarted = false;
+      let playbackRejectedByCompetingOwner = false;
+      let allowTurnBasedFallback = true;
       try {
-        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
         await acquireAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
+        const session = await beginAndroidTalkModePlayback(playbackRouteOwnerId, trimmedText).catch(() => null);
+        if (
+          session?.state !== 'speaking' ||
+          session.playbackOwner !== `react_tts:${playbackRouteOwnerId}`
+        ) {
+          playbackRejectedByCompetingOwner = !!session?.playbackOwner &&
+            session.playbackOwner !== `react_tts:${playbackRouteOwnerId}`;
+          allowTurnBasedFallback = !session || session.state === 'idle';
+          throw new Error('Talk Mode audio session rejected playback startup.');
+        }
+        playbackLifecycleStarted = true;
+        const continuousCapture = talkModeRef.current && session?.mode === 'continuous';
+        await setAudioModeAsync({ allowsRecording: continuousCapture, playsInSilentMode: true }).catch(() => {});
         setIsTTSLoading(false);
         try {
           if (abortController.signal.aborted) return;
-          await new Promise<void>((resolve) => {
-            let settled = false;
-            const finish = (result: 'done' | 'stopped' | 'error') => {
-              if (settled) return;
-              settled = true;
-              abortController.signal.removeEventListener('abort', abortHandler);
-              if (result === 'done' && isSpeakingRef.current) {
-                onPlaybackEnd();
-              } else if (result === 'error' && isSpeakingRef.current) {
-                onError();
-              }
-              resolve();
-            };
-            const abortHandler = () => {
-              Speech.stop().catch(() => {});
-              finish('stopped');
-            };
-            abortController.signal.addEventListener('abort', abortHandler);
-            Speech.stop().catch(() => {});
-            Speech.speak(trimmedText, {
-              rate: 0.96,
-              pitch: 1,
-              onDone: () => finish('done'),
-              onStopped: () => finish('stopped'),
-              onError: () => finish('error'),
-            });
-          });
+          let playbackFinished = false;
+          let interruptionTranscript = '';
+          let interruptionPreview = '';
+          let interruptionComposerDraft: string | null = null;
+          let interruptionSpeechDetected = false;
+          const clearInterruptionPreview = () => {
+            const abandonedPreview = interruptionPreview;
+            const composerDraft = interruptionComposerDraft;
+            interruptionPreview = '';
+            interruptionComposerDraft = null;
+            interruptionSpeechDetected = false;
+            if (abandonedPreview) {
+              setInput(current => current === abandonedPreview ? composerDraft ?? '' : current);
+            }
+          };
+          let recoverableRecognitionFailures = 0;
+          const monitor = continuousCapture
+            ? (async () => {
+                while (!playbackFinished && !abortController.signal.aborted && isSpeakingRef.current) {
+                  try {
+                    nativeSpeechActiveRef.current = true;
+                    const result = await recognizeAndroidSpeechOnce({
+                      locale: 'en-US',
+                      interimResults: true,
+                      timeoutMs: 60_000,
+                      takeInAppCapture: true,
+                      onEvent: (event) => {
+                        if (event.type === 'speech_start' || event.type === 'partial') {
+                          interruptionSpeechDetected = true;
+                        }
+                        if (event.type === 'echo_rejected') {
+                          clearInterruptionPreview();
+                        } else if (event.type === 'partial' && event.sessionState === 'interrupted' && event.text) {
+                          if (interruptionComposerDraft === null) interruptionComposerDraft = inputRef.current;
+                          interruptionPreview = event.text;
+                          setInput(event.text);
+                        }
+                      },
+                    }).finally(() => {
+                      nativeSpeechActiveRef.current = false;
+                    });
+                    if (result.text.trim()) {
+                      interruptionTranscript = result.text.trim();
+                      return;
+                    }
+                    clearInterruptionPreview();
+                  } catch (error) {
+                    clearInterruptionPreview();
+                    const recoverable = (error as Error & { recoverable?: boolean })?.recoverable === true;
+                    if (
+                      recoverable &&
+                      recoverableRecognitionFailures < 5 &&
+                      !playbackFinished &&
+                      !abortController.signal.aborted &&
+                      isSpeakingRef.current
+                    ) {
+                      recoverableRecognitionFailures += 1;
+                      await new Promise(resolve => setTimeout(
+                        resolve,
+                        Math.min(250 * 2 ** recoverableRecognitionFailures, 2_000),
+                      ));
+                      continue;
+                    }
+                    if (!playbackFinished && !abortController.signal.aborted) {
+                      console.warn('[voice] continuous interruption monitor fell back to turn-taking:', error);
+                    }
+                    return;
+                  }
+                }
+              })()
+            : Promise.resolve();
+
+          const playbackResult = await speakAndroidTalkModeText(playbackRouteOwnerId, trimmedText);
+          playbackFinished = true;
+          if (abortController.signal.aborted || speakAbortRef.current !== abortController) return;
+          if (continuousCapture) {
+            if (playbackResult.status === 'interrupted' || interruptionSpeechDetected) {
+              await monitor;
+            } else {
+              cancelAndroidNativeSpeechRecognition().catch(() => {});
+              await monitor;
+            }
+          }
+          if (
+            (playbackResult.status === 'interrupted' || interruptionSpeechDetected) &&
+            interruptionTranscript
+          ) {
+            markAssistantSpeechStopped(assistantId);
+            onError();
+            submitVoiceTranscript(interruptionTranscript);
+          } else if (playbackResult.status === 'done' && isSpeakingRef.current) {
+            onPlaybackEnd();
+          } else if (
+            (playbackResult.status === 'stopped' || playbackResult.status === 'ended') &&
+            isSpeakingRef.current
+          ) {
+            onError();
+          } else if (playbackResult.status === 'error' && isSpeakingRef.current) {
+            throw new Error(playbackResult.error || 'Android native Talk Mode playback failed.');
+          }
         } finally {
+          const ownsCurrentPlayback = speakAbortRef.current === abortController;
+          if (ownsCurrentPlayback) cancelAndroidNativeSpeechRecognition().catch(() => {});
+          finishAndroidTalkModePlayback(playbackRouteOwnerId).catch(() => {});
           releaseAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
+          if (ownsCurrentPlayback) {
+            setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+            if (
+              talkModeRef.current &&
+              !insightsFocusedRef.current &&
+              outsideAppVoiceStateRef.current !== 'paused'
+            ) {
+              handoffAndroidOutsideAppVoiceCapture().catch((error) => {
+                console.warn('[voice] background playback capture handoff failed:', error);
+              });
+            }
+          }
         }
       } catch (error) {
-        console.error('[speakText] Android device TTS failed:', error);
-        onError();
+        if (!playbackLifecycleStarted) {
+          releaseAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
+        }
+        if (abortController.signal.aborted || speakAbortRef.current !== abortController) return;
+        if (playbackLifecycleStarted) {
+          onError();
+          if (
+            talkModeRef.current &&
+            insightsFocusedRef.current &&
+            outsideAppVoiceStateRef.current !== 'paused'
+          ) {
+            scheduleTalkModeRecordingStart(400);
+          }
+          return;
+        }
+        if (playbackRejectedByCompetingOwner || !allowTurnBasedFallback) {
+          onError();
+          return;
+        }
+        console.warn('[speakText] Continuous Android TTS failed; using turn-based device TTS:', error);
+        Speech.speak(trimmedText, {
+          rate: 0.96,
+          pitch: 1,
+          onDone: onPlaybackEnd,
+          onStopped: onError,
+          onError,
+        });
       }
       return;
     }
@@ -2401,7 +2570,7 @@ export default function InsightsScreen() {
         onError();
       }
     }
-  }, [interruptSpeakingAndListen, isSpeaking, scheduleTalkModeRecordingStart, stopSpeaking]);
+  }, [interruptSpeakingAndListen, isSpeaking, markAssistantSpeechStopped, scheduleTalkModeRecordingStart, stopSpeaking, submitVoiceTranscript]);
 
   speakTextRef.current = speakText;
 
@@ -4661,6 +4830,7 @@ export default function InsightsScreen() {
               });
             }
             if (!next) {
+              endAndroidTalkModeAudioSession().catch(() => {});
               clearSilencePoll();
             }
             if (!next && isRecordingRef.current) {

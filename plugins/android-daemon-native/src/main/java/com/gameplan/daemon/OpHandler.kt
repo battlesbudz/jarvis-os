@@ -41,10 +41,35 @@ object JarvisVoicePlaybackController {
     @Volatile private var currentFile: File? = null
 
     @Synchronized
-    fun register(player: android.media.MediaPlayer, file: File) {
+    fun startPlayback(player: android.media.MediaPlayer, file: File, spokenText: String): Boolean {
         stopActivePlayback(rearmTalkMode = false)
+        val existingOwner = TalkModeAudioSession.snapshot().playbackOwner
+        if (existingOwner != null && existingOwner != "daemon_audio") {
+            releasePlayer(player)
+            file.delete()
+            return false
+        }
         currentPlayer = player
         currentFile = file
+        val session = TalkModeAudioSession.beginTurnBasedPlayback("daemon_audio", spokenText)
+        if (session.playbackOwner != "daemon_audio" || session.state != TalkModeAudioState.SPEAKING) {
+            currentPlayer = null
+            currentFile = null
+            releasePlayer(player)
+            file.delete()
+            return false
+        }
+        try {
+            player.start()
+        } catch (error: Throwable) {
+            currentPlayer = null
+            currentFile = null
+            TalkModeAudioSession.stopTalking()
+            releasePlayer(player)
+            file.delete()
+            throw error
+        }
+        return true
     }
 
     @Synchronized
@@ -54,6 +79,7 @@ object JarvisVoicePlaybackController {
         currentFile = null
         releasePlayer(player)
         file.delete()
+        TalkModeAudioSession.finishPlayback("daemon_audio")
         if (rearmTalkMode) {
             OutsideAppVoiceSessionService.resumeWakeCaptureAfterPlayback()
             OutsideAppVoiceSessionService.markPlaybackListening()
@@ -62,7 +88,12 @@ object JarvisVoicePlaybackController {
 
     @Synchronized
     fun stopActivePlayback(rearmTalkMode: Boolean = true): Boolean {
-        val player = currentPlayer ?: return false
+        val player = currentPlayer ?: run {
+            if (TalkModeAudioSession.snapshot().playbackOwner == "daemon_audio") {
+                TalkModeAudioSession.stopTalking()
+            }
+            return false
+        }
         val file = currentFile
         currentPlayer = null
         currentFile = null
@@ -71,6 +102,7 @@ object JarvisVoicePlaybackController {
         }.onFailure { Log.w(TAG, "Failed to stop active voice playback", it) }
         releasePlayer(player)
         file?.delete()
+        TalkModeAudioSession.stopTalking()
         if (rearmTalkMode) {
             OutsideAppVoiceSessionService.resumeWakeCaptureAfterPlayback()
             OutsideAppVoiceSessionService.markPlaybackListening()
@@ -1638,9 +1670,19 @@ object OpHandler {
                 DaemonLog.add("voice_speak_audio: asynchronous playback error what=$what extra=$extra rearmed=$shouldRearm")
                 true
             }
-            JarvisVoicePlaybackController.register(mediaPlayer, playbackFile)
+            // MediaPlayer playback pauses wake-word capture, so expose this surface as
+            // turn-based instead of promising interruption capture that is not armed.
+            if (!JarvisVoicePlaybackController.startPlayback(
+                    mediaPlayer,
+                    playbackFile,
+                    op.optString("spokenText", ""),
+                )
+            ) {
+                tmpFile = null
+                DaemonLog.add("voice_speak_audio: session rejected playback at atomic start")
+                return OpResult(false, error = "voice session is paused or ended")
+            }
             OutsideAppVoiceSessionService.markPlaybackSpeaking()
-            mediaPlayer.start()
             DaemonLog.add("voice_speak_audio: playing ${bytes.size} bytes")
             OpResult(true, data = JSONObject().put("playing", true).put("bytes", bytes.size))
         } catch (e: Exception) {
