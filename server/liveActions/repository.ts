@@ -649,7 +649,7 @@ export async function listLiveActionsForUser(opts: {
     .select()
     .from(schema.liveActions)
     .where(and(...conditions))
-    .orderBy(desc(schema.liveActions.updatedAt))
+    .orderBy(desc(schema.liveActions.updatedAt), desc(schema.liveActions.id))
     .limit(Math.min(Math.max(opts.limit ?? 25, 1), 100));
   return rows.map(rowToAction);
 }

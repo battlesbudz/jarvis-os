@@ -48,6 +48,7 @@ assert.match(jobQueue, /delete inputPatch\.cancelRequestedAt/);
 assert.match(jobQueue, /agentJobs\.input\} \|\| \$\{JSON\.stringify\(inputPatch\)\}::jsonb/);
 assert.match(repository, /pass < MAX_RECONCILIATION_PASSES/);
 assert.match(repository, /const terminalPageSize = targetLineages/);
+assert.match(repository, /orderBy\(desc\(schema\.liveActions\.updatedAt\), desc\(schema\.liveActions\.id\)\)/);
 assert.match(repository, /return false/);
 assert.match(repository, /Math\.fround\(value\)/);
 assert.match(agentJobProjection, /update\(JSON\.stringify\(event\)\)/);
