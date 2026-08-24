@@ -181,7 +181,10 @@ internal class NativeTalkModePlaybackBridge(
         tentativeInterruption = false
         if (completedOwner != null) {
             if (status == "done") TalkModeAudioSession.finishPlayback(completedOwner)
-            else if (status != "interrupted") TalkModeAudioSession.stopTalking()
+            else if (
+                status != "interrupted" &&
+                TalkModeAudioSession.snapshot().playbackOwner == completedOwner
+            ) TalkModeAudioSession.stopTalking()
         }
         val promise = pendingPromise
         pendingPromise = null

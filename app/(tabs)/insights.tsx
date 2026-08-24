@@ -2091,6 +2091,7 @@ export default function InsightsScreen() {
           let playbackFinished = false;
           let interruptionTranscript = '';
           let interruptionPreview = '';
+          let interruptionSpeechDetected = false;
           const clearInterruptionPreview = () => {
             const abandonedPreview = interruptionPreview;
             interruptionPreview = '';
@@ -2110,6 +2111,9 @@ export default function InsightsScreen() {
                       timeoutMs: 60_000,
                       takeInAppCapture: true,
                       onEvent: (event) => {
+                        if (event.type === 'speech_start' || event.type === 'partial') {
+                          interruptionSpeechDetected = true;
+                        }
                         if (event.type === 'echo_rejected') {
                           clearInterruptionPreview();
                         } else if (event.type === 'partial' && event.sessionState === 'interrupted' && event.text) {
@@ -2155,24 +2159,27 @@ export default function InsightsScreen() {
           playbackFinished = true;
           if (abortController.signal.aborted || speakAbortRef.current !== abortController) return;
           if (continuousCapture) {
-            if (playbackResult.status === 'interrupted') {
+            if (playbackResult.status === 'interrupted' || interruptionSpeechDetected) {
               await monitor;
             } else {
               cancelAndroidNativeSpeechRecognition().catch(() => {});
               await monitor;
             }
           }
-          if (playbackResult.status === 'done' && isSpeakingRef.current) {
+          if (
+            (playbackResult.status === 'interrupted' || interruptionSpeechDetected) &&
+            interruptionTranscript
+          ) {
+            markAssistantSpeechStopped(assistantId);
+            onError();
+            submitVoiceTranscript(interruptionTranscript);
+          } else if (playbackResult.status === 'done' && isSpeakingRef.current) {
             onPlaybackEnd();
           } else if (
             (playbackResult.status === 'stopped' || playbackResult.status === 'ended') &&
             isSpeakingRef.current
           ) {
             onError();
-          } else if (playbackResult.status === 'interrupted' && interruptionTranscript) {
-            markAssistantSpeechStopped(assistantId);
-            onError();
-            submitVoiceTranscript(interruptionTranscript);
           } else if (playbackResult.status === 'error' && isSpeakingRef.current) {
             throw new Error(playbackResult.error || 'Android native Talk Mode playback failed.');
           }
