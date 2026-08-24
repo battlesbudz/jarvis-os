@@ -1349,6 +1349,7 @@ export default function InsightsScreen() {
         return;
       }
       if (normalizedControl === 'stop listening') {
+        nativeVoiceStateSyncHeldRef.current = true;
         talkModeStartSeqRef.current += 1;
         outsideAppVoiceStateRef.current = 'paused';
         pauseAndroidTalkModeListening().catch(() => {});

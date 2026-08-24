@@ -40,7 +40,7 @@ internal class NativeTalkModePlaybackBridge(
                 finish(if (session.state == TalkModeAudioState.ENDED) "ended" else "stopped")
                 return@runOnMain
             }
-            ensureTts { engine -> speakRemaining(engine) }
+            ensureTts { engine -> if (!tentativeInterruption) speakRemaining(engine) }
         }
     }
 

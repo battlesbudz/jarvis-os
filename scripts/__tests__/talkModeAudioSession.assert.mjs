@@ -41,6 +41,7 @@ for (const root of roots) {
   assert.match(playback, /resumeAfterRejectedInterruption/);
   assert.match(playback, /tts = null[\s\S]*?engine\?\.shutdown\(\)/);
   assert.match(playback, /if \(initializing\) return[\s\S]*?tts\?\.let/);
+  assert.match(playback, /ensureTts \{ engine -> if \(!tentativeInterruption\) speakRemaining\(engine\) \}/);
   assert.match(playback, /session\.playbackOwner != ownerId \|\| session\.state != TalkModeAudioState\.SPEAKING/);
   assert.match(playback, /status != "interrupted"[\s\S]*?playbackOwner == completedOwner[\s\S]*?stopTalking\(\)/);
 }
@@ -77,6 +78,7 @@ const screen = fs.readFileSync("app/(tabs)/insights.tsx", "utf8");
 assert.match(screen, /event\.type === 'partial'[\s\S]*?setInput/);
 assert.match(screen, /normalizedControl === 'stop talking'[\s\S]*?stopAndroidTalkModeSpeech/);
 assert.match(screen, /normalizedControl === 'stop listening'[\s\S]*?pauseAndroidTalkModeListening/);
+assert.match(screen, /normalizedControl === 'stop listening'[\s\S]*?nativeVoiceStateSyncHeldRef\.current = true[\s\S]*?pauseAndroidTalkModeListening/);
 assert.match(screen, /beginAndroidTalkModePlayback\(playbackRouteOwnerId, trimmedText\)/);
 assert.match(screen, /if \(!talkModeRef\.current\)[\s\S]*?Speech\.speak\(trimmedText/);
 assert.match(screen, /recognizeAndroidSpeechOnce\([\s\S]*?speakAndroidTalkModeText\(playbackRouteOwnerId, trimmedText\)/);
