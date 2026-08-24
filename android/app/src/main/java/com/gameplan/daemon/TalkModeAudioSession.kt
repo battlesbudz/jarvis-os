@@ -196,7 +196,11 @@ internal class TalkModeAudioSessionStateMachine {
         val restoredMode = modeBeforePlaybackOverride ?: snapshot.mode
         modeBeforePlaybackOverride = null
         snapshot = snapshot.copy(
-            state = if (snapshot.captureOwner == null) TalkModeAudioState.IDLE else TalkModeAudioState.LISTENING,
+            state = when (snapshot.state) {
+                TalkModeAudioState.PAUSED -> TalkModeAudioState.PAUSED
+                TalkModeAudioState.ENDED -> TalkModeAudioState.ENDED
+                else -> if (snapshot.captureOwner == null) TalkModeAudioState.IDLE else TalkModeAudioState.LISTENING
+            },
             playbackOwner = null,
             mode = restoredMode,
             playbackText = "",

@@ -23,6 +23,7 @@ for (const root of roots) {
   assert.match(session, /state = if \(snapshot\.playbackOwner == null\) TalkModeAudioState\.LISTENING else TalkModeAudioState\.SPEAKING/);
   assert.match(session, /snapshot\.captureOwner == null -> TalkModeAudioState\.IDLE/);
   assert.match(session, /modeBeforePlaybackOverride/);
+  assert.match(session, /fun stopTalking[\s\S]*?TalkModeAudioState\.PAUSED -> TalkModeAudioState\.PAUSED[\s\S]*?TalkModeAudioState\.ENDED -> TalkModeAudioState\.ENDED/);
   assert.match(session, /fun recover[\s\S]*?TalkModeAudioState\.IDLE \|\| snapshot\.state == TalkModeAudioState\.ENDED\) return snapshot/);
   assert.match(session, /fun recovered[\s\S]*?TalkModeAudioState\.IDLE \|\| snapshot\.state == TalkModeAudioState\.ENDED\) return snapshot/);
   assert.match(session, /AcousticEchoCanceler\.isAvailable/);
@@ -54,6 +55,7 @@ assert.match(bridge, /TalkModeAudioSession\.updatePartial/);
 assert.match(bridge, /putBoolean\("committed", false\)/);
 assert.match(bridge, /TalkModeAudioSession\.commitTranscript/);
 assert.match(bridge, /resultConfidenceScores/);
+assert.match(bridge, /snapshot\(\)\.state == TalkModeAudioState\.INTERRUPTED[\s\S]*?resumeAfterRejectedInterruption\(\)/);
 
 const wrapper = fs.readFileSync("lib/android-daemon-native.ts", "utf8");
 assert.match(wrapper, /AndroidTalkModeAudioSessionStatus/);

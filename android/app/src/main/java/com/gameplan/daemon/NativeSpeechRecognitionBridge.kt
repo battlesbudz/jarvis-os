@@ -425,6 +425,9 @@ internal class NativeSpeechRecognitionBridge(
     }
 
     private fun cancelRecognizer(emitCancelled: Boolean) {
+        if (TalkModeAudioSession.snapshot().state == TalkModeAudioState.INTERRUPTED) {
+            playbackBridge.resumeAfterRejectedInterruption()
+        }
         rejectPendingStart(
             "E_NATIVE_STT_CANCELLED",
             "Android speech recognition was cancelled before startup completed.",
