@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 35427)
+Total output lines: 3302
+
 import { db } from "../db";
 import { eq, and, sql, gte, asc } from "drizzle-orm";
 import * as schema from "@shared/schema";
@@ -844,33 +847,45 @@ async function appendWorkerEventToJob(opts: {
   retryAttempt?: number;
   metadata?: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
-  const workerType = resolveWorkerType({ agentType: opts.agentType, input: opts.input });
-  const nextInput = withWorkerRuntimeEvent(
-    opts.input,
-    buildWorkerRuntimeEvent({
-      type: opts.type,
-      workerType,
-      message: opts.message,
-      userVisible: opts.userVisible ?? false,
-      progress: opts.progress,
-      checkpoint: opts.checkpoint,
-      retryAttempt: opts.retryAttempt,
-      metadata: opts.metadata,
-    }),
-  );
-  const inputPatch = { ...nextInput };
-  delete inputPatch.requeuedAt;
-  delete inputPatch.requeueHistory;
-  delete inputPatch.cancelRequestedAt;
-  delete inputPatch.resourcePause;
-  const [updated] = await db
-    .update(schema.agentJobs)
-    .set({ input: sql`${schema.agentJobs.input} || ${JSON.stringify(inputPatch)}::jsonb` })
-    .where(eq(schema.agentJobs.id, opts.jobId))
-    .returning({ input: schema.agentJobs.input });
-  return updated?.input && typeof updated.input === "object" && !Array.isArray(updated.input)
-    ? updated.input as Record<string, unknown>
-    : nextInput;
+  return db.transaction(async (tx) => {
+    const [job] = await tx
+      .select({ input: schema.agentJobs.input })
+      .from(schema.agentJobs)
+      .where(eq(schema.agentJobs.id, opts.jobId))
+      .limit(1)
+      .for("update");
+    const currentInput = job?.input && typeof job.input === "object" && !Array.isArray(job.input)
+      ? job.input as Record<string, unknown>
+      : opts.input;
+    const workerType = resolveWorkerType({ agentType: opts.agentType, input: currentInput });
+    const nextInput = withWorkerRuntimeEvent(
+      currentInput,
+      buildWorkerRuntimeEvent({
+        type: opts.type,
+        workerType,
+        message: opts.message,
+        userVisible: opts.userVisible ?? false,
+        progress: opts.progress,
+        checkpoint: opts.checkpoint,
+        retryAttempt: opts.retryAttempt,
+        metadata: opts.metadata,
+      }),
+    );
+    if (!job) return nextInput;
+
+    const inputPatch = {
+      workerRuntime: nextInput.workerRuntime,
+      workerType: nextInput.workerType,
+    };
+    const [updated] = await tx
+      .update(schema.agentJobs)
+      .set({ input: sql`${schema.agentJobs.input} || ${JSON.stringify(inputPatch)}::jsonb` })
+      .where(eq(schema.agentJobs.id, opts.jobId))
+      .returning({ input: schema.agentJobs.input });
+    return updated?.input && typeof updated.input === "object" && !Array.isArray(updated.input)
+      ? updated.input as Record<string, unknown>
+      : nextInput;
+  });
 }
 
 async function appendWorkerProgressToJob(opts: {
@@ -1392,503 +1407,7 @@ async function processJob(job: typeof schema.agentJobs.$inferSelect): Promise<vo
 
       // ── Codex OAuth verification loop (custom_agent) ──────────────────────
       const MAX_CUSTOM_VERIFY_RETRIES = 2;
-      let customVerificationPassed: boolean | null = null;
-      let customVerificationRetries = 0;
-      {
-        const { getModel } = await import("../lib/modelPrefs");
-        const orchModel = await getModel(job.userId, "orchestrator");
-        let correctionContext: string | undefined;
-
-        for (let attempt = 0; attempt <= MAX_CUSTOM_VERIFY_RETRIES; attempt++) {
-          const verification = await verifyJobOutput({
-            agentType: "custom_agent",
-            originalPrompt: job.prompt,
-            result: customSub.body,
-            orchestratorModel: orchModel,
-            userId: job.userId,
-            correctionContext,
-          });
-
-          if (verification.passed === true) {
-            customVerificationPassed = true;
-            break;
-          }
-
-          if (verification.passed === null) {
-            // Verifier timed out or errored — fail-open: deliver as-is, status unknown
-            customVerificationPassed = null;
-            console.log(
-              `[JobQueue] verify unknown (timeout/error) for custom_agent job ${job.id} — delivering with null status: ${verification.reason}`,
-            );
-            break;
-          }
-
-          // passed === false: content rejected — retry if attempts remain
-          correctionContext = verification.reason;
-          if (attempt < MAX_CUSTOM_VERIFY_RETRIES) {
-            customVerificationRetries++;
-            console.log(
-              `[JobQueue] verify retry ${attempt + 1}/${MAX_CUSTOM_VERIFY_RETRIES} for custom_agent job ${job.id}: ${verification.reason}`,
-            );
-            const revisedPrompt =
-              `${job.prompt}\n\n` +
-              `[Previous attempt was rejected for: ${correctionContext}. Please address this in your response.]`;
-            customSub = await runSubAgent({
-              agentType: agentDef.baseType as SubAgentType,
-              prompt: revisedPrompt,
-              defaultTitle: job.title,
-              context: ctx,
-              model: modelOverride,
-              extraSystemPrompt: agentDef.extraPrompt ?? undefined,
-              approvalReceipt,
-            });
-          } else {
-            customVerificationPassed = false;
-            console.log(
-              `[JobQueue] verify exhausted for custom_agent job ${job.id} after ${MAX_CUSTOM_VERIFY_RETRIES} retries — delivering best result`,
-            );
-          }
-        }
-      }
-      customSub.meta.verificationPassed = customVerificationPassed;
-      customSub.meta.verificationRetries = customVerificationRetries;
-      // ─────────────────────────────────────────────────────────────────────
-
-      const sub = customSub;
-
-      const { db: __db } = await import("../db");
-      const { deliverables: _deliverables } = await import("@shared/schema");
-
-      const inserted = await __db
-        .insert(_deliverables)
-        .values({
-          userId: job.userId,
-          jobId: job.id,
-          agentType: "custom_agent",
-          type: sub.type,
-          title: `[${agentDef.name}] ${sub.title}`,
-          summary: sub.summary,
-          body: sub.body,
-          meta: { ...sub.meta, ...getRevisionDeliverableMeta(jobInput), customAgentId, customAgentName: agentDef.name },
-        })
-        .returning({ id: _deliverables.id });
-
-      const deliverableId = inserted[0]?.id || "";
-
-      await completeJob(job.id, {
-        result: { deliverableId, type: sub.type, title: sub.title, customAgentId },
-        turns: sub.turns,
-        toolCallsCount: sub.toolCallsCount,
-      });
-
-      console.log(
-        `[JobQueue] complete custom_agent job ${job.id} agent="${agentDef.name}" deliverable=${deliverableId}`,
-      );
-
-      const notifyMsg = sub.body || sub.summary || "Ready for review";
-      await notifyJobComplete(
-        job.userId,
-        "custom_agent",
-        `${agentDef.name}: ${sub.title}`,
-        notifyMsg,
-        originChannel,
-        originDiscordChannelId,
-      );
-
-      if (hasWorkflow) {
-        const wfOutput = `${sub.title}\n\n${sub.summary || ""}\n\n${sub.body?.slice(0, 1200) || ""}`.trim();
-        await onWorkflowJobComplete(wfId!, wfStep!, job.id, wfOutput).catch((e) =>
-          console.error("[JobQueue] workflow hook failed:", e),
-        );
-      }
-      return;
-    }
-
-    if (job.agentType === "goal_decompose") {
-      const result = await runGoalDecomposition(job);
-      await completeJob(job.id, {
-        result: { goalTreeId: result.goalTreeId, phases: result.phaseCount },
-        turns: result.turns,
-        toolCallsCount: result.toolCallsCount,
-      });
-      diagEmit({
-        userId: job.userId,
-        subsystem: "job_queue",
-        severity: "info",
-        message: `Job ${job.id} (goal_decompose) completed — ${result.phaseCount} phases`,
-        metadata: { jobId: job.id, agentType: job.agentType, recovery: true },
-      }).catch(() => {});
-      console.log(`[JobQueue] complete goal_decompose job ${job.id} → tree ${result.goalTreeId}`);
-      const goalMsg = `Goal broken into ${result.phaseCount} phase(s). Open the Goals tab to review.`;
-      await notifyJobComplete(job.userId, "goal_decompose", job.title, goalMsg, originChannel, originDiscordChannelId);
-      if (hasWorkflow) {
-        await onWorkflowJobComplete(wfId!, wfStep!, job.id, goalMsg).catch((e) =>
-          console.error("[JobQueue] workflow hook failed:", e),
-        );
-      }
-      return;
-    }
-
-    // ── Jarvis Project session ─────────────────────────────────────────────────
-    if (job.agentType === "project_session") {
-      const input = (job.input as Record<string, unknown>) ?? {};
-      const projectId = String(input.projectId ?? "");
-      if (!projectId) throw new Error("project_session job missing projectId");
-      const userAnswer = typeof input.userAnswer === "string" ? input.userAnswer : undefined;
-
-      console.log(`[JobQueue] project_session start: project=${projectId}${userAnswer ? " (with user answer)" : ""}`);
-      const { runProjectSession } = await import("./projectRunner");
-      const sessionResult = await runProjectSession(projectId, userAnswer);
-
-      await completeJob(job.id, {
-        result: {
-          projectId,
-          status: sessionResult.status,
-          stepsCompleted: sessionResult.stepsCompleted,
-          summary: sessionResult.summary,
-        },
-        turns: 1,
-        toolCallsCount: 0,
-      });
-
-      console.log(
-        `[JobQueue] project_session complete: project=${projectId} status=${sessionResult.status} stepsCompleted=${sessionResult.stepsCompleted}`,
-      );
-      return;
-    }
-
-    // ── Standalone app build project session ───────────────────────────────────
-    if (job.agentType === "app_project") {
-      const input = (job.input as Record<string, unknown>) ?? {};
-      const projectId = String(input.projectId ?? "");
-      if (!projectId) throw new Error("app_project job missing projectId");
-      const userAnswer = typeof input.userAnswer === "string" ? input.userAnswer : undefined;
-      const originChannel = typeof input.originChannel === "string" ? input.originChannel : undefined;
-
-      console.log(`[JobQueue] app_project start: project=${projectId}${userAnswer ? " (with user answer)" : ""}`);
-      const { runAppProjectSession } = await import("./appProjectRunner");
-      const sessionResult = await runAppProjectSession(projectId, 1, userAnswer);
-
-      if (sessionResult.status === "complete") {
-        const { packageAndDeliverApp } = await import("./appDelivery");
-        try {
-          await packageAndDeliverApp(projectId, job.userId, originChannel);
-        } catch (deliveryErr) {
-          console.error(`[JobQueue] app_project delivery failed for ${projectId}:`, deliveryErr);
-        }
-      }
-
-      await completeJob(job.id, {
-        result: {
-          projectId,
-          status: sessionResult.status,
-          stepsCompleted: sessionResult.stepsCompleted,
-          summary: sessionResult.summary,
-        },
-        turns: 1,
-        toolCallsCount: 0,
-      });
-
-      console.log(
-        `[JobQueue] app_project complete: project=${projectId} status=${sessionResult.status} stepsCompleted=${sessionResult.stepsCompleted}`,
-      );
-      return;
-    }
-
-    // ── General-purpose diagnostic agent (e.g. auto-debug from IntegrationValidator) ─
-    if (job.agentType === "general") {
-      const generalCtx: ToolContext = {
-        userId: job.userId,
-        googleAccessToken: null,
-        channel: originChannel || `JobQueue/general`,
-        originChannelId,
-        jobId: job.id,
-        state: { pendingAttachments: [] },
-        ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
-      };
-
-      const debugTools = [
-        readRecentErrorsTool,
-        listSourceFilesTool,
-        readSourceFileTool,
-        proposeCodeChangeTool,
-      ];
-
-      const result = await runAgent({
-        messages: [
-          {
-            role: "system",
-            content: `You are Jarvis, an AI assistant running a background diagnostic task.
-The user is NOT present in this conversation. Your job is to investigate an error, diagnose the root
-cause, and either propose a code fix or send a plain-English diagnosis to the user's inbox.
-
-Always conclude by either calling propose_code_change (if a targeted code fix is appropriate) or by
-writing a clear inbox message explaining what is broken and what the user should do.`,
-          },
-          { role: "user", content: job.prompt },
-        ],
-        tools: debugTools,
-        context: generalCtx,
-        maxTurns: 8,
-      });
-
-      await completeJob(job.id, {
-        result: { output: result.reply, agentType: "general" },
-        turns: result.turns,
-        toolCallsCount: result.toolCalls?.length ?? 0,
-      });
-
-      console.log(`[JobQueue] complete general job ${job.id} turns=${result.turns}`);
-
-      const generalReply = result.reply?.trim()
-        ? result.reply.slice(0, 3000)
-        : "Auto-debug ran but produced no summary. Please check the Proposals tab or review recent error logs for details.";
-      await notifyJobComplete(job.userId, "general", job.title, generalReply, originChannel, originDiscordChannelId);
-
-      if (hasWorkflow) {
-        await onWorkflowJobComplete(wfId!, wfStep!, job.id, generalReply).catch((e) =>
-          console.error("[JobQueue] workflow hook failed:", e),
-        );
-      }
-      return;
-    }
-
-    // ── Morning brief agent ──────────────────────────────────────────────────
-    if (job.agentType === "morning_brief") {
-      const briefTokens = await getValidGoogleTokens(job.userId).catch(() => []);
-      const briefGoogleToken = briefTokens?.[0] || null;
-      const briefCtx: ToolContext = {
-        userId: job.userId,
-        googleAccessToken: briefGoogleToken,
-        channel: originChannel || `JobQueue/morning_brief`,
-        originChannelId,
-        jobId: job.id,
-        state: { pendingAttachments: [] },
-        ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
-      };
-      const briefTools = briefGoogleToken ? [fetchCalendarTool] : [];
-      const briefModelOverride = typeof jobInput.model === "string" ? jobInput.model : undefined;
-
-      const briefResult = await runAgent({
-        messages: [
-          {
-            role: "system",
-            content: `You are Jarvis, generating an on-demand morning briefing for the user. The user is NOT in this conversation.
-
-Your job: produce a concise, actionable briefing they can act on immediately.
-
-Structure your response as follows (plain markdown, no extra headers):
-
-## ☀️ Morning Briefing
-
-**Today at a glance** — 2-3 sentences summarising the key focus for the day.
-
-**Calendar** — if you called fetch_calendar, list upcoming events for today/tomorrow. If no calendar is connected, skip this section.
-
-**Goals & priorities** — Summarise what the user should focus on. If no specific goals are in the prompt, suggest a general productivity focus.
-
-**Quick wins** — 2-3 small, specific actions the user can complete today.
-
-Keep the whole briefing under 300 words. Be warm but direct. No filler phrases.`,
-          },
-          { role: "user", content: job.prompt },
-        ],
-        tools: briefTools,
-        context: briefCtx,
-        maxTurns: 4,
-        model: briefModelOverride,
-      });
-
-      await completeJob(job.id, {
-        result: { output: briefResult.reply, agentType: "morning_brief" },
-        turns: briefResult.turns,
-        toolCallsCount: briefResult.toolCalls?.length ?? 0,
-      });
-
-      console.log(`[JobQueue] complete morning_brief job ${job.id} turns=${briefResult.turns}`);
-
-      const briefReply = briefResult.reply?.trim()
-        ? briefResult.reply.slice(0, 3000)
-        : "Your morning briefing is ready. No summary was produced — please try again.";
-      await notifyJobComplete(job.userId, "morning_brief", job.title, briefReply, originChannel, originDiscordChannelId);
-
-      if (hasWorkflow) {
-        await onWorkflowJobComplete(wfId!, wfStep!, job.id, briefReply).catch((e) =>
-          console.error("[JobQueue] workflow hook failed:", e),
-        );
-      }
-      return;
-    }
-
-    // ── Build-feature multi-step job ─────────────────────────────────────────
-    if (job.agentType === "build_feature") {
-      // Lazy imports to avoid circular dependency at module load time
-      const { applyCodeChangeTool } = await import("./tools/applyCodeChangeTool");
-      const { runShellTool: buildShellTool } = await import("./tools/runShellTool");
-      const { cleanupJobWorkspace, execInWorkspaceTool } = await import("./tools/codeExecution");
-      const { getModel } = await import("../lib/modelPrefs");
-
-      const orchModel = await getModel(job.userId, "orchestrator");
-
-      const buildCtx: ToolContext = {
-        userId: job.userId,
-        googleAccessToken: null,
-        channel: originChannel || `JobQueue/build_feature`,
-        originChannelId,
-        jobId: job.id,
-        state: { pendingAttachments: [] },
-        ...(originDiscordChannelId ? { discordChannelId: originDiscordChannelId } : {}),
-      };
-
-      /** Persist progress state into agent_jobs.input (merge, not replace). */
-      const persistProgress = async (updates: Record<string, unknown>): Promise<void> => {
-        const [updated] = await db.update(schema.agentJobs)
-          .set({ input: sql`${schema.agentJobs.input} || ${JSON.stringify(updates)}::jsonb` })
-          .where(eq(schema.agentJobs.id, job.id))
-          .returning({ input: schema.agentJobs.input });
-        jobInput = updated ? jobInputOf(updated) : { ...jobInput, ...updates };
-      };
-
-      /** Fire a brief progress notification to the origin channel. */
-      const sendBuildPing = (text: string): Promise<void> =>
-        notifyJobComplete(job.userId, "build_feature", job.title, text, originChannel, originDiscordChannelId);
-
-      const recordBuildProgress = async (input: BuildFeatureProgressInput): Promise<void> => {
-        const currentStep = buildFeatureProgressLabel(input);
-        jobInput = await appendWorkerProgressToJob({
-          jobId: job.id,
-          agentType: job.agentType,
-          title: job.title,
-          input: jobInput,
-          currentStep,
-          percent: buildFeatureProgressPercent(input),
-          metadata: {
-            phase: input.phase,
-            stepIndex: input.stepIndex,
-            stepCount: input.stepCount,
-            stepLabel: input.stepLabel,
-            attempt: input.attempt,
-          },
-        }).catch((err) => {
-          console.warn(`[JobQueue] build_feature progress append failed for ${job.id}:`, err);
-          return jobInput;
-        });
-        latestJobInput = jobInput;
-      };
-
-      const baseFeatureDescription = String(jobInput.feature_description ?? job.prompt);
-      const conversationContext = jobInput.conversationContext ? String(jobInput.conversationContext) : "";
-      const featureDescription = conversationContext
-        ? `Conversation context (for follow-up understanding):\n${conversationContext}\n\nLatest request: ${baseFeatureDescription}`
-        : baseFeatureDescription;
-
-      // ── Phase 1: Research (if requested and not already completed) ──────────
-      // Research is queued as a standard agent_jobs record.  claimNextJob has a
-      // parent-child bypass: when a queued job's input.parentJobId matches a currently
-      // running job, it is allowed to run concurrently (no deadlock).
-      // Max wait: 5 minutes, then proceed without research.
-      let researchBody = String(jobInput.researchBody ?? "");
-      if (Boolean(jobInput.research_required ?? false) && !researchBody) {
-        await recordBuildProgress({ phase: "research" });
-        let researchJobId = String(jobInput.researchJobId ?? "");
-
-        if (!researchJobId) {
-          researchJobId = (await submitAgentJob({
-            userId: job.userId,
-            agentType: "research",
-            title: `Research for build: ${featureDescription.slice(0, 80)}`,
-            prompt: `Research context for building this Jarvis feature: ${featureDescription}`,
-            input: { parentJobId: job.id, originChannel, originDiscordChannelId },
-          })).id;
-          await persistProgress({ researchJobId });
-          await recordBuildProgress({ phase: "research" });
-          await sendBuildPing(`🔍 Background research queued (job ${researchJobId.slice(0, 8)}…) — waiting up to 5 min`);
-        }
-
-        // Poll for the research job to reach a terminal state (max 5 minutes).
-        const RESEARCH_POLL_INTERVAL_MS = 10_000;
-        const RESEARCH_MAX_WAIT_MS = 5 * 60 * 1000;
-        const researchPollStart = Date.now();
-        let researchStatus = "";
-        while (Date.now() - researchPollStart < RESEARCH_MAX_WAIT_MS) {
-          const [row] = await db
-            .select({ status: schema.agentJobs.status })
-            .from(schema.agentJobs)
-            .where(eq(schema.agentJobs.id, researchJobId))
-            .limit(1);
-          researchStatus = row?.status ?? "unknown";
-          if (researchStatus === "complete" || researchStatus === "failed") break;
-          await recordBuildProgress({ phase: "research" });
-          await new Promise((r) => setTimeout(r, RESEARCH_POLL_INTERVAL_MS));
-        }
-
-        if (researchStatus === "complete") {
-          const [deliv] = await db
-            .select({ body: schema.deliverables.body })
-            .from(schema.deliverables)
-            .where(eq(schema.deliverables.jobId, researchJobId))
-            .limit(1);
-          if (deliv?.body) {
-            researchBody = deliv.body.slice(0, 4000);
-            await persistProgress({ researchBody });
-            await recordBuildProgress({ phase: "planning" });
-            console.log(`[JobQueue] build_feature job ${job.id} — research complete (${researchBody.length} chars)`);
-          }
-        } else {
-          console.warn(`[JobQueue] build_feature job ${job.id} — research job ${researchJobId} did not complete (status=${researchStatus}), proceeding without research`);
-          await recordBuildProgress({ phase: "planning" });
-        }
-      }
-
-      // ── Phase 2: Plan with Codex OAuth ──────────────────────────────────────
-      interface BuildStep {
-        step_id: string;
-        label: string;
-        what_to_build: string;
-        acceptance_criteria: string;
-        files_affected: string[];
-      }
-
-      let plan = (jobInput.plan as BuildStep[] | null) ?? null;
-
-      if (!plan) {
-        await recordBuildProgress({ phase: "planning" });
-        const planCtx = [
-          featureDescription,
-          researchBody ? `\n\nResearch findings:\n${researchBody}` : "",
-        ].join("");
-
-        const planResp = await routeModelTurn({
-          tier: "smart",
-          maxCompletionTokens: 8192,
-          stream: false,
-          toolChoice: "none",
-          userId: job.userId,
-          disableRuntimeStateCard: true,
-          logPrefix: "[BuildFeaturePlan]",
-          messages: [
-            {
-              role: "system",
-              content: `You are an expert TypeScript/Node.js engineer planning how to build a new Jarvis tool or feature.
-Decompose the feature into discrete, independently verifiable implementation steps.
-Output a JSON array inside a \`\`\`json block. Each element:
-{
-  "step_id": "s1",
-  "label": "Short verb phrase (4-6 words)",
-  "what_to_build": "Detailed implementation instruction for a code worker",
-  "acceptance_criteria": "Concrete, measurable criterion — what makes this step done correctly",
-  "files_affected": ["server/agent/tools/foo.ts"]
-}
-
-Jarvis tool patterns:
-- Tools live in server/agent/tools/<name>.ts and export \`const <name>Tool: AgentTool\`
-- New tools must be registered in server/agent/tools/index.ts (ALL_TOOLS + telegramCoachTools)
-- Express routes go in server/<name>Routes.ts, mounted in server/index.ts
-- Shared DB schema lives in shared/schema.ts (Drizzle ORM + drizzle-kit)
-
-Keep the plan minimal: 2-5 steps for most features. Each step is one focused code change.`,
-            },
-            { role: "user", content: `Feature to build:\n${planCtx}` },
+…5427 tokens truncated…x}` },
           ],
         });
 
