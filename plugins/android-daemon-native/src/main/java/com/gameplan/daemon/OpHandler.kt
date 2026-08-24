@@ -64,7 +64,9 @@ object JarvisVoicePlaybackController {
     @Synchronized
     fun stopActivePlayback(rearmTalkMode: Boolean = true): Boolean {
         val player = currentPlayer ?: run {
-            TalkModeAudioSession.stopTalking()
+            if (TalkModeAudioSession.snapshot().playbackOwner == "daemon_audio") {
+                TalkModeAudioSession.stopTalking()
+            }
             return false
         }
         val file = currentFile
