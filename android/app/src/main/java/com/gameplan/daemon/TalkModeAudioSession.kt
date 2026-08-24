@@ -141,7 +141,11 @@ internal class TalkModeAudioSessionStateMachine {
 
     @Synchronized
     fun beginResponse(): TalkModeAudioSnapshot {
-        if (snapshot.state != TalkModeAudioState.PAUSED && snapshot.state != TalkModeAudioState.ENDED) {
+        if (
+            snapshot.state != TalkModeAudioState.IDLE &&
+            snapshot.state != TalkModeAudioState.PAUSED &&
+            snapshot.state != TalkModeAudioState.ENDED
+        ) {
             snapshot = snapshot.copy(state = TalkModeAudioState.RESPONDING)
         }
         return snapshot
@@ -230,7 +234,11 @@ internal class TalkModeAudioSessionStateMachine {
 
     @Synchronized
     fun recovered(owner: String, routeState: String): TalkModeAudioSnapshot {
-        if (snapshot.state == TalkModeAudioState.IDLE || snapshot.state == TalkModeAudioState.ENDED) return snapshot
+        if (
+            snapshot.state == TalkModeAudioState.IDLE ||
+            snapshot.state == TalkModeAudioState.PAUSED ||
+            snapshot.state == TalkModeAudioState.ENDED
+        ) return snapshot
         ensureSession(owner)
         snapshot = snapshot.copy(
             state = if (snapshot.playbackOwner == null) TalkModeAudioState.LISTENING else TalkModeAudioState.SPEAKING,
