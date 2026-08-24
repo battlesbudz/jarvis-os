@@ -74,6 +74,8 @@ assert.match(screen, /if \(!talkModeRef\.current\)[\s\S]*?Speech\.speak\(trimmed
 assert.match(screen, /recognizeAndroidSpeechOnce\([\s\S]*?speakAndroidTalkModeText\(playbackRouteOwnerId, trimmedText\)/);
 assert.match(screen, /finishAndroidTalkModePlayback\(playbackRouteOwnerId\)/);
 assert.match(screen, /playbackResult\.status === 'stopped'[\s\S]*?playbackResult\.status === 'ended'[\s\S]*?onError\(\)/);
+assert.match(screen, /speakAndroidTalkModeText\(playbackRouteOwnerId, trimmedText\)[\s\S]*?speakAbortRef\.current !== abortController\) return/);
+assert.match(screen, /ownsCurrentPlayback[\s\S]*?cancelAndroidNativeSpeechRecognition[\s\S]*?if \(ownsCurrentPlayback\)[\s\S]*?setAudioModeAsync/);
 assert.match(screen, /normalizedControl === 'stop talking'[\s\S]*?scheduleTalkModeRecordingStartRef\.current\(400\)/);
 assert.match(screen, /recoverable[\s\S]*?continue;/);
 assert.match(screen, /nativeSpeechActiveRef\.current = true;[\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?\.finally\(\(\) => \{[\s\S]*?nativeSpeechActiveRef\.current = false;/);

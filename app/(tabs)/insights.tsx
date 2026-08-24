@@ -2120,6 +2120,7 @@ export default function InsightsScreen() {
 
           const playbackResult = await speakAndroidTalkModeText(playbackRouteOwnerId, trimmedText);
           playbackFinished = true;
+          if (abortController.signal.aborted || speakAbortRef.current !== abortController) return;
           if (continuousCapture) {
             if (playbackResult.status === 'interrupted') {
               await monitor;
@@ -2143,12 +2144,16 @@ export default function InsightsScreen() {
             throw new Error(playbackResult.error || 'Android native Talk Mode playback failed.');
           }
         } finally {
-          cancelAndroidNativeSpeechRecognition().catch(() => {});
+          const ownsCurrentPlayback = speakAbortRef.current === abortController;
+          if (ownsCurrentPlayback) cancelAndroidNativeSpeechRecognition().catch(() => {});
           finishAndroidTalkModePlayback(playbackRouteOwnerId).catch(() => {});
           releaseAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
-          setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+          if (ownsCurrentPlayback) {
+            setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+          }
         }
       } catch (error) {
+        if (abortController.signal.aborted || speakAbortRef.current !== abortController) return;
         console.warn('[speakText] Continuous Android TTS failed; using turn-based device TTS:', error);
         Speech.speak(trimmedText, {
           rate: 0.96,
