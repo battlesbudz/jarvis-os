@@ -104,7 +104,7 @@ assert.match(screen, /const clearInterruptionPreview[\s\S]*?interruptionSpeechDe
 assert.match(screen, /session\?\.state !== 'speaking'[\s\S]*?session\.playbackOwner !== `react_tts:/);
 assert.match(screen, /allowTurnBasedFallback = !session \|\| session\.state === 'idle'[\s\S]*?playbackRejectedByCompetingOwner \|\| !allowTurnBasedFallback/);
 assert.match(screen, /if \(!playbackLifecycleStarted\)[\s\S]*?releaseAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)/);
-assert.match(screen, /if \(playbackLifecycleStarted\)[\s\S]*?onError\(\)[\s\S]*?!options\.suppressAutoListen[\s\S]*?insightsFocusedRef\.current[\s\S]*?scheduleTalkModeRecordingStart\(400\)[\s\S]*?if \(options\.nativeOnly\) throw error[\s\S]*?return;/);
+assert.match(screen, /if \(playbackLifecycleStarted\)[\s\S]*?onError\(\)[\s\S]*?insightsFocusedRef\.current[\s\S]*?scheduleTalkModeRecordingStart\(400\)[\s\S]*?return;/);
 assert.match(screen, /interruptionPreview = event\.text/);
 assert.match(screen, /normalizedControl === 'stop talking'[\s\S]*?scheduleTalkModeRecordingStartRef\.current\(400\)/);
 assert.match(screen, /recoverable[\s\S]*?continue;/);

@@ -2215,14 +2215,12 @@ export default function InsightsScreen() {
         if (playbackLifecycleStarted) {
           onError();
           if (
-            !options.suppressAutoListen &&
             talkModeRef.current &&
             insightsFocusedRef.current &&
             outsideAppVoiceStateRef.current !== 'paused'
           ) {
             scheduleTalkModeRecordingStart(400);
           }
-          if (options.nativeOnly) throw error;
           return;
         }
         if (playbackRejectedByCompetingOwner || !allowTurnBasedFallback) {
