@@ -76,9 +76,23 @@ class JarvisDaemonModule(
     }
 
     override fun invalidate() {
+        val shouldReturnCaptureToOutsideApp = OutsideAppVoiceSessionService.isActive()
         nativeSpeechRecognitionBridge.destroy()
         nativeTalkModePlaybackBridge.destroy()
-        if (!OutsideAppVoiceSessionService.isActive()) TalkModeAudioSession.end()
+        if (shouldReturnCaptureToOutsideApp) {
+            runCatching {
+                reactApplicationContext.startService(
+                    OutsideAppVoiceSessionService.controlIntent(
+                        reactApplicationContext,
+                        OutsideAppVoiceSessionService.ACTION_TAKE_CAPTURE,
+                    ),
+                )
+            }.onFailure { err ->
+                DaemonLog.add("outside_app_voice: React invalidation capture handoff failed: ${err.message}")
+            }
+        } else {
+            TalkModeAudioSession.end()
+        }
         nativeVoicePlaybackOwners.forEach(WearableAudioRouteManager::release)
         nativeVoicePlaybackOwners.clear()
         suppressedNativeVoicePlaybackOwners.clear()
