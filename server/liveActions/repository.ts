@@ -669,6 +669,17 @@ export async function getLiveActionForUser(userId: string, actionId: string): Pr
   return row ? rowToAction(row) : null;
 }
 
+export async function getLiveActionLineageForUser(userId: string, actionId: string): Promise<string | null> {
+  const [row] = await db.select({ sourceLineageKey: schema.liveActions.sourceLineageKey })
+    .from(schema.liveActions)
+    .where(and(
+      eq(schema.liveActions.id, actionId),
+      eq(schema.liveActions.userId, userId),
+    ))
+    .limit(1);
+  return row?.sourceLineageKey ?? null;
+}
+
 export async function listLiveActionEvents(actionId: string): Promise<LiveActionEvent[]> {
   const rows = await db
     .select()

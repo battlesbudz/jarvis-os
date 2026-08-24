@@ -1,6 +1,7 @@
 import { LiveActionDetailSchema, LiveActionSnapshotSchema, type LiveActionDetail, type LiveActionSnapshot, type LiveActionStatus } from "@shared/liveActions";
 import {
   getLiveActionForUser,
+  getLiveActionLineageForUser,
   listLiveActionEvents,
   listLiveActionsForUser,
   reconcileAgentJobsForUser,
@@ -27,10 +28,10 @@ export const liveActionReadService: LiveActionReadService = {
   },
 
   async getDetail(userId, actionId) {
-    let action = await getLiveActionForUser(userId, actionId);
-    if (!action) return null;
-    await reconcileAgentJobsForUser(userId, { sourceLineageKey: action.source.lineageKey });
-    action = await getLiveActionForUser(userId, actionId);
+    const sourceLineageKey = await getLiveActionLineageForUser(userId, actionId);
+    if (!sourceLineageKey) return null;
+    await reconcileAgentJobsForUser(userId, { sourceLineageKey });
+    const action = await getLiveActionForUser(userId, actionId);
     if (!action) return null;
     return LiveActionDetailSchema.parse({
       schemaVersion: 1,

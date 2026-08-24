@@ -12,6 +12,7 @@ const gateway = fs.readFileSync("server/gateway/controlPlane.ts", "utf8");
 const jobQueue = fs.readFileSync("server/agent/jobQueue.ts", "utf8");
 const repository = fs.readFileSync("server/liveActions/repository.ts", "utf8");
 const agentJobProjection = fs.readFileSync("server/liveActions/adapters/agentJob.ts", "utf8");
+const service = fs.readFileSync("server/liveActions/service.ts", "utf8");
 
 assert.match(migration, /CREATE TABLE IF NOT EXISTS "live_actions"/);
 assert.match(migration, /"progress_value" real/);
@@ -48,5 +49,6 @@ assert.match(jobQueue, /agentJobs\.input\} \|\| \$\{JSON\.stringify\(inputPatch\
 assert.match(repository, /pass < MAX_RECONCILIATION_PASSES/);
 assert.match(repository, /Math\.fround\(value\)/);
 assert.match(agentJobProjection, /update\(JSON\.stringify\(event\)\)/);
+assert.match(service, /getLiveActionLineageForUser\(userId, actionId\)/);
 
 console.log("Live Action migration and authenticated route ownership assertions passed.");

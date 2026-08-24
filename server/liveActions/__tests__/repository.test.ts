@@ -19,6 +19,7 @@ async function main(): Promise<void> {
     persistAgentJobProjection,
     reconcileAgentJobsForUser,
   } = await import("../repository");
+  const { liveActionReadService } = await import("../service");
 
   await ensureTablesExist();
   const marker = `live-action-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -700,6 +701,38 @@ async function main(): Promise<void> {
       null,
       "detail reads enforce terminal retention",
     );
+
+    const expiredRetryRootId = `${marker}-expired-retry-root`;
+    const [expiredRetryRoot] = await db.insert(schema.agentJobs).values({
+      id: expiredRetryRootId,
+      userId,
+      agentType: "research",
+      title: "Expired retry root",
+      prompt: "Retry after retention",
+      status: "complete",
+      createdAt: expiredAt,
+      completedAt: expiredAt,
+    }).returning();
+    const expiredRetryAction = await persistAgentJobProjection(projectAgentJob(expiredRetryRoot));
+    assert.equal(await getLiveActionForUser(userId, expiredRetryAction.id), null);
+    const activeRetryId = `${marker}-expired-retry-active`;
+    await db.insert(schema.agentJobs).values({
+      id: activeRetryId,
+      userId,
+      agentType: "research",
+      title: "Active retry",
+      prompt: "Revive retained detail",
+      input: {
+        retryOfJobId: expiredRetryRootId,
+        liveActionLineageKey: expiredRetryRootId,
+        retriedAt: new Date().toISOString(),
+      },
+      status: "queued",
+      createdAt: new Date(),
+    });
+    const revivedDetail = await liveActionReadService.getDetail(userId, expiredRetryAction.id);
+    assert.equal(revivedDetail?.action.source.id, activeRetryId, "detail reconciliation revives an expired retried lineage");
+    assert.equal(await liveActionReadService.getDetail(otherUserId, expiredRetryAction.id), null);
 
     const [staleActiveJob] = await db.insert(schema.agentJobs).values({
       id: `${marker}-stale-active`,
