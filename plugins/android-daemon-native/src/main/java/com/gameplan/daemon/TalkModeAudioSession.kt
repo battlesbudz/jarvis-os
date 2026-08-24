@@ -154,6 +154,7 @@ internal class TalkModeAudioSessionStateMachine {
             snapshot.state == TalkModeAudioState.PAUSED ||
             snapshot.state == TalkModeAudioState.ENDED
         ) return snapshot
+        if (snapshot.playbackOwner != null && snapshot.playbackOwner != owner) return snapshot
         val playbackMode = if (turnBased) {
             if (modeBeforePlaybackOverride == null) modeBeforePlaybackOverride = snapshot.mode
             TalkModeAudioMode.TURN_BASED

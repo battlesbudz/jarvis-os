@@ -2070,6 +2070,12 @@ export default function InsightsScreen() {
       try {
         await acquireAndroidNativeVoicePlaybackRoute(playbackRouteOwnerId).catch(() => {});
         const session = await beginAndroidTalkModePlayback(playbackRouteOwnerId, trimmedText).catch(() => null);
+        if (
+          session?.state !== 'speaking' ||
+          session.playbackOwner !== `react_tts:${playbackRouteOwnerId}`
+        ) {
+          throw new Error('Talk Mode audio session rejected playback startup.');
+        }
         const continuousCapture = talkModeRef.current && session?.mode === 'continuous';
         await setAudioModeAsync({ allowsRecording: continuousCapture, playsInSilentMode: true }).catch(() => {});
         setIsTTSLoading(false);
@@ -2077,6 +2083,7 @@ export default function InsightsScreen() {
           if (abortController.signal.aborted) return;
           let playbackFinished = false;
           let interruptionTranscript = '';
+          let interruptionPreview = '';
           let recoverableRecognitionFailures = 0;
           const monitor = continuousCapture
             ? (async () => {
@@ -2090,8 +2097,9 @@ export default function InsightsScreen() {
                       takeInAppCapture: true,
                       onEvent: (event) => {
                         if (event.type === 'echo_rejected') {
-                          setInput('');
+                          setInput(current => current === interruptionPreview ? '' : current);
                         } else if (event.type === 'partial' && event.sessionState === 'interrupted' && event.text) {
+                          interruptionPreview = event.text;
                           setInput(event.text);
                         }
                       },

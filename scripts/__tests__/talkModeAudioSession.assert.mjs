@@ -21,6 +21,7 @@ for (const root of roots) {
   assert.doesNotMatch(session, /candidateWords\.count \{ it in playbackWords \}/);
   assert.doesNotMatch(session, /candidateWords\.size < 3/);
   assert.match(session, /snapshot\.state == TalkModeAudioState\.IDLE[\s\S]*?snapshot\.state == TalkModeAudioState\.PAUSED/);
+  assert.match(session, /snapshot\.playbackOwner != null && snapshot\.playbackOwner != owner/);
   assert.match(session, /TalkModeAudioMode\.TURN_BASED/);
   assert.match(session, /state = if \(snapshot\.playbackOwner == null\) TalkModeAudioState\.LISTENING else TalkModeAudioState\.SPEAKING/);
   assert.match(session, /snapshot\.captureOwner == null -> TalkModeAudioState\.IDLE/);
@@ -81,7 +82,10 @@ assert.match(screen, /playbackResult\.status === 'stopped'[\s\S]*?playbackResult
 assert.match(screen, /speakAndroidTalkModeText\(playbackRouteOwnerId, trimmedText\)[\s\S]*?speakAbortRef\.current !== abortController\) return/);
 assert.match(screen, /ownsCurrentPlayback[\s\S]*?cancelAndroidNativeSpeechRecognition[\s\S]*?if \(ownsCurrentPlayback\)[\s\S]*?setAudioModeAsync/);
 assert.match(screen, /recoverableRecognitionFailures < 5[\s\S]*?setTimeout/);
-assert.match(screen, /event\.type === 'echo_rejected'[\s\S]*?setInput\(''\)/);
+assert.match(screen, /event\.type === 'echo_rejected'[\s\S]*?current === interruptionPreview/);
+assert.match(screen, /session\?\.state !== 'speaking'[\s\S]*?session\.playbackOwner !== `react_tts:/);
+assert.match(screen, /interruptionPreview = event\.text/);
+assert.match(screen, /current === interruptionPreview \? '' : current/);
 assert.match(screen, /normalizedControl === 'stop talking'[\s\S]*?scheduleTalkModeRecordingStartRef\.current\(400\)/);
 assert.match(screen, /recoverable[\s\S]*?continue;/);
 assert.match(screen, /nativeSpeechActiveRef\.current = true;[\s\S]*?recognizeAndroidSpeechOnce\([\s\S]*?\.finally\(\(\) => \{[\s\S]*?nativeSpeechActiveRef\.current = false;/);
