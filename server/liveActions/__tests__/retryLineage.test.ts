@@ -37,7 +37,7 @@ async function main(): Promise<void> {
     },
   });
 
-  assert.deepEqual(result, { id: "job-retry", isDuplicate: false });
+  assert.deepEqual(result, { id: "job-retry", isDuplicate: false, status: "queued" });
   assert.equal(insertedInput?.retryOfJobId, "job-failed");
   assert.equal(insertedInput?.liveActionLineageKey, "job-root");
 
@@ -50,7 +50,7 @@ async function main(): Promise<void> {
     },
     insertJob: async () => "trusted-retry",
   });
-  assert.deepEqual(trusted, { id: "trusted-retry", isDuplicate: false });
+  assert.deepEqual(trusted, { id: "trusted-retry", isDuplicate: false, status: "queued" });
   assert.equal(duplicateChecks, 0, "validated retries bypass unrelated title dedupe");
 }
 
