@@ -517,7 +517,12 @@ internal object WearableAudioRouteManager {
     }
 
     private fun clearRoute() {
-        val manager = audioManager ?: return
+        val manager = audioManager
+        if (manager == null) {
+            routeState = "idle"
+            completePending(unsupportedSnapshot("Android AudioManager is unavailable."))
+            return
+        }
         val waitForLegacyTeardown =
             Build.VERSION.SDK_INT < Build.VERSION_CODES.S &&
                 (routeState == "active" || routeState == "requesting")
@@ -550,7 +555,9 @@ internal object WearableAudioRouteManager {
             requestedDeviceId = null
             routeGeneration += 1
             routeState = "idle"
-            pendingCallbacks.clear()
+            val clearedSnapshot = appContext?.let(::snapshot)
+                ?: unsupportedSnapshot("Android context is unavailable.")
+            completePending(clearedSnapshot)
         }
     }
 

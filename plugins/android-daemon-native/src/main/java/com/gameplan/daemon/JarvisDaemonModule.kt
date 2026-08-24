@@ -28,7 +28,7 @@ class JarvisDaemonModule(
         reactApplicationContext,
         nativeTalkModePlaybackBridge,
     )
-    private val nativeVoicePlaybackOwners = linkedSetOf<String>()
+    private val nativeVoicePlaybackOwners = ConcurrentHashMap.newKeySet<String>()
 
     companion object {
         private const val VOICE_SESSION_CONTROL_EVENT = "JarvisVoiceSessionControl"

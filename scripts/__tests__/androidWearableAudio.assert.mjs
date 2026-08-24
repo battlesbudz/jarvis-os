@@ -201,8 +201,10 @@ assert.match(
 assert.match(daemonModule, /fun stopActiveNativeTalkModePlayback\(\)/);
 assert.match(daemonModule, /stopActiveNativeTalkModePlayback[\s\S]*?stopNativeTalkModePlaybackAndSuppressPending/);
 assert.match(daemonModule, /suppressedNativeVoicePlaybackOwners\.addAll\(nativeVoicePlaybackOwners\)[\s\S]*?nativeTalkModePlaybackBridge\.stop\(\)/);
+assert.match(daemonModule, /nativeVoicePlaybackOwners = ConcurrentHashMap\.newKeySet<String>\(\)/);
 assert.match(daemonModule, /beginNativeTalkModePlayback[\s\S]*?suppressedNativeVoicePlaybackOwners\.remove\(routeOwner\)[\s\S]*?TalkModeAudioSession\.snapshot\(\)/);
 assert.match(daemonModule, /NativeTalkModePlaybackBridge\([\s\S]*?::consumeNativeTalkModePlaybackSuppression/);
+assert.match(routeManager, /private fun clearRoute\(\)[\s\S]*?routeState = "idle"[\s\S]*?completePending\(clearedSnapshot\)/);
 assert.match(daemonModule, /fun stopNativeTalkModeSpeech[\s\S]*?playbackOwner\?\.startsWith\("react_tts:"\) == true[\s\S]*?TalkModeAudioSession\.stopTalking\(\)/);
 assert.match(daemonModule, /fun cancelActiveNativeSpeechRecognition\(\)[\s\S]*?cancelForOutsideAppHandoff\(\)/);
 assert.match(outsideVoice, /private fun pauseWakeCapture\(\)[\s\S]*?cancelActiveNativeSpeechRecognition\(\)[\s\S]*?stopActiveNativeTalkModePlayback\(\)/);
