@@ -211,7 +211,7 @@ assert.match(daemonModule, /fun acquireNativeVoicePlaybackRoute\(ownerId: String
 assert.match(daemonModule, /fun releaseNativeVoicePlaybackRoute\(ownerId: String, promise: Promise\)/);
 assert.match(
   daemonModule,
-  /override fun invalidate\(\)[\s\S]*?nativeVoicePlaybackOwners\.forEach\(WearableAudioRouteManager::release\)/,
+  /override fun invalidate\(\)[\s\S]*?!OutsideAppVoiceSessionService\.isActive\(\)[\s\S]*?TalkModeAudioSession\.end\(\)[\s\S]*?nativeVoicePlaybackOwners\.forEach\(WearableAudioRouteManager::release\)/,
 );
 assert.match(androidDaemonNative, /acquireAndroidNativeVoicePlaybackRoute/);
 assert.match(androidDaemonNative, /releaseAndroidNativeVoicePlaybackRoute/);

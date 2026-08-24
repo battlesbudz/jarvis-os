@@ -27,7 +27,7 @@ for (const root of roots) {
   assert.match(session, /snapshot\.sessionId == 0L -> TalkModeAudioState\.IDLE/);
   assert.match(session, /modeBeforePlaybackOverride/);
   assert.match(session, /fun stopTalking[\s\S]*?TalkModeAudioState\.PAUSED -> TalkModeAudioState\.PAUSED[\s\S]*?TalkModeAudioState\.ENDED -> TalkModeAudioState\.ENDED/);
-  assert.match(session, /fun recover[\s\S]*?TalkModeAudioState\.IDLE \|\| snapshot\.state == TalkModeAudioState\.ENDED\) return snapshot/);
+  assert.match(session, /fun recover[\s\S]*?TalkModeAudioState\.IDLE[\s\S]*?TalkModeAudioState\.PAUSED[\s\S]*?TalkModeAudioState\.ENDED[\s\S]*?return snapshot/);
   assert.match(session, /fun beginResponse[\s\S]*?TalkModeAudioState\.IDLE[\s\S]*?TalkModeAudioState\.PAUSED[\s\S]*?TalkModeAudioState\.ENDED/);
   assert.match(session, /fun recovered[\s\S]*?TalkModeAudioState\.IDLE[\s\S]*?TalkModeAudioState\.PAUSED[\s\S]*?TalkModeAudioState\.ENDED[\s\S]*?return snapshot/);
   assert.match(session, /AcousticEchoCanceler\.isAvailable/);

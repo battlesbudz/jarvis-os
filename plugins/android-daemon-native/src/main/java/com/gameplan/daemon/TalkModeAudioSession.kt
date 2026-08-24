@@ -223,7 +223,11 @@ internal class TalkModeAudioSessionStateMachine {
 
     @Synchronized
     fun recover(owner: String, routeState: String, error: String? = null): TalkModeAudioSnapshot {
-        if (snapshot.state == TalkModeAudioState.IDLE || snapshot.state == TalkModeAudioState.ENDED) return snapshot
+        if (
+            snapshot.state == TalkModeAudioState.IDLE ||
+            snapshot.state == TalkModeAudioState.PAUSED ||
+            snapshot.state == TalkModeAudioState.ENDED
+        ) return snapshot
         ensureSession(owner)
         snapshot = snapshot.copy(
             state = if (snapshot.playbackOwner == null) TalkModeAudioState.RECOVERING else TalkModeAudioState.SPEAKING,

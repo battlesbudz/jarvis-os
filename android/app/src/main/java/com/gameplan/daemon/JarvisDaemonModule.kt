@@ -65,7 +65,7 @@ class JarvisDaemonModule(
     override fun invalidate() {
         nativeSpeechRecognitionBridge.destroy()
         nativeTalkModePlaybackBridge.destroy()
-        TalkModeAudioSession.end()
+        if (!OutsideAppVoiceSessionService.isActive()) TalkModeAudioSession.end()
         nativeVoicePlaybackOwners.forEach(WearableAudioRouteManager::release)
         nativeVoicePlaybackOwners.clear()
         if (activeReactContext === reactApplicationContext) activeReactContext = null
