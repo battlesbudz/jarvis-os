@@ -319,6 +319,7 @@ class OutsideAppVoiceSessionService : Service() {
 
     override fun onDestroy() {
         if (!expectedStop && sessionActive && state != OutsideAppVoiceState.IDLE) {
+            JarvisDaemonModule.cancelActiveNativeSpeechRecognition()
             JarvisDaemonModule.stopActiveNativeTalkModePlayback()
             JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
             endTalkModeCapture()
@@ -393,6 +394,7 @@ class OutsideAppVoiceSessionService : Service() {
     }
 
     private fun pauseWakeCapture() {
+        JarvisDaemonModule.cancelActiveNativeSpeechRecognition()
         JarvisDaemonModule.stopActiveNativeTalkModePlayback()
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         WakeWordService.pauseForUserControl()
@@ -450,6 +452,7 @@ class OutsideAppVoiceSessionService : Service() {
         expectedStop = true
         endedSessionBlocksPlayback = true
         ownsVoiceCapture = false
+        JarvisDaemonModule.cancelActiveNativeSpeechRecognition()
         JarvisDaemonModule.stopActiveNativeTalkModePlayback()
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         endTalkModeCapture()

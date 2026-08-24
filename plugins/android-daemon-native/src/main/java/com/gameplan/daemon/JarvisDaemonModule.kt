@@ -31,9 +31,14 @@ class JarvisDaemonModule(
 
         @Volatile private var activeReactContext: ReactApplicationContext? = null
         @Volatile private var activeNativeTalkModePlaybackBridge: NativeTalkModePlaybackBridge? = null
+        @Volatile private var activeNativeSpeechRecognitionBridge: NativeSpeechRecognitionBridge? = null
 
         fun stopActiveNativeTalkModePlayback() {
             activeNativeTalkModePlaybackBridge?.stop()
+        }
+
+        fun cancelActiveNativeSpeechRecognition() {
+            activeNativeSpeechRecognitionBridge?.cancelForOutsideAppHandoff()
         }
 
         fun emitVoiceSessionControl(actionName: String, state: String, confirmationToken: String?): Boolean {
@@ -60,6 +65,7 @@ class JarvisDaemonModule(
         super.initialize()
         activeReactContext = reactApplicationContext
         activeNativeTalkModePlaybackBridge = nativeTalkModePlaybackBridge
+        activeNativeSpeechRecognitionBridge = nativeSpeechRecognitionBridge
     }
 
     override fun invalidate() {
@@ -71,6 +77,9 @@ class JarvisDaemonModule(
         if (activeReactContext === reactApplicationContext) activeReactContext = null
         if (activeNativeTalkModePlaybackBridge === nativeTalkModePlaybackBridge) {
             activeNativeTalkModePlaybackBridge = null
+        }
+        if (activeNativeSpeechRecognitionBridge === nativeSpeechRecognitionBridge) {
+            activeNativeSpeechRecognitionBridge = null
         }
         super.invalidate()
     }

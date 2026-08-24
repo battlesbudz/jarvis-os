@@ -199,6 +199,10 @@ assert.match(
   /OutsideAppVoiceOverlayTapAction\.INTERRUPT_AND_LISTEN[\s\S]*?JarvisDaemonModule\.stopActiveNativeTalkModePlayback\(\)/,
 );
 assert.match(daemonModule, /fun stopActiveNativeTalkModePlayback\(\)/);
+assert.match(daemonModule, /fun cancelActiveNativeSpeechRecognition\(\)[\s\S]*?cancelForOutsideAppHandoff\(\)/);
+assert.match(outsideVoice, /private fun pauseWakeCapture\(\)[\s\S]*?cancelActiveNativeSpeechRecognition\(\)[\s\S]*?stopActiveNativeTalkModePlayback\(\)/);
+assert.match(outsideVoice, /private fun endSession\(\)[\s\S]*?cancelActiveNativeSpeechRecognition\(\)[\s\S]*?stopActiveNativeTalkModePlayback\(\)/);
+assert.match(outsideVoice, /override fun onDestroy\(\)[\s\S]*?cancelActiveNativeSpeechRecognition\(\)[\s\S]*?stopActiveNativeTalkModePlayback\(\)/);
 assert.match(outsideVoice, /fun prepareForInAppCapture\(\)/);
 assert.match(
   outsideVoice,
