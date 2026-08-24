@@ -365,7 +365,11 @@ class JarvisDaemonModule(
     @ReactMethod
     fun stopNativeTalkModeSpeech(promise: Promise) {
         nativeTalkModePlaybackBridge.stop()
-        promise.resolve(buildTalkModeAudioStatusMap(TalkModeAudioSession.stopTalking()))
+        val session = TalkModeAudioSession.snapshot()
+        val stopped = if (session.playbackOwner?.startsWith("react_tts:") == true) {
+            TalkModeAudioSession.stopTalking()
+        } else session
+        promise.resolve(buildTalkModeAudioStatusMap(stopped))
     }
 
     @ReactMethod

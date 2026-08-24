@@ -2096,6 +2096,7 @@ export default function InsightsScreen() {
           const clearInterruptionPreview = () => {
             const abandonedPreview = interruptionPreview;
             interruptionPreview = '';
+            interruptionSpeechDetected = false;
             if (abandonedPreview) {
               setInput(current => current === abandonedPreview ? '' : current);
             }

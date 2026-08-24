@@ -90,6 +90,7 @@ assert.match(screen, /recoverableRecognitionFailures < 5[\s\S]*?setTimeout/);
 assert.match(screen, /event\.type === 'speech_start' \|\| event\.type === 'partial'[\s\S]*?interruptionSpeechDetected = true[\s\S]*?status === 'interrupted' \|\| interruptionSpeechDetected[\s\S]*?await monitor/);
 assert.match(screen, /event\.type === 'echo_rejected'[\s\S]*?clearInterruptionPreview\(\)/);
 assert.match(screen, /const clearInterruptionPreview[\s\S]*?current === abandonedPreview[\s\S]*?if \(result\.text\.trim\(\)\)[\s\S]*?clearInterruptionPreview\(\)[\s\S]*?catch \(error\)[\s\S]*?clearInterruptionPreview\(\)/);
+assert.match(screen, /const clearInterruptionPreview[\s\S]*?interruptionSpeechDetected = false/);
 assert.match(screen, /session\?\.state !== 'speaking'[\s\S]*?session\.playbackOwner !== `react_tts:/);
 assert.match(screen, /allowTurnBasedFallback = !session \|\| session\.state === 'idle'[\s\S]*?playbackRejectedByCompetingOwner \|\| !allowTurnBasedFallback/);
 assert.match(screen, /if \(!playbackLifecycleStarted\)[\s\S]*?releaseAndroidNativeVoicePlaybackRoute\(playbackRouteOwnerId\)/);
