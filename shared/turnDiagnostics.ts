@@ -167,16 +167,19 @@ export function buildTurnDiagnosticBundle(input: {
  * human conversation transcript in copied diagnostics.
  */
 export function buildDiagnosticConversationMessages(
-  messages: Array<{ id?: unknown; role?: unknown; content?: unknown }>,
+  messages: Array<{ id?: unknown; role?: unknown; content?: unknown; stopped?: unknown; heardAssistantText?: unknown }>,
 ): DiagnosticConversationMessage[] {
   return messages.flatMap((message, index) => {
-    if (typeof message.content !== "string" || message.content.trim().length === 0) return [];
+    const content = message.role === "assistant" && message.stopped === true
+      ? (typeof message.heardAssistantText === "string" ? message.heardAssistantText : message.content)
+      : message.content;
+    if (typeof content !== "string" || content.trim().length === 0) return [];
     return [{
       id: typeof message.id === "string" && message.id.length > 0
         ? message.id
         : `legacy-${index}`,
       role: typeof message.role === "string" ? message.role : "unknown",
-      content: message.content,
+      content,
     }];
   });
 }

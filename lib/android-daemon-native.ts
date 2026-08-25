@@ -183,7 +183,7 @@ const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
       getNativeTalkModeAudioSessionStatus?(): Promise<AndroidTalkModeAudioSessionStatus>;
       beginNativeTalkModeResponse?(): Promise<AndroidTalkModeAudioSessionStatus>;
       beginNativeTalkModePlayback?(ownerId: string, spokenText: string): Promise<AndroidTalkModeAudioSessionStatus>;
-      speakNativeTalkModeText?(ownerId: string, spokenText: string): Promise<{ status: "done" | "interrupted" | "stopped" | "replaced" | "ended" | "error"; error?: string | null }>;
+      speakNativeTalkModeText?(ownerId: string, spokenText: string): Promise<{ status: "done" | "interrupted" | "stopped" | "replaced" | "ended" | "error"; error?: string | null; acknowledgedOffset?: number }>;
       finishNativeTalkModePlayback?(ownerId: string): Promise<AndroidTalkModeAudioSessionStatus>;
       stopNativeTalkModeSpeech?(): Promise<AndroidTalkModeAudioSessionStatus>;
       pauseNativeTalkModeListening?(): Promise<AndroidTalkModeAudioSessionStatus>;
@@ -345,11 +345,22 @@ export async function beginAndroidTalkModePlayback(
 export async function speakAndroidTalkModeText(
   ownerId: string,
   spokenText: string,
-): Promise<{ status: "done" | "interrupted" | "stopped" | "replaced" | "ended" | "error"; error?: string | null }> {
+  options: { onStart?: () => void } = {},
+): Promise<{ status: "done" | "interrupted" | "stopped" | "replaced" | "ended" | "error"; error?: string | null; acknowledgedOffset?: number }> {
   if (Platform.OS !== "android" || !NativeJarvisDaemon?.speakNativeTalkModeText) {
     throw new Error("Continuous Android Talk Mode playback is unavailable in this APK.");
   }
-  return NativeJarvisDaemon.speakNativeTalkModeText(ownerId, spokenText);
+  const expectedOwner = `react_tts:${ownerId}`;
+  const subscription = options.onStart
+    ? DeviceEventEmitter.addListener("JarvisTalkModePlayback", (event) => {
+        if (event?.type === "start" && event?.ownerId === expectedOwner) options.onStart?.();
+      })
+    : null;
+  try {
+    return await NativeJarvisDaemon.speakNativeTalkModeText(ownerId, spokenText);
+  } finally {
+    subscription?.remove();
+  }
 }
 
 export async function finishAndroidTalkModePlayback(ownerId: string): Promise<AndroidTalkModeAudioSessionStatus | null> {
@@ -444,6 +455,8 @@ export async function recognizeAndroidSpeechOnce(
         const message = event.message || event.error || "Android on-device speech recognition failed.";
         const recognitionError = Object.assign(new Error(message), {
           recoverable: event.recoverable === true,
+          errorCode: event.errorCode,
+          recognitionError: event.error,
         });
         finish(() => reject(recognitionError));
       } else if (eventType === "cancelled") {
