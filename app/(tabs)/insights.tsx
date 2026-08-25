@@ -2427,6 +2427,7 @@ export default function InsightsScreen() {
           let interruptionDetectedAt: number | null = null;
           let interruptionPreview = '';
           let interruptionComposerDraft: string | null = null;
+          let interruptionAccepted = false;
           const clearProviderInterruptionPreview = () => {
             const abandonedPreview = interruptionPreview;
             const composerDraft = interruptionComposerDraft;
@@ -2479,6 +2480,7 @@ export default function InsightsScreen() {
                   soundRef.current?.play();
                   continue;
                 }
+                interruptionAccepted = true;
                 if (interruptionDetectedAt !== null) {
                   recordVoiceMetric(
                     'interruption_ms',
@@ -2525,6 +2527,7 @@ export default function InsightsScreen() {
               }
             }
           } finally {
+            if (!interruptionAccepted) clearProviderInterruptionPreview();
             nativeSpeechActiveRef.current = false;
           }
         })();

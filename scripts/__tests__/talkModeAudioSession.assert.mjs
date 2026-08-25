@@ -130,6 +130,7 @@ assert.match(screen, /return \(\) => \{[\s\S]*?streamingSpeechRef\.current\?\.qu
 assert.match(screen, /Fallback also failed:[\s\S]*?onError\(\)[\s\S]*?if \(options\.nativeOnly\)[\s\S]*?throw fallbackErr/);
 assert.match(screen, /if \(options\.providerOnly\) \{[\s\S]*?stopSpeaking\(options\.preserveResponseQueue\)[\s\S]*?onError\(\)[\s\S]*?throw error/);
 assert.match(screen, /const clearProviderInterruptionPreview[\s\S]*?composerDraft \?\? ''[\s\S]*?interruptionComposerDraft = inputRef\.current/);
+assert.match(screen, /let interruptionAccepted = false[\s\S]*?if \(!transcript\)[\s\S]*?interruptionAccepted = true[\s\S]*?finally \{[\s\S]*?if \(!interruptionAccepted\) clearProviderInterruptionPreview\(\)/);
 assert.match(screen, /interruptionPreview = event\.text/);
 assert.match(screen, /playbackResult\.acknowledgedOffset[\s\S]*?trimmedText\.slice\(0, acknowledgedOffset\)[\s\S]*?activeSpeech\.heardText/);
 assert.match(screen, /ownsCurrentPlayback[\s\S]*?cancelAndroidNativeSpeechRecognition[\s\S]*?if \(ownsCurrentPlayback\)[\s\S]*?setAudioModeAsync/);
