@@ -120,6 +120,7 @@ import {
   normalizeVoiceRestoreReply,
   voiceApprovalClarificationPrompt,
 } from '@shared/voiceApprovalGates';
+import { SpeakableResponseSegmenter, StreamingSpeechQueue } from '@shared/streamingSpeech';
 
 
 interface EmailSuggestion {
@@ -134,6 +135,11 @@ interface EmailSuggestion {
 const DEFAULT_RUNTIME_MODE: CoachingMode = 'sharp';
 const VOICE_RESTORE_FRESH_MS = 60 * 60 * 1000;
 
+function recordVoiceMetric(metric: 'first_audio_ms' | 'interruption_ms', valueMs: number, route: string): void {
+  if (!Number.isFinite(valueMs) || valueMs < 0) return;
+  apiRequest('POST', '/api/voice/metrics', { metric, valueMs: Math.round(valueMs), route }).catch(() => {});
+}
+
 function isPendingVoiceRestoreFresh(voiceRestore?: PendingVoiceRestore, now = Date.now()): boolean {
   const createdAt = voiceRestore?.createdAt;
   return typeof createdAt === 'number' && Number.isFinite(createdAt) && now - createdAt < VOICE_RESTORE_FRESH_MS;
@@ -144,6 +150,14 @@ type SendMessageOrigin =
   | { source: 'voice'; voiceTrace: DiagnosticVoiceTrace };
 
 type VoiceConfirmAction = (msgId: string, confirmed: boolean, origin?: SendMessageOrigin) => Promise<void>;
+
+type SpeakTextOptions = {
+  providerOnly?: boolean;
+  nativeOnly?: boolean;
+  preserveResponseQueue?: boolean;
+  suppressAutoListen?: boolean;
+  onFirstAudio?: () => void;
+};
 
 const SUGGESTED_PROMPTS = [
   "How am I doing overall?",
@@ -1115,7 +1129,8 @@ export default function InsightsScreen() {
   const scheduleTalkModeRecordingStartRef = useRef<(delayMs?: number) => void>(() => {});
   const stopRecordingRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const stopRecordingSilentlyRef = useRef<() => Promise<void>>(() => Promise.resolve());
-  const speakTextRef = useRef<(text: string, assistantId?: string) => void>(() => {});
+  const stopSpeakingRef = useRef<() => void>(() => {});
+  const speakTextRef = useRef<(text: string, assistantId?: string, options?: SpeakTextOptions) => Promise<void>>(() => Promise.resolve());
   const isRecordingRef = useRef(false);
   const [isTTSLoading, setIsTTSLoading] = useState(false);
   const speakingTextRef = useRef<string | null>(null);
@@ -1147,6 +1162,12 @@ export default function InsightsScreen() {
   const messagesRef = useRef<ChatMessage[]>([]);
   const pendingAttachmentsRef = useRef<PendingChatAttachment[]>([]);
   const pendingVoiceDiagnosticCopyRef = useRef(false);
+  const streamingSpeechRef = useRef<{
+    assistantId: string;
+    heardText: string;
+    segmenter: SpeakableResponseSegmenter;
+    queue: StreamingSpeechQueue;
+  } | null>(null);
   const hasScrolledRef = useRef(false);
   const initialScanDoneRef = useRef(false);
   const [commitments, setCommitments] = useState<Commitment[]>([]);
@@ -1264,6 +1285,9 @@ export default function InsightsScreen() {
         nativeSpeechActiveRef.current = false;
       }
       soundRef.current?.remove();
+      streamingSpeechRef.current?.queue.suppress();
+      streamingSpeechRef.current = null;
+      isSpeakingRef.current = false;
       speakAbortRef.current?.abort();
       if (Platform.OS === 'android') {
         cancelAndroidNativeSpeechRecognition().catch(() => {});
@@ -1343,7 +1367,7 @@ export default function InsightsScreen() {
     if (talkModeRef.current) {
       const normalizedControl = transcriptText.toLowerCase().replace(/[^a-z\s]/g, '').replace(/\s+/g, ' ').trim();
       if (normalizedControl === 'stop talking') {
-        stopAndroidTalkModeSpeech().catch(() => {});
+        stopSpeakingRef.current();
         setInput('');
         scheduleTalkModeRecordingStartRef.current(400);
         return;
@@ -1842,17 +1866,28 @@ export default function InsightsScreen() {
 
   const markAssistantSpeechStopped = useCallback((assistantId?: string | null) => {
     if (!assistantId) return;
+    const activeSpeech = streamingSpeechRef.current;
+    const streamedHeardText = activeSpeech?.assistantId === assistantId
+      ? activeSpeech.heardText.trim()
+      : undefined;
     setMessages(prev => {
       const idx = prev.findIndex(message => message.id === assistantId && message.role === 'assistant');
       if (idx === -1 || prev[idx].stopped) return prev;
       const updated = [...prev];
-      updated[idx] = { ...updated[idx], stopped: true };
+      const heardAssistantText = streamedHeardText !== undefined
+        ? streamedHeardText
+        : prev[idx].heardAssistantText ?? prev[idx].content;
+      updated[idx] = { ...updated[idx], stopped: true, heardAssistantText };
       persistChatHistory(updated);
       return updated;
     });
   }, []);
 
-  const stopSpeaking = useCallback(() => {
+  const stopSpeaking = useCallback((preserveResponseQueue = false) => {
+    if (!preserveResponseQueue) {
+      streamingSpeechRef.current?.queue.suppress();
+      streamingSpeechRef.current = null;
+    }
     speakAbortRef.current?.abort();
     speakAbortRef.current = null;
     isSpeakingRef.current = false;
@@ -1864,6 +1899,11 @@ export default function InsightsScreen() {
       webAudioCtxRef.current?.close().catch(() => {});
       webAudioCtxRef.current = null;
     } else if (Platform.OS === 'android') {
+      if (nativeSpeechActiveRef.current) {
+        nativeSpeechCancelledRef.current = true;
+        nativeSpeechActiveRef.current = false;
+        cancelAndroidNativeSpeechRecognition().catch(() => {});
+      }
       stopAndroidTalkModeSpeech().catch(() => {});
       Speech.stop().catch(() => {});
       soundRef.current?.pause();
@@ -1877,6 +1917,7 @@ export default function InsightsScreen() {
     setIsSpeaking(false);
     setIsTTSLoading(false);
   }, []);
+  stopSpeakingRef.current = stopSpeaking;
 
   const scheduleTalkModeRecordingStart = useCallback((delayMs = 0) => {
     const startSeq = talkModeStartSeqRef.current;
@@ -1900,6 +1941,9 @@ export default function InsightsScreen() {
   scheduleTalkModeRecordingStartRef.current = scheduleTalkModeRecordingStart;
 
   const abortActiveChatTurn = useCallback(async () => {
+    const interruptedAssistantId = streamingSpeechRef.current?.assistantId ?? speakingAssistantIdRef.current;
+    if (interruptedAssistantId) markAssistantSpeechStopped(interruptedAssistantId);
+    stopSpeaking();
     const runId = chatRunIdRef.current;
     if (runId) {
       try {
@@ -1917,18 +1961,26 @@ export default function InsightsScreen() {
     setIsSearchingWeb(false);
     setIsWorkingOnPhone(false);
     setIsTranscribing(false);
-  }, []);
+  }, [markAssistantSpeechStopped, stopSpeaking]);
 
   const interruptSpeakingAndListen = useCallback(() => {
     const shouldResumeTalkMode = talkModeRef.current;
     if (shouldResumeTalkMode) {
-      markAssistantSpeechStopped(speakingAssistantIdRef.current);
+      markAssistantSpeechStopped(speakingAssistantIdRef.current ?? streamingSpeechRef.current?.assistantId);
+    }
+    if (isStreamingRef.current) {
+      void abortActiveChatTurn()
+        .catch(() => {})
+        .finally(() => {
+          if (shouldResumeTalkMode) scheduleTalkModeRecordingStart();
+        });
+      return;
     }
     stopSpeaking();
     if (shouldResumeTalkMode) {
       scheduleTalkModeRecordingStart();
     }
-  }, [markAssistantSpeechStopped, scheduleTalkModeRecordingStart, stopSpeaking]);
+  }, [abortActiveChatTurn, markAssistantSpeechStopped, scheduleTalkModeRecordingStart, stopSpeaking]);
 
   useEffect(() => {
     if (Platform.OS !== 'android') return;
@@ -1936,7 +1988,13 @@ export default function InsightsScreen() {
       const action = String(event?.action ?? '').toLowerCase();
       if (action === 'interrupt') {
         nativeVoiceStateSyncHeldRef.current = false;
-        if (isSpeakingRef.current) {
+        if (isStreamingRef.current) {
+          markAssistantSpeechStopped(speakingAssistantIdRef.current ?? streamingSpeechRef.current?.assistantId);
+          stopSpeaking();
+          abortActiveChatTurn()
+            .catch(() => {})
+            .finally(() => scheduleTalkModeRecordingStart());
+        } else if (isSpeakingRef.current) {
           interruptSpeakingAndListen();
         }
         return;
@@ -1945,7 +2003,7 @@ export default function InsightsScreen() {
         nativeVoiceStateSyncHeldRef.current = true;
         talkModeStartSeqRef.current += 1;
         outsideAppVoiceStateRef.current = 'paused';
-        stopSpeaking();
+        markAssistantSpeechStopped(speakingAssistantIdRef.current ?? streamingSpeechRef.current?.assistantId);
         abortActiveChatTurn().catch(() => {});
         stopRecordingSilentlyRef.current().catch(() => {});
         return;
@@ -1956,7 +2014,7 @@ export default function InsightsScreen() {
         talkModeRef.current = false;
         setTalkModeEnabled(false);
         setTalkModeActive(false);
-        stopSpeaking();
+        markAssistantSpeechStopped(speakingAssistantIdRef.current ?? streamingSpeechRef.current?.assistantId);
         abortActiveChatTurn().catch(() => {});
         stopRecordingSilentlyRef.current().catch(() => {});
         apiRequest('PUT', '/api/voice/wake-settings', { talkModeEnabled: false }).catch(() => {});
@@ -2012,10 +2070,10 @@ export default function InsightsScreen() {
       }
     });
     return () => subscription.remove();
-  }, [abortActiveChatTurn, interruptSpeakingAndListen, scheduleTalkModeRecordingStart, setTalkModeActive, stopSpeaking]);
+  }, [abortActiveChatTurn, interruptSpeakingAndListen, markAssistantSpeechStopped, scheduleTalkModeRecordingStart, setTalkModeActive, stopSpeaking]);
 
-  const speakText = useCallback(async (text: string, assistantId?: string) => {
-    if (isSpeaking && speakingTextRef.current === text) {
+  const speakText = useCallback(async (text: string, assistantId?: string, options: SpeakTextOptions = {}) => {
+    if (isSpeakingRef.current && speakingTextRef.current === text) {
       if (talkModeRef.current) {
         interruptSpeakingAndListen();
       } else {
@@ -2023,7 +2081,7 @@ export default function InsightsScreen() {
       }
       return;
     }
-    stopSpeaking();
+    stopSpeaking(options.preserveResponseQueue);
     isSpeakingRef.current = true;
     speakingTextRef.current = text;
     speakingAssistantIdRef.current = assistantId ?? null;
@@ -2032,20 +2090,36 @@ export default function InsightsScreen() {
 
     const abortController = new AbortController();
     speakAbortRef.current = abortController;
+    let providerPlaybackOwnerId: string | null = null;
+    let providerInterruptionPending = false;
+    const cleanupProviderPlayback = () => {
+      if (!providerPlaybackOwnerId) return;
+      const ownerId = providerPlaybackOwnerId;
+      providerPlaybackOwnerId = null;
+      cancelAndroidNativeSpeechRecognition().catch(() => {});
+      finishAndroidTalkModePlayback(ownerId).catch(() => {});
+      releaseAndroidNativeVoicePlaybackRoute(ownerId).catch(() => {});
+      setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
+    };
+    abortController.signal.addEventListener('abort', cleanupProviderPlayback, { once: true });
 
     const onPlaybackEnd = () => {
+      cleanupProviderPlayback();
       isSpeakingRef.current = false;
       speakingTextRef.current = null;
       speakingAssistantIdRef.current = null;
       setIsSpeaking(false);
       setIsTTSLoading(false);
-      apiRequest('POST', '/api/voice/tts-done').catch(() => {});
-      if (talkModeRef.current && outsideAppVoiceStateRef.current !== 'paused') {
+      if (!options.suppressAutoListen) {
+        apiRequest('POST', '/api/voice/tts-done').catch(() => {});
+      }
+      if (!options.suppressAutoListen && talkModeRef.current && outsideAppVoiceStateRef.current !== 'paused') {
         scheduleTalkModeRecordingStart(400);
       }
     };
 
     const onError = () => {
+      cleanupProviderPlayback();
       isSpeakingRef.current = false;
       speakingTextRef.current = null;
       speakingAssistantIdRef.current = null;
@@ -2054,10 +2128,49 @@ export default function InsightsScreen() {
     };
 
     const trimmedText = text.slice(0, 4000);
+    let providerCompletedPcmBytes = 0;
+    let providerActiveSegmentPcmBytes = 0;
+    let providerQueuedPcmBytes = 0;
+    let providerPcmStreamDone = false;
+    let providerInterruptedAtPcmByte: number | null = null;
+    let providerContinuousCapture = false;
 
-    if (Platform.OS === 'android') {
+    const getProviderPlayedPcmBytes = () => {
+      const player = soundRef.current;
+      const activeSegmentRatio = player && player.duration > 0
+        ? Math.max(0, Math.min(1, player.currentTime / player.duration))
+        : 0;
+      return providerCompletedPcmBytes + Math.floor(providerActiveSegmentPcmBytes * activeSegmentRatio);
+    };
+
+    const getProviderAcknowledgedOffset = (playedPcmBytes: number) => {
+      if (playedPcmBytes <= 0) return 0;
+      if (providerPcmStreamDone && providerQueuedPcmBytes > 0) {
+        return Math.min(
+          trimmedText.length,
+          Math.floor(trimmedText.length * playedPcmBytes / providerQueuedPcmBytes),
+        );
+      }
+
+      // The provider does not expose word timings while its PCM stream is still
+      // open. Use a conservative 90 WPM bound until the full duration is known,
+      // and only acknowledge complete words that fit within played audio.
+      const completedWordCount = Math.floor((playedPcmBytes / (24_000 * 2)) * 1.5);
+      const words = trimmedText.matchAll(/\S+/g);
+      let offset = 0;
+      let count = 0;
+      for (const word of words) {
+        if (count >= completedWordCount) break;
+        offset = (word.index ?? 0) + word[0].length;
+        count++;
+      }
+      return offset;
+    };
+
+    if (Platform.OS === 'android' && !options.providerOnly) {
       if (!talkModeRef.current) {
         setIsTTSLoading(false);
+        options.onFirstAudio?.();
         Speech.speak(trimmedText, {
           rate: 0.96,
           pitch: 1,
@@ -2091,13 +2204,25 @@ export default function InsightsScreen() {
           if (abortController.signal.aborted) return;
           let playbackFinished = false;
           let interruptionTranscript = '';
+          let interruptionDetectedAt: number | null = null;
           let interruptionPreview = '';
+          let interruptionComposerDraft: string | null = null;
+          const clearProviderInterruptionPreview = () => {
+            const abandonedPreview = interruptionPreview;
+            const composerDraft = interruptionComposerDraft;
+            interruptionPreview = '';
+            interruptionComposerDraft = null;
+            if (abandonedPreview) {
+              setInput(current => current === abandonedPreview ? composerDraft ?? '' : current);
+            }
+          };
           let interruptionComposerDraft: string | null = null;
           let interruptionSpeechDetected = false;
           const clearInterruptionPreview = () => {
             const abandonedPreview = interruptionPreview;
             const composerDraft = interruptionComposerDraft;
             interruptionPreview = '';
+            interruptionDetectedAt = null;
             interruptionComposerDraft = null;
             interruptionSpeechDetected = false;
             if (abandonedPreview) {
@@ -2119,9 +2244,12 @@ export default function InsightsScreen() {
                         if (event.type === 'speech_start' || event.type === 'partial') {
                           interruptionSpeechDetected = true;
                         }
-                        if (event.type === 'echo_rejected') {
+                        if (event.type === 'interruption_candidate' && interruptionDetectedAt === null) {
+                          interruptionDetectedAt = Date.now();
+                        } else if (event.type === 'echo_rejected') {
                           clearInterruptionPreview();
-                        } else if (event.type === 'partial' && event.sessionState === 'interrupted' && event.text) {
+                        }
+                        if (event.type === 'partial' && event.sessionState === 'interrupted' && event.text) {
                           if (interruptionComposerDraft === null) interruptionComposerDraft = inputRef.current;
                           interruptionPreview = event.text;
                           setInput(event.text);
@@ -2161,7 +2289,9 @@ export default function InsightsScreen() {
               })()
             : Promise.resolve();
 
-          const playbackResult = await speakAndroidTalkModeText(playbackRouteOwnerId, trimmedText);
+          const playbackResult = await speakAndroidTalkModeText(playbackRouteOwnerId, trimmedText, {
+            onStart: options.onFirstAudio,
+          });
           playbackFinished = true;
           if (abortController.signal.aborted || speakAbortRef.current !== abortController) return;
           if (continuousCapture) {
@@ -2176,8 +2306,23 @@ export default function InsightsScreen() {
             (playbackResult.status === 'interrupted' || interruptionSpeechDetected) &&
             interruptionTranscript
           ) {
+            const acknowledgedOffset = Math.max(0, Math.min(
+              trimmedText.length,
+              Math.trunc(playbackResult.acknowledgedOffset ?? 0),
+            ));
+            const acknowledgedPrefix = trimmedText.slice(0, acknowledgedOffset).trim();
+            const activeSpeech = streamingSpeechRef.current;
+            if (acknowledgedPrefix && activeSpeech?.assistantId === assistantId) {
+              activeSpeech.heardText = `${activeSpeech.heardText} ${acknowledgedPrefix}`.trim();
+            }
+            if (interruptionDetectedAt !== null) {
+              recordVoiceMetric('interruption_ms', Date.now() - interruptionDetectedAt, 'android_continuous');
+            }
             markAssistantSpeechStopped(assistantId);
             onError();
+            const activeTurnSettled = activeChatTurnSettledRef.current;
+            await abortActiveChatTurn();
+            await activeTurnSettled;
             submitVoiceTranscript(interruptionTranscript);
           } else if (playbackResult.status === 'done' && isSpeakingRef.current) {
             onPlaybackEnd();
@@ -2186,6 +2331,9 @@ export default function InsightsScreen() {
             isSpeakingRef.current
           ) {
             onError();
+            if (options.nativeOnly && !abortController.signal.aborted) {
+              throw new Error(`Android native Talk Mode playback ${playbackResult.status}.`);
+            }
           } else if (playbackResult.status === 'error' && isSpeakingRef.current) {
             throw new Error(playbackResult.error || 'Android native Talk Mode playback failed.');
           }
@@ -2197,6 +2345,7 @@ export default function InsightsScreen() {
           if (ownsCurrentPlayback) {
             setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
             if (
+              !options.suppressAutoListen &&
               talkModeRef.current &&
               !insightsFocusedRef.current &&
               outsideAppVoiceStateRef.current !== 'paused'
@@ -2215,19 +2364,46 @@ export default function InsightsScreen() {
         if (playbackLifecycleStarted) {
           onError();
           if (
+            !options.suppressAutoListen &&
             talkModeRef.current &&
             insightsFocusedRef.current &&
             outsideAppVoiceStateRef.current !== 'paused'
           ) {
             scheduleTalkModeRecordingStart(400);
           }
+          if (options.nativeOnly) throw error;
           return;
         }
         if (playbackRejectedByCompetingOwner || !allowTurnBasedFallback) {
           onError();
+          if (options.nativeOnly) {
+            throw new Error(playbackRejectedByCompetingOwner
+              ? 'Talk Mode playback is owned by another audio surface.'
+              : 'Talk Mode playback was paused or ended.');
+          }
           return;
         }
         console.warn('[speakText] Continuous Android TTS failed; using turn-based device TTS:', error);
+        if (options.nativeOnly) {
+          await new Promise<void>((resolve, reject) => {
+            const rejectPlayback = (reason: string) => {
+              onError();
+              reject(new Error(reason));
+            };
+            Speech.speak(trimmedText, {
+              rate: 0.96,
+              pitch: 1,
+              onStart: options.onFirstAudio,
+              onDone: () => {
+                onPlaybackEnd();
+                resolve();
+              },
+              onStopped: () => rejectPlayback('Fallback speech playback stopped before completion.'),
+              onError: () => rejectPlayback('Fallback speech playback failed.'),
+            });
+          });
+          return;
+        }
         Speech.speak(trimmedText, {
           rate: 0.96,
           pitch: 1,
@@ -2237,6 +2413,122 @@ export default function InsightsScreen() {
         });
       }
       return;
+    }
+
+    if (Platform.OS === 'android' && options.providerOnly && talkModeRef.current) {
+      const ownerId = `${Date.now()}-${++nativeVoiceRouteSeqRef.current}`;
+      providerPlaybackOwnerId = ownerId;
+      await acquireAndroidNativeVoicePlaybackRoute(ownerId).catch(() => {});
+      const session = await beginAndroidTalkModePlayback(ownerId, trimmedText).catch(() => null);
+      if (
+        session?.state !== 'speaking' ||
+        session.playbackOwner !== `react_tts:${ownerId}`
+      ) {
+        cleanupProviderPlayback();
+        onError();
+        throw new Error('Talk Mode audio session rejected provider playback startup.');
+      }
+      const continuousCapture = session?.mode === 'continuous';
+      providerContinuousCapture = continuousCapture;
+      let providerAcknowledgedPrefix = '';
+      await setAudioModeAsync({ allowsRecording: continuousCapture, playsInSilentMode: true }).catch(() => {});
+      if (continuousCapture) {
+        void (async () => {
+          let interruptionDetectedAt: number | null = null;
+          let interruptionPreview = '';
+          let recoverableRecognitionFailures = 0;
+          try {
+            nativeSpeechActiveRef.current = true;
+            while (!abortController.signal.aborted && providerPlaybackOwnerId === ownerId) {
+              try {
+                const result = await recognizeAndroidSpeechOnce({
+                  locale: 'en-US',
+                  interimResults: true,
+                  timeoutMs: 60_000,
+                  takeInAppCapture: true,
+                  onEvent: (event) => {
+                    if (event.type === 'interruption_candidate' && interruptionDetectedAt === null) {
+                      interruptionDetectedAt = Date.now();
+                      providerInterruptionPending = true;
+                      providerInterruptedAtPcmByte = getProviderPlayedPcmBytes();
+                      soundRef.current?.pause();
+                    } else if (event.type === 'echo_rejected') {
+                      interruptionDetectedAt = null;
+                      providerInterruptedAtPcmByte = null;
+                      providerAcknowledgedPrefix = '';
+                      providerInterruptionPending = false;
+                      clearProviderInterruptionPreview();
+                      soundRef.current?.play();
+                    }
+                    if (event.type === 'partial' && event.sessionState === 'interrupted' && event.text) {
+                      if (interruptionComposerDraft === null) interruptionComposerDraft = inputRef.current;
+                      interruptionPreview = event.text;
+                      setInput(event.text);
+                    }
+                  },
+                });
+                recoverableRecognitionFailures = 0;
+                const transcript = result.text.trim();
+                if (abortController.signal.aborted || providerPlaybackOwnerId !== ownerId) return;
+                if (!transcript) {
+                  interruptionDetectedAt = null;
+                  providerInterruptedAtPcmByte = null;
+                  providerAcknowledgedPrefix = '';
+                  providerInterruptionPending = false;
+                  clearProviderInterruptionPreview();
+                  soundRef.current?.play();
+                  continue;
+                }
+                if (interruptionDetectedAt !== null) {
+                  recordVoiceMetric(
+                    'interruption_ms',
+                    Date.now() - interruptionDetectedAt,
+                    'android_streaming_provider',
+                  );
+                }
+                const providerAcknowledgedOffset = getProviderAcknowledgedOffset(
+                  providerInterruptedAtPcmByte ?? 0,
+                );
+                providerAcknowledgedPrefix = trimmedText.slice(0, providerAcknowledgedOffset).trim();
+                providerInterruptionPending = false;
+                cleanupProviderPlayback();
+                const activeSpeech = streamingSpeechRef.current;
+                if (providerAcknowledgedPrefix && activeSpeech?.assistantId === assistantId) {
+                  activeSpeech.heardText = `${activeSpeech.heardText} ${providerAcknowledgedPrefix}`.trim();
+                }
+                markAssistantSpeechStopped(assistantId);
+                stopSpeaking();
+                const activeTurnSettled = activeChatTurnSettledRef.current;
+                await abortActiveChatTurn();
+                await activeTurnSettled;
+                submitVoiceTranscript(transcript);
+                return;
+              } catch (error) {
+                if (abortController.signal.aborted || providerPlaybackOwnerId !== ownerId) return;
+                interruptionDetectedAt = null;
+                providerInterruptedAtPcmByte = null;
+                providerAcknowledgedPrefix = '';
+                providerInterruptionPending = false;
+                clearProviderInterruptionPreview();
+                soundRef.current?.play();
+                const recoverable = (error as Error & { recoverable?: boolean })?.recoverable === true;
+                if (recoverable && recoverableRecognitionFailures < 5) {
+                  recoverableRecognitionFailures += 1;
+                  await new Promise(resolve => setTimeout(
+                    resolve,
+                    Math.min(250 * 2 ** recoverableRecognitionFailures, 2_000),
+                  ));
+                  continue;
+                }
+                console.warn('[voice] streaming interruption monitor fell back to turn-taking:', error);
+                return;
+              }
+            }
+          } finally {
+            nativeSpeechActiveRef.current = false;
+          }
+        })();
+      }
     }
 
     const uint8ToBase64 = (bytes: Uint8Array): string => {
@@ -2288,7 +2580,9 @@ export default function InsightsScreen() {
         if (!WinAudioContext) throw new Error('Web Audio API not available');
         const audioCtx = new (WinAudioContext as typeof AudioContext)({ sampleRate: 24000 });
         webAudioCtxRef.current = audioCtx;
+        if (audioCtx.state === 'suspended') await audioCtx.resume();
         let scheduledTime = audioCtx.currentTime + 0.1;
+        let firstAudioScheduled = false;
 
         // Carry-over byte to handle odd-length PCM chunks (PCM16 requires 2-byte alignment)
         let webCarryByte: number | null = null;
@@ -2339,6 +2633,17 @@ export default function InsightsScreen() {
           src.connect(audioCtx.destination);
           const startAt = Math.max(audioCtx.currentTime + 0.001, scheduledTime);
           src.start(startAt);
+          if (!firstAudioScheduled) {
+            firstAudioScheduled = true;
+            const firstAudioDelayMs = Math.max(0, (startAt - audioCtx.currentTime) * 1000);
+            setTimeout(() => {
+              if (
+                isSpeakingRef.current &&
+                webAudioCtxRef.current === audioCtx &&
+                audioCtx.state === 'running'
+              ) options.onFirstAudio?.();
+            }, firstAudioDelayMs);
+          }
           scheduledTime = startAt + buf.duration;
           webScheduledCount++;
           // Attach handler at scheduling time to avoid race on short clips
@@ -2404,6 +2709,7 @@ export default function InsightsScreen() {
 
         // segWritePromises[i] resolves when segment i WAV is written to segUris[i]
         const segUris: string[] = [];
+        const segPcmBytes: number[] = [];
         const segWritePromises: Promise<void>[] = [];
         let segIdx = 0;
         let pendingBuf: Uint8Array[] = [];
@@ -2423,6 +2729,8 @@ export default function InsightsScreen() {
 
         const enqueueSegment = (chunks: Uint8Array[], len: number) => {
           const idx = segIdx++;
+          providerQueuedPcmBytes += len;
+          segPcmBytes[idx] = len;
           const uri = `${FileSystem.cacheDirectory ?? ''}jarvis_tts_${segPrefix}_${idx}.wav`;
           segUris[idx] = uri;
           segWritePromises[idx] = (async () => {
@@ -2433,7 +2741,7 @@ export default function InsightsScreen() {
 
         // Playback loop runs concurrently with streaming
         const playbackDone = (async () => {
-          await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+          await setAudioModeAsync({ allowsRecording: providerContinuousCapture, playsInSilentMode: true });
           let playIdx = 0;
           while (!abortController.signal.aborted && isSpeakingRef.current) {
             if (playIdx < segWritePromises.length) {
@@ -2442,21 +2750,43 @@ export default function InsightsScreen() {
               const sound = createAudioPlayer({ uri: segUris[playIdx] });
               soundRef.current = sound;
               const segUri = segUris[playIdx];
+              providerActiveSegmentPcmBytes = segPcmBytes[playIdx] ?? 0;
               playIdx++;
+              while (providerInterruptionPending && !abortController.signal.aborted) {
+                await new Promise(resolve => setTimeout(resolve, 25));
+              }
+              if (abortController.signal.aborted || !isSpeakingRef.current) {
+                sound.remove();
+                FileSystem.deleteAsync(segUri, { idempotent: true }).catch(() => {});
+                break;
+              }
               sound.play();
               await new Promise<void>((resolve) => {
                 let started = false;
+                let settled = false;
+                const settle = () => {
+                  if (settled) return;
+                  settled = true;
+                  abortController.signal.removeEventListener('abort', settle);
+                  resolve();
+                };
+                abortController.signal.addEventListener('abort', settle, { once: true });
                 sound.addListener('playbackStatusUpdate', (status) => {
-                  if (status.isLoaded && status.playing) started = true;
+                  if (status.isLoaded && status.playing && !started) {
+                    started = true;
+                    options.onFirstAudio?.();
+                  }
                   if (status.didJustFinish) {
+                    providerCompletedPcmBytes += providerActiveSegmentPcmBytes;
+                    providerActiveSegmentPcmBytes = 0;
                     sound.remove();
                     FileSystem.deleteAsync(segUri, { idempotent: true }).catch(() => {});
-                    resolve();
-                  } else if (started && status.isLoaded && !status.playing) {
+                    settle();
+                  } else if (started && status.isLoaded && !status.playing && !providerInterruptionPending) {
                     // Sound was stopped externally (abort/stop) — resolve to unblock loop
                     sound.remove();
                     FileSystem.deleteAsync(segUri, { idempotent: true }).catch(() => {});
-                    resolve();
+                    settle();
                   }
                 });
               });
@@ -2519,6 +2849,7 @@ export default function InsightsScreen() {
         }
         if (!nativeFirstChunk) setIsTTSLoading(false);
         streamDone = true;
+        providerPcmStreamDone = true;
 
         if (!isSpeakingRef.current || abortController.signal.aborted) {
           cleanupSegFiles();
@@ -2530,6 +2861,11 @@ export default function InsightsScreen() {
       }
     } catch (error: unknown) {
       if (error instanceof Error && error.name === 'AbortError') return;
+      if (options.providerOnly) {
+        stopSpeaking(options.preserveResponseQueue);
+        onError();
+        throw error;
+      }
       console.warn('[speakText] Streaming failed, falling back:', error);
 
       if (streamingAttempted && !isSpeakingRef.current) return;
@@ -2545,7 +2881,11 @@ export default function InsightsScreen() {
         if (!isSpeakingRef.current) return;
         const data = await res.json();
         setIsTTSLoading(false);
-        if (!data.audio || !isSpeakingRef.current) { onError(); return; }
+        if (!data.audio || !isSpeakingRef.current) {
+          onError();
+          if (options.nativeOnly) throw new Error('Fallback speech returned no playable audio.');
+          return;
+        }
 
         if (Platform.OS === 'web') {
           const audioEl = new window.Audio(`data:audio/mp3;base64,${data.audio}`);
@@ -2568,11 +2908,107 @@ export default function InsightsScreen() {
         if (fallbackErr instanceof Error && fallbackErr.name === 'AbortError') return;
         console.error('[speakText] Fallback also failed:', fallbackErr);
         onError();
+        if (options.nativeOnly) {
+          throw fallbackErr instanceof Error ? fallbackErr : new Error(String(fallbackErr));
+        }
       }
     }
-  }, [interruptSpeakingAndListen, isSpeaking, markAssistantSpeechStopped, scheduleTalkModeRecordingStart, stopSpeaking, submitVoiceTranscript]);
+  }, [abortActiveChatTurn, interruptSpeakingAndListen, markAssistantSpeechStopped, scheduleTalkModeRecordingStart, stopSpeaking, submitVoiceTranscript]);
 
   speakTextRef.current = speakText;
+
+  const startStreamingSpeechResponse = useCallback((assistantId: string, responseStartedAt: number) => {
+    streamingSpeechRef.current?.queue.suppress();
+    const segmenter = new SpeakableResponseSegmenter(assistantId);
+    let firstAudioRecorded = false;
+    const waitForPlayback = async (signal: AbortSignal) => {
+      while (!signal.aborted && isSpeakingRef.current) {
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      if (signal.aborted) {
+        const abortError = new Error('Speech queue cancelled');
+        abortError.name = 'AbortError';
+        throw abortError;
+      }
+    };
+    const queue = new StreamingSpeechQueue({
+      speak: async (chunk, signal, markPlaybackStarted) => {
+        await speakTextRef.current(chunk.spokenText, assistantId, {
+          providerOnly: true,
+          preserveResponseQueue: true,
+          suppressAutoListen: true,
+          onFirstAudio: () => {
+            markPlaybackStarted();
+            if (firstAudioRecorded) return;
+            firstAudioRecorded = true;
+            recordVoiceMetric('first_audio_ms', Date.now() - responseStartedAt, 'streaming_provider');
+          },
+        });
+        await waitForPlayback(signal);
+      },
+      fallback: async (chunk, signal) => {
+        await speakTextRef.current(chunk.spokenText, assistantId, {
+          nativeOnly: true,
+          preserveResponseQueue: true,
+          suppressAutoListen: true,
+          onFirstAudio: () => {
+            if (firstAudioRecorded) return;
+            firstAudioRecorded = true;
+            const route = Platform.OS === 'android' ? 'android_native_fallback' : 'streaming_provider_retry';
+            recordVoiceMetric('first_audio_ms', Date.now() - responseStartedAt, route);
+          },
+        });
+        await waitForPlayback(signal);
+      },
+      onChunkComplete: (chunk) => {
+        const response = streamingSpeechRef.current;
+        if (!response || response.assistantId !== assistantId) return;
+        response.heardText = `${response.heardText} ${chunk.spokenText}`.trim();
+      },
+    });
+    streamingSpeechRef.current = { assistantId, heardText: '', segmenter, queue };
+  }, []);
+
+  const appendStreamingSpeech = useCallback((assistantId: string, delta: string) => {
+    const response = streamingSpeechRef.current;
+    if (!response || response.assistantId !== assistantId) return;
+    response.queue.enqueue(response.segmenter.append(delta));
+  }, []);
+
+  const finishStreamingSpeech = useCallback((assistantId: string) => {
+    const response = streamingSpeechRef.current;
+    if (!response || response.assistantId !== assistantId) return;
+    const resumeTalkModeCaptureAfterQueue = () => {
+      if (!talkModeRef.current || outsideAppVoiceStateRef.current === 'paused') return;
+      if (Platform.OS === 'android' && !insightsFocusedRef.current) {
+        handoffAndroidOutsideAppVoiceCapture().catch((error) => {
+          console.warn('[voice] background queue capture handoff failed:', error);
+        });
+        return;
+      }
+      scheduleTalkModeRecordingStartRef.current(400);
+    };
+    response.queue.enqueue(response.segmenter.finish());
+    void response.queue.settled().then(() => {
+      if (streamingSpeechRef.current !== response) return;
+      streamingSpeechRef.current = null;
+      apiRequest('POST', '/api/voice/tts-done').catch(() => {});
+      resumeTalkModeCaptureAfterQueue();
+    }).catch((error) => {
+      console.warn('[voice] streaming speech queue failed:', error);
+      markAssistantSpeechStopped(response.assistantId);
+      if (streamingSpeechRef.current === response) streamingSpeechRef.current = null;
+      apiRequest('POST', '/api/voice/tts-done').catch(() => {});
+      resumeTalkModeCaptureAfterQueue();
+    });
+  }, [markAssistantSpeechStopped]);
+
+  const cancelStreamingSpeech = useCallback((assistantId?: string) => {
+    const response = streamingSpeechRef.current;
+    if (!response || (assistantId && response.assistantId !== assistantId)) return;
+    stopSpeaking();
+    if (streamingSpeechRef.current === response) streamingSpeechRef.current = null;
+  }, [stopSpeaking]);
 
   const scanForTasks = useCallback(async (currentGoals: Goal[]) => {
     if (currentGoals.length === 0) return;
@@ -2960,8 +3396,12 @@ export default function InsightsScreen() {
         silencePollRef.current = null;
       }
       const shouldHandoff = talkModeRef.current;
-      stopRecordingSilentlyRef.current().finally(() => {
+      const activeTurnSettled = activeChatTurnSettledRef.current;
+      const activeSpeech = streamingSpeechRef.current;
+      stopRecordingSilentlyRef.current().finally(async () => {
         if (!shouldHandoff) return;
+        await activeTurnSettled;
+        await activeSpeech?.queue.settled().catch(() => {});
         return handoffAndroidOutsideAppVoiceCapture().catch((err) => {
           console.warn('[voice] outside-app microphone handoff failed:', err);
         });
@@ -3729,6 +4169,10 @@ export default function InsightsScreen() {
         return updated;
       });
 
+      if (talkModeRef.current && outsideAppVoiceStateRef.current !== 'paused') {
+        startStreamingSpeechResponse(assistantId, diagnosticStartedAt.getTime());
+      }
+
       if (!response.body) throw new Error('No response body');
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -3769,10 +4213,14 @@ export default function InsightsScreen() {
                 serverContextTrace = normalizeServerContextTrace(parsed);
               } else if (parsed.type === 'aborted') {
                 streamAborted = true;
+                markAssistantSpeechStopped(assistantId);
+                cancelStreamingSpeech(assistantId);
                 break outer;
               } else if (parsed.type === 'error' || parsed.error) {
                 streamErrorMessage = String(parsed.message || parsed.error || 'Jarvis hit a model provider error.');
                 diagnosticModelErrors.push(parsed);
+                markAssistantSpeechStopped(assistantId);
+                cancelStreamingSpeech(assistantId);
                 fullContent = `Error: ${streamErrorMessage}`;
                 setIsSearchingWeb(false);
                 setIsWorkingOnPhone(false);
@@ -3916,6 +4364,7 @@ export default function InsightsScreen() {
                 setIsSearchingWeb(false);
                 setIsWorkingOnPhone(false);
                 fullContent += parsed.content;
+                appendStreamingSpeech(assistantId, parsed.content);
                 const captured = fullContent;
                 setMessages(prev => {
                   const updated = [...prev];
@@ -3972,6 +4421,7 @@ export default function InsightsScreen() {
       }
 
       if (gotConfirmRequired) {
+        cancelStreamingSpeech(assistantId);
         clearAcceptedVoiceRestore();
         return;
       }
@@ -3979,6 +4429,7 @@ export default function InsightsScreen() {
       const finalContent = fullContent.trim().length > 0
         ? fullContent
         : 'Error: Jarvis did not return a final response. Please retry; if this repeats, check the selected model provider runtime.';
+      if (fullContent.trim().length === 0) appendStreamingSpeech(assistantId, finalContent);
       const finalActions = executedActions;
       setMessages(prev => {
         const updated = [...prev];
@@ -4004,10 +4455,7 @@ export default function InsightsScreen() {
         retainAcceptedVoiceRestoreForRetry();
       }
 
-      // Auto-speak the reply in Talk Mode once streaming finishes.
-      if (talkModeRef.current && outsideAppVoiceStateRef.current !== 'paused' && finalContent.trim()) {
-        speakTextRef.current(finalContent, assistantId);
-      }
+      finishStreamingSpeech(assistantId);
 
       // If Jarvis just sent a channel connect link, start polling for connection.
       // When the channel connects, a confirmation message is injected into the chat.
@@ -4067,6 +4515,8 @@ export default function InsightsScreen() {
       }).catch(() => {});
 
     } catch (error) {
+      markAssistantSpeechStopped(assistantId);
+      cancelStreamingSpeech(assistantId);
       chatAbortControllerRef.current = null;
       chatRunIdRef.current = null;
       setShowTyping(false);
@@ -4143,7 +4593,7 @@ export default function InsightsScreen() {
       settleTurn();
       if (activeChatTurnSettledRef.current === turnSettled) activeChatTurnSettledRef.current = null;
     }
-  }, [copyDiagnosticBundleToClipboard, getDiagnosticRecords, isStreaming, openMcpSheet]);
+  }, [appendStreamingSpeech, cancelStreamingSpeech, copyDiagnosticBundleToClipboard, finishStreamingSpeech, getDiagnosticRecords, isStreaming, openMcpSheet, startStreamingSpeechResponse]);
 
   useEffect(() => {
     sendMessageRef.current = sendMessage;
@@ -4830,6 +5280,7 @@ export default function InsightsScreen() {
               });
             }
             if (!next) {
+              stopSpeaking();
               endAndroidTalkModeAudioSession().catch(() => {});
               clearSilencePoll();
             }

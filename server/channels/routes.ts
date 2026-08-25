@@ -958,6 +958,22 @@ export function registerChannelRoutes(app: Express): void {
     }
   });
 
+  app.post("/api/voice/metrics", authMiddleware, (req: Request, res: Response) => {
+    const metric = req.body?.metric;
+    const valueMs = req.body?.valueMs;
+    const requestedRoute = typeof req.body?.route === "string" ? req.body.route : "";
+    const route = /^[a-z0-9_:-]{1,48}$/i.test(requestedRoute) ? requestedRoute : "unknown";
+    if ((metric !== "first_audio_ms" && metric !== "interruption_ms")
+      || typeof valueMs !== "number"
+      || !Number.isFinite(valueMs)
+      || valueMs < 0
+      || valueMs > 60_000) {
+      return res.status(400).json({ error: "Invalid voice metric" });
+    }
+    console.info(`[voice-metric] metric=${metric} valueMs=${Math.round(valueMs)} route=${route}`);
+    res.status(202).json({ accepted: true });
+  });
+
   // SSE endpoint — mobile app subscribes to wake word trigger events
   app.get("/api/voice/wake-events", authMiddleware, (req: Request, res: Response) => {
     const userId = req.userId!;

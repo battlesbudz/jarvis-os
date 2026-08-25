@@ -13,6 +13,7 @@ function read(relPath: string): string {
 const insights = read("app/(tabs)/insights.tsx");
 const appLayout = read("app/_layout.tsx");
 const localVoiceLoop = read("shared/localVoiceLoop.ts");
+const channelRoutes = read("server/channels/routes.ts");
 
 assert.match(
   localVoiceLoop,
@@ -64,8 +65,8 @@ assert.match(
 
 assert.match(
   insights,
-  /speakTextRef\.current\(finalContent,\s*assistantId\)/,
-  "The canonical assistant response should be spoken with the same chat message id",
+  /new SpeakableResponseSegmenter\(assistantId\)[\s\S]*?speakTextRef\.current\(chunk\.spokenText, assistantId/,
+  "Canonical response chunks should keep the same chat message id",
 );
 
 assert.match(
@@ -76,7 +77,7 @@ assert.match(
 
 assert.match(
   insights,
-  /if\s*\(shouldResumeTalkMode\)\s*\{\s*markAssistantSpeechStopped\(speakingAssistantIdRef\.current\);/,
+  /if\s*\(shouldResumeTalkMode\)\s*\{\s*markAssistantSpeechStopped\(speakingAssistantIdRef\.current \?\? streamingSpeechRef\.current\?\.assistantId\);/,
   "Only Talk Mode interruptions should mark the assistant message as stopped",
 );
 
@@ -130,7 +131,7 @@ assert.match(
 
 assert.match(
   insights,
-  /if\s*\(isSpeaking && speakingTextRef\.current === text\)\s*\{\s*if\s*\(talkModeRef\.current\)\s*\{\s*interruptSpeakingAndListen\(\);/,
+  /if\s*\(isSpeakingRef\.current && speakingTextRef\.current === text\)\s*\{\s*if\s*\(talkModeRef\.current\)\s*\{\s*interruptSpeakingAndListen\(\);/,
   "The assistant bubble speaker stop should also use Talk Mode interrupt behavior",
 );
 
@@ -163,5 +164,32 @@ assert.match(
   /nativeSpeechManualFinishRef\.current = true;[\s\S]*?stopAndroidNativeSpeechRecognition\(\)/,
   "Manual Android mic stop should finish the current transcript without opening another continuation window",
 );
+
+assert.match(
+  insights,
+  /startStreamingSpeechResponse\(assistantId,[\s\S]*?appendStreamingSpeech\(assistantId, parsed\.content\)[\s\S]*?finishStreamingSpeech\(assistantId\)/,
+  "Talk Mode should feed canonical response deltas to speech before the response completes",
+);
+
+assert.match(
+  insights,
+  /providerOnly: true[\s\S]*?nativeOnly: true/,
+  "Streaming speech should fall back once to Android native TTS",
+);
+
+assert.match(insights, /providerInterruptionPending = true;[\s\S]*?!providerInterruptionPending/);
+assert.match(insights, /catch \(error\) \{[\s\S]*?providerInterruptionPending = false;[\s\S]*?soundRef\.current\?\.play\(\)/);
+assert.match(insights, /const interruptSpeakingAndListen[\s\S]*?if \(isStreamingRef\.current\)[\s\S]*?abortActiveChatTurn\(\)[\s\S]*?finally[\s\S]*?scheduleTalkModeRecordingStart\(\)/);
+assert.match(insights, /action === 'pause'[\s\S]*?markAssistantSpeechStopped\(speakingAssistantIdRef\.current \?\? streamingSpeechRef\.current\?\.assistantId\)[\s\S]*?abortActiveChatTurn\(\)/);
+assert.match(insights, /action === 'end'[\s\S]*?markAssistantSpeechStopped\(speakingAssistantIdRef\.current \?\? streamingSpeechRef\.current\?\.assistantId\)[\s\S]*?abortActiveChatTurn\(\)/);
+assert.match(insights, /parsed\.type === 'aborted'[\s\S]*?markAssistantSpeechStopped\(assistantId\)[\s\S]*?cancelStreamingSpeech\(assistantId\)/);
+assert.match(insights, /firstAudioDelayMs = Math\.max\(0, \(startAt - audioCtx\.currentTime\) \* 1000\)[\s\S]*?audioCtx\.state === 'running'[\s\S]*?options\.onFirstAudio/);
+assert.match(insights, /if \(!options\.suppressAutoListen\)[\s\S]*?\/api\/voice\/tts-done/);
+assert.match(insights, /response\.queue\.settled\(\)\.then[\s\S]*?streamingSpeechRef\.current = null;[\s\S]*?\/api\/voice\/tts-done/);
+assert.match(insights, /activeSpeech\?\.assistantId === assistantId[\s\S]*?prev\[idx\]\.heardAssistantText \?\? prev\[idx\]\.content/);
+
+assert.match(channelRoutes, /\/api\/voice\/metrics[\s\S]*?first_audio_ms[\s\S]*?interruption_ms/);
+assert.match(channelRoutes, /\^\[a-z0-9_:-\]\{1,48\}\$\/i\.test\(requestedRoute\)/);
+assert.doesNotMatch(channelRoutes, /\[voice-metric\][^\n]*(?:text|content|transcript)=/);
 
 console.log("OK: in-app local voice loop wiring keeps chat, TTS, cleanup, and interrupt behavior aligned");

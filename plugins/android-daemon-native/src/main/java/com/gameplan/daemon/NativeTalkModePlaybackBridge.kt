@@ -9,6 +9,7 @@ import android.speech.tts.UtteranceProgressListener
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.util.Locale
 
 /** Android TTS owner used by continuous Talk Mode so capture and playback share one lifecycle. */
@@ -131,7 +132,17 @@ internal class NativeTalkModePlaybackBridge(
         val currentGeneration = ++generation
         val utteranceId = "jarvis-talk-${TalkModeAudioSession.snapshot().sessionId}-$currentGeneration"
         engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-            override fun onStart(id: String?) = Unit
+            override fun onStart(id: String?) {
+                runOnMain {
+                    if (!isCurrent(activeOwner, currentGeneration) || tentativeInterruption) return@runOnMain
+                    context
+                        .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+                        .emit("JarvisTalkModePlayback", Arguments.createMap().apply {
+                            putString("type", "start")
+                            putString("ownerId", activeOwner)
+                        })
+                }
+            }
 
             override fun onDone(id: String?) {
                 runOnMain {
@@ -183,6 +194,7 @@ internal class NativeTalkModePlaybackBridge(
 
     private fun finish(status: String, error: String? = null) {
         val completedOwner = owner
+        val completedOffset = acknowledgedOffset.coerceIn(0, spokenText.length)
         owner = null
         spokenText = ""
         baseOffset = 0
@@ -200,6 +212,7 @@ internal class NativeTalkModePlaybackBridge(
         promise?.resolve(Arguments.createMap().apply {
             putString("status", status)
             putString("error", error)
+            putInt("acknowledgedOffset", completedOffset)
         })
     }
 

@@ -385,6 +385,7 @@ export interface ChatMessage {
   pendingConfirm?: PendingConfirm;
   pendingVoiceRestore?: PendingVoiceRestore;
   stopped?: boolean;
+  heardAssistantText?: string;
 }
 
 export interface Commitment {

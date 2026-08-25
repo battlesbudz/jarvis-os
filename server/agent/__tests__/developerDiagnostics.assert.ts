@@ -134,8 +134,12 @@ function testTruthfulAppContextDiagnostics() {
     { id: "user-1", role: "user", content: "What did I say?" },
     { id: "tool-protocol", role: "assistant", content: null },
     { id: "assistant-1", role: "assistant", content: "You asked about context." },
+    { id: "assistant-stopped", role: "assistant", content: "This suffix was never heard.", stopped: true, heardAssistantText: "This was heard." },
+    { id: "assistant-legacy-stopped", role: "assistant", content: "Legacy stopped response.", stopped: true },
   ]);
-  assert.deepEqual(submitted.map((message) => message.id), ["user-1", "assistant-1"]);
+  assert.deepEqual(submitted.map((message) => message.id), ["user-1", "assistant-1", "assistant-stopped", "assistant-legacy-stopped"]);
+  assert.equal(submitted.find((message) => message.id === "assistant-stopped")?.content, "This was heard.");
+  assert.equal(submitted.find((message) => message.id === "assistant-legacy-stopped")?.content, "Legacy stopped response.");
   assert.equal(submitted.some((message) => message.content.trim().length === 0), false);
 
   const trace = normalizeServerContextTrace({
