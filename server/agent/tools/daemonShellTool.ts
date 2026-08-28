@@ -1180,20 +1180,23 @@ export const androidSearchInAppTool: AgentTool = {
       (!identity.resourceId || field.resourceId === identity.resourceId) &&
       (!identity.hint || field.hint === identity.hint);
 
-    const focusedSearchFieldStillVerified = async (): Promise<boolean> => {
+    const readVerifiedFocusedSearchField = async (): Promise<ReturnType<typeof extractFocusedFieldText> | null> => {
       // Package verification precedes every focus fast path; the final focus read
       // remains the last operation before the caller clears or types.
       const screenCheck = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      if (!screenCheck.ok || !screenMatchesResolvedApp(screenCheck.data)) return false;
+      if (!screenCheck.ok || !screenMatchesResolvedApp(screenCheck.data)) return null;
       const focusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
-      if (!focusCheck.ok) return false;
+      if (!focusCheck.ok) return null;
       const focusedField = extractFocusedFieldText(focusCheck.data);
-      if (isFocusedSearchField(focusedField)) return true;
+      if (isFocusedSearchField(focusedField)) return focusedField;
       if (!dedicatedSearchActivityFocus || !matchesFocusIdentity(focusedField, dedicatedSearchActivityFocus)) {
-        return false;
+        return null;
       }
-      return isDedicatedSearchActivity(screenCheck.data);
+      return isDedicatedSearchActivity(screenCheck.data) ? focusedField : null;
     };
+
+    const focusedSearchFieldStillVerified = async (): Promise<boolean> =>
+      (await readVerifiedFocusedSearchField()) !== null;
 
     const rebuildDedicatedSearchActivityFocus = async (): Promise<boolean> => {
       const initialFocusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
@@ -1935,12 +1938,16 @@ export const androidSearchInAppTool: AgentTool = {
         successStep: "Query confirmed in focused field.",
         inconclusiveStep: (currentText) => `Query verification inconclusive: field text="${currentText ?? "empty"}".`,
       }));
-      const inputTargetStillSearch = await focusedSearchFieldStillVerified();
-      const focusedFieldTextMatches = typeof fieldText === "string"
-        ? fieldText.trim() === searchQuery.trim()
+      const currentInputTarget = await readVerifiedFocusedSearchField();
+      const inputTargetStillSearch = currentInputTarget !== null;
+      const focusedFieldTextMatches = typeof currentInputTarget?.text === "string"
+        ? currentInputTarget.text.trim() === searchQuery.trim()
         : null;
-      if (!inputTargetStillSearch) inputVerified = false;
-      else if (focusedFieldTextMatches !== null) inputVerified = focusedFieldTextMatches;
+      fieldText = currentInputTarget?.text ?? null;
+      // Only the fresh focus read can authorize exact field-text evidence. If
+      // text is unavailable, fail closed here and let the post-input screen
+      // delta provide the sole bounded fallback below.
+      inputVerified = inputTargetStillSearch && focusedFieldTextMatches === true;
       await sleep(600);
 
       // Confirm the query text appeared on screen

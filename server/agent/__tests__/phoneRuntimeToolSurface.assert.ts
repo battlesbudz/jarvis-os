@@ -481,7 +481,7 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /beforeEscalating: \(\) => safelyClearFocusedSearchField\(inputSteps\)[\s\S]*const inputTargetStillSearch = await focusedSearchFieldStillVerified\(\)[\s\S]*inputTargetStillSearch && focusedFieldTextMatches === null && screenContainsQuery/,
+  /beforeEscalating: \(\) => safelyClearFocusedSearchField\(inputSteps\)[\s\S]*const currentInputTarget = await readVerifiedFocusedSearchField\(\)[\s\S]*currentInputTarget\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*inputVerified = inputTargetStillSearch && focusedFieldTextMatches === true[\s\S]*inputTargetStillSearch && focusedFieldTextMatches === null && screenContainsQuery/,
   "in-app search must revalidate search identity around paste escalation and again before accepting input evidence",
 );
 assert.match(
