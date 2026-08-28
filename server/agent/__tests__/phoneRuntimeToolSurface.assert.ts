@@ -436,7 +436,7 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /acceptedAppPackages[\s\S]*screenMatchesResolvedApp[\s\S]*resolvedAppPackage = packageName[\s\S]*focusedSearchFieldStillVerified[\s\S]*screenMatchesResolvedApp\(screenCheck\.data\)[\s\S]*isFocusedSearchField\(focusedField\)/,
+  /acceptedAppPackages[\s\S]*screenMatchesResolvedApp[\s\S]*resolvedAppPackage = packageName[\s\S]*readVerifiedFocusedSearchField[\s\S]*screenMatchesResolvedApp\(screenCheck\.data\)[\s\S]*isFocusedSearchField\(focusedField\)/,
   "every focused-field fast path must verify and lock the expected resolved foreground package",
 );
 assert.match(
