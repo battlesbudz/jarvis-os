@@ -496,6 +496,11 @@ assert.match(
   /const openedPackage = \(openResult\.data[\s\S]*acceptedAppPackages\.has\(openedPackage\)[\s\S]*resolvedAppPackage = openedPackage/,
   "in-app search must honor the package actually resolved by Android's app-opening fallback",
 );
+assert.match(
+  inAppSearchSource,
+  /Resuming from a later step[\s\S]*screenMatchesResolvedApp\(r\.data\)[\s\S]*error_at_step: "resume_package"[\s\S]*screenRaw = JSON\.stringify\(r\.data/,
+  "step-3/4/5 resumes must verify and initialize the resolved foreground package",
+);
 assert.doesNotMatch(
   inAppSearchSource,
   /rebuildDedicatedSearchActivityFocus/,

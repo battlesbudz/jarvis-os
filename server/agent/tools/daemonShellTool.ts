@@ -1483,9 +1483,23 @@ export const androidSearchInAppTool: AgentTool = {
         };
       }
     } else {
-      // Resuming from a later step     read current screen state
+      // Resuming from a later step: verify and lock the current target package
+      // before any package-bound focus, clear, type, or submit operation.
       const r = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      if (r.ok) screenRaw = JSON.stringify(r.data || "");
+      if (!r.ok || !screenMatchesResolvedApp(r.data)) {
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: resumeFromStep,
+            error_at_step: "resume_package",
+            error: `Cannot resume because ${appName} is not the verified foreground app.`,
+            suggestion: "Bring the requested app back to the foreground and retry from step 2.",
+            steps: stepLog,
+          }),
+        };
+      }
+      screenRaw = JSON.stringify(r.data || "");
     }
 
     // Shared coords: populated by step 2 locate logic, used as fallback in step 3 tap loop.
