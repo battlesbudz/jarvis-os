@@ -2179,9 +2179,10 @@ export const androidSearchInAppTool: AgentTool = {
         const focusedSearchQueryVerified = typeof focusedField.text === "string"
           ? focusedField.text.trim() === searchQuery.trim()
           : (requireTransition ? screenHasNewQueryEvidence(raw) : resumedQueryVisible);
-        return focusedSearchIdentityVerified && focusedSearchQueryVerified && (
-          requireTransition || hasNamedResultsEvidence(raw, requireTransition)
-        );
+        // A focused search field can still be showing typeahead suggestions.
+        // Require result-specific evidence even when other labels transitioned.
+        return focusedSearchIdentityVerified && focusedSearchQueryVerified &&
+          hasNamedResultsEvidence(raw, requireTransition);
       }
 
       if (!resultsLoaded) {
