@@ -1106,6 +1106,37 @@ export const androidSearchInAppTool: AgentTool = {
       ].some((signal) => identity.includes(signal.toLowerCase()));
     };
 
+    const normalizeVisibleText = (value: string): string => value
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim()
+      .replace(/\s+/g, " ");
+
+    const extractCompactScreenVisibleValues = (data: unknown): string[] => {
+      const compactScreen = data && typeof data === "object"
+        ? data as Record<string, unknown>
+        : {};
+      const visibleValues: string[] = [];
+      if (Array.isArray(compactScreen.text)) {
+        visibleValues.push(...compactScreen.text.filter((value): value is string => typeof value === "string"));
+      } else if (typeof compactScreen.text === "string") {
+        visibleValues.push(compactScreen.text);
+      }
+      if (Array.isArray(compactScreen.clickable)) {
+        for (const item of compactScreen.clickable) {
+          if (typeof item === "string") {
+            visibleValues.push(item);
+          } else if (item && typeof item === "object") {
+            const clickable = item as Record<string, unknown>;
+            if (typeof clickable.label === "string") visibleValues.push(clickable.label);
+            if (typeof clickable.content_desc === "string") visibleValues.push(clickable.content_desc);
+          }
+        }
+      }
+      return visibleValues;
+    };
+
     // ── Helper: parse accessibility tree for the best search-bar candidate ────
     // Strategy (in priority order):
     //   1. App-specific resource IDs from APP_SEARCH_HINTS (most reliable — avoids
@@ -1711,6 +1742,10 @@ export const androidSearchInAppTool: AgentTool = {
           }),
         };
       }
+      const beforeInputScreen = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      const beforeInputVisibleValues = beforeInputScreen.ok
+        ? new Set(extractCompactScreenVisibleValues(beforeInputScreen.data).map(normalizeVisibleText))
+        : null;
       let { methodUsed, inputOk, daemonVerified, fieldText } = await runAndroidTextInputFallback(
         ctx.userId,
         searchQuery,
@@ -1762,42 +1797,19 @@ export const androidSearchInAppTool: AgentTool = {
       let typeVerified = inputVerified;
       if (afterType.ok) {
         const afterTypeRaw = JSON.stringify(afterType.data || "");
-        const normalizeVisibleText = (value: string) => value
-          .normalize("NFKC")
-          .toLowerCase()
-          .replace(/[^\p{L}\p{N}]+/gu, " ")
-          .trim()
-          .replace(/\s+/g, " ");
-        const compactScreen = afterType.data && typeof afterType.data === "object"
-          ? afterType.data as Record<string, unknown>
-          : {};
-        const visibleValues: string[] = [];
-        if (Array.isArray(compactScreen.text)) {
-          visibleValues.push(...compactScreen.text.filter((value): value is string => typeof value === "string"));
-        } else if (typeof compactScreen.text === "string") {
-          visibleValues.push(compactScreen.text);
-        }
-        if (Array.isArray(compactScreen.clickable)) {
-          for (const item of compactScreen.clickable) {
-            if (typeof item === "string") {
-              visibleValues.push(item);
-            } else if (item && typeof item === "object") {
-              const clickable = item as Record<string, unknown>;
-              if (typeof clickable.label === "string") visibleValues.push(clickable.label);
-              if (typeof clickable.content_desc === "string") visibleValues.push(clickable.content_desc);
-            }
-          }
-        }
+        const visibleValues = extractCompactScreenVisibleValues(afterType.data);
         const normalizedQuery = normalizeVisibleText(searchQuery);
-        const screenContainsQuery = normalizedQuery.length > 0 &&
-          visibleValues.some((value) =>
-            ` ${normalizeVisibleText(value)} `.includes(` ${normalizedQuery} `),
-          );
+        const screenContainsQuery = normalizedQuery.length > 0 && beforeInputVisibleValues !== null &&
+          visibleValues.some((value) => {
+            const normalizedValue = normalizeVisibleText(value);
+            return !beforeInputVisibleValues.has(normalizedValue) &&
+              ` ${normalizedValue} `.includes(` ${normalizedQuery} `);
+          });
         // When the focused field exposes its value, require an exact replacement.
         // Only use compact screen text as a fallback when field text is unavailable,
-        // and require the complete normalized query as a bounded phrase in visible
-        // label only. JSON keys, package/activity metadata, and tokens split across
-        // unrelated elements are not evidence.
+        // and require the complete normalized query as a bounded phrase within one
+        // newly visible label. JSON keys, package/activity metadata, pre-existing
+        // labels, and tokens split across unrelated elements are not evidence.
         typeVerified = typeVerified || (focusedFieldTextMatches === null && screenContainsQuery);
         screenRaw = afterTypeRaw;
       }
