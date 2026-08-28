@@ -439,6 +439,11 @@ assert.doesNotMatch(
   /if \(isFocused \|\| isSearchActivity\)/,
   "a generic focused field or search-like screen must not authorize destructive text entry",
 );
+assert.match(
+  inAppSearchSource,
+  /if \(resumeFromStep === 4\)[\s\S]*!focusCheck\.ok \|\| !isFocusedSearchField\(focusedField\)[\s\S]*error_at_step: "type_query_no_focus"/,
+  "resuming at the input step must fail closed unless the focused field has search-specific identity",
+);
 assert.doesNotMatch(
   inAppSearchSource,
   /const isFocused = screenContains\(afterRaw/,

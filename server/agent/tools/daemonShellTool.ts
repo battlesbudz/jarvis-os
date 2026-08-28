@@ -1093,6 +1093,19 @@ export const androidSearchInAppTool: AgentTool = {
     const SEARCH_KEYWORDS = ["search", "find", "lookup", "query"];
     if (searchBarHint) SEARCH_KEYWORDS.unshift(searchBarHint.toLowerCase());
 
+    const isFocusedSearchField = (
+      field: ReturnType<typeof extractFocusedFieldText>,
+    ): boolean => {
+      if (!field.focused) return false;
+      const identity = `${field.resourceId ?? ""} ${field.hint ?? ""}`.toLowerCase();
+      const appSearchHint = APP_SEARCH_HINTS[appPackage];
+      return [
+        ...(appSearchHint?.resourceIds ?? []),
+        ...(appSearchHint?.extraKeywords ?? []),
+        ...SEARCH_KEYWORDS,
+      ].some((signal) => identity.includes(signal.toLowerCase()));
+    };
+
     // ── Helper: parse accessibility tree for the best search-bar candidate ────
     // Strategy (in priority order):
     //   1. App-specific resource IDs from APP_SEARCH_HINTS (most reliable — avoids
@@ -1609,13 +1622,7 @@ export const androidSearchInAppTool: AgentTool = {
         const focusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
         const focusedField = extractFocusedFieldText(focusResult.data);
         const isFocused = focusResult.ok && focusedField.focused;
-        const focusedIdentity = `${focusedField.resourceId ?? ""} ${focusedField.hint ?? ""}`.toLowerCase();
-        const appSearchHint = APP_SEARCH_HINTS[appPackage];
-        const focusedFieldIsSearch = isFocused && [
-          ...(appSearchHint?.resourceIds ?? []),
-          ...(appSearchHint?.extraKeywords ?? []),
-          ...SEARCH_KEYWORDS,
-        ].some((signal) => focusedIdentity.includes(signal.toLowerCase()));
+        const focusedFieldIsSearch = isFocusedSearchField(focusedField);
         const focusChanged = beforeFocusResult.ok && isFocused && (
           !beforeFocus.focused ||
           (!!focusedField.resourceId && focusedField.resourceId !== beforeFocus.resourceId) ||
@@ -1668,21 +1675,19 @@ export const androidSearchInAppTool: AgentTool = {
       // Confirm focus before typing (skip re-verify if we just verified in step 3)
       if (resumeFromStep === 4) {
         const focusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
-        if (focusCheck.ok) {
-          const isFocused = extractFocusedFieldText(focusCheck.data).focused;
-          if (!isFocused) {
-            emitProgress(`Search field lost focus — cannot type ✗`);
-            return {
+        const focusedField = extractFocusedFieldText(focusCheck.data);
+        if (!focusCheck.ok || !isFocusedSearchField(focusedField)) {
+          emitProgress(`Search field focus could not be verified — cannot type ✗`);
+          return {
+            ok: false,
+            content: JSON.stringify({
               ok: false,
-              content: JSON.stringify({
-                ok: false,
-                step_reached: 4,
-                error_at_step: "type_query_no_focus",
-                error: `Resumed at step 4 but the search field no longer appears focused in ${appName}.`,
-                suggestion: "Retry android_search_in_app with the same app and query using resume_from_step: 3 to re-tap and focus the search bar without reopening the app.",
-              }),
-            };
-          }
+              step_reached: 4,
+              error_at_step: "type_query_no_focus",
+              error: `Resumed at step 4 but a focused search field could not be verified in ${appName}.`,
+              suggestion: "Retry android_search_in_app with the same app and query using resume_from_step: 3 to re-tap and focus the search bar without reopening the app.",
+            }),
+          };
         }
       }
 
