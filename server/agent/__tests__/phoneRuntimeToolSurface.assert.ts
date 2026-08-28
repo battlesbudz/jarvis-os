@@ -378,15 +378,11 @@ assert.match(runtimeSource, /type: ["']android_notification_open["']/);
 assert.match(bridgeSource, /type: ["']android_notification_open["']/);
 assert.match(daemonShellSource, /type: ["']android_press_key["'], key: ["']enter["']/);
 assert.match(daemonShellSource, /if \(!screenRaw\)[\s\S]*submit_search_baseline/);
-assert.match(daemonShellSource, /function parseSubmitElement/);
-assert.match(
+assert.doesNotMatch(
   daemonShellSource,
-  /relocateSubmitElement[\s\S]*screenMatchesResolvedApp\(result\.data\)[\s\S]*type: "android_get_focused_field"[\s\S]*isFocusedSearchField\(focusedField\)[\s\S]*focusedField\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*submitTarget[\s\S]*screenMatchesResolvedApp\(submitTarget\.data\)[\s\S]*parseSubmitElement\(JSON\.stringify\(submitTarget\.data/,
-  "submit-control fallback must refresh the resolved foreground package and coordinates after focus/query validation",
+  /relocateSubmitElement|parseSubmitElement|button_tap_fallback|Retrying submission via search button/,
+  "search submission must fail closed instead of tapping a generic non-atomic submit control",
 );
-assert.match(daemonShellSource, /node\.contentDesc[\s\S]{0,160}node\.content_desc/);
-assert.match(daemonShellSource, /\^\(\?:search\|go\|submit\)\\b/);
-assert.match(daemonShellSource, /coordinateMatch = ranked[\s\S]*extractNodeCoords[\s\S]*\.find\(\(entry\) => entry\.coords !== null\)/);
 assert.match(
   daemonShellSource,
   /relocateSearchElement[\s\S]*screenMatchesResolvedApp\(r\.data\)[\s\S]*attempt === 2[\s\S]*screenMatchesResolvedApp\(swipeTarget\.data\)[\s\S]*tapTarget[\s\S]*screenMatchesResolvedApp\(tapTarget\.data\)/,

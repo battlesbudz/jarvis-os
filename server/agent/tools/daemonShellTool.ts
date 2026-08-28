@@ -1376,42 +1376,6 @@ export const androidSearchInAppTool: AgentTool = {
       }
     }
 
-    function parseSubmitElement(raw: string): { found: boolean; x: number | null; y: number | null } {
-      try {
-        const parsed = JSON.parse(raw);
-        const nodes: Array<Record<string, unknown>> = [];
-        const collect = (value: unknown): void => {
-          if (!value || typeof value !== "object") return;
-          if (Array.isArray(value)) { value.forEach(collect); return; }
-          const node = value as Record<string, unknown>;
-          nodes.push(node);
-          Object.values(node).forEach(collect);
-        };
-        collect(parsed);
-        const ranked = nodes.map((node) => {
-          const serialized = JSON.stringify(node).toLowerCase();
-          const className = String(node.className || node.class_name || node.class || node.type || "").toLowerCase();
-          const label = String(node.text || node.label || node.contentDesc || node.contentdesc || node.content_desc || node.contentDescription || "").trim();
-          if (/edittext|textfield|textinput/.test(className)) return { node, score: -1 };
-          let score = 0;
-          if (/search_button|searchbutton|submit_search|search_icon|action_search/.test(serialized)) score += 12;
-          if (/^(?:search|go|submit)\b/i.test(label)) score += 10;
-          if (/search|submit|\bgo\b/.test(serialized)) score += 3;
-          if (/"(?:clickable|isclickable)"\s*:\s*true/.test(serialized)) score += 3;
-          if (/"(?:focused|isfocused)"\s*:\s*true/.test(serialized)) score -= 5;
-          return { node, score };
-        }).filter((entry) => entry.score > 5).sort((left, right) => right.score - left.score);
-        const coordinateMatch = ranked
-          .map((entry) => ({ ...entry, coords: extractNodeCoords(entry.node) }))
-          .find((entry) => entry.coords !== null);
-        return coordinateMatch?.coords
-          ? { found: true, x: coordinateMatch.coords.x, y: coordinateMatch.coords.y }
-          : { found: false, x: null, y: null };
-      } catch {
-        return { found: false, x: null, y: null };
-      }
-    }
-
     //        Helper: freshly locate the search element from current screen                            
     async function relocateSearchElement(): Promise<{ found: boolean; x: number | null; y: number | null; screenRaw: string; discoveredResourceId?: string }> {
       const r = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
@@ -1421,36 +1385,6 @@ export const androidSearchInAppTool: AgentTool = {
       const raw = JSON.stringify(r.data || "");
       const parsed = parseSearchElement(raw);
       return { ...parsed, screenRaw: raw };
-    }
-
-    async function relocateSubmitElement(): Promise<{ found: boolean; x: number | null; y: number | null }> {
-      const result = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      if (!result.ok || !screenMatchesResolvedApp(result.data)) {
-        return { found: false, x: null, y: null };
-      }
-      const focus = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
-      if (!focus.ok) return { found: false, x: null, y: null };
-      const focusedField = extractFocusedFieldText(focus.data);
-      const focusedSearchQueryVerified = isFocusedSearchField(focusedField) && (
-        typeof focusedField.text === "string"
-          ? focusedField.text.trim() === searchQuery.trim()
-          : screenHasNewQueryEvidence(result.data)
-      );
-      if (!focusedSearchQueryVerified) {
-        return { found: false, x: null, y: null };
-      }
-
-      // Refresh both the foreground package and submit coordinates after focus
-      // validation. This closes the app-switch window between the first screen
-      // snapshot and android_get_focused_field, whose response has no package.
-      const submitTarget = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      if (!submitTarget.ok || !screenMatchesResolvedApp(submitTarget.data)) {
-        return { found: false, x: null, y: null };
-      }
-      if (typeof focusedField.text !== "string" && !screenHasNewQueryEvidence(submitTarget.data)) {
-        return { found: false, x: null, y: null };
-      }
-      return parseSubmitElement(JSON.stringify(submitTarget.data || ""));
     }
 
     let screenRaw = "";
@@ -2260,26 +2194,9 @@ export const androidSearchInAppTool: AgentTool = {
         }
       }
 
-      // Fallback: locate and tap a visible search/go button
+      // Step 5 is strict: if results did not load after the verified Enter action, fail closed.
       if (!resultsLoaded) {
-        emitProgress(`Retrying submission via search button…`);
-        const btnLocated = await relocateSubmitElement();
-        if (btnLocated.found && btnLocated.x !== null && btnLocated.y !== null) {
-          await sendDaemonOp(ctx.userId, { type: "android_tap", x: btnLocated.x, y: btnLocated.y }, 10000);
-          await sleep(2500);
-          const retryRead = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-          if (retryRead.ok) {
-            const retryRaw = JSON.stringify(retryRead.data || "");
-            resultsLoaded = await isVerifiedResultsState(retryRaw);
-            screenRaw = retryRaw;
-            stepLog.push({ step: 5, outcome: "button_tap_fallback", detail: `resultsLoaded=${resultsLoaded} after button tap` });
-          }
-        }
-      }
-
-      // Step 5 is strict     if results did not load after both attempts, return a structured failure
-      if (!resultsLoaded) {
-        stepLog.push({ step: 5, outcome: "failed", detail: "results screen not detected after Enter + button tap" });
+        stepLog.push({ step: 5, outcome: "failed", detail: "results screen not detected after verified Enter action" });
         emitProgress(`Search results did not load ✗`);
         return {
           ok: false,
@@ -2287,7 +2204,7 @@ export const androidSearchInAppTool: AgentTool = {
             ok: false,
             step_reached: 5,
             error_at_step: "execute_search",
-            error: `Search was submitted in ${appName} but the results screen did not appear. The app may require a different submission method, may have shown a network error, or may not have recognised the search input.`,
+            error: `Search was submitted in ${appName} but the results screen did not appear. Jarvis did not tap a generic submit control because it could not atomically bind those coordinates to the verified search field.`,
             suggestion: "Use android_screenshot to inspect the current state. Retry from step 5 only after confirming the results screen is visible.",
             steps: stepLog,
           }),
