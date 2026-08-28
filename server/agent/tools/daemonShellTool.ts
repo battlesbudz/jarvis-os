@@ -1584,6 +1584,9 @@ export const androidSearchInAppTool: AgentTool = {
           tapY = freshLocated.y ?? searchY;
         }
 
+        const beforeFocusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+        const beforeFocus = extractFocusedFieldText(beforeFocusResult.data);
+
         if (tapX !== null && tapY !== null) {
           await sendDaemonOp(ctx.userId, { type: "android_tap", x: tapX, y: tapY }, 10000);
         } else {
@@ -1596,7 +1599,20 @@ export const androidSearchInAppTool: AgentTool = {
         // text/clickable snapshot, so it cannot prove that an input owns focus. Ask
         // the accessibility service for the focused editable field directly.
         const focusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
-        const isFocused = focusResult.ok && extractFocusedFieldText(focusResult.data).focused;
+        const focusedField = extractFocusedFieldText(focusResult.data);
+        const isFocused = focusResult.ok && focusedField.focused;
+        const focusedIdentity = `${focusedField.resourceId ?? ""} ${focusedField.hint ?? ""}`.toLowerCase();
+        const appSearchHint = APP_SEARCH_HINTS[appPackage];
+        const focusedFieldIsSearch = isFocused && [
+          ...(appSearchHint?.resourceIds ?? []),
+          ...(appSearchHint?.extraKeywords ?? []),
+          ...SEARCH_KEYWORDS,
+        ].some((signal) => focusedIdentity.includes(signal.toLowerCase()));
+        const focusChanged = beforeFocusResult.ok && isFocused && (
+          !beforeFocus.focused ||
+          (!!focusedField.resourceId && focusedField.resourceId !== beforeFocus.resourceId) ||
+          (!!focusedField.hint && focusedField.hint !== beforeFocus.hint)
+        );
 
         const afterTap = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
         let isSearchActivity = false;
@@ -1610,8 +1626,9 @@ export const androidSearchInAppTool: AgentTool = {
             screenContains(afterRaw, SEARCH_KEYWORDS);
           screenRaw = afterRaw;
         }
-        stepLog.push({ step: 3, outcome: isFocused ? "focus_ok" : "checking", detail: `attempt ${attempt}: isFocused=${isFocused} isSearchActivity=${isSearchActivity}` });
-        if (isFocused || isSearchActivity) {
+        const focusVerified = focusedFieldIsSearch || (focusChanged && isSearchActivity);
+        stepLog.push({ step: 3, outcome: focusVerified ? "focus_ok" : "checking", detail: `attempt ${attempt}: isFocused=${isFocused} focusedFieldIsSearch=${focusedFieldIsSearch} focusChanged=${focusChanged} isSearchActivity=${isSearchActivity}` });
+        if (focusVerified) {
           tapVerified = true;
           break;
         }

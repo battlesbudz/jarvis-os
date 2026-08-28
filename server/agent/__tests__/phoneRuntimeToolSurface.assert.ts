@@ -426,8 +426,18 @@ const inAppSearchEnd = daemonShellSource.indexOf("export const androidTypeInFiel
 const inAppSearchSource = daemonShellSource.slice(inAppSearchStart, inAppSearchEnd);
 assert.match(
   inAppSearchSource,
-  /type: "android_get_focused_field"[\s\S]*extractFocusedFieldText\(focusResult\.data\)\.focused/,
+  /type: "android_get_focused_field"[\s\S]*const focusedField = extractFocusedFieldText\(focusResult\.data\)/,
   "in-app search must verify focus through the dedicated accessibility operation",
+);
+assert.match(
+  inAppSearchSource,
+  /const beforeFocus = extractFocusedFieldText\(beforeFocusResult\.data\)[\s\S]*const focusVerified = focusedFieldIsSearch \|\| \(focusChanged && isSearchActivity\)[\s\S]*if \(focusVerified\)/,
+  "in-app search must verify search-field identity or a focus transition before clearing and typing",
+);
+assert.doesNotMatch(
+  inAppSearchSource,
+  /if \(isFocused \|\| isSearchActivity\)/,
+  "a generic focused field or search-like screen must not authorize destructive text entry",
 );
 assert.doesNotMatch(
   inAppSearchSource,
