@@ -563,7 +563,7 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /if \(!screenRaw\)[\s\S]*const finalSearchState = await readVerifiedFocusedSearchState\(\)[\s\S]*finalSearchState\.field\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*screenHasNewQueryEvidence\(finalSearchState\.screen\)[\s\S]*if \(!finalQueryVerified\)[\s\S]*error_at_step: "submit_search_target"[\s\S]*type: "android_press_key", key: "enter"/,
+  /if \(!screenRaw\)[\s\S]*const finalSearchState = await readVerifiedFocusedSearchState\(\)[\s\S]*finalSearchState\.field\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*screenHasNewQueryEvidence\(finalSearchState\.screen\)[\s\S]*if \(!finalQueryVerified\)[\s\S]*error_at_step: "submit_search_target"[\s\S]*sendDaemonOp\(ctx\.userId, \{\s*type: "android_press_key",\s*key: "enter",\s*expectedPackage: resolvedAppPackage \?\? undefined,\s*expectedResourceId: finalSearchState\?\.field\.resourceId,\s*expectedHint: finalSearchState\?\.field\.hint,\s*\}, 10000\)/,
   "in-app search must revalidate the live search identity and query immediately before dispatching Enter",
 );
 assert.match(
