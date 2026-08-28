@@ -1261,6 +1261,15 @@ export const androidSearchInAppTool: AgentTool = {
       return visibleValues;
     };
 
+    const countNormalizedVisibleValues = (data: unknown): Map<string, number> => {
+      const counts = new Map<string, number>();
+      for (const value of extractCompactScreenVisibleValues(data)) {
+        const normalizedValue = normalizeVisibleText(value);
+        counts.set(normalizedValue, (counts.get(normalizedValue) ?? 0) + 1);
+      }
+      return counts;
+    };
+
     // ── Helper: parse accessibility tree for the best search-bar candidate ────
     // Strategy (in priority order):
     //   1. App-specific resource IDs from APP_SEARCH_HINTS (most reliable — avoids
@@ -1883,10 +1892,10 @@ export const androidSearchInAppTool: AgentTool = {
         };
       }
       const beforeInputScreen = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      const beforeInputVisibleValues = beforeInputScreen.ok
-        ? new Set(extractCompactScreenVisibleValues(beforeInputScreen.data).map(normalizeVisibleText))
+      const beforeInputVisibleValueCounts = beforeInputScreen.ok
+        ? countNormalizedVisibleValues(beforeInputScreen.data)
         : null;
-      let verificationBaselineVisibleValues = beforeInputVisibleValues;
+      let verificationBaselineVisibleValueCounts = beforeInputVisibleValueCounts;
       if (!(await focusedSearchFieldStillVerified())) {
         inputSteps.push("Search-field identity check failed immediately before input; typing was aborted.");
         stepLog.push({ step: 4, outcome: "failed", detail: inputSteps.join(" | ") });
@@ -1930,8 +1939,8 @@ export const androidSearchInAppTool: AgentTool = {
       const safelyPreparePasteEscalation = async (): Promise<boolean> => {
         if (!(await safelyClearFocusedSearchField(inputSteps))) return false;
         const baseline = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-        verificationBaselineVisibleValues = baseline.ok
-          ? new Set(extractCompactScreenVisibleValues(baseline.data).map(normalizeVisibleText))
+        verificationBaselineVisibleValueCounts = baseline.ok
+          ? countNormalizedVisibleValues(baseline.data)
           : null;
         if (!(await focusedSearchFieldStillVerified())) {
           inputSteps.push("Search-field identity check failed after the paste baseline read; escalation was aborted.");
@@ -1969,14 +1978,13 @@ export const androidSearchInAppTool: AgentTool = {
       // delta provide the sole bounded fallback below.
       inputVerified = inputTargetStillSearch && focusedFieldTextMatches === true;
       const screenHasNewQueryEvidence = (data: unknown): boolean => {
-        const visibleValues = extractCompactScreenVisibleValues(data);
+        const visibleValueCounts = countNormalizedVisibleValues(data);
         const normalizedQuery = normalizeVisibleText(searchQuery);
-        return normalizedQuery.length > 0 && verificationBaselineVisibleValues !== null &&
-          visibleValues.some((value) => {
-            const normalizedValue = normalizeVisibleText(value);
-            return !verificationBaselineVisibleValues!.has(normalizedValue) &&
-              containsBoundedSignal(normalizedValue, normalizedQuery);
-          });
+        return normalizedQuery.length > 0 && verificationBaselineVisibleValueCounts !== null &&
+          [...visibleValueCounts.entries()].some(([normalizedValue, count]) =>
+            count > (verificationBaselineVisibleValueCounts!.get(normalizedValue) ?? 0) &&
+            containsBoundedSignal(normalizedValue, normalizedQuery),
+          );
       };
       await sleep(600);
 

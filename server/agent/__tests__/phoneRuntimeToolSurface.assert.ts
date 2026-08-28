@@ -491,7 +491,7 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /beforeInputScreen[\s\S]*new Set\(extractCompactScreenVisibleValues\(beforeInputScreen\.data\)\.map\(normalizeVisibleText\)\)[\s\S]*currentInputTarget\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*normalizedQuery\.length > 0 && verificationBaselineVisibleValues !== null[\s\S]*return !verificationBaselineVisibleValues!\.has\(normalizedValue\)[\s\S]*containsBoundedSignal\(normalizedValue, normalizedQuery\)[\s\S]*focusedFieldTextMatches === null && screenContainsQuery/,
+  /beforeInputScreen[\s\S]*countNormalizedVisibleValues\(beforeInputScreen\.data\)[\s\S]*currentInputTarget\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*normalizedQuery\.length > 0 && verificationBaselineVisibleValueCounts !== null[\s\S]*count > \(verificationBaselineVisibleValueCounts!\.get\(normalizedValue\) \?\? 0\)[\s\S]*containsBoundedSignal\(normalizedValue, normalizedQuery\)[\s\S]*focusedFieldTextMatches === null && screenContainsQuery/,
   "in-app search must reject appended stale text and require the complete bounded query in a newly visible compact-screen value",
 );
 assert.match(
