@@ -441,13 +441,23 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /typeVerified = typeVerified \|\| queryWords\.length === 0/,
-  "a compact screen snapshot must not undo focused-field input verification",
+  /clearFocusedAndroidField\(ctx\.userId, inputSteps\)[\s\S]*runAndroidTextInputFallback\(/,
+  "in-app search must clear any prior query before accessibility or paste input",
+);
+assert.match(
+  inAppSearchSource,
+  /fieldText\.trim\(\) === searchQuery\.trim\(\)[\s\S]*focusedFieldTextMatches === null && screenContainsQuery/,
+  "in-app search must reject appended stale text and only fall back to compact screen verification when field text is unavailable",
 );
 assert.match(
   inAppSearchSource,
   /resume_from_step: 2[\s\S]{0,180}Do not call android_open_app_by_name/,
   "a failed search-bar tap must refresh coordinates without triggering a blocked background relaunch",
+);
+assert.match(
+  inAppSearchSource,
+  /if \(attempt === 1 && resumeFromStep !== 2\)[\s\S]*type: "android_open_app"/,
+  "resumed step-2 discovery must remain in the foreground app",
 );
 assert.equal(
   pluginAndroidAccessibilitySource,

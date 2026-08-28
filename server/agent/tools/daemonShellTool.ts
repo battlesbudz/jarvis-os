@@ -1406,7 +1406,7 @@ export const androidSearchInAppTool: AgentTool = {
             break;
           }
 
-          if (attempt === 1) {
+          if (attempt === 1 && resumeFromStep !== 2) {
             // Navigate to home then reopen the app so we land on the main screen
             await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "home" }, 10000);
             await sleep(800);
@@ -1663,6 +1663,9 @@ export const androidSearchInAppTool: AgentTool = {
 
       emitProgress(`Typing "${searchQuery.slice(0, 40)}${searchQuery.length > 40 ? "…" : ""}"…`);
       const inputSteps: string[] = [];
+      // Search fields may retain the previous query. Clear first so every input
+      // path replaces the query instead of a paste fallback appending to it.
+      await clearFocusedAndroidField(ctx.userId, inputSteps);
       let { methodUsed, inputOk, daemonVerified, fieldText } = await runAndroidTextInputFallback(
         ctx.userId,
         searchQuery,
@@ -1702,6 +1705,10 @@ export const androidSearchInAppTool: AgentTool = {
         successStep: "Query confirmed in focused field.",
         inconclusiveStep: (currentText) => `Query verification inconclusive: field text="${currentText ?? "empty"}".`,
       }));
+      const focusedFieldTextMatches = typeof fieldText === "string"
+        ? fieldText.trim() === searchQuery.trim()
+        : null;
+      if (focusedFieldTextMatches !== null) inputVerified = focusedFieldTextMatches;
       await sleep(600);
 
       // Confirm the query text appeared on screen
@@ -1710,8 +1717,11 @@ export const androidSearchInAppTool: AgentTool = {
       if (afterType.ok) {
         const afterTypeRaw = JSON.stringify(afterType.data || "");
         const queryWords = searchQuery.split(/\s+/).filter((w) => w.length > 1);
-        typeVerified = typeVerified || queryWords.length === 0 ||
+        const screenContainsQuery = queryWords.length === 0 ||
           queryWords.some((w) => afterTypeRaw.toLowerCase().includes(w.toLowerCase()));
+        // When the focused field exposes its value, require an exact replacement.
+        // Only use compact screen text as a fallback when field text is unavailable.
+        typeVerified = typeVerified || (focusedFieldTextMatches === null && screenContainsQuery);
         screenRaw = afterTypeRaw;
       }
 
