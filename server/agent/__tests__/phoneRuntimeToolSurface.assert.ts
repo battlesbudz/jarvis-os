@@ -381,8 +381,8 @@ assert.match(daemonShellSource, /if \(!screenRaw\)[\s\S]*submit_search_baseline/
 assert.match(daemonShellSource, /function parseSubmitElement/);
 assert.match(
   daemonShellSource,
-  /relocateSubmitElement[\s\S]*screenMatchesResolvedApp\(result\.data\)[\s\S]*type: "android_get_focused_field"[\s\S]*isFocusedSearchField\(focusedField\)[\s\S]*focusedField\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*screenHasNewQueryEvidence\(result\.data\)[\s\S]*parseSubmitElement/,
-  "submit-control fallback must validate the resolved foreground package on the same snapshot used for coordinates",
+  /relocateSubmitElement[\s\S]*screenMatchesResolvedApp\(result\.data\)[\s\S]*type: "android_get_focused_field"[\s\S]*isFocusedSearchField\(focusedField\)[\s\S]*focusedField\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*submitTarget[\s\S]*screenMatchesResolvedApp\(submitTarget\.data\)[\s\S]*parseSubmitElement\(JSON\.stringify\(submitTarget\.data/,
+  "submit-control fallback must refresh the resolved foreground package and coordinates after focus/query validation",
 );
 assert.match(daemonShellSource, /node\.contentDesc[\s\S]{0,160}node\.content_desc/);
 assert.match(daemonShellSource, /\^\(\?:search\|go\|submit\)\\b/);

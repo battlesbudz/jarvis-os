@@ -1436,9 +1436,21 @@ export const androidSearchInAppTool: AgentTool = {
           ? focusedField.text.trim() === searchQuery.trim()
           : screenHasNewQueryEvidence(result.data)
       );
-      return focusedSearchQueryVerified
-        ? parseSubmitElement(JSON.stringify(result.data || ""))
-        : { found: false, x: null, y: null };
+      if (!focusedSearchQueryVerified) {
+        return { found: false, x: null, y: null };
+      }
+
+      // Refresh both the foreground package and submit coordinates after focus
+      // validation. This closes the app-switch window between the first screen
+      // snapshot and android_get_focused_field, whose response has no package.
+      const submitTarget = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      if (!submitTarget.ok || !screenMatchesResolvedApp(submitTarget.data)) {
+        return { found: false, x: null, y: null };
+      }
+      if (typeof focusedField.text !== "string" && !screenHasNewQueryEvidence(submitTarget.data)) {
+        return { found: false, x: null, y: null };
+      }
+      return parseSubmitElement(JSON.stringify(submitTarget.data || ""));
     }
 
     let screenRaw = "";
