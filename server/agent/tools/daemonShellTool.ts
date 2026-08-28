@@ -2102,8 +2102,7 @@ export const androidSearchInAppTool: AgentTool = {
         await sleep(2500);
       }
 
-      function isResultsState(raw: string, requireTransition = true): boolean {
-        const keyboardDismissed = !screenContains(raw, ["\"inputmethod\"", "inputmethod_service", "\"isFocused\":true", "\"focused\":true"]);
+      function hasNamedResultsEvidence(raw: string, requireTransition: boolean): boolean {
         const resultEvidence = [
           /search[_ -]?results?/i,
           /results?[_ -]?(?:list|container|grid)/i,
@@ -2111,9 +2110,14 @@ export const androidSearchInAppTool: AgentTool = {
           /no\s+results?/i,
           /[?&](?:q|query|search_query)=/i,
         ];
-        const hasNamedResultEvidence = resultEvidence.some((pattern) =>
+        return resultEvidence.some((pattern) =>
           pattern.test(raw) && (!requireTransition || !pattern.test(screenRaw)),
         );
+      }
+
+      function isResultsState(raw: string, requireTransition = true): boolean {
+        const keyboardDismissed = !screenContains(raw, ["\"inputmethod\"", "inputmethod_service", "\"isFocused\":true", "\"focused\":true"]);
+        const hasNamedResultEvidence = hasNamedResultsEvidence(raw, requireTransition);
         function collectResultStructure(serialized: string): { labels: Set<string>; containers: Set<string> } {
           const labels = new Set<string>();
           const containers = new Set<string>();
@@ -2161,7 +2165,13 @@ export const androidSearchInAppTool: AgentTool = {
       async function isVerifiedResultsState(raw: string, requireTransition = true): Promise<boolean> {
         if (!screenMatchesResolvedApp(raw) || !isResultsState(raw, requireTransition)) return false;
         const focus = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
-        return focus.ok && !extractFocusedFieldText(focus.data).focused;
+        if (!focus.ok) return false;
+        const focusedField = extractFocusedFieldText(focus.data);
+        if (!focusedField.focused) return true;
+        const focusedSearchQueryMatches = isFocusedSearchField(focusedField) &&
+          typeof focusedField.text === "string" &&
+          focusedField.text.trim() === searchQuery.trim();
+        return focusedSearchQueryMatches && hasNamedResultsEvidence(raw, requireTransition);
       }
 
       if (!resultsLoaded) {
