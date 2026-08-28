@@ -441,6 +441,11 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
+  /rebuildDedicatedSearchActivityFocus[\s\S]*initialField\.resourceId[\s\S]*isDedicatedSearchActivity[\s\S]*dedicatedSearchActivityFocus = identity[\s\S]*if \(resumeFromStep === 4\)[\s\S]*await rebuildDedicatedSearchActivityFocus\(\)/,
+  "step-4 resume must rebuild stable focus identity inside a dedicated search activity",
+);
+assert.match(
+  inAppSearchSource,
   /const localResourceId = resourceId\.slice\(resourceId\.lastIndexOf\("\/"\) \+ 1\)[\s\S]*containsBoundedSignal\(localResourceId, normalizedSignal\)[\s\S]*containsBoundedSignal\(hint, signal\)/,
   "search-field identity must ignore package-name substrings and use bounded local resource-ID or hint signals",
 );
@@ -461,8 +466,8 @@ assert.doesNotMatch(
 );
 assert.match(
   inAppSearchSource,
-  /runAndroidTextInputFallback\([\s\S]*verifyAndroidTextInput\(/,
-  "in-app search must escalate silent Android text-input failures for custom search fields",
+  /runAndroidTextInputFallback\([\s\S]*beforePaste: \(\) => safelyClearFocusedSearchField\(inputSteps\)[\s\S]*verifyAndroidTextInput\(/,
+  "in-app search must revalidate and clear the search target before every paste fallback",
 );
 assert.match(
   inAppSearchSource,

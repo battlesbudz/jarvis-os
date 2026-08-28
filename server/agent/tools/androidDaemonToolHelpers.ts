@@ -12,6 +12,7 @@ export async function runAndroidTextInputFallback(
   text: string,
   fieldDescription: string,
   steps: string[],
+  options: { beforePaste?: () => Promise<boolean> } = {},
 ): Promise<AndroidTextInputFallbackResult> {
   let methodUsed: string | null = null;
   let inputOk = false;
@@ -29,6 +30,10 @@ export async function runAndroidTextInputFallback(
   }
 
   if (!inputOk) {
+    if (options.beforePaste && !(await options.beforePaste())) {
+      steps.push("Level 2 paste aborted because the target field could not be revalidated safely.");
+      return { methodUsed, inputOk, daemonVerified, fieldText };
+    }
     steps.push("Level 2 - android_paste_text (adb input text primary, clipboard fallback)...");
     const pasteResult = await sendDaemonOp(userId, { type: "android_paste_text", text, fieldDescription }, 15000);
     if (pasteResult.ok) {
@@ -45,6 +50,10 @@ export async function runAndroidTextInputFallback(
   }
 
   if (!inputOk) {
+    if (options.beforePaste && !(await options.beforePaste())) {
+      steps.push("Level 3 paste retry aborted because the target field could not be revalidated safely.");
+      return { methodUsed, inputOk, daemonVerified, fieldText };
+    }
     steps.push("Level 3 - android_paste_text retry (clipboard-only path)...");
     const retryResult = await sendDaemonOp(userId, { type: "android_paste_text", text, fieldDescription }, 15000);
     if (retryResult.ok) {

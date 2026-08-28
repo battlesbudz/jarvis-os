@@ -15,7 +15,9 @@ assert.ok(
 assert.ok(
   helperSource.includes('sendDaemonOp(userId, { type: "android_type", text }, 10000)') &&
     helperSource.includes('type: "android_paste_text"') &&
-    helperSource.includes('methodUsed = `android_paste_text:${retryMethod}:L3`'),
+    helperSource.includes('methodUsed = `android_paste_text:${retryMethod}:L3`') &&
+    helperSource.includes('options.beforePaste && !(await options.beforePaste())') &&
+    helperSource.includes('paste aborted because the target field could not be revalidated safely'),
   "helper should preserve the three-level Android text input fallback chain",
 );
 assert.ok(

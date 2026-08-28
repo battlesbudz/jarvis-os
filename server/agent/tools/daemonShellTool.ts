@@ -1156,6 +1156,22 @@ export const androidSearchInAppTool: AgentTool = {
       );
     };
 
+    const rebuildDedicatedSearchActivityFocus = async (): Promise<boolean> => {
+      const initialFocusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+      if (!initialFocusCheck.ok) return false;
+      const initialField = extractFocusedFieldText(initialFocusCheck.data);
+      if (!initialField.focused || (!initialField.resourceId && !initialField.hint)) return false;
+      const identity: FocusIdentity = { resourceId: initialField.resourceId, hint: initialField.hint };
+      const activityCheck = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      if (!activityCheck.ok || !isDedicatedSearchActivity(JSON.stringify(activityCheck.data || ""))) return false;
+      const finalFocusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+      if (!finalFocusCheck.ok || !matchesFocusIdentity(extractFocusedFieldText(finalFocusCheck.data), identity)) {
+        return false;
+      }
+      dedicatedSearchActivityFocus = identity;
+      return true;
+    };
+
     const safelyClearFocusedSearchField = async (steps: string[]): Promise<boolean> => {
       if (!(await focusedSearchFieldStillVerified())) {
         steps.push("Search-field identity check failed before clear; no text was changed.");
@@ -1768,6 +1784,9 @@ export const androidSearchInAppTool: AgentTool = {
 
     //        Step 4: Focus-verify     type     confirm text appeared                                              
     if (!resumeFromStep || resumeFromStep <= 4) {
+      if (resumeFromStep === 4) {
+        await rebuildDedicatedSearchActivityFocus();
+      }
       // Revalidate immediately before any destructive input, even when step 3
       // just succeeded: app rerenders can move focus between tool operations.
       if (!(await focusedSearchFieldStillVerified())) {
@@ -1828,6 +1847,7 @@ export const androidSearchInAppTool: AgentTool = {
         searchQuery,
         `${appName} search field`,
         inputSteps,
+        { beforePaste: () => safelyClearFocusedSearchField(inputSteps) },
       );
 
       if (!inputOk) {
