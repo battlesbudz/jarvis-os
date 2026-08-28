@@ -1097,13 +1097,28 @@ export const androidSearchInAppTool: AgentTool = {
       field: ReturnType<typeof extractFocusedFieldText>,
     ): boolean => {
       if (!field.focused) return false;
-      const identity = `${field.resourceId ?? ""} ${field.hint ?? ""}`.toLowerCase();
+      const resourceId = (field.resourceId ?? "").toLowerCase();
+      const localResourceId = resourceId.slice(resourceId.lastIndexOf("/") + 1);
+      const hint = (field.hint ?? "").toLowerCase();
       const appSearchHint = APP_SEARCH_HINTS[appPackage];
-      return [
-        ...(appSearchHint?.resourceIds ?? []),
+      const containsBoundedSignal = (value: string, signal: string): boolean => {
+        const escaped = signal.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?:$|[^\\p{L}\\p{N}])`, "u").test(value);
+      };
+      const appResourceMatches = (appSearchHint?.resourceIds ?? []).some((signal) => {
+        const normalizedSignal = signal.toLowerCase();
+        return normalizedSignal.includes("/") || normalizedSignal.includes(":")
+          ? resourceId === normalizedSignal || resourceId.endsWith(normalizedSignal)
+          : containsBoundedSignal(localResourceId, normalizedSignal);
+      });
+      const textSignals = [
         ...(appSearchHint?.extraKeywords ?? []),
         ...SEARCH_KEYWORDS,
-      ].some((signal) => identity.includes(signal.toLowerCase()));
+      ];
+      const semanticTextMatches = textSignals.some((signal) =>
+        containsBoundedSignal(localResourceId, signal) || containsBoundedSignal(hint, signal),
+      );
+      return appResourceMatches || semanticTextMatches;
     };
 
     const normalizeVisibleText = (value: string): string => value

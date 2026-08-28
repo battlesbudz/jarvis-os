@@ -434,6 +434,11 @@ assert.match(
   /const beforeFocus = extractFocusedFieldText\(beforeFocusResult\.data\)[\s\S]*const focusVerified = focusedFieldIsSearch \|\| \(focusChanged && isSearchActivity\)[\s\S]*if \(focusVerified\)/,
   "in-app search must verify search-field identity or a focus transition before clearing and typing",
 );
+assert.match(
+  inAppSearchSource,
+  /const localResourceId = resourceId\.slice\(resourceId\.lastIndexOf\("\/"\) \+ 1\)[\s\S]*containsBoundedSignal\(localResourceId, normalizedSignal\)[\s\S]*containsBoundedSignal\(hint, signal\)/,
+  "search-field identity must ignore package-name substrings and use bounded local resource-ID or hint signals",
+);
 assert.doesNotMatch(
   inAppSearchSource,
   /if \(isFocused \|\| isSearchActivity\)/,
