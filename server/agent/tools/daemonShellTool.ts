@@ -520,6 +520,7 @@ type VerifyAndroidTextInputOptions = {
   onInconclusive?: () => void;
   onAlreadyVerified?: () => void;
   beforeEscalating?: () => Promise<boolean>;
+  deferEscalationWhenFieldTextUnavailable?: boolean;
 };
 
 async function verifyAndroidTextInput(options: VerifyAndroidTextInputOptions): Promise<{
@@ -552,7 +553,10 @@ async function verifyAndroidTextInput(options: VerifyAndroidTextInputOptions): P
         fieldText.includes(options.expectedText)
       );
 
-  if (!verified && methodUsed === "android_type") {
+  if (
+    !verified && methodUsed === "android_type" &&
+    !(options.deferEscalationWhenFieldTextUnavailable && fieldText === null)
+  ) {
     options.steps.push(options.escalationStep(fieldText));
     options.onEscalating?.();
     const safeToEscalate = options.beforeEscalating
@@ -1882,6 +1886,7 @@ export const androidSearchInAppTool: AgentTool = {
       const beforeInputVisibleValues = beforeInputScreen.ok
         ? new Set(extractCompactScreenVisibleValues(beforeInputScreen.data).map(normalizeVisibleText))
         : null;
+      let verificationBaselineVisibleValues = beforeInputVisibleValues;
       if (!(await focusedSearchFieldStillVerified())) {
         inputSteps.push("Search-field identity check failed immediately before input; typing was aborted.");
         stepLog.push({ step: 4, outcome: "failed", detail: inputSteps.join(" | ") });
@@ -1922,25 +1927,40 @@ export const androidSearchInAppTool: AgentTool = {
       }
 
       let inputVerified = false;
-      ({ methodUsed, daemonVerified, fieldText, verified: inputVerified } = await verifyAndroidTextInput({
-        userId: ctx.userId,
-        expectedText: searchQuery,
-        fieldDescription: `${appName} search field`,
-        methodUsed,
-        daemonVerified,
-        fieldText,
-        steps: inputSteps,
-        verificationStep: "Verifying query via android_get_focused_field...",
-        escalationStep: (currentText) => `Query verification failed after android_type (field: "${currentText ?? "empty"}") — escalating to android_paste_text...`,
-        escalationSuccessStep: (method, verified) => `android_paste_text succeeded via ${method}. Verified: ${verified}.`,
-        escalationFailureStep: (error) => `android_paste_text failed: ${error}`,
-        beforeEscalating: () => safelyClearFocusedSearchField(inputSteps),
-        successStep: "Query confirmed in focused field.",
-        inconclusiveStep: (currentText) => `Query verification inconclusive: field text="${currentText ?? "empty"}".`,
-      }));
-      const currentInputTarget = await readVerifiedFocusedSearchField();
-      const inputTargetStillSearch = currentInputTarget !== null;
-      const focusedFieldTextMatches = typeof currentInputTarget?.text === "string"
+      const safelyPreparePasteEscalation = async (): Promise<boolean> => {
+        if (!(await safelyClearFocusedSearchField(inputSteps))) return false;
+        const baseline = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        verificationBaselineVisibleValues = baseline.ok
+          ? new Set(extractCompactScreenVisibleValues(baseline.data).map(normalizeVisibleText))
+          : null;
+        if (!(await focusedSearchFieldStillVerified())) {
+          inputSteps.push("Search-field identity check failed after the paste baseline read; escalation was aborted.");
+          return false;
+        }
+        return true;
+      };
+      const verifySearchInput = (deferEscalationWhenFieldTextUnavailable: boolean) =>
+        verifyAndroidTextInput({
+          userId: ctx.userId,
+          expectedText: searchQuery,
+          fieldDescription: `${appName} search field`,
+          methodUsed,
+          daemonVerified,
+          fieldText,
+          steps: inputSteps,
+          verificationStep: "Verifying query via android_get_focused_field...",
+          escalationStep: (currentText) => `Query verification failed after android_type (field: "${currentText ?? "empty"}") — escalating to android_paste_text...`,
+          escalationSuccessStep: (method, verified) => `android_paste_text succeeded via ${method}. Verified: ${verified}.`,
+          escalationFailureStep: (error) => `android_paste_text failed: ${error}`,
+          beforeEscalating: safelyPreparePasteEscalation,
+          deferEscalationWhenFieldTextUnavailable,
+          successStep: "Query confirmed in focused field.",
+          inconclusiveStep: (currentText) => `Query verification inconclusive: field text="${currentText ?? "empty"}".`,
+        });
+      ({ methodUsed, daemonVerified, fieldText, verified: inputVerified } = await verifySearchInput(true));
+      let currentInputTarget = await readVerifiedFocusedSearchField();
+      let inputTargetStillSearch = currentInputTarget !== null;
+      let focusedFieldTextMatches = typeof currentInputTarget?.text === "string"
         ? currentInputTarget.text.trim() === searchQuery.trim()
         : null;
       fieldText = currentInputTarget?.text ?? null;
@@ -1948,6 +1968,16 @@ export const androidSearchInAppTool: AgentTool = {
       // text is unavailable, fail closed here and let the post-input screen
       // delta provide the sole bounded fallback below.
       inputVerified = inputTargetStillSearch && focusedFieldTextMatches === true;
+      const screenHasNewQueryEvidence = (data: unknown): boolean => {
+        const visibleValues = extractCompactScreenVisibleValues(data);
+        const normalizedQuery = normalizeVisibleText(searchQuery);
+        return normalizedQuery.length > 0 && verificationBaselineVisibleValues !== null &&
+          visibleValues.some((value) => {
+            const normalizedValue = normalizeVisibleText(value);
+            return !verificationBaselineVisibleValues!.has(normalizedValue) &&
+              containsBoundedSignal(normalizedValue, normalizedQuery);
+          });
+      };
       await sleep(600);
 
       // Confirm the query text appeared on screen
@@ -1955,14 +1985,7 @@ export const androidSearchInAppTool: AgentTool = {
       let typeVerified = inputVerified;
       if (afterType.ok) {
         const afterTypeRaw = JSON.stringify(afterType.data || "");
-        const visibleValues = extractCompactScreenVisibleValues(afterType.data);
-        const normalizedQuery = normalizeVisibleText(searchQuery);
-        const screenContainsQuery = normalizedQuery.length > 0 && beforeInputVisibleValues !== null &&
-          visibleValues.some((value) => {
-            const normalizedValue = normalizeVisibleText(value);
-            return !beforeInputVisibleValues.has(normalizedValue) &&
-              containsBoundedSignal(normalizedValue, normalizedQuery);
-          });
+        const screenContainsQuery = screenHasNewQueryEvidence(afterType.data);
         // When the focused field exposes its value, require an exact replacement.
         // Only use compact screen text as a fallback when field text is unavailable,
         // and require the complete normalized query as a bounded phrase within one
@@ -1974,6 +1997,31 @@ export const androidSearchInAppTool: AgentTool = {
         // Never let step 5 compare against a pre-input screen when this read failed.
         // An empty value forces a fresh pre-submit baseline before Enter is pressed.
         screenRaw = "";
+      }
+
+      // A custom field may contain the correct query while accessibility cannot
+      // expose its value. Give the non-destructive screen-delta fallback the
+      // first chance to prove that input before clearing for clipboard retry.
+      if (!typeVerified && methodUsed === "android_type" && focusedFieldTextMatches === null) {
+        ({ methodUsed, daemonVerified, fieldText, verified: inputVerified } = await verifySearchInput(false));
+        currentInputTarget = await readVerifiedFocusedSearchField();
+        inputTargetStillSearch = currentInputTarget !== null;
+        focusedFieldTextMatches = typeof currentInputTarget?.text === "string"
+          ? currentInputTarget.text.trim() === searchQuery.trim()
+          : null;
+        fieldText = currentInputTarget?.text ?? null;
+        typeVerified = inputTargetStillSearch && focusedFieldTextMatches === true;
+        await sleep(600);
+        const afterEscalation = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        if (afterEscalation.ok) {
+          typeVerified = typeVerified || (
+            inputTargetStillSearch && focusedFieldTextMatches === null &&
+            screenHasNewQueryEvidence(afterEscalation.data)
+          );
+          screenRaw = JSON.stringify(afterEscalation.data || "");
+        } else {
+          screenRaw = "";
+        }
       }
 
       if (!typeVerified) {

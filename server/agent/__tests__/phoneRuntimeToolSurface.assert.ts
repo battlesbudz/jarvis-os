@@ -481,7 +481,7 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /beforeEscalating: \(\) => safelyClearFocusedSearchField\(inputSteps\)[\s\S]*const currentInputTarget = await readVerifiedFocusedSearchField\(\)[\s\S]*currentInputTarget\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*inputVerified = inputTargetStillSearch && focusedFieldTextMatches === true[\s\S]*inputTargetStillSearch && focusedFieldTextMatches === null && screenContainsQuery/,
+  /safelyPreparePasteEscalation[\s\S]*beforeEscalating: safelyPreparePasteEscalation[\s\S]*deferEscalationWhenFieldTextUnavailable[\s\S]*verifySearchInput\(true\)[\s\S]*currentInputTarget\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*inputTargetStillSearch && focusedFieldTextMatches === null && screenContainsQuery[\s\S]*if \(!typeVerified && methodUsed === "android_type" && focusedFieldTextMatches === null\)[\s\S]*verifySearchInput\(false\)/,
   "in-app search must revalidate search identity around paste escalation and again before accepting input evidence",
 );
 assert.match(
@@ -491,7 +491,7 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /beforeInputScreen[\s\S]*new Set\(extractCompactScreenVisibleValues\(beforeInputScreen\.data\)\.map\(normalizeVisibleText\)\)[\s\S]*fieldText\.trim\(\) === searchQuery\.trim\(\)[\s\S]*normalizedQuery\.length > 0 && beforeInputVisibleValues !== null[\s\S]*!beforeInputVisibleValues\.has\(normalizedValue\)[\s\S]*containsBoundedSignal\(normalizedValue, normalizedQuery\)[\s\S]*focusedFieldTextMatches === null && screenContainsQuery/,
+  /beforeInputScreen[\s\S]*new Set\(extractCompactScreenVisibleValues\(beforeInputScreen\.data\)\.map\(normalizeVisibleText\)\)[\s\S]*currentInputTarget\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*normalizedQuery\.length > 0 && verificationBaselineVisibleValues !== null[\s\S]*return !verificationBaselineVisibleValues!\.has\(normalizedValue\)[\s\S]*containsBoundedSignal\(normalizedValue, normalizedQuery\)[\s\S]*focusedFieldTextMatches === null && screenContainsQuery/,
   "in-app search must reject appended stale text and require the complete bounded query in a newly visible compact-screen value",
 );
 assert.match(
