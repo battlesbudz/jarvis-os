@@ -1415,7 +1415,9 @@ export const androidSearchInAppTool: AgentTool = {
     //        Helper: freshly locate the search element from current screen                            
     async function relocateSearchElement(): Promise<{ found: boolean; x: number | null; y: number | null; screenRaw: string; discoveredResourceId?: string }> {
       const r = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      if (!r.ok) return { found: false, x: null, y: null, screenRaw: "" };
+      if (!r.ok || !screenMatchesResolvedApp(r.data)) {
+        return { found: false, x: null, y: null, screenRaw: "" };
+      }
       const raw = JSON.stringify(r.data || "");
       const parsed = parseSearchElement(raw);
       return { ...parsed, screenRaw: raw };
@@ -1426,7 +1428,17 @@ export const androidSearchInAppTool: AgentTool = {
       if (!result.ok || !screenMatchesResolvedApp(result.data)) {
         return { found: false, x: null, y: null };
       }
-      return parseSubmitElement(JSON.stringify(result.data || ""));
+      const focus = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+      if (!focus.ok) return { found: false, x: null, y: null };
+      const focusedField = extractFocusedFieldText(focus.data);
+      const focusedSearchQueryVerified = isFocusedSearchField(focusedField) && (
+        typeof focusedField.text === "string"
+          ? focusedField.text.trim() === searchQuery.trim()
+          : screenHasNewQueryEvidence(result.data)
+      );
+      return focusedSearchQueryVerified
+        ? parseSubmitElement(JSON.stringify(result.data || ""))
+        : { found: false, x: null, y: null };
     }
 
     let screenRaw = "";
@@ -1607,6 +1619,21 @@ export const androidSearchInAppTool: AgentTool = {
             await sendDaemonOp(ctx.userId, { type: "android_open_app", packageName: appPackage }, 15000);
             await sleep(2000);
           } else if (attempt === 2) {
+            // Swipe only while the requested app is still foregrounded.
+            const swipeTarget = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+            if (!swipeTarget.ok || !screenMatchesResolvedApp(swipeTarget.data)) {
+              return {
+                ok: false,
+                content: JSON.stringify({
+                  ok: false,
+                  step_reached: 2,
+                  error_at_step: "search_discovery_package",
+                  error: `${appName} is no longer the verified foreground app, so Jarvis did not swipe or tap.`,
+                  suggestion: "Bring the requested app back to the foreground and retry from step 2.",
+                  steps: stepLog,
+                }),
+              };
+            }
             // Swipe down from near the top to reveal pull-to-reveal search bars
             await sendDaemonOp(ctx.userId, { type: "android_swipe", x1: 540, y1: 200, x2: 540, y2: 800, durationMs: 400 }, 10000);
             await sleep(800);
@@ -1777,6 +1804,22 @@ export const androidSearchInAppTool: AgentTool = {
           tapX = freshLocated.x ?? searchX;
           tapY = freshLocated.y ?? searchY;
         }
+
+        const tapTarget = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        if (!tapTarget.ok || !screenMatchesResolvedApp(tapTarget.data)) {
+          return {
+            ok: false,
+            content: JSON.stringify({
+              ok: false,
+              step_reached: 3,
+              error_at_step: "tap_search_package",
+              error: `${appName} is no longer the verified foreground app, so Jarvis did not tap the cached or discovered coordinates.`,
+              suggestion: "Bring the requested app back to the foreground and retry from step 2.",
+              steps: stepLog,
+            }),
+          };
+        }
+        screenRaw = JSON.stringify(tapTarget.data || "");
 
         const beforeFocusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
         const beforeFocus = extractFocusedFieldText(beforeFocusResult.data);

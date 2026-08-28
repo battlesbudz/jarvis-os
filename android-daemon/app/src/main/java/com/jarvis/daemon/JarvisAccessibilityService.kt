@@ -1228,11 +1228,12 @@ class JarvisAccessibilityService : AccessibilityService() {
         var clipSet = false
         var hadPrimaryClip = false
         var previousClip: android.content.ClipData? = null
+        val temporaryClipLabel = "jarvis_input_${System.nanoTime()}"
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             try {
                 hadPrimaryClip = cm.hasPrimaryClip()
                 previousClip = if (hadPrimaryClip) cm.primaryClip else null
-                cm.setPrimaryClip(android.content.ClipData.newPlainText("jarvis_input", text))
+                cm.setPrimaryClip(android.content.ClipData.newPlainText(temporaryClipLabel, text))
                 clipSet = true
             } catch (e: Exception) {
                 Log.w(TAG, "pasteFromClipboard: clipboard set failed: ${e.message}")
@@ -1249,12 +1250,16 @@ class JarvisAccessibilityService : AccessibilityService() {
             pasteOk = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
             return pasteOk
         } finally {
-            // ACTION_PASTE reads synchronously, but leave a brief grace period
-            // before restoring for vendor accessibility implementations.
-            Thread.sleep(100)
             val restoreLatch = CountDownLatch(1)
             android.os.Handler(android.os.Looper.getMainLooper()).post {
                 try {
+                    val currentLabel = cm.primaryClipDescription?.label?.toString()
+                    val currentText = cm.primaryClip?.takeIf { it.itemCount > 0 }
+                        ?.getItemAt(0)?.coerceToText(this)?.toString()
+                    if (currentLabel != temporaryClipLabel || currentText != text) {
+                        Log.i(TAG, "pasteFromClipboard: clipboard changed during paste; preserving newer content")
+                        return@post
+                    }
                     val clipToRestore = previousClip
                     if (hadPrimaryClip && clipToRestore != null) {
                         cm.setPrimaryClip(clipToRestore)

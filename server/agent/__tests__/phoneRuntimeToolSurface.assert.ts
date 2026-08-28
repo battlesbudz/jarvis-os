@@ -217,7 +217,7 @@ for (const compactScreenSource of [
   assert.doesNotMatch(compactScreenSource, /!texts\.contains\(safeLabel\)/);
   assert.match(
     compactScreenSource,
-    /hadPrimaryClip = cm\.hasPrimaryClip\(\)[\s\S]*previousClip[\s\S]*ACTION_PASTE[\s\S]*finally \{[\s\S]*setPrimaryClip\(clipToRestore\)[\s\S]*clearPrimaryClip\(\)/,
+    /temporaryClipLabel = "jarvis_input_\$\{System\.nanoTime\(\)\}"[\s\S]*hadPrimaryClip = cm\.hasPrimaryClip\(\)[\s\S]*ACTION_PASTE[\s\S]*finally \{[\s\S]*currentLabel != temporaryClipLabel \|\| currentText != text[\s\S]*preserving newer content[\s\S]*setPrimaryClip\(clipToRestore\)[\s\S]*clearPrimaryClip\(\)/,
     "clipboard-backed input must restore the user's previous primary clip in every active daemon",
   );
 }
@@ -381,12 +381,17 @@ assert.match(daemonShellSource, /if \(!screenRaw\)[\s\S]*submit_search_baseline/
 assert.match(daemonShellSource, /function parseSubmitElement/);
 assert.match(
   daemonShellSource,
-  /relocateSubmitElement[\s\S]*screenMatchesResolvedApp\(result\.data\)[\s\S]*parseSubmitElement/,
+  /relocateSubmitElement[\s\S]*screenMatchesResolvedApp\(result\.data\)[\s\S]*type: "android_get_focused_field"[\s\S]*isFocusedSearchField\(focusedField\)[\s\S]*focusedField\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*screenHasNewQueryEvidence\(result\.data\)[\s\S]*parseSubmitElement/,
   "submit-control fallback must validate the resolved foreground package on the same snapshot used for coordinates",
 );
 assert.match(daemonShellSource, /node\.contentDesc[\s\S]{0,160}node\.content_desc/);
 assert.match(daemonShellSource, /\^\(\?:search\|go\|submit\)\\b/);
 assert.match(daemonShellSource, /coordinateMatch = ranked[\s\S]*extractNodeCoords[\s\S]*\.find\(\(entry\) => entry\.coords !== null\)/);
+assert.match(
+  daemonShellSource,
+  /relocateSearchElement[\s\S]*screenMatchesResolvedApp\(r\.data\)[\s\S]*attempt === 2[\s\S]*screenMatchesResolvedApp\(swipeTarget\.data\)[\s\S]*tapTarget[\s\S]*screenMatchesResolvedApp\(tapTarget\.data\)/,
+  "resumed discovery, recovery swipes, and cached-coordinate taps must validate the foreground app before acting",
+);
 const androidApprovalGateStart = routesSource.indexOf("const androidRouteApprovalRequired");
 const androidApprovalGateEnd = routesSource.indexOf("const isHighStakes", androidApprovalGateStart);
 const androidApprovalGateSource = routesSource.slice(androidApprovalGateStart, androidApprovalGateEnd);
