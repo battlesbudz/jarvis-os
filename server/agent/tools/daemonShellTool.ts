@@ -2159,7 +2159,7 @@ export const androidSearchInAppTool: AgentTool = {
       }
 
       async function isVerifiedResultsState(raw: string, requireTransition = true): Promise<boolean> {
-        if (!isResultsState(raw, requireTransition)) return false;
+        if (!screenMatchesResolvedApp(raw) || !isResultsState(raw, requireTransition)) return false;
         const focus = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
         return focus.ok && !extractFocusedFieldText(focus.data).focused;
       }
