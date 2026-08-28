@@ -390,6 +390,11 @@ assert.match(
   "search clearing must pass the verified package and field identity to the native mutation",
 );
 assert.match(
+  daemonShellSource,
+  /boundInputTarget[\s\S]*runAndroidTextInputFallback[\s\S]*expectedPackage: resolvedAppPackage[\s\S]*expectedResourceId: boundInputTarget\.resourceId[\s\S]*verifySearchInput[\s\S]*expectedHint: boundInputTarget\.hint[\s\S]*key: "enter"[\s\S]*expectedResourceId: finalSearchState\?\.field\.resourceId/,
+  "search type, paste escalation, and Enter must carry the verified package and field identity",
+);
+assert.match(
   androidDaemonToolHelpersSource,
   /expectedPackage\?: string[\s\S]*type: "android_clear_field"[\s\S]*expectedResourceId: options\.expectedResourceId[\s\S]*if \(options\.failClosed\)[\s\S]*no key fallback was sent/,
   "bound clears must fail closed without an unverified keyevent fallback",

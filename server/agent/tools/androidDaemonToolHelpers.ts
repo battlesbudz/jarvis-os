@@ -12,7 +12,12 @@ export async function runAndroidTextInputFallback(
   text: string,
   fieldDescription: string,
   steps: string[],
-  options: { beforePaste?: () => Promise<boolean> } = {},
+  options: {
+    beforePaste?: () => Promise<boolean>;
+    expectedPackage?: string;
+    expectedResourceId?: string;
+    expectedHint?: string;
+  } = {},
 ): Promise<AndroidTextInputFallbackResult> {
   let methodUsed: string | null = null;
   let inputOk = false;
@@ -20,7 +25,12 @@ export async function runAndroidTextInputFallback(
   let fieldText: string | null = null;
 
   steps.push("Level 1 - android_type (accessibility ACTION_SET_TEXT)...");
-  const typeResult = await sendDaemonOp(userId, { type: "android_type", text }, 10000);
+  const typeResult = await sendDaemonOp(userId, {
+    type: "android_type", text,
+    expectedPackage: options.expectedPackage,
+    expectedResourceId: options.expectedResourceId,
+    expectedHint: options.expectedHint,
+  }, 10000);
   if (typeResult.ok) {
     methodUsed = "android_type";
     inputOk = true;
@@ -35,7 +45,13 @@ export async function runAndroidTextInputFallback(
       return { methodUsed, inputOk, daemonVerified, fieldText };
     }
     steps.push("Level 2 - android_paste_text (adb input text primary, clipboard fallback)...");
-    const pasteResult = await sendDaemonOp(userId, { type: "android_paste_text", text, fieldDescription }, 15000);
+    const pasteResult = await sendDaemonOp(userId, {
+      type: "android_paste_text", text, fieldDescription,
+      forceClipboardOnly: options.expectedPackage !== undefined,
+      expectedPackage: options.expectedPackage,
+      expectedResourceId: options.expectedResourceId,
+      expectedHint: options.expectedHint,
+    }, 15000);
     if (pasteResult.ok) {
       const pasteData = (pasteResult.data || {}) as Record<string, unknown>;
       const daemonMethod = typeof pasteData.method_used === "string" ? pasteData.method_used : "unknown";
@@ -62,7 +78,10 @@ export async function runAndroidTextInputFallback(
     steps.push("Level 3 - android_paste_text retry (clipboard-only path)...");
     const retryResult = await sendDaemonOp(
       userId,
-      { type: "android_paste_text", text, fieldDescription, forceClipboardOnly: true },
+      { type: "android_paste_text", text, fieldDescription, forceClipboardOnly: true,
+        expectedPackage: options.expectedPackage,
+        expectedResourceId: options.expectedResourceId,
+        expectedHint: options.expectedHint },
       15000,
     );
     if (retryResult.ok) {

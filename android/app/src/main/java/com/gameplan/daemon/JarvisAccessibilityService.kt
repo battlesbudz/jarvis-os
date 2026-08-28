@@ -824,9 +824,30 @@ class JarvisAccessibilityService : AccessibilityService() {
      *  @param submit If true, send IME action (Search/Go/Enter) after typing. */
     data class TypeTextResult(val typed: Boolean, val submitted: Boolean)
 
-    fun typeTextDetailed(text: String, submit: Boolean = false): TypeTextResult {
-        val focused = findFocusedEditable(rootInActiveWindow)
-            ?: findFirstEditable(rootInActiveWindow)
+    private fun findBoundEditable(
+        expectedPackage: String?,
+        expectedResourceId: String?,
+        expectedHint: String?
+    ): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        if (expectedPackage != null && root.packageName?.toString() != expectedPackage) return null
+        val bound = expectedPackage != null || expectedResourceId != null || expectedHint != null
+        val node = if (bound) findFocusedEditable(root) else findFocusedEditable(root) ?: findFirstEditable(root)
+        if (node == null) return null
+        if (expectedResourceId != null && node.viewIdResourceName != expectedResourceId) return null
+        val nodeHint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) node.hintText?.toString() else null
+        if (expectedHint != null && nodeHint != expectedHint) return null
+        return node
+    }
+
+    fun typeTextDetailed(
+        text: String,
+        submit: Boolean = false,
+        expectedPackage: String? = null,
+        expectedResourceId: String? = null,
+        expectedHint: String? = null
+    ): TypeTextResult {
+        val focused = findBoundEditable(expectedPackage, expectedResourceId, expectedHint)
 
         if (focused == null) {
             Log.w(TAG, "typeText: no editable field found")
@@ -854,8 +875,12 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     /** Press the IME action key (Search/Go/Done/Enter) on the currently focused field. */
-    fun pressImeAction(): Boolean {
-        val focused = findFocusedEditable(rootInActiveWindow) ?: return false
+    fun pressImeAction(
+        expectedPackage: String? = null,
+        expectedResourceId: String? = null,
+        expectedHint: String? = null
+    ): Boolean {
+        val focused = findBoundEditable(expectedPackage, expectedResourceId, expectedHint) ?: return false
         return actionImeEnterCompat?.let { focused.performAction(it) } ?: false
     }
 
@@ -1285,9 +1310,13 @@ class JarvisAccessibilityService : AccessibilityService() {
     /** Copy [text] to the system clipboard and issue ACTION_PASTE on the
      *  focused (or first) editable field.  Returns true when ACTION_PASTE
      *  was accepted by the field node. */
-    fun pasteFromClipboard(text: String): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val node = findFocusedEditable(root) ?: findFirstEditable(root) ?: return false
+    fun pasteFromClipboard(
+        text: String,
+        expectedPackage: String? = null,
+        expectedResourceId: String? = null,
+        expectedHint: String? = null
+    ): Boolean {
+        val node = findBoundEditable(expectedPackage, expectedResourceId, expectedHint) ?: return false
         val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
 
         // Clipboard reads/writes must run on the main thread on Android 10+.

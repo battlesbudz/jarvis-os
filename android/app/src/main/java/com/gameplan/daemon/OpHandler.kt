@@ -677,9 +677,12 @@ object OpHandler {
             return OpResult(false, error = "text required")
         }
         val submit = op.optBoolean("submit", false)
+        val expectedPackage = op.optString("expectedPackage").takeIf { it.isNotEmpty() }
+        val expectedResourceId = op.optString("expectedResourceId").takeIf { it.isNotEmpty() }
+        val expectedHint = op.optString("expectedHint").takeIf { it.isNotEmpty() }
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running.")
-        val result = svc.typeTextDetailed(text, submit)
+        val result = svc.typeTextDetailed(text, submit, expectedPackage, expectedResourceId, expectedHint)
         val ok = result.typed && (!submit || result.submitted)
         return OpResult(
             ok = ok,
@@ -721,6 +724,10 @@ object OpHandler {
         }
         val fieldDescription = op.optString("fieldDescription", "input field")
         val forceClipboardOnly = op.optBoolean("forceClipboardOnly", false)
+        val expectedPackage = op.optString("expectedPackage").takeIf { it.isNotEmpty() }
+        val expectedResourceId = op.optString("expectedResourceId").takeIf { it.isNotEmpty() }
+        val expectedHint = op.optString("expectedHint").takeIf { it.isNotEmpty() }
+        val targetBound = expectedPackage != null || expectedResourceId != null || expectedHint != null
 
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis app.")
@@ -730,7 +737,7 @@ object OpHandler {
         // We pass tokens directly (no sh -c) so shell metacharacters in the text
         // are never interpreted by a shell — only the `input` binary sees them.
         var methodUsed: String? = null
-        if (!forceClipboardOnly) {
+        if (!forceClipboardOnly && !targetBound) {
             try {
                 val encoded = text.replace("%", "%%").replace(" ", "%s")
                 val proc = Runtime.getRuntime().exec(arrayOf("input", "text", encoded))
@@ -750,7 +757,7 @@ object OpHandler {
         // ── Step 2 (fallback): ClipboardManager + ACTION_PASTE ───────────────
         if (methodUsed == null) {
             try {
-                val pasteOk = svc.pasteFromClipboard(text)
+                val pasteOk = svc.pasteFromClipboard(text, expectedPackage, expectedResourceId, expectedHint)
                 if (pasteOk) {
                     methodUsed = "clipboard_paste"
                     Log.i(TAG, "paste_text: clipboard paste succeeded for '$fieldDescription'")
@@ -921,8 +928,17 @@ object OpHandler {
 
     private fun handlePressKey(op: JSONObject): OpResult {
         val key = op.optString("key", "back")
+        val expectedPackage = op.optString("expectedPackage").takeIf { it.isNotEmpty() }
+        val expectedResourceId = op.optString("expectedResourceId").takeIf { it.isNotEmpty() }
+        val expectedHint = op.optString("expectedHint").takeIf { it.isNotEmpty() }
+        val targetBound = expectedPackage != null || expectedResourceId != null || expectedHint != null
 
         val svc = JarvisAccessibilityService.instance
+        if (svc != null && key == "enter" && targetBound) {
+            val ok = svc.pressImeAction(expectedPackage, expectedResourceId, expectedHint)
+            return if (ok) OpResult(true, data = JSONObject().put("key", key).put("method", "bound_ime"))
+            else OpResult(false, error = "Focused field no longer matches the expected package and identity")
+        }
         if (svc != null) {
             val ok = svc.pressKey(key)
             if (ok) return OpResult(true, data = JSONObject().put("key", key).put("method", "native"))

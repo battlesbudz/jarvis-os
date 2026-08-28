@@ -521,6 +521,9 @@ type VerifyAndroidTextInputOptions = {
   onAlreadyVerified?: () => void;
   beforeEscalating?: () => Promise<boolean>;
   deferEscalationWhenFieldTextUnavailable?: boolean;
+  expectedPackage?: string;
+  expectedResourceId?: string;
+  expectedHint?: string;
 };
 
 async function verifyAndroidTextInput(options: VerifyAndroidTextInputOptions): Promise<{
@@ -572,6 +575,9 @@ async function verifyAndroidTextInput(options: VerifyAndroidTextInputOptions): P
           text: options.expectedText,
           fieldDescription: options.fieldDescription,
           forceClipboardOnly: true,
+          expectedPackage: options.expectedPackage,
+          expectedResourceId: options.expectedResourceId,
+          expectedHint: options.expectedHint,
         },
         15000,
       );
@@ -1887,7 +1893,8 @@ export const androidSearchInAppTool: AgentTool = {
     if (!resumeFromStep || resumeFromStep <= 4) {
       // Revalidate immediately before any destructive input, even when step 3
       // just succeeded: app rerenders can move focus between tool operations.
-      if (!(await focusedSearchFieldStillVerified())) {
+      const boundInputTarget = await readVerifiedFocusedSearchField();
+      if (!boundInputTarget) {
         emitProgress(`Search field focus could not be verified — cannot type ✗`);
         return {
           ok: false,
@@ -1951,7 +1958,12 @@ export const androidSearchInAppTool: AgentTool = {
         searchQuery,
         `${appName} search field`,
         inputSteps,
-        { beforePaste: () => safelyClearFocusedSearchField(inputSteps) },
+        {
+          beforePaste: () => safelyClearFocusedSearchField(inputSteps),
+          expectedPackage: resolvedAppPackage ?? undefined,
+          expectedResourceId: boundInputTarget.resourceId,
+          expectedHint: boundInputTarget.hint,
+        },
       );
 
       if (!inputOk) {
@@ -1998,6 +2010,9 @@ export const androidSearchInAppTool: AgentTool = {
           escalationFailureStep: (error) => `android_paste_text failed: ${error}`,
           beforeEscalating: safelyPreparePasteEscalation,
           deferEscalationWhenFieldTextUnavailable,
+          expectedPackage: resolvedAppPackage ?? undefined,
+          expectedResourceId: boundInputTarget.resourceId,
+          expectedHint: boundInputTarget.hint,
           successStep: "Query confirmed in focused field.",
           inconclusiveStep: (currentText) => `Query verification inconclusive: field text="${currentText ?? "empty"}".`,
         });
@@ -2127,7 +2142,13 @@ export const androidSearchInAppTool: AgentTool = {
         // Primary: invoke the focused field's accessibility IME Search/Go action.
         // If the field does not expose it, the visible submit-control fallback below
         // remains available without relying on privileged input injection.
-        const enterResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "enter" }, 10000);
+        const enterResult = await sendDaemonOp(ctx.userId, {
+          type: "android_press_key",
+          key: "enter",
+          expectedPackage: resolvedAppPackage ?? undefined,
+          expectedResourceId: finalSearchState?.field.resourceId,
+          expectedHint: finalSearchState?.field.hint,
+        }, 10000);
         stepLog.push({
           step: 5,
           outcome: enterResult.ok ? "enter_dispatched" : "enter_failed",

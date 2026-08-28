@@ -59,7 +59,7 @@ export type DaemonOp =
   | { type: "android_local_model_generate"; requestId?: string; model: string; prompt: string; contextTokens?: number; maxTokens?: number; backend?: string; allowCpuFallback?: boolean; speculativeDecoding?: boolean; temperature?: number }
   | { type: "android_local_model_cancel"; requestId?: string }
   | { type: "android_tap"; x: number; y: number }
-  | { type: "android_type"; text: string; submit?: boolean }
+  | { type: "android_type"; text: string; submit?: boolean; expectedPackage?: string; expectedResourceId?: string; expectedHint?: string }
   | { type: "android_swipe"; x1: number; y1: number; x2: number; y2: number; durationMs?: number }
   | { type: "android_pinch"; pointer1: { x1: number; y1: number; x2: number; y2: number }; pointer2: { x1: number; y1: number; x2: number; y2: number }; durationMs?: number }
   | { type: "android_press_key"; key: "back" | "home" | "recents" | "volume_up" | "volume_down" | "enter" | "select_all" | "delete" }
@@ -88,7 +88,7 @@ export type DaemonOp =
   | { type: "android_sms_send"; to: string; message: string }
   | { type: "android_screen_record"; durationMs?: number; fps?: number; audio?: boolean }
   | { type: "android_view_hierarchy" }
-  | { type: "android_paste_text"; text: string; fieldDescription?: string; forceClipboardOnly?: boolean }
+  | { type: "android_paste_text"; text: string; fieldDescription?: string; forceClipboardOnly?: boolean; expectedPackage?: string; expectedResourceId?: string; expectedHint?: string }
   | { type: "android_get_focused_field" }
   | { type: "android_clear_field"; expectedPackage?: string; expectedResourceId?: string; expectedHint?: string }
   | { type: "android_start_training"; label: string; timeoutMs?: number }
