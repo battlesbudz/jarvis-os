@@ -1423,7 +1423,10 @@ export const androidSearchInAppTool: AgentTool = {
 
     async function relocateSubmitElement(): Promise<{ found: boolean; x: number | null; y: number | null }> {
       const result = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      return result.ok ? parseSubmitElement(JSON.stringify(result.data || "")) : { found: false, x: null, y: null };
+      if (!result.ok || !screenMatchesResolvedApp(result.data)) {
+        return { found: false, x: null, y: null };
+      }
+      return parseSubmitElement(JSON.stringify(result.data || ""));
     }
 
     let screenRaw = "";

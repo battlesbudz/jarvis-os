@@ -374,6 +374,11 @@ assert.match(bridgeSource, /type: ["']android_notification_open["']/);
 assert.match(daemonShellSource, /type: ["']android_press_key["'], key: ["']enter["']/);
 assert.match(daemonShellSource, /if \(!screenRaw\)[\s\S]*submit_search_baseline/);
 assert.match(daemonShellSource, /function parseSubmitElement/);
+assert.match(
+  daemonShellSource,
+  /relocateSubmitElement[\s\S]*screenMatchesResolvedApp\(result\.data\)[\s\S]*parseSubmitElement/,
+  "submit-control fallback must validate the resolved foreground package on the same snapshot used for coordinates",
+);
 assert.match(daemonShellSource, /node\.contentDesc[\s\S]{0,160}node\.content_desc/);
 assert.match(daemonShellSource, /\^\(\?:search\|go\|submit\)\\b/);
 assert.match(daemonShellSource, /coordinateMatch = ranked[\s\S]*extractNodeCoords[\s\S]*\.find\(\(entry\) => entry\.coords !== null\)/);
