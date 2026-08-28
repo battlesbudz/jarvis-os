@@ -436,7 +436,7 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /acceptedAppPackages[\s\S]*screenMatchesResolvedApp[\s\S]*resolvedAppPackage = packageName[\s\S]*readVerifiedFocusedSearchField[\s\S]*screenMatchesResolvedApp\(screenCheck\.data\)[\s\S]*isFocusedSearchField\(focusedField\)/,
+  /acceptedAppPackages[\s\S]*screenMatchesResolvedApp[\s\S]*resolvedAppPackage = packageName[\s\S]*readVerifiedFocusedSearchState[\s\S]*screenMatchesResolvedApp\(screenCheck\.data\)[\s\S]*isFocusedSearchField\(focusedField\)/,
   "every focused-field fast path must verify and lock the expected resolved foreground package",
 );
 assert.match(
@@ -491,13 +491,18 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /beforeInputScreen[\s\S]*countNormalizedVisibleValues\(beforeInputScreen\.data\)[\s\S]*currentInputTarget\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*normalizedQuery\.length > 0 && verificationBaselineVisibleValueCounts !== null[\s\S]*count > \(verificationBaselineVisibleValueCounts!\.get\(normalizedValue\) \?\? 0\)[\s\S]*containsBoundedSignal\(normalizedValue, normalizedQuery\)[\s\S]*focusedFieldTextMatches === null && screenContainsQuery/,
+  /screenHasNewQueryEvidence[\s\S]*normalizedQuery\.length > 0 && queryVerificationBaselineVisibleValueCounts !== null[\s\S]*count > \(queryVerificationBaselineVisibleValueCounts!\.get\(normalizedValue\) \?\? 0\)[\s\S]*containsBoundedSignal\(normalizedValue, normalizedQuery\)[\s\S]*beforeInputScreen[\s\S]*countNormalizedVisibleValues\(beforeInputScreen\.data\)[\s\S]*currentInputTarget\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*focusedFieldTextMatches === null && screenContainsQuery/,
   "in-app search must reject appended stale text and require the complete bounded query in a newly visible compact-screen value",
 );
 assert.match(
   inAppSearchSource,
   /const normalizeVisibleText[\s\S]*\.normalize\("NFKC"\)[\s\S]*\.toLowerCase\(\)[\s\S]*\.trim\(\)[\s\S]*if \(afterType\.ok\)[\s\S]*else \{[\s\S]*screenRaw = "";[\s\S]*if \(!screenRaw\)[\s\S]*submit_search_baseline/,
   "screen fallback must preserve query punctuation and force a fresh submit baseline after a failed post-type read",
+);
+assert.match(
+  inAppSearchSource,
+  /if \(!screenRaw\)[\s\S]*const finalSearchState = await readVerifiedFocusedSearchState\(\)[\s\S]*finalSearchState\.field\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*screenHasNewQueryEvidence\(finalSearchState\.screen\)[\s\S]*if \(!finalQueryVerified\)[\s\S]*error_at_step: "submit_search_target"[\s\S]*type: "android_press_key", key: "enter"/,
+  "in-app search must revalidate the live search identity and query immediately before dispatching Enter",
 );
 assert.match(
   inAppSearchSource,

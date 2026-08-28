@@ -1184,7 +1184,11 @@ export const androidSearchInAppTool: AgentTool = {
       (!identity.resourceId || field.resourceId === identity.resourceId) &&
       (!identity.hint || field.hint === identity.hint);
 
-    const readVerifiedFocusedSearchField = async (): Promise<ReturnType<typeof extractFocusedFieldText> | null> => {
+    type VerifiedFocusedSearchState = {
+      field: ReturnType<typeof extractFocusedFieldText>;
+      screen: unknown;
+    };
+    const readVerifiedFocusedSearchState = async (): Promise<VerifiedFocusedSearchState | null> => {
       // Package verification precedes every focus fast path; the final focus read
       // remains the last operation before the caller clears or types.
       const screenCheck = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
@@ -1192,12 +1196,17 @@ export const androidSearchInAppTool: AgentTool = {
       const focusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
       if (!focusCheck.ok) return null;
       const focusedField = extractFocusedFieldText(focusCheck.data);
-      if (isFocusedSearchField(focusedField)) return focusedField;
+      if (isFocusedSearchField(focusedField)) return { field: focusedField, screen: screenCheck.data };
       if (!dedicatedSearchActivityFocus || !matchesFocusIdentity(focusedField, dedicatedSearchActivityFocus)) {
         return null;
       }
-      return isDedicatedSearchActivity(screenCheck.data) ? focusedField : null;
+      return isDedicatedSearchActivity(screenCheck.data)
+        ? { field: focusedField, screen: screenCheck.data }
+        : null;
     };
+
+    const readVerifiedFocusedSearchField = async (): Promise<ReturnType<typeof extractFocusedFieldText> | null> =>
+      (await readVerifiedFocusedSearchState())?.field ?? null;
 
     const focusedSearchFieldStillVerified = async (): Promise<boolean> =>
       (await readVerifiedFocusedSearchField()) !== null;
@@ -1850,6 +1859,17 @@ export const androidSearchInAppTool: AgentTool = {
       emitProgress(`Search bar tapped, keyboard open ✓`);
     }
 
+    let queryVerificationBaselineVisibleValueCounts: Map<string, number> | null = null;
+    const screenHasNewQueryEvidence = (data: unknown): boolean => {
+      const visibleValueCounts = countNormalizedVisibleValues(data);
+      const normalizedQuery = normalizeVisibleText(searchQuery);
+      return normalizedQuery.length > 0 && queryVerificationBaselineVisibleValueCounts !== null &&
+        [...visibleValueCounts.entries()].some(([normalizedValue, count]) =>
+          count > (queryVerificationBaselineVisibleValueCounts!.get(normalizedValue) ?? 0) &&
+          containsBoundedSignal(normalizedValue, normalizedQuery),
+        );
+    };
+
     //        Step 4: Focus-verify     type     confirm text appeared                                              
     if (!resumeFromStep || resumeFromStep <= 4) {
       if (resumeFromStep === 4) {
@@ -1895,7 +1915,7 @@ export const androidSearchInAppTool: AgentTool = {
       const beforeInputVisibleValueCounts = beforeInputScreen.ok
         ? countNormalizedVisibleValues(beforeInputScreen.data)
         : null;
-      let verificationBaselineVisibleValueCounts = beforeInputVisibleValueCounts;
+      queryVerificationBaselineVisibleValueCounts = beforeInputVisibleValueCounts;
       if (!(await focusedSearchFieldStillVerified())) {
         inputSteps.push("Search-field identity check failed immediately before input; typing was aborted.");
         stepLog.push({ step: 4, outcome: "failed", detail: inputSteps.join(" | ") });
@@ -1939,7 +1959,7 @@ export const androidSearchInAppTool: AgentTool = {
       const safelyPreparePasteEscalation = async (): Promise<boolean> => {
         if (!(await safelyClearFocusedSearchField(inputSteps))) return false;
         const baseline = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-        verificationBaselineVisibleValueCounts = baseline.ok
+        queryVerificationBaselineVisibleValueCounts = baseline.ok
           ? countNormalizedVisibleValues(baseline.data)
           : null;
         if (!(await focusedSearchFieldStillVerified())) {
@@ -1977,15 +1997,6 @@ export const androidSearchInAppTool: AgentTool = {
       // text is unavailable, fail closed here and let the post-input screen
       // delta provide the sole bounded fallback below.
       inputVerified = inputTargetStillSearch && focusedFieldTextMatches === true;
-      const screenHasNewQueryEvidence = (data: unknown): boolean => {
-        const visibleValueCounts = countNormalizedVisibleValues(data);
-        const normalizedQuery = normalizeVisibleText(searchQuery);
-        return normalizedQuery.length > 0 && verificationBaselineVisibleValueCounts !== null &&
-          [...visibleValueCounts.entries()].some(([normalizedValue, count]) =>
-            count > (verificationBaselineVisibleValueCounts!.get(normalizedValue) ?? 0) &&
-            containsBoundedSignal(normalizedValue, normalizedQuery),
-          );
-      };
       await sleep(600);
 
       // Confirm the query text appeared on screen
@@ -2071,6 +2082,32 @@ export const androidSearchInAppTool: AgentTool = {
           };
         }
         screenRaw = JSON.stringify(baseline.data || "");
+      }
+      if (resumeFromStep === 5) {
+        // Reconstruct the nonstandard dedicated-search identity when possible;
+        // standard search resource IDs are verified directly by the final read.
+        await rebuildDedicatedSearchActivityFocus();
+      }
+      const finalSearchState = await readVerifiedFocusedSearchState();
+      const finalFieldTextMatches = typeof finalSearchState?.field.text === "string"
+        ? finalSearchState.field.text.trim() === searchQuery.trim()
+        : null;
+      const finalQueryVerified = finalSearchState !== null && (
+        finalFieldTextMatches === true ||
+        (finalFieldTextMatches === null && screenHasNewQueryEvidence(finalSearchState.screen))
+      );
+      if (!finalQueryVerified) {
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 5,
+            error_at_step: "submit_search_target",
+            error: `The focused ${appName} search field or its query changed before submission, so Jarvis did not press Enter.`,
+            suggestion: "Retry android_search_in_app from step 4 so the query can be re-entered and verified immediately before submission.",
+            steps: stepLog,
+          }),
+        };
       }
       // Primary: invoke the focused field's accessibility IME Search/Go action.
       // If the field does not expose it, the visible submit-control fallback below
