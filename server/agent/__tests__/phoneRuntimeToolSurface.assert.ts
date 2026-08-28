@@ -515,7 +515,7 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /let resultsLoaded = resumeFromStep === 5[\s\S]*await isVerifiedResultsState\(screenRaw, false\)[\s\S]*if \(resultsLoaded\)[\s\S]*outcome: "already_loaded"[\s\S]*no submit action dispatched[\s\S]*async function isVerifiedResultsState[\s\S]*screenMatchesResolvedApp\(raw\)[\s\S]*type: "android_get_focused_field"[\s\S]*if \(!focusedField\.focused\) return true[\s\S]*isFocusedSearchField\(focusedField\)[\s\S]*focusedField\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*hasNamedResultsEvidence\(raw, requireTransition\)[\s\S]*isVerifiedResultsState\(afterSearchRaw\)[\s\S]*isVerifiedResultsState\(retryRaw\)/,
+  /let resultsLoaded = resumeFromStep === 5[\s\S]*await isVerifiedResultsState\(screenRaw, false\)[\s\S]*if \(resultsLoaded\)[\s\S]*outcome: "already_loaded"[\s\S]*no submit action dispatched[\s\S]*async function isVerifiedResultsState[\s\S]*screenMatchesResolvedApp\(raw\)[\s\S]*if \(!requireTransition\)[\s\S]*extractCompactScreenVisibleValues\(compactScreen\)[\s\S]*containsBoundedSignal\(normalizeVisibleText\(value\), normalizedQuery\)[\s\S]*if \(!resumedQueryVisible\) return false[\s\S]*type: "android_get_focused_field"[\s\S]*if \(!focusedField\.focused\) return true[\s\S]*isFocusedSearchField\(focusedField\)[\s\S]*focusedField\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*hasNamedResultsEvidence\(raw, requireTransition\)[\s\S]*isVerifiedResultsState\(afterSearchRaw\)[\s\S]*isVerifiedResultsState\(retryRaw\)/,
   "all results paths must reject focused typeahead editors; step-5 resume may accept already-loaded results without submitting",
 );
 assert.match(

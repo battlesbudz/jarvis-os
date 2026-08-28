@@ -2164,6 +2164,15 @@ export const androidSearchInAppTool: AgentTool = {
 
       async function isVerifiedResultsState(raw: string, requireTransition = true): Promise<boolean> {
         if (!screenMatchesResolvedApp(raw) || !isResultsState(raw, requireTransition)) return false;
+        if (!requireTransition) {
+          const compactScreen = parseCompactScreen(raw);
+          const normalizedQuery = normalizeVisibleText(searchQuery);
+          const resumedQueryVisible = compactScreen !== null && normalizedQuery.length > 0 &&
+            extractCompactScreenVisibleValues(compactScreen).some((value) =>
+              containsBoundedSignal(normalizeVisibleText(value), normalizedQuery),
+            );
+          if (!resumedQueryVisible) return false;
+        }
         const focus = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
         if (!focus.ok) return false;
         const focusedField = extractFocusedFieldText(focus.data);
