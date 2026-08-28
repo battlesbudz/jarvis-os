@@ -2193,11 +2193,25 @@ export const androidSearchInAppTool: AgentTool = {
         const focusPackage = (focus.data as Record<string, unknown> | null)?.package;
         if (typeof focusPackage !== "string" || focusPackage !== resolvedAppPackage) return false;
         const focusedField = extractFocusedFieldText(focus.data);
-        if (!focusedField.focused) return true;
-        // A still-focused editor is ambiguous: it may be showing typeahead
-        // suggestions whose labels resemble results. Fail closed until Android
-        // exposes a non-focused results state.
-        return false;
+        if (focusedField.focused) return false;
+
+        // The package-bound focus probe can outlive the snapshot above. Re-read
+        // and validate results after it so same-package navigation cannot make
+        // stale result evidence authorize Step 6.
+        const postFocusScreen = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        if (!postFocusScreen.ok || !screenMatchesResolvedApp(postFocusScreen.data)) return false;
+        const postFocusRaw = JSON.stringify(postFocusScreen.data || "");
+        if (!isResultsState(postFocusRaw, requireTransition)) return false;
+        if (!requireTransition) {
+          const postFocusCompact = parseCompactScreen(postFocusScreen.data);
+          const normalizedQuery = normalizeVisibleText(searchQuery);
+          const postFocusQueryVisible = postFocusCompact !== null && normalizedQuery.length > 0 &&
+            extractCompactScreenVisibleValues(postFocusCompact).some((value) =>
+              containsBoundedSignal(normalizeVisibleText(value), normalizedQuery),
+            );
+          if (!postFocusQueryVisible) return false;
+        }
+        return true;
       }
 
       if (!resultsLoaded) {
