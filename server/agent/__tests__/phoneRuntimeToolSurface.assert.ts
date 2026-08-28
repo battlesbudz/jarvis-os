@@ -461,8 +461,8 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /const fieldCleared = await clearFocusedAndroidField\(ctx\.userId, inputSteps\)[\s\S]*if \(!fieldCleared\)[\s\S]*error_at_step: "clear_search_field"[\s\S]*runAndroidTextInputFallback\(/,
-  "in-app search must clear any prior query before accessibility or paste input",
+  /const fieldCleared = await safelyClearFocusedSearchField\(inputSteps\)[\s\S]*if \(!fieldCleared\)[\s\S]*error_at_step: "clear_search_field"[\s\S]*runAndroidTextInputFallback\(/,
+  "in-app search must safely clear any prior query before accessibility or paste input",
 );
 assert.match(
   inAppSearchSource,
