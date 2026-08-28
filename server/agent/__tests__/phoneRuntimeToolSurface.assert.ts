@@ -446,8 +446,8 @@ assert.doesNotMatch(
 );
 assert.match(
   inAppSearchSource,
-  /if \(resumeFromStep === 4\)[\s\S]*!focusCheck\.ok \|\| !isFocusedSearchField\(focusedField\)[\s\S]*error_at_step: "type_query_no_focus"/,
-  "resuming at the input step must fail closed unless the focused field has search-specific identity",
+  /focusedSearchFieldStillVerified[\s\S]*safelyClearFocusedSearchField[\s\S]*identity check failed before clear[\s\S]*identity check failed after clear[\s\S]*beforeInputScreen[\s\S]*if \(!\(await focusedSearchFieldStillVerified\(\)\)\)[\s\S]*identity check failed immediately before input[\s\S]*runAndroidTextInputFallback/,
+  "every input path must fail closed unless search-field identity is verified immediately before clear and again before typing",
 );
 assert.doesNotMatch(
   inAppSearchSource,
@@ -466,8 +466,8 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /beforeEscalating: \(\) => clearFocusedAndroidField\(ctx\.userId, inputSteps\)/,
-  "in-app search must clear the field again before escalating a successful accessibility type to paste",
+  /beforeEscalating: \(\) => safelyClearFocusedSearchField\(inputSteps\)[\s\S]*const inputTargetStillSearch = await focusedSearchFieldStillVerified\(\)[\s\S]*inputTargetStillSearch && focusedFieldTextMatches === null && screenContainsQuery/,
+  "in-app search must revalidate search identity around paste escalation and again before accepting input evidence",
 );
 assert.match(
   daemonShellSource,

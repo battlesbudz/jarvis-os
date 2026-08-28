@@ -1122,6 +1122,24 @@ export const androidSearchInAppTool: AgentTool = {
       return appResourceMatches || semanticTextMatches;
     };
 
+    const focusedSearchFieldStillVerified = async (): Promise<boolean> => {
+      const focusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+      return focusCheck.ok && isFocusedSearchField(extractFocusedFieldText(focusCheck.data));
+    };
+
+    const safelyClearFocusedSearchField = async (steps: string[]): Promise<boolean> => {
+      if (!(await focusedSearchFieldStillVerified())) {
+        steps.push("Search-field identity check failed before clear; no text was changed.");
+        return false;
+      }
+      if (!(await clearFocusedAndroidField(ctx.userId, steps))) return false;
+      if (!(await focusedSearchFieldStillVerified())) {
+        steps.push("Search-field identity check failed after clear; input was aborted.");
+        return false;
+      }
+      return true;
+    };
+
     const normalizeVisibleText = (value: string): string => value
       .normalize("NFKC")
       .toLowerCase()
@@ -1718,30 +1736,27 @@ export const androidSearchInAppTool: AgentTool = {
 
     //        Step 4: Focus-verify     type     confirm text appeared                                              
     if (!resumeFromStep || resumeFromStep <= 4) {
-      // Confirm focus before typing (skip re-verify if we just verified in step 3)
-      if (resumeFromStep === 4) {
-        const focusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
-        const focusedField = extractFocusedFieldText(focusCheck.data);
-        if (!focusCheck.ok || !isFocusedSearchField(focusedField)) {
-          emitProgress(`Search field focus could not be verified — cannot type ✗`);
-          return {
+      // Revalidate immediately before any destructive input, even when step 3
+      // just succeeded: app rerenders can move focus between tool operations.
+      if (!(await focusedSearchFieldStillVerified())) {
+        emitProgress(`Search field focus could not be verified — cannot type ✗`);
+        return {
+          ok: false,
+          content: JSON.stringify({
             ok: false,
-            content: JSON.stringify({
-              ok: false,
-              step_reached: 4,
-              error_at_step: "type_query_no_focus",
-              error: `Resumed at step 4 but a focused search field could not be verified in ${appName}.`,
-              suggestion: "Retry android_search_in_app with the same app and query using resume_from_step: 3 to re-tap and focus the search bar without reopening the app.",
-            }),
-          };
-        }
+            step_reached: 4,
+            error_at_step: "type_query_no_focus",
+            error: `A focused search field could not be verified in ${appName} immediately before input.`,
+            suggestion: "Retry android_search_in_app with the same app and query using resume_from_step: 3 to re-tap and focus the search bar without reopening the app.",
+          }),
+        };
       }
 
       emitProgress(`Typing "${searchQuery.slice(0, 40)}${searchQuery.length > 40 ? "…" : ""}"…`);
       const inputSteps: string[] = [];
       // Search fields may retain the previous query. Clear first so every input
       // path replaces the query instead of a paste fallback appending to it.
-      const fieldCleared = await clearFocusedAndroidField(ctx.userId, inputSteps);
+      const fieldCleared = await safelyClearFocusedSearchField(inputSteps);
       if (!fieldCleared) {
         stepLog.push({ step: 4, outcome: "failed", detail: inputSteps.join(" | ") });
         emitProgress(`Could not safely clear the search field ✗`);
@@ -1761,6 +1776,21 @@ export const androidSearchInAppTool: AgentTool = {
       const beforeInputVisibleValues = beforeInputScreen.ok
         ? new Set(extractCompactScreenVisibleValues(beforeInputScreen.data).map(normalizeVisibleText))
         : null;
+      if (!(await focusedSearchFieldStillVerified())) {
+        inputSteps.push("Search-field identity check failed immediately before input; typing was aborted.");
+        stepLog.push({ step: 4, outcome: "failed", detail: inputSteps.join(" | ") });
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 4,
+            error_at_step: "type_query_no_focus",
+            error: `The focused search field changed before text input in ${appName}, so Jarvis did not type or paste the query.`,
+            suggestion: "Retry android_search_in_app from step 3 (resume_from_step: 3) to refocus the search field.",
+            steps: stepLog,
+          }),
+        };
+      }
       let { methodUsed, inputOk, daemonVerified, fieldText } = await runAndroidTextInputFallback(
         ctx.userId,
         searchQuery,
@@ -1797,14 +1827,16 @@ export const androidSearchInAppTool: AgentTool = {
         escalationStep: (currentText) => `Query verification failed after android_type (field: "${currentText ?? "empty"}") — escalating to android_paste_text...`,
         escalationSuccessStep: (method, verified) => `android_paste_text succeeded via ${method}. Verified: ${verified}.`,
         escalationFailureStep: (error) => `android_paste_text failed: ${error}`,
-        beforeEscalating: () => clearFocusedAndroidField(ctx.userId, inputSteps),
+        beforeEscalating: () => safelyClearFocusedSearchField(inputSteps),
         successStep: "Query confirmed in focused field.",
         inconclusiveStep: (currentText) => `Query verification inconclusive: field text="${currentText ?? "empty"}".`,
       }));
+      const inputTargetStillSearch = await focusedSearchFieldStillVerified();
       const focusedFieldTextMatches = typeof fieldText === "string"
         ? fieldText.trim() === searchQuery.trim()
         : null;
-      if (focusedFieldTextMatches !== null) inputVerified = focusedFieldTextMatches;
+      if (!inputTargetStillSearch) inputVerified = false;
+      else if (focusedFieldTextMatches !== null) inputVerified = focusedFieldTextMatches;
       await sleep(600);
 
       // Confirm the query text appeared on screen
@@ -1825,7 +1857,7 @@ export const androidSearchInAppTool: AgentTool = {
         // and require the complete normalized query as a bounded phrase within one
         // newly visible label. JSON keys, package/activity metadata, pre-existing
         // labels, and tokens split across unrelated elements are not evidence.
-        typeVerified = typeVerified || (focusedFieldTextMatches === null && screenContainsQuery);
+        typeVerified = typeVerified || (inputTargetStillSearch && focusedFieldTextMatches === null && screenContainsQuery);
         screenRaw = afterTypeRaw;
       } else {
         // Never let step 5 compare against a pre-input screen when this read failed.
