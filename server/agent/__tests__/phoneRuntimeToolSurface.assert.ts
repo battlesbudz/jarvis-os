@@ -451,8 +451,18 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /clearFocusedAndroidField\(ctx\.userId, inputSteps\)[\s\S]*runAndroidTextInputFallback\(/,
+  /const fieldCleared = await clearFocusedAndroidField\(ctx\.userId, inputSteps\)[\s\S]*if \(!fieldCleared\)[\s\S]*error_at_step: "clear_search_field"[\s\S]*runAndroidTextInputFallback\(/,
   "in-app search must clear any prior query before accessibility or paste input",
+);
+assert.match(
+  inAppSearchSource,
+  /beforeEscalating: \(\) => clearFocusedAndroidField\(ctx\.userId, inputSteps\)/,
+  "in-app search must clear the field again before escalating a successful accessibility type to paste",
+);
+assert.match(
+  daemonShellSource,
+  /beforeEscalating\?: \(\) => Promise<boolean>[\s\S]*Paste escalation aborted because the existing field text could not be cleared safely/,
+  "paste escalation must abort when the field cannot be confirmed empty",
 );
 assert.match(
   inAppSearchSource,

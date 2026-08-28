@@ -26,6 +26,13 @@ assert.ok(
   "helper should preserve Android clear-field verification and fallback behavior",
 );
 assert.ok(
+  helperSource.includes('): Promise<boolean>') &&
+    helperSource.includes('clearData.verifiedEmpty === true || clearData.fieldWasAlreadyEmpty === true') &&
+    helperSource.includes('verification inconclusive because focused field text is unavailable') &&
+    helperSource.includes('return false'),
+  "clear-field helper should report whether the field was confirmed empty",
+);
+assert.ok(
   helperSource.includes('raw.match(/focused="true"[^>]*text="([^"]+)"/i)') &&
     helperSource.includes('raw.match(/text="([^"]+)"[^>]*focused="true"/i)'),
   "helper should preserve focused-field XML parsing in both attribute orders",

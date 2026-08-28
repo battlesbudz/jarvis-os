@@ -90,21 +90,21 @@ export async function clearFocusedAndroidField(
   userId: string,
   steps: string[],
   options: { detailedSuccess?: boolean } = {},
-): Promise<void> {
+): Promise<boolean> {
   steps.push("Clearing field (android_clear_field)...");
   const clearResult = await sendDaemonOp(userId, { type: "android_clear_field" }, 8000);
   if (clearResult.ok) {
+    const clearData = (clearResult.data || {}) as Record<string, unknown>;
+    const clearVerified = clearData.verifiedEmpty === true || clearData.fieldWasAlreadyEmpty === true;
     if (options.detailedSuccess) {
-      const clearData = (clearResult.data || {}) as Record<string, unknown>;
       const clearMethod = typeof clearData.method === "string" ? clearData.method : "unknown";
-      const verified = clearData.verifiedEmpty === true;
       const alreadyEmpty = clearData.fieldWasAlreadyEmpty === true;
-      steps.push(alreadyEmpty ? "Field was already empty." : `Field cleared via ${clearMethod}. Verified empty: ${verified}.`);
+      steps.push(alreadyEmpty ? "Field was already empty." : `Field cleared via ${clearMethod}. Verified empty: ${clearVerified}.`);
     } else {
-      steps.push("Field cleared.");
+      steps.push(`Field clear dispatched. Verified empty: ${clearVerified}.`);
     }
     await sleep(150);
-    return;
+    return clearVerified;
   }
 
   steps.push(`android_clear_field failed (${clearResult.error || "unknown"}); trying select-all + delete fallback...`);
@@ -121,15 +121,20 @@ export async function clearFocusedAndroidField(
   const fallbackVerifyResult = await sendDaemonOp(userId, { type: "android_get_focused_field" }, 6000);
   if (!fallbackVerifyResult.ok) {
     steps.push("Select-all + delete fallback: verification inconclusive (android_get_focused_field failed). Proceeding with unknown clear status.");
-    return;
+    return false;
   }
 
   const fallbackRemainingText = extractFocusedFieldText(fallbackVerifyResult.data).text;
-  if (fallbackRemainingText === undefined || fallbackRemainingText === "") {
+  if (fallbackRemainingText === "") {
     steps.push("Select-all + delete fallback verified: field is empty.");
+    return true;
+  }
+  if (fallbackRemainingText === undefined) {
+    steps.push("Select-all + delete fallback: verification inconclusive because focused field text is unavailable.");
   } else {
     steps.push(`Select-all + delete fallback: field not empty after clear attempt. Remaining text: "${fallbackRemainingText}". Level 2/3 paste may append to existing content.`);
   }
+  return false;
 }
 
 const MAX_SCREENSHOTS_PER_TURN = 4;

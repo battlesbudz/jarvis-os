@@ -519,6 +519,7 @@ type VerifyAndroidTextInputOptions = {
   onVerified?: () => void;
   onInconclusive?: () => void;
   onAlreadyVerified?: () => void;
+  beforeEscalating?: () => Promise<boolean>;
 };
 
 async function verifyAndroidTextInput(options: VerifyAndroidTextInputOptions): Promise<{
@@ -554,21 +555,28 @@ async function verifyAndroidTextInput(options: VerifyAndroidTextInputOptions): P
   if (!verified && methodUsed === "android_type") {
     options.steps.push(options.escalationStep(fieldText));
     options.onEscalating?.();
-    const escalateResult = await sendDaemonOp(
-      options.userId,
-      { type: "android_paste_text", text: options.expectedText, fieldDescription: options.fieldDescription },
-      15000,
-    );
-    if (escalateResult.ok) {
-      const esc = (escalateResult.data || {}) as Record<string, unknown>;
-      const escMethod = typeof esc.method_used === "string" ? esc.method_used : "unknown";
-      methodUsed = `android_paste_text:${escMethod}:escalated`;
-      daemonVerified = esc.verified === true;
-      fieldText = typeof esc.field_text === "string" ? esc.field_text : null;
-      verified = daemonVerified;
-      options.steps.push(options.escalationSuccessStep(escMethod, verified));
+    const safeToEscalate = options.beforeEscalating
+      ? await options.beforeEscalating()
+      : true;
+    if (!safeToEscalate) {
+      options.steps.push("Paste escalation aborted because the existing field text could not be cleared safely.");
     } else {
-      options.steps.push(options.escalationFailureStep(escalateResult.error || "unknown"));
+      const escalateResult = await sendDaemonOp(
+        options.userId,
+        { type: "android_paste_text", text: options.expectedText, fieldDescription: options.fieldDescription },
+        15000,
+      );
+      if (escalateResult.ok) {
+        const esc = (escalateResult.data || {}) as Record<string, unknown>;
+        const escMethod = typeof esc.method_used === "string" ? esc.method_used : "unknown";
+        methodUsed = `android_paste_text:${escMethod}:escalated`;
+        daemonVerified = esc.verified === true;
+        fieldText = typeof esc.field_text === "string" ? esc.field_text : null;
+        verified = daemonVerified;
+        options.steps.push(options.escalationSuccessStep(escMethod, verified));
+      } else {
+        options.steps.push(options.escalationFailureStep(escalateResult.error || "unknown"));
+      }
     }
   }
 
@@ -1682,7 +1690,22 @@ export const androidSearchInAppTool: AgentTool = {
       const inputSteps: string[] = [];
       // Search fields may retain the previous query. Clear first so every input
       // path replaces the query instead of a paste fallback appending to it.
-      await clearFocusedAndroidField(ctx.userId, inputSteps);
+      const fieldCleared = await clearFocusedAndroidField(ctx.userId, inputSteps);
+      if (!fieldCleared) {
+        stepLog.push({ step: 4, outcome: "failed", detail: inputSteps.join(" | ") });
+        emitProgress(`Could not safely clear the search field ✗`);
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 4,
+            error_at_step: "clear_search_field",
+            error: `Could not confirm that ${appName}'s search field was empty, so Jarvis did not type or paste the query.`,
+            suggestion: "Retry android_search_in_app from step 3 (resume_from_step: 3) to refocus and safely clear the search field.",
+            steps: stepLog,
+          }),
+        };
+      }
       let { methodUsed, inputOk, daemonVerified, fieldText } = await runAndroidTextInputFallback(
         ctx.userId,
         searchQuery,
@@ -1719,6 +1742,7 @@ export const androidSearchInAppTool: AgentTool = {
         escalationStep: (currentText) => `Query verification failed after android_type (field: "${currentText ?? "empty"}") — escalating to android_paste_text...`,
         escalationSuccessStep: (method, verified) => `android_paste_text succeeded via ${method}. Verified: ${verified}.`,
         escalationFailureStep: (error) => `android_paste_text failed: ${error}`,
+        beforeEscalating: () => clearFocusedAndroidField(ctx.userId, inputSteps),
         successStep: "Query confirmed in focused field.",
         inconclusiveStep: (currentText) => `Query verification inconclusive: field text="${currentText ?? "empty"}".`,
       }));
