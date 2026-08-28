@@ -2173,6 +2173,8 @@ export const androidSearchInAppTool: AgentTool = {
         }
         const focus = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
         if (!focus.ok) return false;
+        const focusPackage = (focus.data as Record<string, unknown> | null)?.package;
+        if (typeof focusPackage !== "string" || focusPackage !== resolvedAppPackage) return false;
         const focusedField = extractFocusedFieldText(focus.data);
         if (!focusedField.focused) return true;
         // A still-focused editor is ambiguous: it may be showing typeahead

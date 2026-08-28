@@ -1191,14 +1191,16 @@ class JarvisAccessibilityService : AccessibilityService() {
         val hint: String?,
         val resourceId: String?,
         val className: String?,
-        val isPassword: Boolean
+        val isPassword: Boolean,
+        val packageName: String?
     )
 
     fun getFocusedFieldInfo(): FocusedFieldInfo {
         val root = rootInActiveWindow
-            ?: return FocusedFieldInfo(false, null, null, null, null, false)
+            ?: return FocusedFieldInfo(false, null, null, null, null, false, null)
+        val packageName = root.packageName?.toString()
         val node = findFocusedEditable(root)
-            ?: return FocusedFieldInfo(false, null, null, null, null, false)
+            ?: return FocusedFieldInfo(false, null, null, null, null, false, packageName)
         val hint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             node.hintText?.toString()
         } else null
@@ -1208,7 +1210,8 @@ class JarvisAccessibilityService : AccessibilityService() {
             hint = hint,
             resourceId = node.viewIdResourceName,
             className = node.className?.toString(),
-            isPassword = node.isPassword
+            isPassword = node.isPassword,
+            packageName = packageName
         )
     }
 

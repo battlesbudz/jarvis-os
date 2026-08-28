@@ -653,6 +653,7 @@ object OpHandler {
             .put("resourceId", info.resourceId ?: JSONObject.NULL)
             .put("className", info.className ?: JSONObject.NULL)
             .put("isPassword", info.isPassword)
+            .put("package", info.packageName ?: JSONObject.NULL)
 
         return OpResult(ok = true, data = data)
     }
