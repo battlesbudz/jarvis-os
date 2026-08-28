@@ -596,7 +596,7 @@ assert.equal(
 );
 for (const opHandlerSource of [generatedAndroidOpHandlerSource, pluginAndroidOpHandlerSource, androidOpHandlerSource]) {
   assert.match(opHandlerSource, /allowShadeFallback = op\.optBoolean\("allowShadeFallback", false\)/);
-  assert.match(opHandlerSource, /forceClipboardOnly = op\.optBoolean\("forceClipboardOnly", false\)[\s\S]*if \(!forceClipboardOnly\)[\s\S]*pasteFromClipboard/);
+  assert.match(opHandlerSource, /forceClipboardOnly = op\.optBoolean\("forceClipboardOnly", false\)[\s\S]*targetBound = expectedPackage != null \|\| expectedResourceId != null \|\| expectedHint != null[\s\S]*if \(!forceClipboardOnly && !targetBound\)[\s\S]*pasteFromClipboard/);
   assert.match(opHandlerSource, /!allowShadeFallback[\s\S]*android_read_screen permission is required for the notification-shade fallback/);
   assert.doesNotMatch(opHandlerSource, /"enter"\s*->\s*Pair\("KEYCODE_ENTER"/);
   assert.match(opHandlerSource, /query\.isEmpty\(\) && appName == null/);
