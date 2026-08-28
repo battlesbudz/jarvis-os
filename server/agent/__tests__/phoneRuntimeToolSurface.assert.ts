@@ -196,6 +196,7 @@ const routingSource = fs.readFileSync(path.resolve("server/agent/phoneRuntimeRou
 const runtimeToolNamesSource = fs.readFileSync(path.resolve("server/agent/androidPhoneRuntimeToolNames.ts"), "utf8");
 const runtimeSource = fs.readFileSync(path.resolve("server/agent/tools/androidAppRuntime.ts"), "utf8");
 const daemonShellSource = fs.readFileSync(path.resolve("server/agent/tools/daemonShellTool.ts"), "utf8");
+const androidDaemonToolHelpersSource = fs.readFileSync(path.resolve("server/agent/tools/androidDaemonToolHelpers.ts"), "utf8");
 const bridgeSource = fs.readFileSync(path.resolve("server/daemon/bridge.ts"), "utf8");
 const androidOpHandlerSource = fs.readFileSync(path.resolve("android-daemon/app/src/main/java/com/jarvis/daemon/OpHandler.kt"), "utf8");
 const androidAccessibilitySource = fs.readFileSync(path.resolve("android/app/src/main/java/com/gameplan/daemon/JarvisAccessibilityService.kt"), "utf8");
@@ -393,6 +394,17 @@ assert.match(
   /expectedPackage\?: string[\s\S]*type: "android_clear_field"[\s\S]*expectedResourceId: options\.expectedResourceId[\s\S]*if \(options\.failClosed\)[\s\S]*no key fallback was sent/,
   "bound clears must fail closed without an unverified keyevent fallback",
 );
+for (const boundClearSource of [
+  androidAccessibilitySource,
+  pluginAndroidAccessibilitySource,
+  standaloneAndroidAccessibilitySource,
+]) {
+  assert.match(
+    boundClearSource,
+    /if \(targetBound\)[\s\S]*bound_fallback_exhausted[\s\S]*refusing unbound global keyevents[\s\S]*try \{[\s\S]*input", "keyevent"/,
+    "native bound clears must stop before the global keyevent fallback",
+  );
+}
 assert.match(
   daemonShellSource,
   /isFocused = focusResult\.ok && focusResultPackage === resolvedAppPackage && focusedField\.focused[\s\S]*focusedFieldIsSearch = isFocused && isFocusedSearchField\(focusedField\)/,

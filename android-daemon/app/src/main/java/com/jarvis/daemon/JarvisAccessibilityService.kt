@@ -1128,8 +1128,11 @@ class JarvisAccessibilityService : AccessibilityService() {
         // ignore accessibility actions but respond to raw key injection.
         // input keyevent: KEYCODE_CTRL_LEFT=113, KEYCODE_A=29, KEYCODE_DEL=67.
         Thread.sleep(100)
-        if (targetBound && findClearTarget(rootInActiveWindow) == null) {
-            return ClearFieldResult(false, "target_changed", false, false, "Focused field changed before keyevent clear")
+        if (targetBound) {
+            return ClearFieldResult(
+                false, "bound_fallback_exhausted", false, false,
+                "Node-scoped clear methods failed; refusing unbound global keyevents for a verified target"
+            )
         }
         try {
             // Step 4a: Select all via Ctrl+A chord
