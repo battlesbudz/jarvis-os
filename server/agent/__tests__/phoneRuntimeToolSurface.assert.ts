@@ -415,7 +415,7 @@ assert.match(runtimeSource, /if \(ranked\.length === 0\) \{[\s\S]*if \(!allowSha
 assert.match(androidAccessibilitySource, /Regex\("\[\^\\\\p\{L\}\\\\p\{N\}\]\+"\)/);
 assert.match(androidAccessibilitySource, /queryTokens\.size > 1 -> containsBoundedNotificationTerm\(label, normalizedQuery\)/);
 assert.match(androidAccessibilitySource, /score = if \(appMatches && queryMatches\)/);
-assert.match(daemonShellSource, /keyboardDismissed && hasNewResultEvidence/);
+assert.match(daemonShellSource, /requireTransition \? hasNewResultEvidence : hasExistingResultEvidence/);
 assert.match(daemonShellSource, /Array\.isArray\(node\.text\)[\s\S]*for \(const value of labelValues\)/);
 assert.match(daemonShellSource, /resumeFromStepRaw > 5/);
 assert.doesNotMatch(daemonShellSource, /resume_from_step: 6/);
@@ -506,8 +506,8 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /let resultsLoaded = resumeFromStep === 5 && isResultsState\(screenRaw, false\)[\s\S]*if \(resultsLoaded\)[\s\S]*outcome: "already_loaded"[\s\S]*no submit action dispatched[\s\S]*function isResultsState\(raw: string, requireTransition = true\)[\s\S]*requireTransition \? hasNewResultEvidence : hasExistingResultEvidence/,
-  "step-5 resume must accept an already-loaded results state without requiring or submitting through a focused editor",
+  /let resultsLoaded = false[\s\S]*resumeFromStep === 5[\s\S]*type: "android_get_focused_field"[\s\S]*hasFocusedEditor = resumeFocus\.ok[\s\S]*resumeFocus\.ok && !hasFocusedEditor && isResultsState\(screenRaw, false\)[\s\S]*if \(resultsLoaded\)[\s\S]*outcome: "already_loaded"[\s\S]*no submit action dispatched[\s\S]*function isResultsState\(raw: string, requireTransition = true\)[\s\S]*requireTransition \? hasNewResultEvidence : hasExistingResultEvidence/,
+  "step-5 resume must reject focused typeahead editors and accept only an already-loaded results state without submitting",
 );
 assert.match(
   inAppSearchSource,

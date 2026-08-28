@@ -2083,7 +2083,12 @@ export const androidSearchInAppTool: AgentTool = {
         }
         screenRaw = JSON.stringify(baseline.data || "");
       }
-      let resultsLoaded = resumeFromStep === 5 && isResultsState(screenRaw, false);
+      let resultsLoaded = false;
+      if (resumeFromStep === 5) {
+        const resumeFocus = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+        const hasFocusedEditor = resumeFocus.ok && extractFocusedFieldText(resumeFocus.data).focused;
+        resultsLoaded = resumeFocus.ok && !hasFocusedEditor && isResultsState(screenRaw, false);
+      }
       if (resultsLoaded) {
         stepLog.push({ step: 5, outcome: "already_loaded", detail: "Existing results state verified on step-5 resume; no submit action dispatched." });
       } else {
