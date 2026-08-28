@@ -540,6 +540,7 @@ object OpHandler {
             return OpResult(false, error = "text required")
         }
         val fieldDescription = op.optString("fieldDescription", "input field")
+        val forceClipboardOnly = op.optBoolean("forceClipboardOnly", false)
 
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
@@ -549,19 +550,21 @@ object OpHandler {
         // We pass tokens directly (no sh -c) so shell metacharacters in the text
         // are never interpreted by a shell — only the `input` binary sees them.
         var methodUsed: String? = null
-        try {
-            val encoded = text.replace("%", "%%").replace(" ", "%s")
-            val proc = Runtime.getRuntime().exec(arrayOf("input", "text", encoded))
-            val exited = proc.waitFor(5, TimeUnit.SECONDS)
-            val exitCode = if (exited) proc.exitValue() else -1
-            if (exitCode == 0) {
-                methodUsed = "input_text_exec"
-                Log.i(TAG, "paste_text: input text exec succeeded for '$fieldDescription'")
-            } else {
-                Log.w(TAG, "paste_text: input text exec exit=$exitCode — trying clipboard fallback")
+        if (!forceClipboardOnly) {
+            try {
+                val encoded = text.replace("%", "%%").replace(" ", "%s")
+                val proc = Runtime.getRuntime().exec(arrayOf("input", "text", encoded))
+                val exited = proc.waitFor(5, TimeUnit.SECONDS)
+                val exitCode = if (exited) proc.exitValue() else -1
+                if (exitCode == 0) {
+                    methodUsed = "input_text_exec"
+                    Log.i(TAG, "paste_text: input text exec succeeded for '$fieldDescription'")
+                } else {
+                    Log.w(TAG, "paste_text: input text exec exit=$exitCode — trying clipboard fallback")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "paste_text: input text exec exception: ${e.message} — trying clipboard fallback")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "paste_text: input text exec exception: ${e.message} — trying clipboard fallback")
         }
 
         // ── Step 2 (fallback): ClipboardManager + ACTION_PASTE ───────────────
@@ -582,7 +585,8 @@ object OpHandler {
         if (methodUsed == null) {
             return OpResult(
                 ok = false,
-                error = "Both input methods failed for '$fieldDescription' (input text exec + clipboard paste). " +
+                error = (if (forceClipboardOnly) "Clipboard paste failed" else "Both input methods failed (input text exec + clipboard paste)") +
+                    " for '$fieldDescription'. " +
                     "Ensure the field is focused — tap it first, then retry."
             )
         }
