@@ -2172,10 +2172,11 @@ export const androidSearchInAppTool: AgentTool = {
 
       async function isVerifiedResultsState(raw: string, requireTransition = true): Promise<boolean> {
         if (!screenMatchesResolvedApp(raw) || !isResultsState(raw, requireTransition)) return false;
+        let resumedQueryVisible = false;
         if (!requireTransition) {
           const compactScreen = parseCompactScreen(raw);
           const normalizedQuery = normalizeVisibleText(searchQuery);
-          const resumedQueryVisible = compactScreen !== null && normalizedQuery.length > 0 &&
+          resumedQueryVisible = compactScreen !== null && normalizedQuery.length > 0 &&
             extractCompactScreenVisibleValues(compactScreen).some((value) =>
               containsBoundedSignal(normalizeVisibleText(value), normalizedQuery),
             );
@@ -2185,10 +2186,11 @@ export const androidSearchInAppTool: AgentTool = {
         if (!focus.ok) return false;
         const focusedField = extractFocusedFieldText(focus.data);
         if (!focusedField.focused) return true;
-        const focusedSearchQueryMatches = isFocusedSearchField(focusedField) &&
-          typeof focusedField.text === "string" &&
-          focusedField.text.trim() === searchQuery.trim();
-        return focusedSearchQueryMatches && (
+        const focusedSearchIdentityVerified = isFocusedSearchField(focusedField);
+        const focusedSearchQueryVerified = typeof focusedField.text === "string"
+          ? focusedField.text.trim() === searchQuery.trim()
+          : (requireTransition ? screenHasNewQueryEvidence(raw) : resumedQueryVisible);
+        return focusedSearchIdentityVerified && focusedSearchQueryVerified && (
           requireTransition || hasNamedResultsEvidence(raw, requireTransition)
         );
       }
