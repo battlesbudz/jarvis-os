@@ -1592,26 +1592,28 @@ export const androidSearchInAppTool: AgentTool = {
         }
         await sleep(1200);
 
+        // android_read_screen intentionally returns only a compact package/activity/
+        // text/clickable snapshot, so it cannot prove that an input owns focus. Ask
+        // the accessibility service for the focused editable field directly.
+        const focusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+        const isFocused = focusResult.ok && extractFocusedFieldText(focusResult.data).focused;
+
         const afterTap = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        let isSearchActivity = false;
         if (afterTap.ok) {
           const afterRaw = JSON.stringify(afterTap.data || "");
-          // Strong signal: accessibility explicitly reports an active input field.
-          // "isFocused\":true" / "focused\":true" appear in most Android a11y trees
-          // when an EditText is active; "inputmethod" indicates the keyboard is shown.
-          // Deliberately avoids "cursor" (too generic) and "keyboard" alone (varies by app).
-          const isFocused = screenContains(afterRaw, ["\"isFocused\":true", "\"focused\":true", "inputmethod", "edittext"]);
           // Acceptable weaker signal: screen transitioned to a dedicated search activity.
           // "Cancel" (standalone) + a search keyword is specific to search UX patterns
           // in apps like Facebook, Instagram, Twitter. Excludes generic commerce "cancel".
-          const isSearchActivity = screenContains(afterRaw, ["\"cancel\"", "cancel\""]) &&
+          isSearchActivity = screenContains(afterRaw, ["\"cancel\"", "cancel\""]) &&
             !screenContains(afterRaw, ["cancel subscription", "cancel order", "cancel payment", "cancel booking"]) &&
             screenContains(afterRaw, SEARCH_KEYWORDS);
-          stepLog.push({ step: 3, outcome: tapVerified ? "focus_ok" : "checking", detail: `attempt ${attempt}: isFocused=${isFocused} isSearchActivity=${isSearchActivity}` });
-          if (isFocused || isSearchActivity) {
-            screenRaw = afterRaw;
-            tapVerified = true;
-            break;
-          }
+          screenRaw = afterRaw;
+        }
+        stepLog.push({ step: 3, outcome: isFocused ? "focus_ok" : "checking", detail: `attempt ${attempt}: isFocused=${isFocused} isSearchActivity=${isSearchActivity}` });
+        if (isFocused || isSearchActivity) {
+          tapVerified = true;
+          break;
         }
       }
 
@@ -1625,7 +1627,7 @@ export const androidSearchInAppTool: AgentTool = {
             step_reached: 3,
             error_at_step: "tap_search_bar",
             error: `Tapped the search element 4 times but could not confirm focus in ${appName}. The app may have navigated to a separate search activity with a non-standard accessibility layout.`,
-            suggestion: "Use android_read_screen to check the current screen, then tap the visible input field manually with android_tap. Once focused, retry with resume_from_step: 4.",
+            suggestion: "Retry android_search_in_app with the same app and query using resume_from_step: 2. This refreshes stale search coordinates without reopening the app. Do not call android_open_app_by_name because the app is already foregrounded.",
             steps: stepLog,
           }),
         };
@@ -1640,11 +1642,9 @@ export const androidSearchInAppTool: AgentTool = {
     if (!resumeFromStep || resumeFromStep <= 4) {
       // Confirm focus before typing (skip re-verify if we just verified in step 3)
       if (resumeFromStep === 4) {
-        const focusCheck = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        const focusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
         if (focusCheck.ok) {
-          const fcRaw = JSON.stringify(focusCheck.data || "");
-          const isFocused = screenContains(fcRaw, ["focused", "edittext", "cursor", "inputmethod", "keyboard"]);
-          screenRaw = fcRaw;
+          const isFocused = extractFocusedFieldText(focusCheck.data).focused;
           if (!isFocused) {
             emitProgress(`Search field lost focus — cannot type ✗`);
             return {
@@ -1654,7 +1654,7 @@ export const androidSearchInAppTool: AgentTool = {
                 step_reached: 4,
                 error_at_step: "type_query_no_focus",
                 error: `Resumed at step 4 but the search field no longer appears focused in ${appName}.`,
-                suggestion: "Retry from step 3 (resume_from_step: 3) to re-tap and focus the search bar.",
+                suggestion: "Retry android_search_in_app with the same app and query using resume_from_step: 3 to re-tap and focus the search bar without reopening the app.",
               }),
             };
           }
@@ -1662,22 +1662,16 @@ export const androidSearchInAppTool: AgentTool = {
       }
 
       emitProgress(`Typing "${searchQuery.slice(0, 40)}${searchQuery.length > 40 ? "…" : ""}"…`);
-      await sendDaemonOp(ctx.userId, { type: "android_type", text: searchQuery }, 15000);
-      await sleep(800);
+      const inputSteps: string[] = [];
+      let { methodUsed, inputOk, daemonVerified, fieldText } = await runAndroidTextInputFallback(
+        ctx.userId,
+        searchQuery,
+        `${appName} search field`,
+        inputSteps,
+      );
 
-      // Confirm the query text appeared on screen
-      const afterType = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      let typeVerified = false;
-      if (afterType.ok) {
-        const afterTypeRaw = JSON.stringify(afterType.data || "");
-        const queryWords = searchQuery.split(/\s+/).filter((w) => w.length > 1);
-        typeVerified = queryWords.length === 0 ||
-          queryWords.some((w) => afterTypeRaw.toLowerCase().includes(w.toLowerCase()));
-        screenRaw = afterTypeRaw;
-      }
-
-      if (!typeVerified) {
-        stepLog.push({ step: 4, outcome: "failed", detail: "query text not found in screen after android_type" });
+      if (!inputOk) {
+        stepLog.push({ step: 4, outcome: "failed", detail: inputSteps.join(" | ") });
         emitProgress(`Text did not appear in search field ✗`);
         return {
           ok: false,
@@ -1685,14 +1679,59 @@ export const androidSearchInAppTool: AgentTool = {
             ok: false,
             step_reached: 4,
             error_at_step: "type_query",
-            error: `Typed "${searchQuery.slice(0, 60)}" but could not confirm the text appeared in ${appName}'s search field.`,
-            suggestion: "The keyboard may not have appeared or the field lost focus. Use android_screenshot to inspect the state, then retry from step 3 (resume_from_step: 3).",
+            error: `Could not type "${searchQuery.slice(0, 60)}" into ${appName}'s search field.`,
+            suggestion: "Retry android_search_in_app from step 3 (resume_from_step: 3) so Jarvis can refocus the field and try the accessibility and paste input paths again.",
             steps: stepLog,
           }),
         };
       }
 
-      stepLog.push({ step: 4, outcome: "success", detail: `query confirmed in accessibility tree` });
+      let inputVerified = false;
+      ({ methodUsed, daemonVerified, fieldText, verified: inputVerified } = await verifyAndroidTextInput({
+        userId: ctx.userId,
+        expectedText: searchQuery,
+        fieldDescription: `${appName} search field`,
+        methodUsed,
+        daemonVerified,
+        fieldText,
+        steps: inputSteps,
+        verificationStep: "Verifying query via android_get_focused_field...",
+        escalationStep: (currentText) => `Query verification failed after android_type (field: "${currentText ?? "empty"}") — escalating to android_paste_text...`,
+        escalationSuccessStep: (method, verified) => `android_paste_text succeeded via ${method}. Verified: ${verified}.`,
+        escalationFailureStep: (error) => `android_paste_text failed: ${error}`,
+        successStep: "Query confirmed in focused field.",
+        inconclusiveStep: (currentText) => `Query verification inconclusive: field text="${currentText ?? "empty"}".`,
+      }));
+      await sleep(600);
+
+      // Confirm the query text appeared on screen
+      const afterType = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      let typeVerified = inputVerified;
+      if (afterType.ok) {
+        const afterTypeRaw = JSON.stringify(afterType.data || "");
+        const queryWords = searchQuery.split(/\s+/).filter((w) => w.length > 1);
+        typeVerified = typeVerified || queryWords.length === 0 ||
+          queryWords.some((w) => afterTypeRaw.toLowerCase().includes(w.toLowerCase()));
+        screenRaw = afterTypeRaw;
+      }
+
+      if (!typeVerified) {
+        stepLog.push({ step: 4, outcome: "failed", detail: inputSteps.join(" | ") });
+        emitProgress(`Text did not appear in search field ✗`);
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 4,
+            error_at_step: "type_query",
+            error: `Tried the accessibility and paste input paths for "${searchQuery.slice(0, 60)}" but could not confirm the text appeared in ${appName}'s search field.`,
+            suggestion: "Retry android_search_in_app from step 3 (resume_from_step: 3) so Jarvis can refocus the field without reopening the app.",
+            steps: stepLog,
+          }),
+        };
+      }
+
+      stepLog.push({ step: 4, outcome: "success", detail: `${inputSteps.join(" | ")} Method: ${methodUsed}; query confirmed.` });
       console.log(`[${label}] step 4 complete     query typed and confirmed`);
       emitProgress(`Query entered ✓`);
     }

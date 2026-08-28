@@ -421,6 +421,34 @@ assert.match(daemonShellSource, /resumeFromStepRaw > 5/);
 assert.doesNotMatch(daemonShellSource, /resume_from_step: 6/);
 assert.match(daemonShellSource, /hasNewResultContainer[\s\S]*newLabels\.length >= 2/);
 assert.doesNotMatch(daemonShellSource, /contentGrew|contentChanged|preSubmitLen|preSubmitNodeCount/);
+const inAppSearchStart = daemonShellSource.indexOf('name: "android_search_in_app"');
+const inAppSearchEnd = daemonShellSource.indexOf("export const androidTypeInFieldTool", inAppSearchStart);
+const inAppSearchSource = daemonShellSource.slice(inAppSearchStart, inAppSearchEnd);
+assert.match(
+  inAppSearchSource,
+  /type: "android_get_focused_field"[\s\S]*extractFocusedFieldText\(focusResult\.data\)\.focused/,
+  "in-app search must verify focus through the dedicated accessibility operation",
+);
+assert.doesNotMatch(
+  inAppSearchSource,
+  /const isFocused = screenContains\(afterRaw/,
+  "in-app search must not expect compact screen snapshots to expose focus metadata",
+);
+assert.match(
+  inAppSearchSource,
+  /runAndroidTextInputFallback\([\s\S]*verifyAndroidTextInput\(/,
+  "in-app search must escalate silent Android text-input failures for custom search fields",
+);
+assert.match(
+  inAppSearchSource,
+  /typeVerified = typeVerified \|\| queryWords\.length === 0/,
+  "a compact screen snapshot must not undo focused-field input verification",
+);
+assert.match(
+  inAppSearchSource,
+  /resume_from_step: 2[\s\S]{0,180}Do not call android_open_app_by_name/,
+  "a failed search-bar tap must refresh coordinates without triggering a blocked background relaunch",
+);
 assert.equal(
   pluginAndroidAccessibilitySource,
   androidAccessibilitySource,
