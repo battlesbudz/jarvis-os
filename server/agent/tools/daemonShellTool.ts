@@ -2175,14 +2175,10 @@ export const androidSearchInAppTool: AgentTool = {
         if (!focus.ok) return false;
         const focusedField = extractFocusedFieldText(focus.data);
         if (!focusedField.focused) return true;
-        const focusedSearchIdentityVerified = isFocusedSearchField(focusedField);
-        const focusedSearchQueryVerified = typeof focusedField.text === "string"
-          ? focusedField.text.trim() === searchQuery.trim()
-          : (requireTransition ? screenHasNewQueryEvidence(raw) : resumedQueryVisible);
-        // A focused search field can still be showing typeahead suggestions.
-        // Require result-specific evidence even when other labels transitioned.
-        return focusedSearchIdentityVerified && focusedSearchQueryVerified &&
-          hasNamedResultsEvidence(raw, requireTransition);
+        // A still-focused editor is ambiguous: it may be showing typeahead
+        // suggestions whose labels resemble results. Fail closed until Android
+        // exposes a non-focused results state.
+        return false;
       }
 
       if (!resultsLoaded) {
