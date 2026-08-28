@@ -1093,6 +1093,11 @@ export const androidSearchInAppTool: AgentTool = {
     const SEARCH_KEYWORDS = ["search", "find", "lookup", "query"];
     if (searchBarHint) SEARCH_KEYWORDS.unshift(searchBarHint.toLowerCase());
 
+    const containsBoundedSignal = (value: string, signal: string): boolean => {
+      const escaped = signal.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?:$|[^\\p{L}\\p{N}])`, "u").test(value);
+    };
+
     const isFocusedSearchField = (
       field: ReturnType<typeof extractFocusedFieldText>,
     ): boolean => {
@@ -1101,10 +1106,6 @@ export const androidSearchInAppTool: AgentTool = {
       const localResourceId = resourceId.slice(resourceId.lastIndexOf("/") + 1);
       const hint = (field.hint ?? "").toLowerCase();
       const appSearchHint = APP_SEARCH_HINTS[appPackage];
-      const containsBoundedSignal = (value: string, signal: string): boolean => {
-        const escaped = signal.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?:$|[^\\p{L}\\p{N}])`, "u").test(value);
-      };
       const appResourceMatches = (appSearchHint?.resourceIds ?? []).some((signal) => {
         const normalizedSignal = signal.toLowerCase();
         return normalizedSignal.includes("/") || normalizedSignal.includes(":")
@@ -1124,7 +1125,6 @@ export const androidSearchInAppTool: AgentTool = {
     const normalizeVisibleText = (value: string): string => value
       .normalize("NFKC")
       .toLowerCase()
-      .replace(/[^\p{L}\p{N}]+/gu, " ")
       .trim()
       .replace(/\s+/g, " ");
 
@@ -1818,7 +1818,7 @@ export const androidSearchInAppTool: AgentTool = {
           visibleValues.some((value) => {
             const normalizedValue = normalizeVisibleText(value);
             return !beforeInputVisibleValues.has(normalizedValue) &&
-              ` ${normalizedValue} `.includes(` ${normalizedQuery} `);
+              containsBoundedSignal(normalizedValue, normalizedQuery);
           });
         // When the focused field exposes its value, require an exact replacement.
         // Only use compact screen text as a fallback when field text is unavailable,
@@ -1827,6 +1827,10 @@ export const androidSearchInAppTool: AgentTool = {
         // labels, and tokens split across unrelated elements are not evidence.
         typeVerified = typeVerified || (focusedFieldTextMatches === null && screenContainsQuery);
         screenRaw = afterTypeRaw;
+      } else {
+        // Never let step 5 compare against a pre-input screen when this read failed.
+        // An empty value forces a fresh pre-submit baseline before Enter is pressed.
+        screenRaw = "";
       }
 
       if (!typeVerified) {

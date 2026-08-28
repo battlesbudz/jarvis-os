@@ -476,8 +476,13 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /beforeInputScreen[\s\S]*new Set\(extractCompactScreenVisibleValues\(beforeInputScreen\.data\)\.map\(normalizeVisibleText\)\)[\s\S]*fieldText\.trim\(\) === searchQuery\.trim\(\)[\s\S]*normalizedQuery\.length > 0 && beforeInputVisibleValues !== null[\s\S]*!beforeInputVisibleValues\.has\(normalizedValue\)[\s\S]*` \$\{normalizedValue\} `\.includes\(` \$\{normalizedQuery\} `\)[\s\S]*focusedFieldTextMatches === null && screenContainsQuery/,
+  /beforeInputScreen[\s\S]*new Set\(extractCompactScreenVisibleValues\(beforeInputScreen\.data\)\.map\(normalizeVisibleText\)\)[\s\S]*fieldText\.trim\(\) === searchQuery\.trim\(\)[\s\S]*normalizedQuery\.length > 0 && beforeInputVisibleValues !== null[\s\S]*!beforeInputVisibleValues\.has\(normalizedValue\)[\s\S]*containsBoundedSignal\(normalizedValue, normalizedQuery\)[\s\S]*focusedFieldTextMatches === null && screenContainsQuery/,
   "in-app search must reject appended stale text and require the complete bounded query in a newly visible compact-screen value",
+);
+assert.match(
+  inAppSearchSource,
+  /const normalizeVisibleText[\s\S]*\.normalize\("NFKC"\)[\s\S]*\.toLowerCase\(\)[\s\S]*\.trim\(\)[\s\S]*if \(afterType\.ok\)[\s\S]*else \{[\s\S]*screenRaw = "";[\s\S]*if \(!screenRaw\)[\s\S]*submit_search_baseline/,
+  "screen fallback must preserve query punctuation and force a fresh submit baseline after a failed post-type read",
 );
 assert.match(
   inAppSearchSource,
