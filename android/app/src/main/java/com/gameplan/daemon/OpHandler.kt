@@ -185,7 +185,7 @@ object OpHandler {
                 "android_view_hierarchy" -> handleViewHierarchy()
                 "android_paste_text" -> handlePasteText(context, op)
                 "android_get_focused_field" -> handleGetFocusedField()
-                "android_clear_field" -> handleClearField()
+                "android_clear_field" -> handleClearField(op)
                 "android_start_training" -> handleStartTraining(op)
                 "android_get_display_size" -> handleGetDisplaySize(context)
                 "android_local_model_status" -> LocalGemmaModelManager.status(context, op)
@@ -849,11 +849,14 @@ object OpHandler {
     //   Step 4 — adb keyevent CTRL_A + DEL via Runtime.exec (hardware injection)
     // Each step verifies the field is actually empty afterward via node refresh.
     // Returns {ok, method, fieldWasAlreadyEmpty, verifiedEmpty} on success.
-    private fun handleClearField(): OpResult {
+    private fun handleClearField(op: JSONObject): OpResult {
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis app.")
 
-        val result = svc.clearField()
+        val expectedPackage = op.optString("expectedPackage").takeIf { it.isNotEmpty() }
+        val expectedResourceId = op.optString("expectedResourceId").takeIf { it.isNotEmpty() }
+        val expectedHint = op.optString("expectedHint").takeIf { it.isNotEmpty() }
+        val result = svc.clearField(expectedPackage, expectedResourceId, expectedHint)
         return if (result.cleared) {
             OpResult(
                 ok = true,

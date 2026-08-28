@@ -385,6 +385,16 @@ assert.match(
 );
 assert.match(
   daemonShellSource,
+  /safelyClearFocusedSearchField[\s\S]*expectedPackage: resolvedAppPackage[\s\S]*expectedResourceId: clearTarget\.resourceId[\s\S]*expectedHint: clearTarget\.hint[\s\S]*failClosed: true/,
+  "search clearing must pass the verified package and field identity to the native mutation",
+);
+assert.match(
+  androidDaemonToolHelpersSource,
+  /expectedPackage\?: string[\s\S]*type: "android_clear_field"[\s\S]*expectedResourceId: options\.expectedResourceId[\s\S]*if \(options\.failClosed\)[\s\S]*no key fallback was sent/,
+  "bound clears must fail closed without an unverified keyevent fallback",
+);
+assert.match(
+  daemonShellSource,
   /isFocused = focusResult\.ok && focusResultPackage === resolvedAppPackage && focusedField\.focused[\s\S]*focusedFieldIsSearch = isFocused && isFocusedSearchField\(focusedField\)/,
   "post-tap search semantics must be gated by the package-bound focus result",
 );

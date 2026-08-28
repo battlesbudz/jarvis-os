@@ -1020,10 +1020,24 @@ class JarvisAccessibilityService : AccessibilityService() {
      *   KEYCODE_CTRL_LEFT=113, KEYCODE_A=29, KEYCODE_DEL=67.
      *   Verified by fresh node refresh after the keyevent sequence.
      */
-    fun clearField(): ClearFieldResult {
-        val root = rootInActiveWindow
-        val focused = findFocusedEditable(root) ?: findFirstEditable(root)
-            ?: return ClearFieldResult(false, "none", false, false, "No editable field found — tap a text input first")
+    fun clearField(
+        expectedPackage: String? = null,
+        expectedResourceId: String? = null,
+        expectedHint: String? = null
+    ): ClearFieldResult {
+        val targetBound = expectedPackage != null || expectedResourceId != null || expectedHint != null
+        fun findClearTarget(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            if (root == null || (expectedPackage != null && root.packageName?.toString() != expectedPackage)) return null
+            val node = if (targetBound) findFocusedEditable(root)
+                else findFocusedEditable(root) ?: findFirstEditable(root)
+            if (node == null) return null
+            if (expectedResourceId != null && node.viewIdResourceName != expectedResourceId) return null
+            val nodeHint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) node.hintText?.toString() else null
+            if (expectedHint != null && nodeHint != expectedHint) return null
+            return node
+        }
+        val focused = findClearTarget(rootInActiveWindow)
+            ?: return ClearFieldResult(false, "none", false, false, "Focused field no longer matches the expected package and identity")
 
         // Check if the field already has content to clear.
         // Only skip clearing if we can positively confirm the text is empty (not null).
@@ -1125,7 +1139,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         // caused the view hierarchy to rebuild.  Re-traverse from the root.
         Thread.sleep(100)
         val freshRoot = rootInActiveWindow
-        val freshNode = findFocusedEditable(freshRoot) ?: findFirstEditable(freshRoot)
+        val freshNode = findClearTarget(freshRoot)
         if (freshNode != null) {
             val freshArgs = Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
@@ -1156,6 +1170,9 @@ class JarvisAccessibilityService : AccessibilityService() {
         // ignore accessibility actions but respond to raw key injection.
         // input keyevent: KEYCODE_CTRL_LEFT=113, KEYCODE_A=29, KEYCODE_DEL=67.
         Thread.sleep(100)
+        if (targetBound && findClearTarget(rootInActiveWindow) == null) {
+            return ClearFieldResult(false, "target_changed", false, false, "Focused field changed before keyevent clear")
+        }
         try {
             // Step 4a: Select all via Ctrl+A chord
             val ctrlAProc = Runtime.getRuntime().exec(
@@ -1170,7 +1187,7 @@ class JarvisAccessibilityService : AccessibilityService() {
                 if (delExited && delProc.exitValue() == 0) {
                     Thread.sleep(80)
                     val verifyRoot = rootInActiveWindow
-                    val verifyNode = findFocusedEditable(verifyRoot) ?: findFirstEditable(verifyRoot)
+                    val verifyNode = findClearTarget(verifyRoot)
                     if (verifyNode != null) {
                         verifyNode.refresh()
                         val textAfterKey = verifyNode.text?.toString()

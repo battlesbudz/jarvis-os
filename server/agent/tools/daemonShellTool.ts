@@ -1214,11 +1214,17 @@ export const androidSearchInAppTool: AgentTool = {
       (await readVerifiedFocusedSearchField()) !== null;
 
     const safelyClearFocusedSearchField = async (steps: string[]): Promise<boolean> => {
-      if (!(await focusedSearchFieldStillVerified())) {
+      const clearTarget = await readVerifiedFocusedSearchField();
+      if (!clearTarget) {
         steps.push("Search-field identity check failed before clear; no text was changed.");
         return false;
       }
-      if (!(await clearFocusedAndroidField(ctx.userId, steps))) return false;
+      if (!(await clearFocusedAndroidField(ctx.userId, steps, {
+        expectedPackage: resolvedAppPackage,
+        expectedResourceId: clearTarget.resourceId,
+        expectedHint: clearTarget.hint,
+        failClosed: true,
+      }))) return false;
       if (!(await focusedSearchFieldStillVerified())) {
         steps.push("Search-field identity check failed after clear; input was aborted.");
         return false;

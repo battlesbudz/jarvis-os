@@ -107,10 +107,21 @@ export function extractFocusedFieldText(data: unknown): { focused: boolean; text
 export async function clearFocusedAndroidField(
   userId: string,
   steps: string[],
-  options: { detailedSuccess?: boolean } = {},
+  options: {
+    detailedSuccess?: boolean;
+    expectedPackage?: string;
+    expectedResourceId?: string;
+    expectedHint?: string;
+    failClosed?: boolean;
+  } = {},
 ): Promise<boolean> {
   steps.push("Clearing field (android_clear_field)...");
-  const clearResult = await sendDaemonOp(userId, { type: "android_clear_field" }, 8000);
+  const clearResult = await sendDaemonOp(userId, {
+    type: "android_clear_field",
+    expectedPackage: options.expectedPackage,
+    expectedResourceId: options.expectedResourceId,
+    expectedHint: options.expectedHint,
+  }, 8000);
   if (clearResult.ok) {
     const clearData = (clearResult.data || {}) as Record<string, unknown>;
     const clearVerified = clearData.verifiedEmpty === true || clearData.fieldWasAlreadyEmpty === true;
@@ -123,6 +134,11 @@ export async function clearFocusedAndroidField(
     }
     await sleep(150);
     return clearVerified;
+  }
+
+  if (options.failClosed) {
+    steps.push(`android_clear_field rejected the bound target (${clearResult.error || "unknown"}); no key fallback was sent.`);
+    return false;
   }
 
   steps.push(`android_clear_field failed (${clearResult.error || "unknown"}); trying select-all + delete fallback...`);

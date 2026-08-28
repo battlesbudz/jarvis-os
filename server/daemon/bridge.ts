@@ -90,7 +90,7 @@ export type DaemonOp =
   | { type: "android_view_hierarchy" }
   | { type: "android_paste_text"; text: string; fieldDescription?: string; forceClipboardOnly?: boolean }
   | { type: "android_get_focused_field" }
-  | { type: "android_clear_field" }
+  | { type: "android_clear_field"; expectedPackage?: string; expectedResourceId?: string; expectedHint?: string }
   | { type: "android_start_training"; label: string; timeoutMs?: number }
   | { type: "android_get_display_size" };
 
