@@ -498,6 +498,11 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
+  /const focusSnapshotProbe = await sendDaemonOp[\s\S]*focusSnapshotProbe\.ok[\s\S]*typeof focusSnapshotData\?\.package !== "string"[\s\S]*typeof focusSnapshotData\.screen !== "object"[\s\S]*error_at_step: "daemon_update_required"[\s\S]*Update or reinstall the Jarvis Android app/,
+  "in-app search must reject legacy daemon focus payloads with an actionable update requirement before mutation",
+);
+assert.match(
+  inAppSearchSource,
   /const openedPackage = \(openResult\.data[\s\S]*acceptedAppPackages\.has\(openedPackage\)[\s\S]*resolvedAppPackage = openedPackage/,
   "in-app search must honor the package actually resolved by Android's app-opening fallback",
 );

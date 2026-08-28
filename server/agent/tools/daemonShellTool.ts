@@ -1508,6 +1508,28 @@ export const androidSearchInAppTool: AgentTool = {
       screenRaw = JSON.stringify(r.data || "");
     }
 
+    // Safe focus-bound mutations require the atomic focus snapshot added by the
+    // current daemon. Older paired APKs return a successful legacy payload without
+    // package/screen; fail explicitly before any search tap or text mutation.
+    const focusSnapshotProbe = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+    if (focusSnapshotProbe.ok) {
+      const focusSnapshotData = focusSnapshotProbe.data as Record<string, unknown> | null;
+      if (typeof focusSnapshotData?.package !== "string" ||
+          !focusSnapshotData.screen || typeof focusSnapshotData.screen !== "object") {
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: resumeFromStep ?? 1,
+            error_at_step: "daemon_update_required",
+            error: "The connected Android daemon is too old for safe in-app search.",
+            suggestion: "Update or reinstall the Jarvis Android app, reconnect Android Device Control, and try the search again.",
+            steps: stepLog,
+          }),
+        };
+      }
+    }
+
     // Shared coords: populated by step 2 locate logic, used as fallback in step 3 tap loop.
     // Declared outside both step blocks so step 3 can reference them even when step 2 was skipped.
     let searchX: number | null = null;
