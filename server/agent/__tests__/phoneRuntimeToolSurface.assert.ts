@@ -506,6 +506,11 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
+  /let resultsLoaded = resumeFromStep === 5 && isResultsState\(screenRaw, false\)[\s\S]*if \(resultsLoaded\)[\s\S]*outcome: "already_loaded"[\s\S]*no submit action dispatched[\s\S]*function isResultsState\(raw: string, requireTransition = true\)[\s\S]*requireTransition \? hasNewResultEvidence : hasExistingResultEvidence/,
+  "step-5 resume must accept an already-loaded results state without requiring or submitting through a focused editor",
+);
+assert.match(
+  inAppSearchSource,
   /resume_from_step: 2[\s\S]{0,180}Do not call android_open_app_by_name/,
   "a failed search-bar tap must refresh coordinates without triggering a blocked background relaunch",
 );

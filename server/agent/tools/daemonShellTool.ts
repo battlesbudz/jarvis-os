@@ -2083,44 +2083,49 @@ export const androidSearchInAppTool: AgentTool = {
         }
         screenRaw = JSON.stringify(baseline.data || "");
       }
-      if (resumeFromStep === 5) {
-        // Reconstruct the nonstandard dedicated-search identity when possible;
-        // standard search resource IDs are verified directly by the final read.
-        await rebuildDedicatedSearchActivityFocus();
-      }
-      const finalSearchState = await readVerifiedFocusedSearchState();
-      const finalFieldTextMatches = typeof finalSearchState?.field.text === "string"
-        ? finalSearchState.field.text.trim() === searchQuery.trim()
-        : null;
-      const finalQueryVerified = finalSearchState !== null && (
-        finalFieldTextMatches === true ||
-        (finalFieldTextMatches === null && screenHasNewQueryEvidence(finalSearchState.screen))
-      );
-      if (!finalQueryVerified) {
-        return {
-          ok: false,
-          content: JSON.stringify({
+      let resultsLoaded = resumeFromStep === 5 && isResultsState(screenRaw, false);
+      if (resultsLoaded) {
+        stepLog.push({ step: 5, outcome: "already_loaded", detail: "Existing results state verified on step-5 resume; no submit action dispatched." });
+      } else {
+        if (resumeFromStep === 5) {
+          // Reconstruct the nonstandard dedicated-search identity when possible;
+          // standard search resource IDs are verified directly by the final read.
+          await rebuildDedicatedSearchActivityFocus();
+        }
+        const finalSearchState = await readVerifiedFocusedSearchState();
+        const finalFieldTextMatches = typeof finalSearchState?.field.text === "string"
+          ? finalSearchState.field.text.trim() === searchQuery.trim()
+          : null;
+        const finalQueryVerified = finalSearchState !== null && (
+          finalFieldTextMatches === true ||
+          (finalFieldTextMatches === null && screenHasNewQueryEvidence(finalSearchState.screen))
+        );
+        if (!finalQueryVerified) {
+          return {
             ok: false,
-            step_reached: 5,
-            error_at_step: "submit_search_target",
-            error: `The focused ${appName} search field or its query changed before submission, so Jarvis did not press Enter.`,
-            suggestion: "Retry android_search_in_app from step 4 so the query can be re-entered and verified immediately before submission.",
-            steps: stepLog,
-          }),
-        };
+            content: JSON.stringify({
+              ok: false,
+              step_reached: 5,
+              error_at_step: "submit_search_target",
+              error: `The focused ${appName} search field or its query changed before submission, so Jarvis did not press Enter.`,
+              suggestion: "Retry android_search_in_app from step 4 so the query can be re-entered and verified immediately before submission.",
+              steps: stepLog,
+            }),
+          };
+        }
+        // Primary: invoke the focused field's accessibility IME Search/Go action.
+        // If the field does not expose it, the visible submit-control fallback below
+        // remains available without relying on privileged input injection.
+        const enterResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "enter" }, 10000);
+        stepLog.push({
+          step: 5,
+          outcome: enterResult.ok ? "enter_dispatched" : "enter_failed",
+          detail: enterResult.ok ? JSON.stringify(enterResult.data || {}) : enterResult.error || "IME and keyevent submission failed",
+        });
+        await sleep(2500);
       }
-      // Primary: invoke the focused field's accessibility IME Search/Go action.
-      // If the field does not expose it, the visible submit-control fallback below
-      // remains available without relying on privileged input injection.
-      const enterResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "enter" }, 10000);
-      stepLog.push({
-        step: 5,
-        outcome: enterResult.ok ? "enter_dispatched" : "enter_failed",
-        detail: enterResult.ok ? JSON.stringify(enterResult.data || {}) : enterResult.error || "IME and keyevent submission failed",
-      });
-      await sleep(2500);
 
-      function isResultsState(raw: string): boolean {
+      function isResultsState(raw: string, requireTransition = true): boolean {
         const keyboardDismissed = !screenContains(raw, ["\"inputmethod\"", "inputmethod_service", "\"isFocused\":true", "\"focused\":true"]);
         const resultEvidence = [
           /search[_ -]?results?/i,
@@ -2129,7 +2134,9 @@ export const androidSearchInAppTool: AgentTool = {
           /no\s+results?/i,
           /[?&](?:q|query|search_query)=/i,
         ];
-        const hasNamedResultEvidence = resultEvidence.some((pattern) => pattern.test(raw) && !pattern.test(screenRaw));
+        const hasNamedResultEvidence = resultEvidence.some((pattern) =>
+          pattern.test(raw) && (!requireTransition || !pattern.test(screenRaw)),
+        );
         function collectResultStructure(serialized: string): { labels: Set<string>; containers: Set<string> } {
           const labels = new Set<string>();
           const containers = new Set<string>();
@@ -2166,18 +2173,22 @@ export const androidSearchInAppTool: AgentTool = {
         const newLabels = [...after.labels].filter((label) => !before.labels.has(label));
         const hasNewResultContainer = [...after.containers].some((container) => !before.containers.has(container));
         const hasNewResultEvidence = hasNamedResultEvidence || hasNewResultContainer || newLabels.length >= 2;
+        const hasExistingResultEvidence = hasNamedResultEvidence || (after.containers.size > 0 && after.labels.size >= 2);
         const isErrorDialog = screenContains(raw, ["network error", "something went wrong", "no connection", "retry"]) &&
           !screenContains(raw, SEARCH_KEYWORDS);
-        return !isErrorDialog && keyboardDismissed && hasNewResultEvidence;
+        return !isErrorDialog && keyboardDismissed && (
+          requireTransition ? hasNewResultEvidence : hasExistingResultEvidence
+        );
       }
 
-      const afterSearch = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      let resultsLoaded = false;
-      if (afterSearch.ok) {
-        const afterSearchRaw = JSON.stringify(afterSearch.data || "");
-        resultsLoaded = isResultsState(afterSearchRaw);
-        screenRaw = afterSearchRaw;
-        stepLog.push({ step: 5, outcome: "enter_sent", detail: `resultsLoaded=${resultsLoaded} after Enter` });
+      if (!resultsLoaded) {
+        const afterSearch = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        if (afterSearch.ok) {
+          const afterSearchRaw = JSON.stringify(afterSearch.data || "");
+          resultsLoaded = isResultsState(afterSearchRaw);
+          screenRaw = afterSearchRaw;
+          stepLog.push({ step: 5, outcome: "enter_sent", detail: `resultsLoaded=${resultsLoaded} after Enter` });
+        }
       }
 
       // Fallback: locate and tap a visible search/go button
