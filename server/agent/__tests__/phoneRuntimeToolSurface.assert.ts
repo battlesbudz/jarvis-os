@@ -485,8 +485,8 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /const fieldCleared = await safelyClearFocusedSearchField\(inputSteps\)[\s\S]*if \(!fieldCleared\)[\s\S]*error_at_step: "clear_search_field"[\s\S]*runAndroidTextInputFallback\(/,
-  "in-app search must safely clear any prior query before accessibility or paste input",
+  /const preInputSearchTarget = await readVerifiedFocusedSearchField\(\)[\s\S]*requiresExplicitClear = typeof preInputSearchTarget\?\.text === "string"[\s\S]*!requiresExplicitClear \|\| await safelyClearFocusedSearchField\(inputSteps\)[\s\S]*if \(!fieldCleared\)[\s\S]*error_at_step: "clear_search_field"[\s\S]*runAndroidTextInputFallback\(/,
+  "in-app search must use replacement-only typing for unreadable fields and require a verified clear before any paste fallback",
 );
 assert.match(
   inAppSearchSource,
@@ -515,7 +515,7 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /let resultsLoaded = resumeFromStep === 5[\s\S]*await isVerifiedResultsState\(screenRaw, false\)[\s\S]*if \(resultsLoaded\)[\s\S]*outcome: "already_loaded"[\s\S]*no submit action dispatched[\s\S]*async function isVerifiedResultsState[\s\S]*screenMatchesResolvedApp\(raw\)[\s\S]*if \(!requireTransition\)[\s\S]*extractCompactScreenVisibleValues\(compactScreen\)[\s\S]*containsBoundedSignal\(normalizeVisibleText\(value\), normalizedQuery\)[\s\S]*if \(!resumedQueryVisible\) return false[\s\S]*type: "android_get_focused_field"[\s\S]*if \(!focusedField\.focused\) return true[\s\S]*isFocusedSearchField\(focusedField\)[\s\S]*focusedField\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*hasNamedResultsEvidence\(raw, requireTransition\)[\s\S]*isVerifiedResultsState\(afterSearchRaw\)[\s\S]*isVerifiedResultsState\(retryRaw\)/,
+  /let resultsLoaded = resumeFromStep === 5[\s\S]*await isVerifiedResultsState\(screenRaw, false\)[\s\S]*if \(resultsLoaded\)[\s\S]*outcome: "already_loaded"[\s\S]*no submit action dispatched[\s\S]*async function isVerifiedResultsState[\s\S]*screenMatchesResolvedApp\(raw\)[\s\S]*if \(!requireTransition\)[\s\S]*extractCompactScreenVisibleValues\(compactScreen\)[\s\S]*containsBoundedSignal\(normalizeVisibleText\(value\), normalizedQuery\)[\s\S]*if \(!resumedQueryVisible\) return false[\s\S]*type: "android_get_focused_field"[\s\S]*if \(!focusedField\.focused\) return true[\s\S]*isFocusedSearchField\(focusedField\)[\s\S]*focusedField\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*requireTransition \|\| hasNamedResultsEvidence\(raw, requireTransition\)[\s\S]*isVerifiedResultsState\(afterSearchRaw\)[\s\S]*isVerifiedResultsState\(retryRaw\)/,
   "all results paths must reject focused typeahead editors; step-5 resume may accept already-loaded results without submitting",
 );
 assert.match(

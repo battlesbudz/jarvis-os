@@ -1876,7 +1876,12 @@ export const androidSearchInAppTool: AgentTool = {
       const inputSteps: string[] = [];
       // Search fields may retain the previous query. Clear first so every input
       // path replaces the query instead of a paste fallback appending to it.
-      const fieldCleared = await safelyClearFocusedSearchField(inputSteps);
+      const preInputSearchTarget = await readVerifiedFocusedSearchField();
+      const requiresExplicitClear = typeof preInputSearchTarget?.text === "string";
+      if (!requiresExplicitClear) {
+        inputSteps.push("Focused search text is unavailable; using non-appending android_type replacement before any guarded paste fallback.");
+      }
+      const fieldCleared = !requiresExplicitClear || await safelyClearFocusedSearchField(inputSteps);
       if (!fieldCleared) {
         stepLog.push({ step: 4, outcome: "failed", detail: inputSteps.join(" | ") });
         emitProgress(`Could not safely clear the search field ✗`);
@@ -2180,7 +2185,9 @@ export const androidSearchInAppTool: AgentTool = {
         const focusedSearchQueryMatches = isFocusedSearchField(focusedField) &&
           typeof focusedField.text === "string" &&
           focusedField.text.trim() === searchQuery.trim();
-        return focusedSearchQueryMatches && hasNamedResultsEvidence(raw, requireTransition);
+        return focusedSearchQueryMatches && (
+          requireTransition || hasNamedResultsEvidence(raw, requireTransition)
+        );
       }
 
       if (!resultsLoaded) {
