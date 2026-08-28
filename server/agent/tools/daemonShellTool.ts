@@ -1768,14 +1768,36 @@ export const androidSearchInAppTool: AgentTool = {
           .replace(/[^\p{L}\p{N}]+/gu, " ")
           .trim()
           .replace(/\s+/g, " ");
+        const compactScreen = afterType.data && typeof afterType.data === "object"
+          ? afterType.data as Record<string, unknown>
+          : {};
+        const visibleValues: string[] = [];
+        if (Array.isArray(compactScreen.text)) {
+          visibleValues.push(...compactScreen.text.filter((value): value is string => typeof value === "string"));
+        } else if (typeof compactScreen.text === "string") {
+          visibleValues.push(compactScreen.text);
+        }
+        if (Array.isArray(compactScreen.clickable)) {
+          for (const item of compactScreen.clickable) {
+            if (typeof item === "string") {
+              visibleValues.push(item);
+            } else if (item && typeof item === "object") {
+              const clickable = item as Record<string, unknown>;
+              if (typeof clickable.label === "string") visibleValues.push(clickable.label);
+              if (typeof clickable.content_desc === "string") visibleValues.push(clickable.content_desc);
+            }
+          }
+        }
         const normalizedQuery = normalizeVisibleText(searchQuery);
-        const normalizedScreen = normalizeVisibleText(afterTypeRaw);
         const screenContainsQuery = normalizedQuery.length > 0 &&
-          ` ${normalizedScreen} `.includes(` ${normalizedQuery} `);
+          visibleValues.some((value) =>
+            ` ${normalizeVisibleText(value)} `.includes(` ${normalizedQuery} `),
+          );
         // When the focused field exposes its value, require an exact replacement.
         // Only use compact screen text as a fallback when field text is unavailable,
-        // and require the complete normalized query as a bounded phrase. A single
-        // incidental token elsewhere on screen must not authorize submission.
+        // and require the complete normalized query as a bounded phrase in visible
+        // label only. JSON keys, package/activity metadata, and tokens split across
+        // unrelated elements are not evidence.
         typeVerified = typeVerified || (focusedFieldTextMatches === null && screenContainsQuery);
         screenRaw = afterTypeRaw;
       }
