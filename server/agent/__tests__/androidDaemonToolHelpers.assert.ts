@@ -13,7 +13,10 @@ assert.ok(
   "helper should preserve the per-turn screenshot budget cap",
 );
 assert.ok(
-  helperSource.includes('sendDaemonOp(userId, { type: "android_type", text }, 10000)') &&
+  helperSource.includes('type: "android_type", text,') &&
+    helperSource.includes("expectedPackage: options.expectedPackage") &&
+    helperSource.includes("expectedResourceId: options.expectedResourceId") &&
+    helperSource.includes("expectedHint: options.expectedHint") &&
     helperSource.includes('type: "android_paste_text"') &&
     helperSource.includes('methodUsed = `android_paste_text:${retryMethod}:L3`') &&
     helperSource.includes('options.beforePaste && !(await options.beforePaste())') &&
