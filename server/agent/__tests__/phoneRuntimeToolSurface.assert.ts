@@ -378,6 +378,11 @@ assert.match(runtimeSource, /type: ["']android_notification_open["']/);
 assert.match(bridgeSource, /type: ["']android_notification_open["']/);
 assert.match(daemonShellSource, /type: ["']android_press_key["'], key: ["']enter["']/);
 assert.match(daemonShellSource, /if \(!screenRaw\)[\s\S]*submit_search_baseline/);
+assert.match(
+  daemonShellSource,
+  /readVerifiedFocusedSearchState[\s\S]*focusCheck[\s\S]*focusPackage !== resolvedAppPackage[\s\S]*isFocusedSearchField/,
+  "every focused-search read must bind the focused field to the atomically reported target package",
+);
 assert.doesNotMatch(
   daemonShellSource,
   /relocateSubmitElement|parseSubmitElement|button_tap_fallback|Retrying submission via search button/,
@@ -385,7 +390,7 @@ assert.doesNotMatch(
 );
 assert.match(
   daemonShellSource,
-  /relocateSearchElement[\s\S]*screenMatchesResolvedApp\(r\.data\)[\s\S]*attempt === 2[\s\S]*screenMatchesResolvedApp\(swipeTarget\.data\)[\s\S]*tapTarget[\s\S]*screenMatchesResolvedApp\(tapTarget\.data\)/,
+  /relocateSearchElement[\s\S]*screenMatchesResolvedApp\(r\.data\)[\s\S]*attempt === 2[\s\S]*screenMatchesResolvedApp\(swipeTarget\.data\)[\s\S]*tapTarget[\s\S]*screenMatchesResolvedApp\(tapTarget\.data\)[\s\S]*beforeFocusPackage !== resolvedAppPackage[\s\S]*focusResultPackage === resolvedAppPackage/,
   "resumed discovery, recovery swipes, and cached-coordinate taps must validate the foreground app before acting",
 );
 const androidApprovalGateStart = routesSource.indexOf("const androidRouteApprovalRequired");

@@ -1195,6 +1195,8 @@ export const androidSearchInAppTool: AgentTool = {
       if (!screenCheck.ok || !screenMatchesResolvedApp(screenCheck.data)) return null;
       const focusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
       if (!focusCheck.ok) return null;
+      const focusPackage = (focusCheck.data as Record<string, unknown> | null)?.package;
+      if (typeof focusPackage !== "string" || focusPackage !== resolvedAppPackage) return null;
       const focusedField = extractFocusedFieldText(focusCheck.data);
       if (isFocusedSearchField(focusedField)) return { field: focusedField, screen: screenCheck.data };
       if (!dedicatedSearchActivityFocus || !matchesFocusIdentity(focusedField, dedicatedSearchActivityFocus)) {
@@ -1768,6 +1770,20 @@ export const androidSearchInAppTool: AgentTool = {
         screenRaw = JSON.stringify(tapTarget.data || "");
 
         const beforeFocusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+        const beforeFocusPackage = (beforeFocusResult.data as Record<string, unknown> | null)?.package;
+        if (!beforeFocusResult.ok || beforeFocusPackage !== resolvedAppPackage) {
+          return {
+            ok: false,
+            content: JSON.stringify({
+              ok: false,
+              step_reached: 3,
+              error_at_step: "tap_search_focus_package",
+              error: `${appName} is no longer the atomically verified foreground app, so Jarvis did not tap the search coordinates.`,
+              suggestion: "Bring the requested app back to the foreground and retry from step 2.",
+              steps: stepLog,
+            }),
+          };
+        }
         const beforeFocus = extractFocusedFieldText(beforeFocusResult.data);
 
         if (tapX !== null && tapY !== null) {
@@ -1782,8 +1798,9 @@ export const androidSearchInAppTool: AgentTool = {
         // text/clickable snapshot, so it cannot prove that an input owns focus. Ask
         // the accessibility service for the focused editable field directly.
         const focusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+        const focusResultPackage = (focusResult.data as Record<string, unknown> | null)?.package;
         const focusedField = extractFocusedFieldText(focusResult.data);
-        const isFocused = focusResult.ok && focusedField.focused;
+        const isFocused = focusResult.ok && focusResultPackage === resolvedAppPackage && focusedField.focused;
         const focusedFieldIsSearch = isFocusedSearchField(focusedField);
         const focusChanged = beforeFocusResult.ok && isFocused && (
           !beforeFocus.focused ||
