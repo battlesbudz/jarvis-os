@@ -208,6 +208,15 @@ const notificationSummarySource = fs.readFileSync(path.resolve("server/agent/and
 const daemonActionSource = fs.readFileSync(path.resolve("server/agent/tools/daemon.ts"), "utf8");
 const actionOntologySource = fs.readFileSync(path.resolve("server/agent/actionOntology.ts"), "utf8");
 
+for (const compactScreenSource of [
+  androidAccessibilitySource,
+  pluginAndroidAccessibilitySource,
+  standaloneAndroidAccessibilitySource,
+]) {
+  assert.match(compactScreenSource, /safeLabel != null && safeLabel\.length > 1\) \{/);
+  assert.doesNotMatch(compactScreenSource, /!texts\.contains\(safeLabel\)/);
+}
+
 assert.match(
   routesSource,
   /androidActive \|\| await hasDaemonPairing\(userId, "android"\)/,
@@ -444,10 +453,10 @@ assert.match(
   /const openedPackage = \(openResult\.data[\s\S]*acceptedAppPackages\.has\(openedPackage\)[\s\S]*resolvedAppPackage = openedPackage/,
   "in-app search must honor the package actually resolved by Android's app-opening fallback",
 );
-assert.match(
+assert.doesNotMatch(
   inAppSearchSource,
-  /rebuildDedicatedSearchActivityFocus[\s\S]*initialField\.resourceId[\s\S]*isDedicatedSearchActivity[\s\S]*dedicatedSearchActivityFocus = identity[\s\S]*if \(resumeFromStep === 4\)[\s\S]*await rebuildDedicatedSearchActivityFocus\(\)/,
-  "step-4 resume must rebuild stable focus identity inside a dedicated search activity",
+  /rebuildDedicatedSearchActivityFocus/,
+  "step-4/5 resume must not bless the current same-app editor without a fresh tap transition",
 );
 assert.match(
   inAppSearchSource,

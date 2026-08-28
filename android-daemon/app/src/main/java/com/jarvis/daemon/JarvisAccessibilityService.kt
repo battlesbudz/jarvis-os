@@ -699,7 +699,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
         val safeLabel = if (sensitive && !label.isNullOrBlank()) SCREEN_CONTEXT_REDACTED else label
         val safeDesc = if (sensitive && !desc.isNullOrBlank()) SCREEN_CONTEXT_REDACTED else (desc ?: "")
-        if (safeLabel != null && safeLabel.length > 1 && !texts.contains(safeLabel)) {
+        if (safeLabel != null && safeLabel.length > 1) {
             texts.add(safeLabel)
         }
         if (node.isClickable && (safeLabel != null || resourceId.isNotEmpty() || className.isNotEmpty())) {
