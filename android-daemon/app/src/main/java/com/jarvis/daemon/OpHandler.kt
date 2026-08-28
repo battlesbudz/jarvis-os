@@ -654,6 +654,7 @@ object OpHandler {
             .put("className", info.className ?: JSONObject.NULL)
             .put("isPassword", info.isPassword)
             .put("package", info.packageName ?: JSONObject.NULL)
+            .put("screen", JSONObject(info.screen))
 
         return OpResult(ok = true, data = data)
     }

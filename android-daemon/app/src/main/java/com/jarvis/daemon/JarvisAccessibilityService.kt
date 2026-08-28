@@ -659,8 +659,9 @@ class JarvisAccessibilityService : AccessibilityService() {
     fun captureScreenContext(): ScreenContextSnapshot =
         ScreenContextEngine(this).capture()
 
-    fun readScreenContent(): String {
-        val root = rootInActiveWindow
+    fun readScreenContent(): String = buildCompactScreen(rootInActiveWindow)
+
+    private fun buildCompactScreen(root: AccessibilityNodeInfo?): String {
         val packageName = root?.packageName?.toString() ?: ""
         val activityName = root?.className?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: packageName
 
@@ -1192,15 +1193,17 @@ class JarvisAccessibilityService : AccessibilityService() {
         val resourceId: String?,
         val className: String?,
         val isPassword: Boolean,
-        val packageName: String?
+        val packageName: String?,
+        val screen: String
     )
 
     fun getFocusedFieldInfo(): FocusedFieldInfo {
         val root = rootInActiveWindow
-            ?: return FocusedFieldInfo(false, null, null, null, null, false, null)
+            ?: return FocusedFieldInfo(false, null, null, null, null, false, null, buildCompactScreen(null))
         val packageName = root.packageName?.toString()
+        val compactScreen = buildCompactScreen(root)
         val node = findFocusedEditable(root)
-            ?: return FocusedFieldInfo(false, null, null, null, null, false, packageName)
+            ?: return FocusedFieldInfo(false, null, null, null, null, false, packageName, compactScreen)
         val hint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             node.hintText?.toString()
         } else null
@@ -1211,7 +1214,8 @@ class JarvisAccessibilityService : AccessibilityService() {
             resourceId = node.viewIdResourceName,
             className = node.className?.toString(),
             isPassword = node.isPassword,
-            packageName = packageName
+            packageName = packageName,
+            screen = compactScreen
         )
     }
 

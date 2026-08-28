@@ -380,7 +380,7 @@ assert.match(daemonShellSource, /type: ["']android_press_key["'], key: ["']enter
 assert.match(daemonShellSource, /if \(!screenRaw\)[\s\S]*submit_search_baseline/);
 assert.match(
   daemonShellSource,
-  /readVerifiedFocusedSearchState[\s\S]*focusCheck[\s\S]*focusPackage !== resolvedAppPackage[\s\S]*isFocusedSearchField/,
+  /readVerifiedFocusedSearchState[\s\S]*focusData\?\.screen[\s\S]*focusPackage !== resolvedAppPackage[\s\S]*screenMatchesResolvedApp\(focusScreen\)[\s\S]*isFocusedSearchField/,
   "every focused-search read must bind the focused field to the atomically reported target package",
 );
 assert.match(
@@ -536,7 +536,7 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /let resultsLoaded = resumeFromStep === 5[\s\S]*await isVerifiedResultsState\(screenRaw, false\)[\s\S]*if \(resultsLoaded\)[\s\S]*outcome: "already_loaded"[\s\S]*no submit action dispatched[\s\S]*async function isVerifiedResultsState[\s\S]*screenMatchesResolvedApp\(raw\)[\s\S]*if \(!requireTransition\)[\s\S]*extractCompactScreenVisibleValues\(compactScreen\)[\s\S]*containsBoundedSignal\(normalizeVisibleText\(value\), normalizedQuery\)[\s\S]*if \(!resumedQueryVisible\) return false[\s\S]*type: "android_get_focused_field"[\s\S]*focusPackage[\s\S]*focusPackage !== resolvedAppPackage[\s\S]*if \(focusedField\.focused\) return false[\s\S]*postFocusScreen[\s\S]*screenMatchesResolvedApp\(postFocusScreen\.data\)[\s\S]*isResultsState\(postFocusRaw, requireTransition\)[\s\S]*postFocusQueryVisible[\s\S]*return true[\s\S]*isVerifiedResultsState\(afterSearchRaw\)/,
+  /let resultsLoaded = resumeFromStep === 5[\s\S]*await isVerifiedResultsState\(screenRaw, false\)[\s\S]*if \(resultsLoaded\)[\s\S]*outcome: "already_loaded"[\s\S]*no submit action dispatched[\s\S]*async function isVerifiedResultsState[\s\S]*screenMatchesResolvedApp\(raw\)[\s\S]*type: "android_get_focused_field"[\s\S]*focusData\?\.screen[\s\S]*focusPackage !== resolvedAppPackage[\s\S]*screenMatchesResolvedApp\(focusScreen\)[\s\S]*isResultsState\(focusScreenRaw, requireTransition\)[\s\S]*if \(!requireTransition\)[\s\S]*extractCompactScreenVisibleValues\(compactScreen\)[\s\S]*if \(!resumedQueryVisible\) return false[\s\S]*return !focusedField\.focused[\s\S]*isVerifiedResultsState\(afterSearchRaw\)/,
   "all results paths must reject focused typeahead editors; step-5 resume may accept already-loaded results without submitting",
 );
 assert.match(

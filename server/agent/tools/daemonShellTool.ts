@@ -1189,21 +1189,21 @@ export const androidSearchInAppTool: AgentTool = {
       screen: unknown;
     };
     const readVerifiedFocusedSearchState = async (): Promise<VerifiedFocusedSearchState | null> => {
-      // Package verification precedes every focus fast path; the final focus read
-      // remains the last operation before the caller clears or types.
-      const screenCheck = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      if (!screenCheck.ok || !screenMatchesResolvedApp(screenCheck.data)) return null;
+      // Focus, package, and compact screen are captured from one accessibility root.
       const focusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
       if (!focusCheck.ok) return null;
-      const focusPackage = (focusCheck.data as Record<string, unknown> | null)?.package;
-      if (typeof focusPackage !== "string" || focusPackage !== resolvedAppPackage) return null;
+      const focusData = focusCheck.data as Record<string, unknown> | null;
+      const focusPackage = focusData?.package;
+      const focusScreen = focusData?.screen;
+      if (typeof focusPackage !== "string" || focusPackage !== resolvedAppPackage ||
+          !focusScreen || typeof focusScreen !== "object" || !screenMatchesResolvedApp(focusScreen)) return null;
       const focusedField = extractFocusedFieldText(focusCheck.data);
-      if (isFocusedSearchField(focusedField)) return { field: focusedField, screen: screenCheck.data };
+      if (isFocusedSearchField(focusedField)) return { field: focusedField, screen: focusScreen };
       if (!dedicatedSearchActivityFocus || !matchesFocusIdentity(focusedField, dedicatedSearchActivityFocus)) {
         return null;
       }
-      return isDedicatedSearchActivity(screenCheck.data)
-        ? { field: focusedField, screen: screenCheck.data }
+      return isDedicatedSearchActivity(focusScreen)
+        ? { field: focusedField, screen: focusScreen }
         : null;
     };
 
@@ -2178,40 +2178,27 @@ export const androidSearchInAppTool: AgentTool = {
 
       async function isVerifiedResultsState(raw: string, requireTransition = true): Promise<boolean> {
         if (!screenMatchesResolvedApp(raw) || !isResultsState(raw, requireTransition)) return false;
-        let resumedQueryVisible = false;
+        const focus = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+        if (!focus.ok) return false;
+        const focusData = focus.data as Record<string, unknown> | null;
+        const focusPackage = focusData?.package;
+        const focusScreen = focusData?.screen;
+        if (typeof focusPackage !== "string" || focusPackage !== resolvedAppPackage ||
+            !focusScreen || typeof focusScreen !== "object" || !screenMatchesResolvedApp(focusScreen)) return false;
+        const focusScreenRaw = JSON.stringify(focusScreen);
+        if (!isResultsState(focusScreenRaw, requireTransition)) return false;
         if (!requireTransition) {
-          const compactScreen = parseCompactScreen(raw);
+          const compactScreen = parseCompactScreen(focusScreen);
           const normalizedQuery = normalizeVisibleText(searchQuery);
-          resumedQueryVisible = compactScreen !== null && normalizedQuery.length > 0 &&
+          const resumedQueryVisible = compactScreen !== null && normalizedQuery.length > 0 &&
             extractCompactScreenVisibleValues(compactScreen).some((value) =>
               containsBoundedSignal(normalizeVisibleText(value), normalizedQuery),
             );
           if (!resumedQueryVisible) return false;
         }
-        const focus = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
-        if (!focus.ok) return false;
-        const focusPackage = (focus.data as Record<string, unknown> | null)?.package;
-        if (typeof focusPackage !== "string" || focusPackage !== resolvedAppPackage) return false;
         const focusedField = extractFocusedFieldText(focus.data);
-        if (focusedField.focused) return false;
-
-        // The package-bound focus probe can outlive the snapshot above. Re-read
-        // and validate results after it so same-package navigation cannot make
-        // stale result evidence authorize Step 6.
-        const postFocusScreen = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-        if (!postFocusScreen.ok || !screenMatchesResolvedApp(postFocusScreen.data)) return false;
-        const postFocusRaw = JSON.stringify(postFocusScreen.data || "");
-        if (!isResultsState(postFocusRaw, requireTransition)) return false;
-        if (!requireTransition) {
-          const postFocusCompact = parseCompactScreen(postFocusScreen.data);
-          const normalizedQuery = normalizeVisibleText(searchQuery);
-          const postFocusQueryVisible = postFocusCompact !== null && normalizedQuery.length > 0 &&
-            extractCompactScreenVisibleValues(postFocusCompact).some((value) =>
-              containsBoundedSignal(normalizeVisibleText(value), normalizedQuery),
-            );
-          if (!postFocusQueryVisible) return false;
-        }
-        return true;
+        // A focused editor is ambiguous typeahead, even when labels resemble results.
+        return !focusedField.focused;
       }
 
       if (!resultsLoaded) {
