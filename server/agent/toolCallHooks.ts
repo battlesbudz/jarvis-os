@@ -22,6 +22,8 @@
 import type { ApprovalReceipt } from "./approvalReceipt";
 import { approvalReceiptCoversToolCall, createApprovalReceipt } from "./approvalReceipt";
 import { withApprovalMarkerForTool } from "./approvalMarkers";
+import type { AuthorityValidationResult } from "../core/runtime/trustedExecutionTypes";
+import type { TrustedExecutionReceipt } from "../core/runtime/trustedExecutionCompatibility";
 
 export type ToolCallHookContext = {
   toolName: string;
@@ -40,6 +42,12 @@ export type ToolCallHookContext = {
   signal?: AbortSignal;
   /** Scoped receipt from an already-approved top-level action. */
   approvalReceipt?: ApprovalReceipt;
+  /** Server-owned, fenced step receipt from the central Trusted Execution runtime. */
+  trustedExecutionReceipt?: TrustedExecutionReceipt;
+  /** Fresh database-backed validation for the referenced authority and step. */
+  trustedExecutionValidation?: AuthorityValidationResult;
+  /** True only for adapters whose stable authenticated ingress is enabled. */
+  trustedExecutionEnabled?: boolean;
 };
 
 // ── Handler return types ───────────────────────────────────────────────────────

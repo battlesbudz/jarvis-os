@@ -21,6 +21,7 @@ import { EventEmitter } from "events";
 import { toolCallHooks, HOOK_PRIORITY } from "./toolCallHooks";
 import { evaluatePolicyForTool } from "./agentPolicyManager";
 import { requiresApproval, requiresHumanApproval } from "./approvalToolRisk";
+import { resolveApprovalCompatibility } from "../core/runtime/trustedExecutionCompatibility";
 export { requiresApproval, requiresHumanApproval, STRICTLY_IRREVERSIBLE_TOOLS } from "./approvalToolRisk";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -427,6 +428,20 @@ export async function listAllGates(userId: string): Promise<ApprovalGate[]> {
 toolCallHooks.register(
   (ctx) => {
     if (!requiresApproval(ctx.toolName, ctx.params)) return undefined;
+    const authorityReferenced = Boolean(ctx.trustedExecutionReceipt);
+    if (ctx.trustedExecutionEnabled || authorityReferenced) {
+      const compatibility = resolveApprovalCompatibility({
+        trustedExecutionEnabled: ctx.trustedExecutionEnabled === true,
+        authorityReferenced,
+        receipt: ctx.trustedExecutionReceipt,
+        authorityValidation: ctx.trustedExecutionValidation,
+        call: { userId: ctx.userId, toolName: ctx.toolName },
+      });
+      if (compatibility.mode === "trusted_execution") return undefined;
+      if (compatibility.mode === "block") {
+        return { block: true, blockReason: compatibility.reason };
+      }
+    }
     return {
       requireApproval: {
         title: `Approve: ${ctx.toolName}`,
