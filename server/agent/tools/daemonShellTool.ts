@@ -1801,7 +1801,7 @@ export const androidSearchInAppTool: AgentTool = {
         const focusResultPackage = (focusResult.data as Record<string, unknown> | null)?.package;
         const focusedField = extractFocusedFieldText(focusResult.data);
         const isFocused = focusResult.ok && focusResultPackage === resolvedAppPackage && focusedField.focused;
-        const focusedFieldIsSearch = isFocusedSearchField(focusedField);
+        const focusedFieldIsSearch = isFocused && isFocusedSearchField(focusedField);
         const focusChanged = beforeFocusResult.ok && isFocused && (
           !beforeFocus.focused ||
           (!!focusedField.resourceId && focusedField.resourceId !== beforeFocus.resourceId) ||

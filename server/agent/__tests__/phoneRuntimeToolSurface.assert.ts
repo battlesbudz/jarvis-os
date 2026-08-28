@@ -383,6 +383,11 @@ assert.match(
   /readVerifiedFocusedSearchState[\s\S]*focusCheck[\s\S]*focusPackage !== resolvedAppPackage[\s\S]*isFocusedSearchField/,
   "every focused-search read must bind the focused field to the atomically reported target package",
 );
+assert.match(
+  daemonShellSource,
+  /isFocused = focusResult\.ok && focusResultPackage === resolvedAppPackage && focusedField\.focused[\s\S]*focusedFieldIsSearch = isFocused && isFocusedSearchField\(focusedField\)/,
+  "post-tap search semantics must be gated by the package-bound focus result",
+);
 assert.doesNotMatch(
   daemonShellSource,
   /relocateSubmitElement|parseSubmitElement|button_tap_fallback|Retrying submission via search button/,
