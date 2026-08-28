@@ -12,6 +12,12 @@ export async function runAndroidTextInputFallback(
   text: string,
   fieldDescription: string,
   steps: string[],
+  options: {
+    beforePaste?: () => Promise<boolean>;
+    expectedPackage?: string;
+    expectedResourceId?: string;
+    expectedHint?: string;
+  } = {},
 ): Promise<AndroidTextInputFallbackResult> {
   let methodUsed: string | null = null;
   let inputOk = false;
@@ -19,7 +25,12 @@ export async function runAndroidTextInputFallback(
   let fieldText: string | null = null;
 
   steps.push("Level 1 - android_type (accessibility ACTION_SET_TEXT)...");
-  const typeResult = await sendDaemonOp(userId, { type: "android_type", text }, 10000);
+  const typeResult = await sendDaemonOp(userId, {
+    type: "android_type", text,
+    expectedPackage: options.expectedPackage,
+    expectedResourceId: options.expectedResourceId,
+    expectedHint: options.expectedHint,
+  }, 10000);
   if (typeResult.ok) {
     methodUsed = "android_type";
     inputOk = true;
@@ -29,24 +40,50 @@ export async function runAndroidTextInputFallback(
   }
 
   if (!inputOk) {
+    if (options.beforePaste && !(await options.beforePaste())) {
+      steps.push("Level 2 paste aborted because the target field could not be revalidated safely.");
+      return { methodUsed, inputOk, daemonVerified, fieldText };
+    }
     steps.push("Level 2 - android_paste_text (adb input text primary, clipboard fallback)...");
-    const pasteResult = await sendDaemonOp(userId, { type: "android_paste_text", text, fieldDescription }, 15000);
+    const pasteResult = await sendDaemonOp(userId, {
+      type: "android_paste_text", text, fieldDescription,
+      forceClipboardOnly: options.expectedPackage !== undefined,
+      expectedPackage: options.expectedPackage,
+      expectedResourceId: options.expectedResourceId,
+      expectedHint: options.expectedHint,
+    }, 15000);
     if (pasteResult.ok) {
       const pasteData = (pasteResult.data || {}) as Record<string, unknown>;
       const daemonMethod = typeof pasteData.method_used === "string" ? pasteData.method_used : "unknown";
       methodUsed = `android_paste_text:${daemonMethod}`;
-      inputOk = true;
-      daemonVerified = pasteData.verified === true;
       fieldText = typeof pasteData.field_text === "string" ? pasteData.field_text : null;
-      steps.push(`android_paste_text succeeded via ${daemonMethod}. Daemon verified: ${daemonVerified}.`);
+      daemonVerified = pasteData.verified === true || fieldText === text || fieldText?.trim() === text.trim();
+      // Only retry an unverified append-capable paste when the caller can first
+      // clear and revalidate the target. Other callers preserve the old behavior
+      // and leave final verification to their own focused-field checks.
+      inputOk = daemonVerified || !options.beforePaste;
+      steps.push(inputOk
+        ? `android_paste_text succeeded via ${daemonMethod}. Daemon verified: ${daemonVerified}.`
+        : `android_paste_text process succeeded via ${daemonMethod}, but text was not verified. Moving to Level 3.`);
     } else {
       steps.push(`android_paste_text failed (${pasteResult.error || "unknown"}). Moving to Level 3.`);
     }
   }
 
   if (!inputOk) {
+    if (options.beforePaste && !(await options.beforePaste())) {
+      steps.push("Level 3 paste retry aborted because the target field could not be revalidated safely.");
+      return { methodUsed, inputOk, daemonVerified, fieldText };
+    }
     steps.push("Level 3 - android_paste_text retry (clipboard-only path)...");
-    const retryResult = await sendDaemonOp(userId, { type: "android_paste_text", text, fieldDescription }, 15000);
+    const retryResult = await sendDaemonOp(
+      userId,
+      { type: "android_paste_text", text, fieldDescription, forceClipboardOnly: true,
+        expectedPackage: options.expectedPackage,
+        expectedResourceId: options.expectedResourceId,
+        expectedHint: options.expectedHint },
+      15000,
+    );
     if (retryResult.ok) {
       const retryData = (retryResult.data || {}) as Record<string, unknown>;
       const retryMethod = typeof retryData.method_used === "string" ? retryData.method_used : "unknown";
@@ -89,22 +126,38 @@ export function extractFocusedFieldText(data: unknown): { focused: boolean; text
 export async function clearFocusedAndroidField(
   userId: string,
   steps: string[],
-  options: { detailedSuccess?: boolean } = {},
-): Promise<void> {
+  options: {
+    detailedSuccess?: boolean;
+    expectedPackage?: string;
+    expectedResourceId?: string;
+    expectedHint?: string;
+    failClosed?: boolean;
+  } = {},
+): Promise<boolean> {
   steps.push("Clearing field (android_clear_field)...");
-  const clearResult = await sendDaemonOp(userId, { type: "android_clear_field" }, 8000);
+  const clearResult = await sendDaemonOp(userId, {
+    type: "android_clear_field",
+    expectedPackage: options.expectedPackage,
+    expectedResourceId: options.expectedResourceId,
+    expectedHint: options.expectedHint,
+  }, 8000);
   if (clearResult.ok) {
+    const clearData = (clearResult.data || {}) as Record<string, unknown>;
+    const clearVerified = clearData.verifiedEmpty === true || clearData.fieldWasAlreadyEmpty === true;
     if (options.detailedSuccess) {
-      const clearData = (clearResult.data || {}) as Record<string, unknown>;
       const clearMethod = typeof clearData.method === "string" ? clearData.method : "unknown";
-      const verified = clearData.verifiedEmpty === true;
       const alreadyEmpty = clearData.fieldWasAlreadyEmpty === true;
-      steps.push(alreadyEmpty ? "Field was already empty." : `Field cleared via ${clearMethod}. Verified empty: ${verified}.`);
+      steps.push(alreadyEmpty ? "Field was already empty." : `Field cleared via ${clearMethod}. Verified empty: ${clearVerified}.`);
     } else {
-      steps.push("Field cleared.");
+      steps.push(`Field clear dispatched. Verified empty: ${clearVerified}.`);
     }
     await sleep(150);
-    return;
+    return clearVerified;
+  }
+
+  if (options.failClosed) {
+    steps.push(`android_clear_field rejected the bound target (${clearResult.error || "unknown"}); no key fallback was sent.`);
+    return false;
   }
 
   steps.push(`android_clear_field failed (${clearResult.error || "unknown"}); trying select-all + delete fallback...`);
@@ -121,15 +174,20 @@ export async function clearFocusedAndroidField(
   const fallbackVerifyResult = await sendDaemonOp(userId, { type: "android_get_focused_field" }, 6000);
   if (!fallbackVerifyResult.ok) {
     steps.push("Select-all + delete fallback: verification inconclusive (android_get_focused_field failed). Proceeding with unknown clear status.");
-    return;
+    return false;
   }
 
   const fallbackRemainingText = extractFocusedFieldText(fallbackVerifyResult.data).text;
-  if (fallbackRemainingText === undefined || fallbackRemainingText === "") {
+  if (fallbackRemainingText === "") {
     steps.push("Select-all + delete fallback verified: field is empty.");
+    return true;
+  }
+  if (fallbackRemainingText === undefined) {
+    steps.push("Select-all + delete fallback: verification inconclusive because focused field text is unavailable.");
   } else {
     steps.push(`Select-all + delete fallback: field not empty after clear attempt. Remaining text: "${fallbackRemainingText}". Level 2/3 paste may append to existing content.`);
   }
+  return false;
 }
 
 const MAX_SCREENSHOTS_PER_TURN = 4;

@@ -519,6 +519,11 @@ type VerifyAndroidTextInputOptions = {
   onVerified?: () => void;
   onInconclusive?: () => void;
   onAlreadyVerified?: () => void;
+  beforeEscalating?: () => Promise<boolean>;
+  deferEscalationWhenFieldTextUnavailable?: boolean;
+  expectedPackage?: string;
+  expectedResourceId?: string;
+  expectedHint?: string;
 };
 
 async function verifyAndroidTextInput(options: VerifyAndroidTextInputOptions): Promise<{
@@ -551,24 +556,42 @@ async function verifyAndroidTextInput(options: VerifyAndroidTextInputOptions): P
         fieldText.includes(options.expectedText)
       );
 
-  if (!verified && methodUsed === "android_type") {
+  if (
+    !verified && methodUsed === "android_type" &&
+    !(options.deferEscalationWhenFieldTextUnavailable && fieldText === null)
+  ) {
     options.steps.push(options.escalationStep(fieldText));
     options.onEscalating?.();
-    const escalateResult = await sendDaemonOp(
-      options.userId,
-      { type: "android_paste_text", text: options.expectedText, fieldDescription: options.fieldDescription },
-      15000,
-    );
-    if (escalateResult.ok) {
-      const esc = (escalateResult.data || {}) as Record<string, unknown>;
-      const escMethod = typeof esc.method_used === "string" ? esc.method_used : "unknown";
-      methodUsed = `android_paste_text:${escMethod}:escalated`;
-      daemonVerified = esc.verified === true;
-      fieldText = typeof esc.field_text === "string" ? esc.field_text : null;
-      verified = daemonVerified;
-      options.steps.push(options.escalationSuccessStep(escMethod, verified));
+    const safeToEscalate = options.beforeEscalating
+      ? await options.beforeEscalating()
+      : true;
+    if (!safeToEscalate) {
+      options.steps.push("Paste escalation aborted because the existing field text could not be cleared safely.");
     } else {
-      options.steps.push(options.escalationFailureStep(escalateResult.error || "unknown"));
+      const escalateResult = await sendDaemonOp(
+        options.userId,
+        {
+          type: "android_paste_text",
+          text: options.expectedText,
+          fieldDescription: options.fieldDescription,
+          forceClipboardOnly: true,
+          expectedPackage: options.expectedPackage,
+          expectedResourceId: options.expectedResourceId,
+          expectedHint: options.expectedHint,
+        },
+        15000,
+      );
+      if (escalateResult.ok) {
+        const esc = (escalateResult.data || {}) as Record<string, unknown>;
+        const escMethod = typeof esc.method_used === "string" ? esc.method_used : "unknown";
+        methodUsed = `android_paste_text:${escMethod}:escalated`;
+        daemonVerified = esc.verified === true;
+        fieldText = typeof esc.field_text === "string" ? esc.field_text : null;
+        verified = daemonVerified;
+        options.steps.push(options.escalationSuccessStep(escMethod, verified));
+      } else {
+        options.steps.push(options.escalationFailureStep(escalateResult.error || "unknown"));
+      }
     }
   }
 
@@ -1081,9 +1104,178 @@ export const androidSearchInAppTool: AgentTool = {
     // understand what happened at each stage and which step to retry.
     const stepLog: Array<{ step: number; outcome: string; detail?: string }> = [];
 
+    const packageAliases: Record<string, string[]> = {
+      "com.facebook.katana": ["com.facebook.lite", "com.facebook.mlite"],
+      "com.facebook.lite": ["com.facebook.katana"],
+      "com.twitter.android": ["com.twitter.android.lite", "com.atebits.tweetie2"],
+      "com.twitter.android.lite": ["com.twitter.android"],
+      "com.reddit.frontpage": ["com.reddit.frontpage.debug"],
+      "com.tiktok.tiktok": ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"],
+      "com.ss.android.ugc.trill": ["com.tiktok.tiktok", "com.zhiliaoapp.musically"],
+      "com.google.android.apps.messaging": ["com.samsung.android.messaging"],
+      "com.samsung.android.messaging": ["com.google.android.apps.messaging"],
+      "com.microsoft.teams": ["com.microsoft.teams2"],
+      "com.snapchat.android": ["com.snapchat.android.debug"],
+      "com.discord": ["com.discord.development"],
+      "com.linkedin.android": ["com.linkedin.android.lite"],
+      "com.amazon.mShop.android.shopping": ["com.amazon.windowshop"],
+      "com.pinterest": ["com.pinterest.twa"],
+    };
+    const acceptedAppPackages = new Set([appPackage, ...(packageAliases[appPackage] ?? [])]);
+    let resolvedAppPackage: string | null = null;
+
+    const parseCompactScreen = (data: unknown): Record<string, unknown> | null => {
+      if (data && typeof data === "object") return data as Record<string, unknown>;
+      if (typeof data !== "string") return null;
+      try { return JSON.parse(data) as Record<string, unknown>; } catch { return null; }
+    };
+
+    const screenMatchesResolvedApp = (data: unknown): boolean => {
+      const packageName = parseCompactScreen(data)?.package;
+      if (typeof packageName !== "string" || !acceptedAppPackages.has(packageName)) return false;
+      if (resolvedAppPackage && packageName !== resolvedAppPackage) return false;
+      resolvedAppPackage = packageName;
+      return true;
+    };
+
     // Build the search-keyword list once     shared across steps 2 and 3
     const SEARCH_KEYWORDS = ["search", "find", "lookup", "query"];
     if (searchBarHint) SEARCH_KEYWORDS.unshift(searchBarHint.toLowerCase());
+
+    const containsBoundedSignal = (value: string, signal: string): boolean => {
+      const escaped = signal.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(?:^|[^\\p{L}\\p{N}])${escaped}(?:$|[^\\p{L}\\p{N}])`, "u").test(value);
+    };
+
+    const isFocusedSearchField = (
+      field: ReturnType<typeof extractFocusedFieldText>,
+    ): boolean => {
+      if (!field.focused) return false;
+      const resourceId = (field.resourceId ?? "").toLowerCase();
+      const localResourceId = resourceId.slice(resourceId.lastIndexOf("/") + 1);
+      const hint = (field.hint ?? "").toLowerCase();
+      const appSearchHint = APP_SEARCH_HINTS[appPackage];
+      const appResourceMatches = (appSearchHint?.resourceIds ?? []).some((signal) => {
+        const normalizedSignal = signal.toLowerCase();
+        return normalizedSignal.includes("/") || normalizedSignal.includes(":")
+          ? resourceId === normalizedSignal || resourceId.endsWith(normalizedSignal)
+          : containsBoundedSignal(localResourceId, normalizedSignal);
+      });
+      const textSignals = [
+        ...(appSearchHint?.extraKeywords ?? []),
+        ...SEARCH_KEYWORDS,
+      ];
+      const semanticTextMatches = textSignals.some((signal) =>
+        containsBoundedSignal(localResourceId, signal) || containsBoundedSignal(hint, signal),
+      );
+      return appResourceMatches || semanticTextMatches;
+    };
+
+    type FocusIdentity = { resourceId?: string; hint?: string };
+    let dedicatedSearchActivityFocus: FocusIdentity | null = null;
+
+    const isDedicatedSearchActivity = (data: unknown): boolean => {
+      const compactScreen = parseCompactScreen(data);
+      if (!compactScreen || !screenMatchesResolvedApp(compactScreen)) return false;
+      const raw = JSON.stringify(compactScreen);
+      return screenContains(raw, ["\"cancel\"", "cancel\""]) &&
+      !screenContains(raw, ["cancel subscription", "cancel order", "cancel payment", "cancel booking"]) &&
+      screenContains(raw, SEARCH_KEYWORDS);
+    };
+
+    const matchesFocusIdentity = (
+      field: ReturnType<typeof extractFocusedFieldText>,
+      identity: FocusIdentity,
+    ): boolean => field.focused &&
+      (!identity.resourceId || field.resourceId === identity.resourceId) &&
+      (!identity.hint || field.hint === identity.hint);
+
+    type VerifiedFocusedSearchState = {
+      field: ReturnType<typeof extractFocusedFieldText>;
+      screen: unknown;
+    };
+    const readVerifiedFocusedSearchState = async (): Promise<VerifiedFocusedSearchState | null> => {
+      // Focus, package, and compact screen are captured from one accessibility root.
+      const focusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+      if (!focusCheck.ok) return null;
+      const focusData = focusCheck.data as Record<string, unknown> | null;
+      const focusPackage = focusData?.package;
+      const focusScreen = focusData?.screen;
+      if (typeof focusPackage !== "string" || focusPackage !== resolvedAppPackage ||
+          !focusScreen || typeof focusScreen !== "object" || !screenMatchesResolvedApp(focusScreen)) return null;
+      const focusedField = extractFocusedFieldText(focusCheck.data);
+      if (isFocusedSearchField(focusedField)) return { field: focusedField, screen: focusScreen };
+      if (!dedicatedSearchActivityFocus || !matchesFocusIdentity(focusedField, dedicatedSearchActivityFocus)) {
+        return null;
+      }
+      return isDedicatedSearchActivity(focusScreen)
+        ? { field: focusedField, screen: focusScreen }
+        : null;
+    };
+
+    const readVerifiedFocusedSearchField = async (): Promise<ReturnType<typeof extractFocusedFieldText> | null> =>
+      (await readVerifiedFocusedSearchState())?.field ?? null;
+
+    const focusedSearchFieldStillVerified = async (): Promise<boolean> =>
+      (await readVerifiedFocusedSearchField()) !== null;
+
+    const safelyClearFocusedSearchField = async (steps: string[]): Promise<boolean> => {
+      const clearTarget = await readVerifiedFocusedSearchField();
+      if (!clearTarget) {
+        steps.push("Search-field identity check failed before clear; no text was changed.");
+        return false;
+      }
+      if (!(await clearFocusedAndroidField(ctx.userId, steps, {
+        expectedPackage: resolvedAppPackage,
+        expectedResourceId: clearTarget.resourceId,
+        expectedHint: clearTarget.hint,
+        failClosed: true,
+      }))) return false;
+      if (!(await focusedSearchFieldStillVerified())) {
+        steps.push("Search-field identity check failed after clear; input was aborted.");
+        return false;
+      }
+      return true;
+    };
+
+    const normalizeVisibleText = (value: string): string => value
+      .normalize("NFKC")
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, " ");
+
+    const extractCompactScreenVisibleValues = (data: unknown): string[] => {
+      const compactScreen = data && typeof data === "object"
+        ? data as Record<string, unknown>
+        : {};
+      const visibleValues: string[] = [];
+      if (Array.isArray(compactScreen.text)) {
+        visibleValues.push(...compactScreen.text.filter((value): value is string => typeof value === "string"));
+      } else if (typeof compactScreen.text === "string") {
+        visibleValues.push(compactScreen.text);
+      }
+      if (Array.isArray(compactScreen.clickable)) {
+        for (const item of compactScreen.clickable) {
+          if (typeof item === "string") {
+            visibleValues.push(item);
+          } else if (item && typeof item === "object") {
+            const clickable = item as Record<string, unknown>;
+            if (typeof clickable.label === "string") visibleValues.push(clickable.label);
+            if (typeof clickable.content_desc === "string") visibleValues.push(clickable.content_desc);
+          }
+        }
+      }
+      return visibleValues;
+    };
+
+    const countNormalizedVisibleValues = (data: unknown): Map<string, number> => {
+      const counts = new Map<string, number>();
+      for (const value of extractCompactScreenVisibleValues(data)) {
+        const normalizedValue = normalizeVisibleText(value);
+        counts.set(normalizedValue, (counts.get(normalizedValue) ?? 0) + 1);
+      }
+      return counts;
+    };
 
     // ── Helper: parse accessibility tree for the best search-bar candidate ────
     // Strategy (in priority order):
@@ -1198,54 +1390,15 @@ export const androidSearchInAppTool: AgentTool = {
       }
     }
 
-    function parseSubmitElement(raw: string): { found: boolean; x: number | null; y: number | null } {
-      try {
-        const parsed = JSON.parse(raw);
-        const nodes: Array<Record<string, unknown>> = [];
-        const collect = (value: unknown): void => {
-          if (!value || typeof value !== "object") return;
-          if (Array.isArray(value)) { value.forEach(collect); return; }
-          const node = value as Record<string, unknown>;
-          nodes.push(node);
-          Object.values(node).forEach(collect);
-        };
-        collect(parsed);
-        const ranked = nodes.map((node) => {
-          const serialized = JSON.stringify(node).toLowerCase();
-          const className = String(node.className || node.class_name || node.class || node.type || "").toLowerCase();
-          const label = String(node.text || node.label || node.contentDesc || node.contentdesc || node.content_desc || node.contentDescription || "").trim();
-          if (/edittext|textfield|textinput/.test(className)) return { node, score: -1 };
-          let score = 0;
-          if (/search_button|searchbutton|submit_search|search_icon|action_search/.test(serialized)) score += 12;
-          if (/^(?:search|go|submit)\b/i.test(label)) score += 10;
-          if (/search|submit|\bgo\b/.test(serialized)) score += 3;
-          if (/"(?:clickable|isclickable)"\s*:\s*true/.test(serialized)) score += 3;
-          if (/"(?:focused|isfocused)"\s*:\s*true/.test(serialized)) score -= 5;
-          return { node, score };
-        }).filter((entry) => entry.score > 5).sort((left, right) => right.score - left.score);
-        const coordinateMatch = ranked
-          .map((entry) => ({ ...entry, coords: extractNodeCoords(entry.node) }))
-          .find((entry) => entry.coords !== null);
-        return coordinateMatch?.coords
-          ? { found: true, x: coordinateMatch.coords.x, y: coordinateMatch.coords.y }
-          : { found: false, x: null, y: null };
-      } catch {
-        return { found: false, x: null, y: null };
-      }
-    }
-
     //        Helper: freshly locate the search element from current screen                            
     async function relocateSearchElement(): Promise<{ found: boolean; x: number | null; y: number | null; screenRaw: string; discoveredResourceId?: string }> {
       const r = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      if (!r.ok) return { found: false, x: null, y: null, screenRaw: "" };
+      if (!r.ok || !screenMatchesResolvedApp(r.data)) {
+        return { found: false, x: null, y: null, screenRaw: "" };
+      }
       const raw = JSON.stringify(r.data || "");
       const parsed = parseSearchElement(raw);
       return { ...parsed, screenRaw: raw };
-    }
-
-    async function relocateSubmitElement(): Promise<{ found: boolean; x: number | null; y: number | null }> {
-      const result = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      return result.ok ? parseSubmitElement(JSON.stringify(result.data || "")) : { found: false, x: null, y: null };
     }
 
     let screenRaw = "";
@@ -1267,6 +1420,19 @@ export const androidSearchInAppTool: AgentTool = {
           }),
         };
       }
+      const openedPackage = (openResult.data as Record<string, unknown> | null)?.package;
+      if (typeof openedPackage !== "string" || !acceptedAppPackages.has(openedPackage)) {
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 1,
+            error_at_step: "open_app_package",
+            error: `${appName} reported an unexpected resolved package after launch.`,
+          }),
+        };
+      }
+      resolvedAppPackage = openedPackage;
 
       // Poll read_screen until no loading spinner or until 12s elapses
       const loadStartedAt = Date.now();
@@ -1323,9 +1489,45 @@ export const androidSearchInAppTool: AgentTool = {
         };
       }
     } else {
-      // Resuming from a later step     read current screen state
+      // Resuming from a later step: verify and lock the current target package
+      // before any package-bound focus, clear, type, or submit operation.
       const r = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      if (r.ok) screenRaw = JSON.stringify(r.data || "");
+      if (!r.ok || !screenMatchesResolvedApp(r.data)) {
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: resumeFromStep,
+            error_at_step: "resume_package",
+            error: `Cannot resume because ${appName} is not the verified foreground app.`,
+            suggestion: "Bring the requested app back to the foreground and retry from step 2.",
+            steps: stepLog,
+          }),
+        };
+      }
+      screenRaw = JSON.stringify(r.data || "");
+    }
+
+    // Safe focus-bound mutations require the atomic focus snapshot added by the
+    // current daemon. Older paired APKs return a successful legacy payload without
+    // package/screen; fail explicitly before any search tap or text mutation.
+    const focusSnapshotProbe = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+    if (focusSnapshotProbe.ok) {
+      const focusSnapshotData = focusSnapshotProbe.data as Record<string, unknown> | null;
+      if (typeof focusSnapshotData?.package !== "string" ||
+          !focusSnapshotData.screen || typeof focusSnapshotData.screen !== "object") {
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: resumeFromStep ?? 1,
+            error_at_step: "daemon_update_required",
+            error: "The connected Android daemon is too old for safe in-app search.",
+            suggestion: "Update or reinstall the Jarvis Android app, reconnect Android Device Control, and try the search again.",
+            steps: stepLog,
+          }),
+        };
+      }
     }
 
     // Shared coords: populated by step 2 locate logic, used as fallback in step 3 tap loop.
@@ -1406,13 +1608,28 @@ export const androidSearchInAppTool: AgentTool = {
             break;
           }
 
-          if (attempt === 1) {
+          if (attempt === 1 && resumeFromStep !== 2) {
             // Navigate to home then reopen the app so we land on the main screen
             await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "home" }, 10000);
             await sleep(800);
             await sendDaemonOp(ctx.userId, { type: "android_open_app", packageName: appPackage }, 15000);
             await sleep(2000);
           } else if (attempt === 2) {
+            // Swipe only while the requested app is still foregrounded.
+            const swipeTarget = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+            if (!swipeTarget.ok || !screenMatchesResolvedApp(swipeTarget.data)) {
+              return {
+                ok: false,
+                content: JSON.stringify({
+                  ok: false,
+                  step_reached: 2,
+                  error_at_step: "search_discovery_package",
+                  error: `${appName} is no longer the verified foreground app, so Jarvis did not swipe or tap.`,
+                  suggestion: "Bring the requested app back to the foreground and retry from step 2.",
+                  steps: stepLog,
+                }),
+              };
+            }
             // Swipe down from near the top to reveal pull-to-reveal search bars
             await sendDaemonOp(ctx.userId, { type: "android_swipe", x1: 540, y1: 200, x2: 540, y2: 800, durationMs: 400 }, 10000);
             await sleep(800);
@@ -1584,6 +1801,39 @@ export const androidSearchInAppTool: AgentTool = {
           tapY = freshLocated.y ?? searchY;
         }
 
+        const tapTarget = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        if (!tapTarget.ok || !screenMatchesResolvedApp(tapTarget.data)) {
+          return {
+            ok: false,
+            content: JSON.stringify({
+              ok: false,
+              step_reached: 3,
+              error_at_step: "tap_search_package",
+              error: `${appName} is no longer the verified foreground app, so Jarvis did not tap the cached or discovered coordinates.`,
+              suggestion: "Bring the requested app back to the foreground and retry from step 2.",
+              steps: stepLog,
+            }),
+          };
+        }
+        screenRaw = JSON.stringify(tapTarget.data || "");
+
+        const beforeFocusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+        const beforeFocusPackage = (beforeFocusResult.data as Record<string, unknown> | null)?.package;
+        if (!beforeFocusResult.ok || beforeFocusPackage !== resolvedAppPackage) {
+          return {
+            ok: false,
+            content: JSON.stringify({
+              ok: false,
+              step_reached: 3,
+              error_at_step: "tap_search_focus_package",
+              error: `${appName} is no longer the atomically verified foreground app, so Jarvis did not tap the search coordinates.`,
+              suggestion: "Bring the requested app back to the foreground and retry from step 2.",
+              steps: stepLog,
+            }),
+          };
+        }
+        const beforeFocus = extractFocusedFieldText(beforeFocusResult.data);
+
         if (tapX !== null && tapY !== null) {
           await sendDaemonOp(ctx.userId, { type: "android_tap", x: tapX, y: tapY }, 10000);
         } else {
@@ -1592,26 +1842,40 @@ export const androidSearchInAppTool: AgentTool = {
         }
         await sleep(1200);
 
+        // android_read_screen intentionally returns only a compact package/activity/
+        // text/clickable snapshot, so it cannot prove that an input owns focus. Ask
+        // the accessibility service for the focused editable field directly.
+        const focusResult = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+        const focusResultPackage = (focusResult.data as Record<string, unknown> | null)?.package;
+        const focusedField = extractFocusedFieldText(focusResult.data);
+        const isFocused = focusResult.ok && focusResultPackage === resolvedAppPackage && focusedField.focused;
+        const focusedFieldIsSearch = isFocused && isFocusedSearchField(focusedField);
+        const focusChanged = beforeFocusResult.ok && isFocused && (
+          !beforeFocus.focused ||
+          (!!focusedField.resourceId && focusedField.resourceId !== beforeFocus.resourceId) ||
+          (!!focusedField.hint && focusedField.hint !== beforeFocus.hint)
+        );
+
         const afterTap = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        let isSearchActivity = false;
         if (afterTap.ok) {
           const afterRaw = JSON.stringify(afterTap.data || "");
-          // Strong signal: accessibility explicitly reports an active input field.
-          // "isFocused\":true" / "focused\":true" appear in most Android a11y trees
-          // when an EditText is active; "inputmethod" indicates the keyboard is shown.
-          // Deliberately avoids "cursor" (too generic) and "keyboard" alone (varies by app).
-          const isFocused = screenContains(afterRaw, ["\"isFocused\":true", "\"focused\":true", "inputmethod", "edittext"]);
           // Acceptable weaker signal: screen transitioned to a dedicated search activity.
           // "Cancel" (standalone) + a search keyword is specific to search UX patterns
           // in apps like Facebook, Instagram, Twitter. Excludes generic commerce "cancel".
-          const isSearchActivity = screenContains(afterRaw, ["\"cancel\"", "cancel\""]) &&
-            !screenContains(afterRaw, ["cancel subscription", "cancel order", "cancel payment", "cancel booking"]) &&
-            screenContains(afterRaw, SEARCH_KEYWORDS);
-          stepLog.push({ step: 3, outcome: tapVerified ? "focus_ok" : "checking", detail: `attempt ${attempt}: isFocused=${isFocused} isSearchActivity=${isSearchActivity}` });
-          if (isFocused || isSearchActivity) {
-            screenRaw = afterRaw;
-            tapVerified = true;
-            break;
-          }
+          isSearchActivity = isDedicatedSearchActivity(afterTap.data);
+          screenRaw = afterRaw;
+        }
+        const hasStableFocusIdentity = !!focusedField.resourceId || !!focusedField.hint;
+        const transitionedDedicatedSearchField = focusChanged && isSearchActivity && hasStableFocusIdentity;
+        const focusVerified = focusedFieldIsSearch || transitionedDedicatedSearchField;
+        stepLog.push({ step: 3, outcome: focusVerified ? "focus_ok" : "checking", detail: `attempt ${attempt}: isFocused=${isFocused} focusedFieldIsSearch=${focusedFieldIsSearch} focusChanged=${focusChanged} isSearchActivity=${isSearchActivity}` });
+        if (focusVerified) {
+          dedicatedSearchActivityFocus = transitionedDedicatedSearchField
+            ? { resourceId: focusedField.resourceId, hint: focusedField.hint }
+            : null;
+          tapVerified = true;
+          break;
         }
       }
 
@@ -1625,7 +1889,7 @@ export const androidSearchInAppTool: AgentTool = {
             step_reached: 3,
             error_at_step: "tap_search_bar",
             error: `Tapped the search element 4 times but could not confirm focus in ${appName}. The app may have navigated to a separate search activity with a non-standard accessibility layout.`,
-            suggestion: "Use android_read_screen to check the current screen, then tap the visible input field manually with android_tap. Once focused, retry with resume_from_step: 4.",
+            suggestion: "Retry android_search_in_app with the same app and query using resume_from_step: 2. This refreshes stale search coordinates without reopening the app. Do not call android_open_app_by_name because the app is already foregrounded.",
             steps: stepLog,
           }),
         };
@@ -1636,48 +1900,96 @@ export const androidSearchInAppTool: AgentTool = {
       emitProgress(`Search bar tapped, keyboard open ✓`);
     }
 
+    let queryVerificationBaselineVisibleValueCounts: Map<string, number> | null = null;
+    const screenHasNewQueryEvidence = (data: unknown): boolean => {
+      const visibleValueCounts = countNormalizedVisibleValues(data);
+      const normalizedQuery = normalizeVisibleText(searchQuery);
+      return normalizedQuery.length > 0 && queryVerificationBaselineVisibleValueCounts !== null &&
+        [...visibleValueCounts.entries()].some(([normalizedValue, count]) =>
+          count > (queryVerificationBaselineVisibleValueCounts!.get(normalizedValue) ?? 0) &&
+          containsBoundedSignal(normalizedValue, normalizedQuery),
+        );
+    };
+
     //        Step 4: Focus-verify     type     confirm text appeared                                              
     if (!resumeFromStep || resumeFromStep <= 4) {
-      // Confirm focus before typing (skip re-verify if we just verified in step 3)
-      if (resumeFromStep === 4) {
-        const focusCheck = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-        if (focusCheck.ok) {
-          const fcRaw = JSON.stringify(focusCheck.data || "");
-          const isFocused = screenContains(fcRaw, ["focused", "edittext", "cursor", "inputmethod", "keyboard"]);
-          screenRaw = fcRaw;
-          if (!isFocused) {
-            emitProgress(`Search field lost focus — cannot type ✗`);
-            return {
-              ok: false,
-              content: JSON.stringify({
-                ok: false,
-                step_reached: 4,
-                error_at_step: "type_query_no_focus",
-                error: `Resumed at step 4 but the search field no longer appears focused in ${appName}.`,
-                suggestion: "Retry from step 3 (resume_from_step: 3) to re-tap and focus the search bar.",
-              }),
-            };
-          }
-        }
+      // Revalidate immediately before any destructive input, even when step 3
+      // just succeeded: app rerenders can move focus between tool operations.
+      const boundInputTarget = await readVerifiedFocusedSearchField();
+      if (!boundInputTarget) {
+        emitProgress(`Search field focus could not be verified — cannot type ✗`);
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 4,
+            error_at_step: "type_query_no_focus",
+            error: `A focused search field could not be verified in ${appName} immediately before input.`,
+            suggestion: "Retry android_search_in_app with the same app and query using resume_from_step: 3 to re-tap and focus the search bar without reopening the app.",
+          }),
+        };
       }
 
       emitProgress(`Typing "${searchQuery.slice(0, 40)}${searchQuery.length > 40 ? "…" : ""}"…`);
-      await sendDaemonOp(ctx.userId, { type: "android_type", text: searchQuery }, 15000);
-      await sleep(800);
-
-      // Confirm the query text appeared on screen
-      const afterType = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      let typeVerified = false;
-      if (afterType.ok) {
-        const afterTypeRaw = JSON.stringify(afterType.data || "");
-        const queryWords = searchQuery.split(/\s+/).filter((w) => w.length > 1);
-        typeVerified = queryWords.length === 0 ||
-          queryWords.some((w) => afterTypeRaw.toLowerCase().includes(w.toLowerCase()));
-        screenRaw = afterTypeRaw;
+      const inputSteps: string[] = [];
+      // Search fields may retain the previous query. Clear first so every input
+      // path replaces the query instead of a paste fallback appending to it.
+      const preInputSearchTarget = await readVerifiedFocusedSearchField();
+      const requiresExplicitClear = typeof preInputSearchTarget?.text === "string";
+      if (!requiresExplicitClear) {
+        inputSteps.push("Focused search text is unavailable; using non-appending android_type replacement before any guarded paste fallback.");
       }
+      const fieldCleared = !requiresExplicitClear || await safelyClearFocusedSearchField(inputSteps);
+      if (!fieldCleared) {
+        stepLog.push({ step: 4, outcome: "failed", detail: inputSteps.join(" | ") });
+        emitProgress(`Could not safely clear the search field ✗`);
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 4,
+            error_at_step: "clear_search_field",
+            error: `Could not confirm that ${appName}'s search field was empty, so Jarvis did not type or paste the query.`,
+            suggestion: "Retry android_search_in_app from step 3 (resume_from_step: 3) to refocus and safely clear the search field.",
+            steps: stepLog,
+          }),
+        };
+      }
+      const beforeInputScreen = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      const beforeInputVisibleValueCounts = beforeInputScreen.ok
+        ? countNormalizedVisibleValues(beforeInputScreen.data)
+        : null;
+      queryVerificationBaselineVisibleValueCounts = beforeInputVisibleValueCounts;
+      if (!(await focusedSearchFieldStillVerified())) {
+        inputSteps.push("Search-field identity check failed immediately before input; typing was aborted.");
+        stepLog.push({ step: 4, outcome: "failed", detail: inputSteps.join(" | ") });
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 4,
+            error_at_step: "type_query_no_focus",
+            error: `The focused search field changed before text input in ${appName}, so Jarvis did not type or paste the query.`,
+            suggestion: "Retry android_search_in_app from step 3 (resume_from_step: 3) to refocus the search field.",
+            steps: stepLog,
+          }),
+        };
+      }
+      let { methodUsed, inputOk, daemonVerified, fieldText } = await runAndroidTextInputFallback(
+        ctx.userId,
+        searchQuery,
+        `${appName} search field`,
+        inputSteps,
+        {
+          beforePaste: () => safelyClearFocusedSearchField(inputSteps),
+          expectedPackage: resolvedAppPackage ?? undefined,
+          expectedResourceId: boundInputTarget.resourceId,
+          expectedHint: boundInputTarget.hint,
+        },
+      );
 
-      if (!typeVerified) {
-        stepLog.push({ step: 4, outcome: "failed", detail: "query text not found in screen after android_type" });
+      if (!inputOk) {
+        stepLog.push({ step: 4, outcome: "failed", detail: inputSteps.join(" | ") });
         emitProgress(`Text did not appear in search field ✗`);
         return {
           ok: false,
@@ -1685,14 +1997,121 @@ export const androidSearchInAppTool: AgentTool = {
             ok: false,
             step_reached: 4,
             error_at_step: "type_query",
-            error: `Typed "${searchQuery.slice(0, 60)}" but could not confirm the text appeared in ${appName}'s search field.`,
-            suggestion: "The keyboard may not have appeared or the field lost focus. Use android_screenshot to inspect the state, then retry from step 3 (resume_from_step: 3).",
+            error: `Could not type "${searchQuery.slice(0, 60)}" into ${appName}'s search field.`,
+            suggestion: "Retry android_search_in_app from step 3 (resume_from_step: 3) so Jarvis can refocus the field and try the accessibility and paste input paths again.",
             steps: stepLog,
           }),
         };
       }
 
-      stepLog.push({ step: 4, outcome: "success", detail: `query confirmed in accessibility tree` });
+      let inputVerified = false;
+      const safelyPreparePasteEscalation = async (): Promise<boolean> => {
+        if (!(await safelyClearFocusedSearchField(inputSteps))) return false;
+        const baseline = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        queryVerificationBaselineVisibleValueCounts = baseline.ok
+          ? countNormalizedVisibleValues(baseline.data)
+          : null;
+        if (!(await focusedSearchFieldStillVerified())) {
+          inputSteps.push("Search-field identity check failed after the paste baseline read; escalation was aborted.");
+          return false;
+        }
+        return true;
+      };
+      const verifySearchInput = (deferEscalationWhenFieldTextUnavailable: boolean) =>
+        verifyAndroidTextInput({
+          userId: ctx.userId,
+          expectedText: searchQuery,
+          fieldDescription: `${appName} search field`,
+          methodUsed,
+          daemonVerified,
+          fieldText,
+          steps: inputSteps,
+          verificationStep: "Verifying query via android_get_focused_field...",
+          escalationStep: (currentText) => `Query verification failed after android_type (field: "${currentText ?? "empty"}") — escalating to android_paste_text...`,
+          escalationSuccessStep: (method, verified) => `android_paste_text succeeded via ${method}. Verified: ${verified}.`,
+          escalationFailureStep: (error) => `android_paste_text failed: ${error}`,
+          beforeEscalating: safelyPreparePasteEscalation,
+          deferEscalationWhenFieldTextUnavailable,
+          expectedPackage: resolvedAppPackage ?? undefined,
+          expectedResourceId: boundInputTarget.resourceId,
+          expectedHint: boundInputTarget.hint,
+          successStep: "Query confirmed in focused field.",
+          inconclusiveStep: (currentText) => `Query verification inconclusive: field text="${currentText ?? "empty"}".`,
+        });
+      ({ methodUsed, daemonVerified, fieldText, verified: inputVerified } = await verifySearchInput(true));
+      let currentInputTarget = await readVerifiedFocusedSearchField();
+      let inputTargetStillSearch = currentInputTarget !== null;
+      let focusedFieldTextMatches = typeof currentInputTarget?.text === "string"
+        ? currentInputTarget.text.trim() === searchQuery.trim()
+        : null;
+      fieldText = currentInputTarget?.text ?? null;
+      // Only the fresh focus read can authorize exact field-text evidence. If
+      // text is unavailable, fail closed here and let the post-input screen
+      // delta provide the sole bounded fallback below.
+      inputVerified = inputTargetStillSearch && focusedFieldTextMatches === true;
+      await sleep(600);
+
+      // Confirm the query text appeared on screen
+      const afterType = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      let typeVerified = inputVerified;
+      if (afterType.ok) {
+        const afterTypeRaw = JSON.stringify(afterType.data || "");
+        const screenContainsQuery = screenHasNewQueryEvidence(afterType.data);
+        // When the focused field exposes its value, require an exact replacement.
+        // Only use compact screen text as a fallback when field text is unavailable,
+        // and require the complete normalized query as a bounded phrase within one
+        // newly visible label. JSON keys, package/activity metadata, pre-existing
+        // labels, and tokens split across unrelated elements are not evidence.
+        typeVerified = typeVerified || (inputTargetStillSearch && focusedFieldTextMatches === null && screenContainsQuery);
+        screenRaw = afterTypeRaw;
+      } else {
+        // Never let step 5 compare against a pre-input screen when this read failed.
+        // An empty value forces a fresh pre-submit baseline before Enter is pressed.
+        screenRaw = "";
+      }
+
+      // A custom field may contain the correct query while accessibility cannot
+      // expose its value. Give the non-destructive screen-delta fallback the
+      // first chance to prove that input before clearing for clipboard retry.
+      if (!typeVerified && methodUsed === "android_type" && focusedFieldTextMatches === null) {
+        ({ methodUsed, daemonVerified, fieldText, verified: inputVerified } = await verifySearchInput(false));
+        currentInputTarget = await readVerifiedFocusedSearchField();
+        inputTargetStillSearch = currentInputTarget !== null;
+        focusedFieldTextMatches = typeof currentInputTarget?.text === "string"
+          ? currentInputTarget.text.trim() === searchQuery.trim()
+          : null;
+        fieldText = currentInputTarget?.text ?? null;
+        typeVerified = inputTargetStillSearch && focusedFieldTextMatches === true;
+        await sleep(600);
+        const afterEscalation = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        if (afterEscalation.ok) {
+          typeVerified = typeVerified || (
+            inputTargetStillSearch && focusedFieldTextMatches === null &&
+            screenHasNewQueryEvidence(afterEscalation.data)
+          );
+          screenRaw = JSON.stringify(afterEscalation.data || "");
+        } else {
+          screenRaw = "";
+        }
+      }
+
+      if (!typeVerified) {
+        stepLog.push({ step: 4, outcome: "failed", detail: inputSteps.join(" | ") });
+        emitProgress(`Text did not appear in search field ✗`);
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 4,
+            error_at_step: "type_query",
+            error: `Tried the accessibility and paste input paths for "${searchQuery.slice(0, 60)}" but could not confirm the text appeared in ${appName}'s search field.`,
+            suggestion: "Retry android_search_in_app from step 3 (resume_from_step: 3) so Jarvis can refocus the field without reopening the app.",
+            steps: stepLog,
+          }),
+        };
+      }
+
+      stepLog.push({ step: 4, outcome: "success", detail: `${inputSteps.join(" | ")} Method: ${methodUsed}; query confirmed.` });
       console.log(`[${label}] step 4 complete     query typed and confirmed`);
       emitProgress(`Query entered ✓`);
     }
@@ -1716,19 +2135,51 @@ export const androidSearchInAppTool: AgentTool = {
         }
         screenRaw = JSON.stringify(baseline.data || "");
       }
-      // Primary: invoke the focused field's accessibility IME Search/Go action.
-      // If the field does not expose it, the visible submit-control fallback below
-      // remains available without relying on privileged input injection.
-      const enterResult = await sendDaemonOp(ctx.userId, { type: "android_press_key", key: "enter" }, 10000);
-      stepLog.push({
-        step: 5,
-        outcome: enterResult.ok ? "enter_dispatched" : "enter_failed",
-        detail: enterResult.ok ? JSON.stringify(enterResult.data || {}) : enterResult.error || "IME and keyevent submission failed",
-      });
-      await sleep(2500);
+      let resultsLoaded = resumeFromStep === 5 &&
+        await isVerifiedResultsState(screenRaw, false);
+      if (resultsLoaded) {
+        stepLog.push({ step: 5, outcome: "already_loaded", detail: "Existing results state verified on step-5 resume; no submit action dispatched." });
+      } else {
+        const finalSearchState = await readVerifiedFocusedSearchState();
+        const finalFieldTextMatches = typeof finalSearchState?.field.text === "string"
+          ? finalSearchState.field.text.trim() === searchQuery.trim()
+          : null;
+        const finalQueryVerified = finalSearchState !== null && (
+          finalFieldTextMatches === true ||
+          (finalFieldTextMatches === null && screenHasNewQueryEvidence(finalSearchState.screen))
+        );
+        if (!finalQueryVerified) {
+          return {
+            ok: false,
+            content: JSON.stringify({
+              ok: false,
+              step_reached: 5,
+              error_at_step: "submit_search_target",
+              error: `The focused ${appName} search field or its query changed before submission, so Jarvis did not press Enter.`,
+              suggestion: "Retry android_search_in_app from step 4 so the query can be re-entered and verified immediately before submission.",
+              steps: stepLog,
+            }),
+          };
+        }
+        // Primary: invoke the focused field's accessibility IME Search/Go action.
+        // If the field does not expose it, the visible submit-control fallback below
+        // remains available without relying on privileged input injection.
+        const enterResult = await sendDaemonOp(ctx.userId, {
+          type: "android_press_key",
+          key: "enter",
+          expectedPackage: resolvedAppPackage ?? undefined,
+          expectedResourceId: finalSearchState?.field.resourceId,
+          expectedHint: finalSearchState?.field.hint,
+        }, 10000);
+        stepLog.push({
+          step: 5,
+          outcome: enterResult.ok ? "enter_dispatched" : "enter_failed",
+          detail: enterResult.ok ? JSON.stringify(enterResult.data || {}) : enterResult.error || "IME and keyevent submission failed",
+        });
+        await sleep(2500);
+      }
 
-      function isResultsState(raw: string): boolean {
-        const keyboardDismissed = !screenContains(raw, ["\"inputmethod\"", "inputmethod_service", "\"isFocused\":true", "\"focused\":true"]);
+      function hasNamedResultsEvidence(raw: string, requireTransition: boolean): boolean {
         const resultEvidence = [
           /search[_ -]?results?/i,
           /results?[_ -]?(?:list|container|grid)/i,
@@ -1736,7 +2187,14 @@ export const androidSearchInAppTool: AgentTool = {
           /no\s+results?/i,
           /[?&](?:q|query|search_query)=/i,
         ];
-        const hasNamedResultEvidence = resultEvidence.some((pattern) => pattern.test(raw) && !pattern.test(screenRaw));
+        return resultEvidence.some((pattern) =>
+          pattern.test(raw) && (!requireTransition || !pattern.test(screenRaw)),
+        );
+      }
+
+      function isResultsState(raw: string, requireTransition = true): boolean {
+        const keyboardDismissed = !screenContains(raw, ["\"inputmethod\"", "inputmethod_service", "\"isFocused\":true", "\"focused\":true"]);
+        const hasNamedResultEvidence = hasNamedResultsEvidence(raw, requireTransition);
         function collectResultStructure(serialized: string): { labels: Set<string>; containers: Set<string> } {
           const labels = new Set<string>();
           const containers = new Set<string>();
@@ -1773,40 +2231,52 @@ export const androidSearchInAppTool: AgentTool = {
         const newLabels = [...after.labels].filter((label) => !before.labels.has(label));
         const hasNewResultContainer = [...after.containers].some((container) => !before.containers.has(container));
         const hasNewResultEvidence = hasNamedResultEvidence || hasNewResultContainer || newLabels.length >= 2;
+        const hasExistingResultEvidence = hasNamedResultEvidence || (after.containers.size > 0 && after.labels.size >= 2);
         const isErrorDialog = screenContains(raw, ["network error", "something went wrong", "no connection", "retry"]) &&
           !screenContains(raw, SEARCH_KEYWORDS);
-        return !isErrorDialog && keyboardDismissed && hasNewResultEvidence;
+        return !isErrorDialog && keyboardDismissed && (
+          requireTransition ? hasNewResultEvidence : hasExistingResultEvidence
+        );
       }
 
-      const afterSearch = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      let resultsLoaded = false;
-      if (afterSearch.ok) {
-        const afterSearchRaw = JSON.stringify(afterSearch.data || "");
-        resultsLoaded = isResultsState(afterSearchRaw);
-        screenRaw = afterSearchRaw;
-        stepLog.push({ step: 5, outcome: "enter_sent", detail: `resultsLoaded=${resultsLoaded} after Enter` });
+      async function isVerifiedResultsState(raw: string, requireTransition = true): Promise<boolean> {
+        if (!screenMatchesResolvedApp(raw) || !isResultsState(raw, requireTransition)) return false;
+        const focus = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+        if (!focus.ok) return false;
+        const focusData = focus.data as Record<string, unknown> | null;
+        const focusPackage = focusData?.package;
+        const focusScreen = focusData?.screen;
+        if (typeof focusPackage !== "string" || focusPackage !== resolvedAppPackage ||
+            !focusScreen || typeof focusScreen !== "object" || !screenMatchesResolvedApp(focusScreen)) return false;
+        const focusScreenRaw = JSON.stringify(focusScreen);
+        if (!isResultsState(focusScreenRaw, requireTransition)) return false;
+        if (!requireTransition) {
+          const compactScreen = parseCompactScreen(focusScreen);
+          const normalizedQuery = normalizeVisibleText(searchQuery);
+          const resumedQueryVisible = compactScreen !== null && normalizedQuery.length > 0 &&
+            extractCompactScreenVisibleValues(compactScreen).some((value) =>
+              containsBoundedSignal(normalizeVisibleText(value), normalizedQuery),
+            );
+          if (!resumedQueryVisible) return false;
+        }
+        const focusedField = extractFocusedFieldText(focus.data);
+        // A focused editor is ambiguous typeahead, even when labels resemble results.
+        return !focusedField.focused;
       }
 
-      // Fallback: locate and tap a visible search/go button
       if (!resultsLoaded) {
-        emitProgress(`Retrying submission via search button…`);
-        const btnLocated = await relocateSubmitElement();
-        if (btnLocated.found && btnLocated.x !== null && btnLocated.y !== null) {
-          await sendDaemonOp(ctx.userId, { type: "android_tap", x: btnLocated.x, y: btnLocated.y }, 10000);
-          await sleep(2500);
-          const retryRead = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-          if (retryRead.ok) {
-            const retryRaw = JSON.stringify(retryRead.data || "");
-            resultsLoaded = isResultsState(retryRaw);
-            screenRaw = retryRaw;
-            stepLog.push({ step: 5, outcome: "button_tap_fallback", detail: `resultsLoaded=${resultsLoaded} after button tap` });
-          }
+        const afterSearch = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+        if (afterSearch.ok) {
+          const afterSearchRaw = JSON.stringify(afterSearch.data || "");
+          resultsLoaded = await isVerifiedResultsState(afterSearchRaw);
+          screenRaw = afterSearchRaw;
+          stepLog.push({ step: 5, outcome: "enter_sent", detail: `resultsLoaded=${resultsLoaded} after Enter` });
         }
       }
 
-      // Step 5 is strict     if results did not load after both attempts, return a structured failure
+      // Step 5 is strict: if results did not load after the verified Enter action, fail closed.
       if (!resultsLoaded) {
-        stepLog.push({ step: 5, outcome: "failed", detail: "results screen not detected after Enter + button tap" });
+        stepLog.push({ step: 5, outcome: "failed", detail: "results screen not detected after verified Enter action" });
         emitProgress(`Search results did not load ✗`);
         return {
           ok: false,
@@ -1814,7 +2284,7 @@ export const androidSearchInAppTool: AgentTool = {
             ok: false,
             step_reached: 5,
             error_at_step: "execute_search",
-            error: `Search was submitted in ${appName} but the results screen did not appear. The app may require a different submission method, may have shown a network error, or may not have recognised the search input.`,
+            error: `Search was submitted in ${appName} but the results screen did not appear. Jarvis did not tap a generic submit control because it could not atomically bind those coordinates to the verified search field.`,
             suggestion: "Use android_screenshot to inspect the current state. Retry from step 5 only after confirming the results screen is visible.",
             steps: stepLog,
           }),

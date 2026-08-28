@@ -659,8 +659,9 @@ class JarvisAccessibilityService : AccessibilityService() {
     fun captureScreenContext(): ScreenContextSnapshot =
         ScreenContextEngine(this).capture()
 
-    fun readScreenContent(): String {
-        val root = rootInActiveWindow
+    fun readScreenContent(): String = buildCompactScreen(rootInActiveWindow)
+
+    private fun buildCompactScreen(root: AccessibilityNodeInfo?): String {
         val packageName = root?.packageName?.toString() ?: ""
         val activityName = root?.className?.toString()?.trim()?.takeIf { it.isNotEmpty() } ?: packageName
 
@@ -699,7 +700,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         }
         val safeLabel = if (sensitive && !label.isNullOrBlank()) SCREEN_CONTEXT_REDACTED else label
         val safeDesc = if (sensitive && !desc.isNullOrBlank()) SCREEN_CONTEXT_REDACTED else (desc ?: "")
-        if (safeLabel != null && safeLabel.length > 1 && !texts.contains(safeLabel)) {
+        if (safeLabel != null && safeLabel.length > 1) {
             texts.add(safeLabel)
         }
         if (node.isClickable && (safeLabel != null || resourceId.isNotEmpty() || className.isNotEmpty())) {
@@ -790,9 +791,30 @@ class JarvisAccessibilityService : AccessibilityService() {
      *  @param submit If true, send IME action (Search/Go/Enter) after typing. */
     data class TypeTextResult(val typed: Boolean, val submitted: Boolean)
 
-    fun typeTextDetailed(text: String, submit: Boolean = false): TypeTextResult {
-        val focused = findFocusedEditable(rootInActiveWindow)
-            ?: findFirstEditable(rootInActiveWindow)
+    private fun findBoundEditable(
+        expectedPackage: String?,
+        expectedResourceId: String?,
+        expectedHint: String?
+    ): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        if (expectedPackage != null && root.packageName?.toString() != expectedPackage) return null
+        val bound = expectedPackage != null || expectedResourceId != null || expectedHint != null
+        val node = if (bound) findFocusedEditable(root) else findFocusedEditable(root) ?: findFirstEditable(root)
+        if (node == null) return null
+        if (expectedResourceId != null && node.viewIdResourceName != expectedResourceId) return null
+        val nodeHint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) node.hintText?.toString() else null
+        if (expectedHint != null && nodeHint != expectedHint) return null
+        return node
+    }
+
+    fun typeTextDetailed(
+        text: String,
+        submit: Boolean = false,
+        expectedPackage: String? = null,
+        expectedResourceId: String? = null,
+        expectedHint: String? = null
+    ): TypeTextResult {
+        val focused = findBoundEditable(expectedPackage, expectedResourceId, expectedHint)
 
         if (focused == null) {
             Log.w(TAG, "typeText: no editable field found")
@@ -820,8 +842,12 @@ class JarvisAccessibilityService : AccessibilityService() {
     }
 
     /** Press the IME action key (Search/Go/Done/Enter) on the currently focused field. */
-    fun pressImeAction(): Boolean {
-        val focused = findFocusedEditable(rootInActiveWindow) ?: return false
+    fun pressImeAction(
+        expectedPackage: String? = null,
+        expectedResourceId: String? = null,
+        expectedHint: String? = null
+    ): Boolean {
+        val focused = findBoundEditable(expectedPackage, expectedResourceId, expectedHint) ?: return false
         return actionImeEnterCompat?.let { focused.performAction(it) } ?: false
     }
 
@@ -977,10 +1003,24 @@ class JarvisAccessibilityService : AccessibilityService() {
      *   KEYCODE_CTRL_LEFT=113, KEYCODE_A=29, KEYCODE_DEL=67.
      *   Verified by fresh node refresh after the keyevent sequence.
      */
-    fun clearField(): ClearFieldResult {
-        val root = rootInActiveWindow
-        val focused = findFocusedEditable(root) ?: findFirstEditable(root)
-            ?: return ClearFieldResult(false, "none", false, false, "No editable field found — tap a text input first")
+    fun clearField(
+        expectedPackage: String? = null,
+        expectedResourceId: String? = null,
+        expectedHint: String? = null
+    ): ClearFieldResult {
+        val targetBound = expectedPackage != null || expectedResourceId != null || expectedHint != null
+        fun findClearTarget(root: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
+            if (root == null || (expectedPackage != null && root.packageName?.toString() != expectedPackage)) return null
+            val node = if (targetBound) findFocusedEditable(root)
+                else findFocusedEditable(root) ?: findFirstEditable(root)
+            if (node == null) return null
+            if (expectedResourceId != null && node.viewIdResourceName != expectedResourceId) return null
+            val nodeHint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) node.hintText?.toString() else null
+            if (expectedHint != null && nodeHint != expectedHint) return null
+            return node
+        }
+        val focused = findClearTarget(rootInActiveWindow)
+            ?: return ClearFieldResult(false, "none", false, false, "Focused field no longer matches the expected package and identity")
 
         // Check if the field already has content to clear.
         // Only skip clearing if we can positively confirm the text is empty (not null).
@@ -1082,7 +1122,7 @@ class JarvisAccessibilityService : AccessibilityService() {
         // caused the view hierarchy to rebuild.  Re-traverse from the root.
         Thread.sleep(100)
         val freshRoot = rootInActiveWindow
-        val freshNode = findFocusedEditable(freshRoot) ?: findFirstEditable(freshRoot)
+        val freshNode = findClearTarget(freshRoot)
         if (freshNode != null) {
             val freshArgs = Bundle().apply {
                 putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, "")
@@ -1113,6 +1153,12 @@ class JarvisAccessibilityService : AccessibilityService() {
         // ignore accessibility actions but respond to raw key injection.
         // input keyevent: KEYCODE_CTRL_LEFT=113, KEYCODE_A=29, KEYCODE_DEL=67.
         Thread.sleep(100)
+        if (targetBound) {
+            return ClearFieldResult(
+                false, "bound_fallback_exhausted", false, false,
+                "Node-scoped clear methods failed; refusing unbound global keyevents for a verified target"
+            )
+        }
         try {
             // Step 4a: Select all via Ctrl+A chord
             val ctrlAProc = Runtime.getRuntime().exec(
@@ -1127,7 +1173,7 @@ class JarvisAccessibilityService : AccessibilityService() {
                 if (delExited && delProc.exitValue() == 0) {
                     Thread.sleep(80)
                     val verifyRoot = rootInActiveWindow
-                    val verifyNode = findFocusedEditable(verifyRoot) ?: findFirstEditable(verifyRoot)
+                    val verifyNode = findClearTarget(verifyRoot)
                     if (verifyNode != null) {
                         verifyNode.refresh()
                         val textAfterKey = verifyNode.text?.toString()
@@ -1191,14 +1237,18 @@ class JarvisAccessibilityService : AccessibilityService() {
         val hint: String?,
         val resourceId: String?,
         val className: String?,
-        val isPassword: Boolean
+        val isPassword: Boolean,
+        val packageName: String?,
+        val screen: String
     )
 
     fun getFocusedFieldInfo(): FocusedFieldInfo {
         val root = rootInActiveWindow
-            ?: return FocusedFieldInfo(false, null, null, null, null, false)
+            ?: return FocusedFieldInfo(false, null, null, null, null, false, null, buildCompactScreen(null))
+        val packageName = root.packageName?.toString()
+        val compactScreen = buildCompactScreen(root)
         val node = findFocusedEditable(root)
-            ?: return FocusedFieldInfo(false, null, null, null, null, false)
+            ?: return FocusedFieldInfo(false, null, null, null, null, false, packageName, compactScreen)
         val hint = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             node.hintText?.toString()
         } else null
@@ -1208,7 +1258,9 @@ class JarvisAccessibilityService : AccessibilityService() {
             hint = hint,
             resourceId = node.viewIdResourceName,
             className = node.className?.toString(),
-            isPassword = node.isPassword
+            isPassword = node.isPassword,
+            packageName = packageName,
+            screen = compactScreen
         )
     }
 
@@ -1216,33 +1268,70 @@ class JarvisAccessibilityService : AccessibilityService() {
     /** Copy [text] to the system clipboard and issue ACTION_PASTE on the
      *  focused (or first) editable field.  Returns true when ACTION_PASTE
      *  was accepted by the field node. */
-    fun pasteFromClipboard(text: String): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val node = findFocusedEditable(root) ?: findFirstEditable(root) ?: return false
+    fun pasteFromClipboard(
+        text: String,
+        expectedPackage: String? = null,
+        expectedResourceId: String? = null,
+        expectedHint: String? = null
+    ): Boolean {
+        val node = findBoundEditable(expectedPackage, expectedResourceId, expectedHint) ?: return false
+        val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
 
-        // Build a plain-text clip and set it on the primary clipboard slot.
-        // We must dispatch this to the main thread on Android 10+ — background
-        // threads cannot write to the clipboard on Android 10+ (the write is
-        // silently dropped).
-        val latch = CountDownLatch(1)
+        // Clipboard reads/writes must run on the main thread on Android 10+.
+        // Preserve both the prior clip and the absence of a clip so this
+        // temporary transport never destroys user clipboard contents.
+        val setLatch = CountDownLatch(1)
         var clipSet = false
+        var hadPrimaryClip = false
+        var previousClip: android.content.ClipData? = null
+        val temporaryClipLabel = "jarvis_input_${System.nanoTime()}"
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             try {
-                val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                val clip = android.content.ClipData.newPlainText("jarvis_input", text)
-                cm.setPrimaryClip(clip)
+                hadPrimaryClip = cm.hasPrimaryClip()
+                previousClip = if (hadPrimaryClip) cm.primaryClip else null
+                cm.setPrimaryClip(android.content.ClipData.newPlainText(temporaryClipLabel, text))
                 clipSet = true
             } catch (e: Exception) {
                 Log.w(TAG, "pasteFromClipboard: clipboard set failed: ${e.message}")
             } finally {
-                latch.countDown()
+                setLatch.countDown()
             }
         }
-        latch.await(2, TimeUnit.SECONDS)
+        setLatch.await(2, TimeUnit.SECONDS)
         if (!clipSet) return false
 
-        Thread.sleep(100) // Let clipboard propagate
-        return node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+        var pasteOk = false
+        try {
+            Thread.sleep(100) // Let the temporary clip propagate
+            pasteOk = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            return pasteOk
+        } finally {
+            val restoreLatch = CountDownLatch(1)
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    val currentLabel = cm.primaryClipDescription?.label?.toString()
+                    val currentText = cm.primaryClip?.takeIf { it.itemCount > 0 }
+                        ?.getItemAt(0)?.coerceToText(this)?.toString()
+                    if (currentLabel != temporaryClipLabel || currentText != text) {
+                        Log.i(TAG, "pasteFromClipboard: clipboard changed during paste; preserving newer content")
+                        return@post
+                    }
+                    val clipToRestore = previousClip
+                    if (hadPrimaryClip && clipToRestore != null) {
+                        cm.setPrimaryClip(clipToRestore)
+                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        cm.clearPrimaryClip()
+                    } else {
+                        cm.setPrimaryClip(android.content.ClipData.newPlainText("", ""))
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "pasteFromClipboard: clipboard restore failed: ${e.message}")
+                } finally {
+                    restoreLatch.countDown()
+                }
+            }
+            restoreLatch.await(2, TimeUnit.SECONDS)
+        }
     }
 
     // ── Swipe ────────────────────────────────────────────────────────────────

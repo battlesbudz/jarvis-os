@@ -78,7 +78,7 @@ object OpHandler {
                 "android_view_hierarchy" -> handleViewHierarchy()
                 "android_paste_text" -> handlePasteText(context, op)
                 "android_get_focused_field" -> handleGetFocusedField()
-                "android_clear_field" -> handleClearField()
+                "android_clear_field" -> handleClearField(op)
                 "android_start_training" -> handleStartTraining(op)
                 "android_get_display_size" -> handleGetDisplaySize(context)
                 else -> OpResult(false, error = "Unknown op type: $type")
@@ -497,9 +497,12 @@ object OpHandler {
             return OpResult(false, error = "text required")
         }
         val submit = op.optBoolean("submit", false)
+        val expectedPackage = op.optString("expectedPackage").takeIf { it.isNotEmpty() }
+        val expectedResourceId = op.optString("expectedResourceId").takeIf { it.isNotEmpty() }
+        val expectedHint = op.optString("expectedHint").takeIf { it.isNotEmpty() }
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running.")
-        val result = svc.typeTextDetailed(text, submit)
+        val result = svc.typeTextDetailed(text, submit, expectedPackage, expectedResourceId, expectedHint)
         val ok = result.typed && (!submit || result.submitted)
         return OpResult(
             ok = ok,
@@ -540,6 +543,11 @@ object OpHandler {
             return OpResult(false, error = "text required")
         }
         val fieldDescription = op.optString("fieldDescription", "input field")
+        val forceClipboardOnly = op.optBoolean("forceClipboardOnly", false)
+        val expectedPackage = op.optString("expectedPackage").takeIf { it.isNotEmpty() }
+        val expectedResourceId = op.optString("expectedResourceId").takeIf { it.isNotEmpty() }
+        val expectedHint = op.optString("expectedHint").takeIf { it.isNotEmpty() }
+        val targetBound = expectedPackage != null || expectedResourceId != null || expectedHint != null
 
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
@@ -549,25 +557,27 @@ object OpHandler {
         // We pass tokens directly (no sh -c) so shell metacharacters in the text
         // are never interpreted by a shell — only the `input` binary sees them.
         var methodUsed: String? = null
-        try {
-            val encoded = text.replace("%", "%%").replace(" ", "%s")
-            val proc = Runtime.getRuntime().exec(arrayOf("input", "text", encoded))
-            val exited = proc.waitFor(5, TimeUnit.SECONDS)
-            val exitCode = if (exited) proc.exitValue() else -1
-            if (exitCode == 0) {
-                methodUsed = "input_text_exec"
-                Log.i(TAG, "paste_text: input text exec succeeded for '$fieldDescription'")
-            } else {
-                Log.w(TAG, "paste_text: input text exec exit=$exitCode — trying clipboard fallback")
+        if (!forceClipboardOnly && !targetBound) {
+            try {
+                val encoded = text.replace("%", "%%").replace(" ", "%s")
+                val proc = Runtime.getRuntime().exec(arrayOf("input", "text", encoded))
+                val exited = proc.waitFor(5, TimeUnit.SECONDS)
+                val exitCode = if (exited) proc.exitValue() else -1
+                if (exitCode == 0) {
+                    methodUsed = "input_text_exec"
+                    Log.i(TAG, "paste_text: input text exec succeeded for '$fieldDescription'")
+                } else {
+                    Log.w(TAG, "paste_text: input text exec exit=$exitCode — trying clipboard fallback")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "paste_text: input text exec exception: ${e.message} — trying clipboard fallback")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "paste_text: input text exec exception: ${e.message} — trying clipboard fallback")
         }
 
         // ── Step 2 (fallback): ClipboardManager + ACTION_PASTE ───────────────
         if (methodUsed == null) {
             try {
-                val pasteOk = svc.pasteFromClipboard(text)
+                val pasteOk = svc.pasteFromClipboard(text, expectedPackage, expectedResourceId, expectedHint)
                 if (pasteOk) {
                     methodUsed = "clipboard_paste"
                     Log.i(TAG, "paste_text: clipboard paste succeeded for '$fieldDescription'")
@@ -582,7 +592,8 @@ object OpHandler {
         if (methodUsed == null) {
             return OpResult(
                 ok = false,
-                error = "Both input methods failed for '$fieldDescription' (input text exec + clipboard paste). " +
+                error = (if (forceClipboardOnly) "Clipboard paste failed" else "Both input methods failed (input text exec + clipboard paste)") +
+                    " for '$fieldDescription'. " +
                     "Ensure the field is focused — tap it first, then retry."
             )
         }
@@ -649,6 +660,8 @@ object OpHandler {
             .put("resourceId", info.resourceId ?: JSONObject.NULL)
             .put("className", info.className ?: JSONObject.NULL)
             .put("isPassword", info.isPassword)
+            .put("package", info.packageName ?: JSONObject.NULL)
+            .put("screen", JSONObject(info.screen))
 
         return OpResult(ok = true, data = data)
     }
@@ -663,11 +676,14 @@ object OpHandler {
     //   Step 4 — adb keyevent CTRL_A + DEL via Runtime.exec (hardware injection)
     // Each step verifies the field is actually empty afterward via node refresh.
     // Returns {ok, method, fieldWasAlreadyEmpty, verifiedEmpty} on success.
-    private fun handleClearField(): OpResult {
+    private fun handleClearField(op: JSONObject): OpResult {
         val svc = JarvisAccessibilityService.instance
             ?: return OpResult(false, error = "Accessibility service not running. Enable it in Settings > Accessibility > Jarvis Daemon.")
 
-        val result = svc.clearField()
+        val expectedPackage = op.optString("expectedPackage").takeIf { it.isNotEmpty() }
+        val expectedResourceId = op.optString("expectedResourceId").takeIf { it.isNotEmpty() }
+        val expectedHint = op.optString("expectedHint").takeIf { it.isNotEmpty() }
+        val result = svc.clearField(expectedPackage, expectedResourceId, expectedHint)
         return if (result.cleared) {
             OpResult(
                 ok = true,
@@ -732,8 +748,17 @@ object OpHandler {
 
     private fun handlePressKey(op: JSONObject): OpResult {
         val key = op.optString("key", "back")
+        val expectedPackage = op.optString("expectedPackage").takeIf { it.isNotEmpty() }
+        val expectedResourceId = op.optString("expectedResourceId").takeIf { it.isNotEmpty() }
+        val expectedHint = op.optString("expectedHint").takeIf { it.isNotEmpty() }
+        val targetBound = expectedPackage != null || expectedResourceId != null || expectedHint != null
 
         val svc = JarvisAccessibilityService.instance
+        if (svc != null && key == "enter" && targetBound) {
+            val ok = svc.pressImeAction(expectedPackage, expectedResourceId, expectedHint)
+            return if (ok) OpResult(true, data = JSONObject().put("key", key).put("method", "bound_ime"))
+            else OpResult(false, error = "Focused field no longer matches the expected package and identity")
+        }
         if (svc != null) {
             val ok = svc.pressKey(key)
             if (ok) return OpResult(true, data = JSONObject().put("key", key).put("method", "native"))

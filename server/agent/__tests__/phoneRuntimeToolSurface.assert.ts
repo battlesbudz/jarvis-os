@@ -196,6 +196,7 @@ const routingSource = fs.readFileSync(path.resolve("server/agent/phoneRuntimeRou
 const runtimeToolNamesSource = fs.readFileSync(path.resolve("server/agent/androidPhoneRuntimeToolNames.ts"), "utf8");
 const runtimeSource = fs.readFileSync(path.resolve("server/agent/tools/androidAppRuntime.ts"), "utf8");
 const daemonShellSource = fs.readFileSync(path.resolve("server/agent/tools/daemonShellTool.ts"), "utf8");
+const androidDaemonToolHelpersSource = fs.readFileSync(path.resolve("server/agent/tools/androidDaemonToolHelpers.ts"), "utf8");
 const bridgeSource = fs.readFileSync(path.resolve("server/daemon/bridge.ts"), "utf8");
 const androidOpHandlerSource = fs.readFileSync(path.resolve("android-daemon/app/src/main/java/com/jarvis/daemon/OpHandler.kt"), "utf8");
 const androidAccessibilitySource = fs.readFileSync(path.resolve("android/app/src/main/java/com/gameplan/daemon/JarvisAccessibilityService.kt"), "utf8");
@@ -207,6 +208,20 @@ const approvalToolRiskSource = fs.readFileSync(path.resolve("server/agent/approv
 const notificationSummarySource = fs.readFileSync(path.resolve("server/agent/androidNotificationSummary.ts"), "utf8");
 const daemonActionSource = fs.readFileSync(path.resolve("server/agent/tools/daemon.ts"), "utf8");
 const actionOntologySource = fs.readFileSync(path.resolve("server/agent/actionOntology.ts"), "utf8");
+
+for (const compactScreenSource of [
+  androidAccessibilitySource,
+  pluginAndroidAccessibilitySource,
+  standaloneAndroidAccessibilitySource,
+]) {
+  assert.match(compactScreenSource, /safeLabel != null && safeLabel\.length > 1\) \{/);
+  assert.doesNotMatch(compactScreenSource, /!texts\.contains\(safeLabel\)/);
+  assert.match(
+    compactScreenSource,
+    /temporaryClipLabel = "jarvis_input_\$\{System\.nanoTime\(\)\}"[\s\S]*hadPrimaryClip = cm\.hasPrimaryClip\(\)[\s\S]*ACTION_PASTE[\s\S]*finally \{[\s\S]*currentLabel != temporaryClipLabel \|\| currentText != text[\s\S]*preserving newer content[\s\S]*setPrimaryClip\(clipToRestore\)[\s\S]*clearPrimaryClip\(\)/,
+    "clipboard-backed input must restore the user's previous primary clip in every active daemon",
+  );
+}
 
 assert.match(
   routesSource,
@@ -364,10 +379,52 @@ assert.match(runtimeSource, /type: ["']android_notification_open["']/);
 assert.match(bridgeSource, /type: ["']android_notification_open["']/);
 assert.match(daemonShellSource, /type: ["']android_press_key["'], key: ["']enter["']/);
 assert.match(daemonShellSource, /if \(!screenRaw\)[\s\S]*submit_search_baseline/);
-assert.match(daemonShellSource, /function parseSubmitElement/);
-assert.match(daemonShellSource, /node\.contentDesc[\s\S]{0,160}node\.content_desc/);
-assert.match(daemonShellSource, /\^\(\?:search\|go\|submit\)\\b/);
-assert.match(daemonShellSource, /coordinateMatch = ranked[\s\S]*extractNodeCoords[\s\S]*\.find\(\(entry\) => entry\.coords !== null\)/);
+assert.match(
+  daemonShellSource,
+  /readVerifiedFocusedSearchState[\s\S]*focusData\?\.screen[\s\S]*focusPackage !== resolvedAppPackage[\s\S]*screenMatchesResolvedApp\(focusScreen\)[\s\S]*isFocusedSearchField/,
+  "every focused-search read must bind the focused field to the atomically reported target package",
+);
+assert.match(
+  daemonShellSource,
+  /safelyClearFocusedSearchField[\s\S]*expectedPackage: resolvedAppPackage[\s\S]*expectedResourceId: clearTarget\.resourceId[\s\S]*expectedHint: clearTarget\.hint[\s\S]*failClosed: true/,
+  "search clearing must pass the verified package and field identity to the native mutation",
+);
+assert.match(
+  daemonShellSource,
+  /boundInputTarget[\s\S]*runAndroidTextInputFallback[\s\S]*expectedPackage: resolvedAppPackage[\s\S]*expectedResourceId: boundInputTarget\.resourceId[\s\S]*verifySearchInput[\s\S]*expectedHint: boundInputTarget\.hint[\s\S]*key: "enter"[\s\S]*expectedResourceId: finalSearchState\?\.field\.resourceId/,
+  "search type, paste escalation, and Enter must carry the verified package and field identity",
+);
+assert.match(
+  androidDaemonToolHelpersSource,
+  /expectedPackage\?: string[\s\S]*type: "android_clear_field"[\s\S]*expectedResourceId: options\.expectedResourceId[\s\S]*if \(options\.failClosed\)[\s\S]*no key fallback was sent/,
+  "bound clears must fail closed without an unverified keyevent fallback",
+);
+for (const boundClearSource of [
+  androidAccessibilitySource,
+  pluginAndroidAccessibilitySource,
+  standaloneAndroidAccessibilitySource,
+]) {
+  assert.match(
+    boundClearSource,
+    /if \(targetBound\)[\s\S]*bound_fallback_exhausted[\s\S]*refusing unbound global keyevents[\s\S]*try \{[\s\S]*input", "keyevent"/,
+    "native bound clears must stop before the global keyevent fallback",
+  );
+}
+assert.match(
+  daemonShellSource,
+  /isFocused = focusResult\.ok && focusResultPackage === resolvedAppPackage && focusedField\.focused[\s\S]*focusedFieldIsSearch = isFocused && isFocusedSearchField\(focusedField\)/,
+  "post-tap search semantics must be gated by the package-bound focus result",
+);
+assert.doesNotMatch(
+  daemonShellSource,
+  /relocateSubmitElement|parseSubmitElement|button_tap_fallback|Retrying submission via search button/,
+  "search submission must fail closed instead of tapping a generic non-atomic submit control",
+);
+assert.match(
+  daemonShellSource,
+  /relocateSearchElement[\s\S]*screenMatchesResolvedApp\(r\.data\)[\s\S]*attempt === 2[\s\S]*screenMatchesResolvedApp\(swipeTarget\.data\)[\s\S]*tapTarget[\s\S]*screenMatchesResolvedApp\(tapTarget\.data\)[\s\S]*beforeFocusPackage !== resolvedAppPackage[\s\S]*focusResultPackage === resolvedAppPackage/,
+  "resumed discovery, recovery swipes, and cached-coordinate taps must validate the foreground app before acting",
+);
 const androidApprovalGateStart = routesSource.indexOf("const androidRouteApprovalRequired");
 const androidApprovalGateEnd = routesSource.indexOf("const isHighStakes", androidApprovalGateStart);
 const androidApprovalGateSource = routesSource.slice(androidApprovalGateStart, androidApprovalGateEnd);
@@ -415,12 +472,120 @@ assert.match(runtimeSource, /if \(ranked\.length === 0\) \{[\s\S]*if \(!allowSha
 assert.match(androidAccessibilitySource, /Regex\("\[\^\\\\p\{L\}\\\\p\{N\}\]\+"\)/);
 assert.match(androidAccessibilitySource, /queryTokens\.size > 1 -> containsBoundedNotificationTerm\(label, normalizedQuery\)/);
 assert.match(androidAccessibilitySource, /score = if \(appMatches && queryMatches\)/);
-assert.match(daemonShellSource, /keyboardDismissed && hasNewResultEvidence/);
+assert.match(daemonShellSource, /requireTransition \? hasNewResultEvidence : hasExistingResultEvidence/);
 assert.match(daemonShellSource, /Array\.isArray\(node\.text\)[\s\S]*for \(const value of labelValues\)/);
 assert.match(daemonShellSource, /resumeFromStepRaw > 5/);
 assert.doesNotMatch(daemonShellSource, /resume_from_step: 6/);
 assert.match(daemonShellSource, /hasNewResultContainer[\s\S]*newLabels\.length >= 2/);
 assert.doesNotMatch(daemonShellSource, /contentGrew|contentChanged|preSubmitLen|preSubmitNodeCount/);
+const inAppSearchStart = daemonShellSource.indexOf('name: "android_search_in_app"');
+const inAppSearchEnd = daemonShellSource.indexOf("export const androidTypeInFieldTool", inAppSearchStart);
+const inAppSearchSource = daemonShellSource.slice(inAppSearchStart, inAppSearchEnd);
+assert.match(
+  inAppSearchSource,
+  /type: "android_get_focused_field"[\s\S]*const focusedField = extractFocusedFieldText\(focusResult\.data\)/,
+  "in-app search must verify focus through the dedicated accessibility operation",
+);
+assert.match(
+  inAppSearchSource,
+  /const beforeFocus = extractFocusedFieldText\(beforeFocusResult\.data\)[\s\S]*const transitionedDedicatedSearchField = focusChanged && isSearchActivity && hasStableFocusIdentity[\s\S]*const focusVerified = focusedFieldIsSearch \|\| transitionedDedicatedSearchField[\s\S]*if \(focusVerified\)/,
+  "in-app search must verify search-field identity or a focus transition before clearing and typing",
+);
+assert.match(
+  inAppSearchSource,
+  /acceptedAppPackages[\s\S]*screenMatchesResolvedApp[\s\S]*resolvedAppPackage = packageName[\s\S]*readVerifiedFocusedSearchState[\s\S]*focusData\?\.screen[\s\S]*screenMatchesResolvedApp\(focusScreen\)[\s\S]*isFocusedSearchField\(focusedField\)/,
+  "every focused-field fast path must verify and lock the expected resolved foreground package",
+);
+assert.match(
+  inAppSearchSource,
+  /const focusSnapshotProbe = await sendDaemonOp[\s\S]*focusSnapshotProbe\.ok[\s\S]*typeof focusSnapshotData\?\.package !== "string"[\s\S]*typeof focusSnapshotData\.screen !== "object"[\s\S]*error_at_step: "daemon_update_required"[\s\S]*Update or reinstall the Jarvis Android app/,
+  "in-app search must reject legacy daemon focus payloads with an actionable update requirement before mutation",
+);
+assert.match(
+  inAppSearchSource,
+  /const openedPackage = \(openResult\.data[\s\S]*acceptedAppPackages\.has\(openedPackage\)[\s\S]*resolvedAppPackage = openedPackage/,
+  "in-app search must honor the package actually resolved by Android's app-opening fallback",
+);
+assert.match(
+  inAppSearchSource,
+  /Resuming from a later step[\s\S]*screenMatchesResolvedApp\(r\.data\)[\s\S]*error_at_step: "resume_package"[\s\S]*screenRaw = JSON\.stringify\(r\.data/,
+  "step-3/4/5 resumes must verify and initialize the resolved foreground package",
+);
+assert.doesNotMatch(
+  inAppSearchSource,
+  /rebuildDedicatedSearchActivityFocus/,
+  "step-4/5 resume must not bless the current same-app editor without a fresh tap transition",
+);
+assert.match(
+  inAppSearchSource,
+  /const localResourceId = resourceId\.slice\(resourceId\.lastIndexOf\("\/"\) \+ 1\)[\s\S]*containsBoundedSignal\(localResourceId, normalizedSignal\)[\s\S]*containsBoundedSignal\(hint, signal\)/,
+  "search-field identity must ignore package-name substrings and use bounded local resource-ID or hint signals",
+);
+assert.doesNotMatch(
+  inAppSearchSource,
+  /if \(isFocused \|\| isSearchActivity\)/,
+  "a generic focused field or search-like screen must not authorize destructive text entry",
+);
+assert.match(
+  inAppSearchSource,
+  /focusedSearchFieldStillVerified[\s\S]*safelyClearFocusedSearchField[\s\S]*identity check failed before clear[\s\S]*identity check failed after clear[\s\S]*beforeInputScreen[\s\S]*if \(!\(await focusedSearchFieldStillVerified\(\)\)\)[\s\S]*identity check failed immediately before input[\s\S]*runAndroidTextInputFallback/,
+  "every input path must fail closed unless search-field identity is verified immediately before clear and again before typing",
+);
+assert.doesNotMatch(
+  inAppSearchSource,
+  /const isFocused = screenContains\(afterRaw/,
+  "in-app search must not expect compact screen snapshots to expose focus metadata",
+);
+assert.match(
+  inAppSearchSource,
+  /runAndroidTextInputFallback\([\s\S]*beforePaste: \(\) => safelyClearFocusedSearchField\(inputSteps\)[\s\S]*verifyAndroidTextInput\(/,
+  "in-app search must revalidate and clear the search target before every paste fallback",
+);
+assert.match(
+  inAppSearchSource,
+  /const preInputSearchTarget = await readVerifiedFocusedSearchField\(\)[\s\S]*requiresExplicitClear = typeof preInputSearchTarget\?\.text === "string"[\s\S]*!requiresExplicitClear \|\| await safelyClearFocusedSearchField\(inputSteps\)[\s\S]*if \(!fieldCleared\)[\s\S]*error_at_step: "clear_search_field"[\s\S]*runAndroidTextInputFallback\(/,
+  "in-app search must use replacement-only typing for unreadable fields and require a verified clear before any paste fallback",
+);
+assert.match(
+  inAppSearchSource,
+  /safelyPreparePasteEscalation[\s\S]*beforeEscalating: safelyPreparePasteEscalation[\s\S]*deferEscalationWhenFieldTextUnavailable[\s\S]*verifySearchInput\(true\)[\s\S]*currentInputTarget\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*inputTargetStillSearch && focusedFieldTextMatches === null && screenContainsQuery[\s\S]*if \(!typeVerified && methodUsed === "android_type" && focusedFieldTextMatches === null\)[\s\S]*verifySearchInput\(false\)/,
+  "in-app search must revalidate search identity around paste escalation and again before accepting input evidence",
+);
+assert.match(
+  daemonShellSource,
+  /beforeEscalating\?: \(\) => Promise<boolean>[\s\S]*Paste escalation aborted because the existing field text could not be cleared safely[\s\S]*forceClipboardOnly: true/,
+  "paste escalation must abort when the field cannot be confirmed empty and use a real clipboard-only fallback",
+);
+assert.match(
+  inAppSearchSource,
+  /screenHasNewQueryEvidence[\s\S]*normalizedQuery\.length > 0 && queryVerificationBaselineVisibleValueCounts !== null[\s\S]*count > \(queryVerificationBaselineVisibleValueCounts!\.get\(normalizedValue\) \?\? 0\)[\s\S]*containsBoundedSignal\(normalizedValue, normalizedQuery\)[\s\S]*beforeInputScreen[\s\S]*countNormalizedVisibleValues\(beforeInputScreen\.data\)[\s\S]*currentInputTarget\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*focusedFieldTextMatches === null && screenContainsQuery/,
+  "in-app search must reject appended stale text and require the complete bounded query in a newly visible compact-screen value",
+);
+assert.match(
+  inAppSearchSource,
+  /const normalizeVisibleText[\s\S]*\.normalize\("NFKC"\)[\s\S]*\.toLowerCase\(\)[\s\S]*\.trim\(\)[\s\S]*if \(afterType\.ok\)[\s\S]*else \{[\s\S]*screenRaw = "";[\s\S]*if \(!screenRaw\)[\s\S]*submit_search_baseline/,
+  "screen fallback must preserve query punctuation and force a fresh submit baseline after a failed post-type read",
+);
+assert.match(
+  inAppSearchSource,
+  /if \(!screenRaw\)[\s\S]*const finalSearchState = await readVerifiedFocusedSearchState\(\)[\s\S]*finalSearchState\.field\.text\.trim\(\) === searchQuery\.trim\(\)[\s\S]*screenHasNewQueryEvidence\(finalSearchState\.screen\)[\s\S]*if \(!finalQueryVerified\)[\s\S]*error_at_step: "submit_search_target"[\s\S]*sendDaemonOp\(ctx\.userId, \{\s*type: "android_press_key",\s*key: "enter",\s*expectedPackage: resolvedAppPackage \?\? undefined,\s*expectedResourceId: finalSearchState\?\.field\.resourceId,\s*expectedHint: finalSearchState\?\.field\.hint,\s*\}, 10000\)/,
+  "in-app search must revalidate the live search identity and query immediately before dispatching Enter",
+);
+assert.match(
+  inAppSearchSource,
+  /let resultsLoaded = resumeFromStep === 5[\s\S]*await isVerifiedResultsState\(screenRaw, false\)[\s\S]*if \(resultsLoaded\)[\s\S]*outcome: "already_loaded"[\s\S]*no submit action dispatched[\s\S]*async function isVerifiedResultsState[\s\S]*screenMatchesResolvedApp\(raw\)[\s\S]*type: "android_get_focused_field"[\s\S]*focusData\?\.screen[\s\S]*focusPackage !== resolvedAppPackage[\s\S]*screenMatchesResolvedApp\(focusScreen\)[\s\S]*isResultsState\(focusScreenRaw, requireTransition\)[\s\S]*if \(!requireTransition\)[\s\S]*extractCompactScreenVisibleValues\(compactScreen\)[\s\S]*if \(!resumedQueryVisible\) return false[\s\S]*return !focusedField\.focused[\s\S]*isVerifiedResultsState\(afterSearchRaw\)/,
+  "all results paths must reject focused typeahead editors; step-5 resume may accept already-loaded results without submitting",
+);
+assert.match(
+  inAppSearchSource,
+  /resume_from_step: 2[\s\S]{0,180}Do not call android_open_app_by_name/,
+  "a failed search-bar tap must refresh coordinates without triggering a blocked background relaunch",
+);
+assert.match(
+  inAppSearchSource,
+  /if \(attempt === 1 && resumeFromStep !== 2\)[\s\S]*type: "android_open_app"/,
+  "resumed step-2 discovery must remain in the foreground app",
+);
 assert.equal(
   pluginAndroidAccessibilitySource,
   androidAccessibilitySource,
@@ -436,6 +601,7 @@ assert.equal(
 );
 for (const opHandlerSource of [generatedAndroidOpHandlerSource, pluginAndroidOpHandlerSource, androidOpHandlerSource]) {
   assert.match(opHandlerSource, /allowShadeFallback = op\.optBoolean\("allowShadeFallback", false\)/);
+  assert.match(opHandlerSource, /forceClipboardOnly = op\.optBoolean\("forceClipboardOnly", false\)[\s\S]*targetBound = expectedPackage != null \|\| expectedResourceId != null \|\| expectedHint != null[\s\S]*if \(!forceClipboardOnly && !targetBound\)[\s\S]*pasteFromClipboard/);
   assert.match(opHandlerSource, /!allowShadeFallback[\s\S]*android_read_screen permission is required for the notification-shade fallback/);
   assert.doesNotMatch(opHandlerSource, /"enter"\s*->\s*Pair\("KEYCODE_ENTER"/);
   assert.match(opHandlerSource, /query\.isEmpty\(\) && appName == null/);
