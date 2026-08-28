@@ -2083,12 +2083,8 @@ export const androidSearchInAppTool: AgentTool = {
         }
         screenRaw = JSON.stringify(baseline.data || "");
       }
-      let resultsLoaded = false;
-      if (resumeFromStep === 5) {
-        const resumeFocus = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
-        const hasFocusedEditor = resumeFocus.ok && extractFocusedFieldText(resumeFocus.data).focused;
-        resultsLoaded = resumeFocus.ok && !hasFocusedEditor && isResultsState(screenRaw, false);
-      }
+      let resultsLoaded = resumeFromStep === 5 &&
+        await isVerifiedResultsState(screenRaw, false);
       if (resultsLoaded) {
         stepLog.push({ step: 5, outcome: "already_loaded", detail: "Existing results state verified on step-5 resume; no submit action dispatched." });
       } else {
@@ -2186,11 +2182,17 @@ export const androidSearchInAppTool: AgentTool = {
         );
       }
 
+      async function isVerifiedResultsState(raw: string, requireTransition = true): Promise<boolean> {
+        if (!isResultsState(raw, requireTransition)) return false;
+        const focus = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
+        return focus.ok && !extractFocusedFieldText(focus.data).focused;
+      }
+
       if (!resultsLoaded) {
         const afterSearch = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
         if (afterSearch.ok) {
           const afterSearchRaw = JSON.stringify(afterSearch.data || "");
-          resultsLoaded = isResultsState(afterSearchRaw);
+          resultsLoaded = await isVerifiedResultsState(afterSearchRaw);
           screenRaw = afterSearchRaw;
           stepLog.push({ step: 5, outcome: "enter_sent", detail: `resultsLoaded=${resultsLoaded} after Enter` });
         }
@@ -2206,7 +2208,7 @@ export const androidSearchInAppTool: AgentTool = {
           const retryRead = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
           if (retryRead.ok) {
             const retryRaw = JSON.stringify(retryRead.data || "");
-            resultsLoaded = isResultsState(retryRaw);
+            resultsLoaded = await isVerifiedResultsState(retryRaw);
             screenRaw = retryRaw;
             stepLog.push({ step: 5, outcome: "button_tap_fallback", detail: `resultsLoaded=${resultsLoaded} after button tap` });
           }

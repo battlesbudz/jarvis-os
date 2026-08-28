@@ -506,8 +506,8 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /let resultsLoaded = false[\s\S]*resumeFromStep === 5[\s\S]*type: "android_get_focused_field"[\s\S]*hasFocusedEditor = resumeFocus\.ok[\s\S]*resumeFocus\.ok && !hasFocusedEditor && isResultsState\(screenRaw, false\)[\s\S]*if \(resultsLoaded\)[\s\S]*outcome: "already_loaded"[\s\S]*no submit action dispatched[\s\S]*function isResultsState\(raw: string, requireTransition = true\)[\s\S]*requireTransition \? hasNewResultEvidence : hasExistingResultEvidence/,
-  "step-5 resume must reject focused typeahead editors and accept only an already-loaded results state without submitting",
+  /let resultsLoaded = resumeFromStep === 5[\s\S]*await isVerifiedResultsState\(screenRaw, false\)[\s\S]*if \(resultsLoaded\)[\s\S]*outcome: "already_loaded"[\s\S]*no submit action dispatched[\s\S]*async function isVerifiedResultsState[\s\S]*type: "android_get_focused_field"[\s\S]*!extractFocusedFieldText\(focus\.data\)\.focused[\s\S]*isVerifiedResultsState\(afterSearchRaw\)[\s\S]*isVerifiedResultsState\(retryRaw\)/,
+  "all results paths must reject focused typeahead editors; step-5 resume may accept already-loaded results without submitting",
 );
 assert.match(
   inAppSearchSource,
