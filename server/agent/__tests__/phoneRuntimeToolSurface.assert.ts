@@ -215,6 +215,11 @@ for (const compactScreenSource of [
 ]) {
   assert.match(compactScreenSource, /safeLabel != null && safeLabel\.length > 1\) \{/);
   assert.doesNotMatch(compactScreenSource, /!texts\.contains\(safeLabel\)/);
+  assert.match(
+    compactScreenSource,
+    /hadPrimaryClip = cm\.hasPrimaryClip\(\)[\s\S]*previousClip[\s\S]*ACTION_PASTE[\s\S]*finally \{[\s\S]*setPrimaryClip\(clipToRestore\)[\s\S]*clearPrimaryClip\(\)/,
+    "clipboard-backed input must restore the user's previous primary clip in every active daemon",
+  );
 }
 
 assert.match(

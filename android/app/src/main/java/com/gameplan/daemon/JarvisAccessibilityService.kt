@@ -1261,30 +1261,58 @@ class JarvisAccessibilityService : AccessibilityService() {
     fun pasteFromClipboard(text: String): Boolean {
         val root = rootInActiveWindow ?: return false
         val node = findFocusedEditable(root) ?: findFirstEditable(root) ?: return false
+        val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
 
-        // Build a plain-text clip and set it on the primary clipboard slot.
-        // We must dispatch this to the main thread on Android 10+ — background
-        // threads cannot write to the clipboard on Android 10+ (the write is
-        // silently dropped).
-        val latch = CountDownLatch(1)
+        // Clipboard reads/writes must run on the main thread on Android 10+.
+        // Preserve both the prior clip and the absence of a clip so this
+        // temporary transport never destroys user clipboard contents.
+        val setLatch = CountDownLatch(1)
         var clipSet = false
+        var hadPrimaryClip = false
+        var previousClip: android.content.ClipData? = null
         android.os.Handler(android.os.Looper.getMainLooper()).post {
             try {
-                val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                val clip = android.content.ClipData.newPlainText("jarvis_input", text)
-                cm.setPrimaryClip(clip)
+                hadPrimaryClip = cm.hasPrimaryClip()
+                previousClip = if (hadPrimaryClip) cm.primaryClip else null
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("jarvis_input", text))
                 clipSet = true
             } catch (e: Exception) {
                 Log.w(TAG, "pasteFromClipboard: clipboard set failed: ${e.message}")
             } finally {
-                latch.countDown()
+                setLatch.countDown()
             }
         }
-        latch.await(2, TimeUnit.SECONDS)
+        setLatch.await(2, TimeUnit.SECONDS)
         if (!clipSet) return false
 
-        Thread.sleep(100) // Let clipboard propagate
-        return node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+        var pasteOk = false
+        try {
+            Thread.sleep(100) // Let the temporary clip propagate
+            pasteOk = node.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+            return pasteOk
+        } finally {
+            // ACTION_PASTE reads synchronously, but leave a brief grace period
+            // before restoring for vendor accessibility implementations.
+            Thread.sleep(100)
+            val restoreLatch = CountDownLatch(1)
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                try {
+                    val clipToRestore = previousClip
+                    if (hadPrimaryClip && clipToRestore != null) {
+                        cm.setPrimaryClip(clipToRestore)
+                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        cm.clearPrimaryClip()
+                    } else {
+                        cm.setPrimaryClip(android.content.ClipData.newPlainText("", ""))
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "pasteFromClipboard: clipboard restore failed: ${e.message}")
+                } finally {
+                    restoreLatch.countDown()
+                }
+            }
+            restoreLatch.await(2, TimeUnit.SECONDS)
+        }
     }
 
     // ── Swipe ────────────────────────────────────────────────────────────────
