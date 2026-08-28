@@ -1279,6 +1279,242 @@ export const agentApprovalAllowlist = pgTable("agent_approval_allowlist", {
 
 export type AgentApprovalAllowlistEntry = typeof agentApprovalAllowlist.$inferSelect;
 
+// ── Trusted Execution ────────────────────────────────────────────────────────
+// Server-owned authority records are intentionally separate from legacy
+// approval gates. The first rollout keeps every Trusted Execution flag off;
+// these tables establish bounded provenance, workflow manifests, attempts,
+// revocation epochs, and standing-grant lineage without changing live policy.
+
+export const TRUSTED_EXECUTION_AUTHORITY_STATUSES = [
+  "active",
+  "compensating",
+  "completed",
+  "failed",
+  "cancelled",
+  "expired",
+] as const;
+export type TrustedExecutionAuthorityStatus = typeof TRUSTED_EXECUTION_AUTHORITY_STATUSES[number];
+
+export const TRUSTED_EXECUTION_STEP_STATUSES = [
+  "pending",
+  "consuming",
+  "consumed",
+  "retryable_failed",
+  "failed",
+  "cancelled",
+  "skipped",
+  "reconciliation_required",
+] as const;
+export type TrustedExecutionStepStatus = typeof TRUSTED_EXECUTION_STEP_STATUSES[number];
+
+export const trustedExecutionGlobalControls = pgTable("trusted_execution_global_controls", {
+  id: varchar("id").primaryKey().default("global"),
+  enabled: boolean("enabled").notNull().default(false),
+  killSwitchEnabled: boolean("kill_switch_enabled").notNull().default(false),
+  executionEpoch: integer("execution_epoch").notNull().default(0),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const trustedExecutionUserControls = pgTable("trusted_execution_user_controls", {
+  userId: varchar("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  executionEpoch: integer("execution_epoch").notNull().default(0),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const standingExecutionGrantHeads = pgTable("standing_execution_grant_heads", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  status: varchar("status").notNull().default("active"),
+  category: varchar("category").notNull(),
+  currentVersion: integer("current_version").notNull().default(1),
+  stateRevision: integer("state_revision").notNull().default(1),
+  triggerLineageId: varchar("trigger_lineage_id").notNull(),
+  allowedActions: jsonb("allowed_actions").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  allowedTargets: jsonb("allowed_targets").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  limits: jsonb("limits").$type<Record<string, number>>().notNull().default(sql`'{}'::jsonb`),
+  expiresAt: timestamp("expires_at").notNull(),
+  pausedAt: timestamp("paused_at"),
+  revokedAt: timestamp("revoked_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  index("standing_execution_grant_user_status_idx").on(table.userId, table.status, table.updatedAt),
+  uniqueIndex("standing_execution_grant_trigger_lineage_uidx").on(table.id, table.triggerLineageId),
+]);
+
+export const standingExecutionGrantVersions = pgTable("standing_execution_grant_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  grantId: varchar("grant_id").notNull().references(() => standingExecutionGrantHeads.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  version: integer("version").notNull(),
+  actorUserId: varchar("actor_user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  consentSourceTurnId: varchar("consent_source_turn_id").notNull(),
+  sourceActionKind: varchar("source_action_kind").notNull(),
+  sourceActionKey: varchar("source_action_key").notNull(),
+  category: varchar("category").notNull(),
+  triggerLineageId: varchar("trigger_lineage_id").notNull(),
+  allowedActions: jsonb("allowed_actions").$type<string[]>().notNull(),
+  allowedTargets: jsonb("allowed_targets").$type<string[]>().notNull(),
+  limits: jsonb("limits").$type<Record<string, number>>().notNull(),
+  effectiveFrom: timestamp("effective_from").notNull(),
+  effectiveThrough: timestamp("effective_through"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("standing_execution_grant_version_uidx").on(table.grantId, table.version),
+  uniqueIndex("standing_execution_grant_consent_source_uidx").on(table.userId, table.sourceActionKind, table.sourceActionKey),
+]);
+
+export const executionAuthorities = pgTable("execution_authorities", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  sourceType: varchar("source_type").$type<"direct_command" | "standing_grant">().notNull(),
+  sourceTurnId: varchar("source_turn_id"),
+  sourceActionKind: varchar("source_action_kind"),
+  sourceActionKey: varchar("source_action_key"),
+  standingGrantId: varchar("standing_grant_id").references(() => standingExecutionGrantHeads.id, { onDelete: "set null" }),
+  standingGrantVersion: integer("standing_grant_version"),
+  standingGrantStateRevision: integer("standing_grant_state_revision"),
+  standingGrantCategory: varchar("standing_grant_category"),
+  standingGrantLimitSnapshot: jsonb("standing_grant_limit_snapshot").$type<Record<string, number>>(),
+  standingGrantConsentSourceTurnId: varchar("standing_grant_consent_source_turn_id"),
+  standingGrantTriggerLineageId: varchar("standing_grant_trigger_lineage_id"),
+  triggerOccurrenceKey: varchar("trigger_occurrence_key"),
+  standingGrantUsageSnapshot: jsonb("standing_grant_usage_snapshot").$type<Record<string, unknown>>(),
+  globalExecutionEpoch: integer("global_execution_epoch").notNull(),
+  userExecutionEpoch: integer("user_execution_epoch").notNull(),
+  originChannel: varchar("origin_channel").notNull(),
+  taskId: varchar("task_id").notNull(),
+  intent: text("intent").notNull(),
+  allowedActions: jsonb("allowed_actions").$type<string[]>().notNull(),
+  allowedTargets: jsonb("allowed_targets").$type<string[]>().notNull(),
+  riskTier: varchar("risk_tier").$type<"low" | "medium" | "high">().notNull(),
+  maxAttemptsPerStep: integer("max_attempts_per_step").notNull(),
+  idempotencyLineageId: varchar("idempotency_lineage_id").notNull(),
+  workflowPlanRevision: integer("workflow_plan_revision").notNull().default(1),
+  workflowPlanStatus: varchar("workflow_plan_status").$type<"planning" | "closed">().notNull().default("planning"),
+  requiredStepManifestHash: varchar("required_step_manifest_hash"),
+  issuedAt: timestamp("issued_at").defaultNow().notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  compensationExpiresAt: timestamp("compensation_expires_at").notNull(),
+  forwardAdmissionStatus: varchar("forward_admission_status").$type<"open" | "closed">().notNull().default("open"),
+  forwardAdmissionClosedAt: timestamp("forward_admission_closed_at"),
+  compensationReasons: jsonb("compensation_reasons").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  status: varchar("status").$type<TrustedExecutionAuthorityStatus>().notNull().default("active"),
+  reconciliationStatus: varchar("reconciliation_status").$type<"none" | "required" | "resolved">().notNull().default("none"),
+  terminalReasonRef: varchar("terminal_reason_ref"),
+  auditMetadata: jsonb("audit_metadata").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  failedAt: timestamp("failed_at"),
+  cancelledAt: timestamp("cancelled_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("execution_authority_source_action_uidx").on(table.userId, table.sourceActionKind, table.sourceActionKey),
+  uniqueIndex("execution_authority_idempotency_uidx").on(table.userId, table.idempotencyLineageId),
+  index("execution_authority_user_status_idx").on(table.userId, table.status, table.updatedAt),
+]);
+
+export const authorityExecutionSteps = pgTable("authority_execution_steps", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  authorityId: varchar("authority_id").notNull().references(() => executionAuthorities.id, { onDelete: "cascade" }),
+  stepKey: varchar("step_key").notNull(),
+  action: varchar("action").notNull(),
+  targetFingerprint: varchar("target_fingerprint").notNull(),
+  idempotencyKey: varchar("idempotency_key").notNull(),
+  role: varchar("role").$type<"forward" | "compensation">().notNull(),
+  dependsOnStepKeys: jsonb("depends_on_step_keys").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  compensatesStepKeys: jsonb("compensates_step_keys").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  compensationTriggers: jsonb("compensation_triggers").$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+  compensationEligibility: varchar("compensation_eligibility").notNull().default("inactive"),
+  maxAttempts: integer("max_attempts").notNull(),
+  attemptCount: integer("attempt_count").notNull().default(0),
+  currentAttemptId: varchar("current_attempt_id"),
+  status: varchar("status").$type<TrustedExecutionStepStatus>().notNull().default("pending"),
+  resultRef: varchar("result_ref"),
+  recoveryRef: varchar("recovery_ref"),
+  startedAt: timestamp("started_at"),
+  consumedAt: timestamp("consumed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("authority_execution_step_key_uidx").on(table.authorityId, table.stepKey),
+  uniqueIndex("authority_execution_step_idempotency_uidx").on(table.authorityId, table.idempotencyKey),
+  index("authority_execution_step_status_idx").on(table.authorityId, table.status),
+]);
+
+export const authorityExecutionAttempts = pgTable("authority_execution_attempts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  authorityExecutionStepId: varchar("authority_execution_step_id").notNull().references(() => authorityExecutionSteps.id, { onDelete: "cascade" }),
+  attemptNumber: integer("attempt_number").notNull(),
+  leaseOwnerId: varchar("lease_owner_id").notNull(),
+  leaseGeneration: integer("lease_generation").notNull(),
+  leaseExpiresAt: timestamp("lease_expires_at").notNull(),
+  boundaryState: varchar("boundary_state").notNull().default("not_started"),
+  status: varchar("status").notNull().default("leased"),
+  boundaryStartedAt: timestamp("boundary_started_at"),
+  finishedAt: timestamp("finished_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("authority_execution_attempt_number_uidx").on(table.authorityExecutionStepId, table.attemptNumber),
+  uniqueIndex("authority_execution_attempt_generation_uidx").on(table.authorityExecutionStepId, table.leaseGeneration),
+  index("authority_execution_attempt_lease_idx").on(table.status, table.leaseExpiresAt),
+]);
+
+export const standingExecutionOccurrences = pgTable("standing_execution_occurrences", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  grantId: varchar("grant_id").notNull().references(() => standingExecutionGrantHeads.id, { onDelete: "cascade" }),
+  triggerLineageId: varchar("trigger_lineage_id").notNull(),
+  triggerOccurrenceKey: varchar("trigger_occurrence_key").notNull(),
+  authorityId: varchar("authority_id").notNull().references(() => executionAuthorities.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("standing_execution_occurrence_uidx").on(table.grantId, table.triggerLineageId, table.triggerOccurrenceKey),
+  uniqueIndex("standing_execution_occurrence_authority_uidx").on(table.authorityId),
+]);
+
+export const standingExecutionUsageAllocations = pgTable("standing_execution_usage_allocations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  grantId: varchar("grant_id").notNull().references(() => standingExecutionGrantHeads.id, { onDelete: "cascade" }),
+  authorityId: varchar("authority_id").notNull().references(() => executionAuthorities.id, { onDelete: "cascade" }),
+  authorityExecutionStepId: varchar("authority_execution_step_id").references(() => authorityExecutionSteps.id, { onDelete: "set null" }),
+  limitKey: varchar("limit_key").notNull(),
+  windowStart: timestamp("window_start").notNull(),
+  windowEnd: timestamp("window_end").notNull(),
+  amount: integer("amount").notNull(),
+  status: varchar("status").notNull().default("reserved"),
+  reconciliationOwner: varchar("reconciliation_owner"),
+  reconciliationDeadline: timestamp("reconciliation_deadline"),
+  recoveryRef: varchar("recovery_ref"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (table) => [
+  uniqueIndex("standing_execution_usage_authority_window_uidx").on(table.authorityId, table.limitKey, table.windowStart, table.windowEnd),
+  index("standing_execution_usage_counter_idx").on(table.grantId, table.limitKey, table.windowStart, table.windowEnd, table.status),
+]);
+
+export const trustedExecutionAuditEvents = pgTable("trusted_execution_audit_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  authorityId: varchar("authority_id").references(() => executionAuthorities.id, { onDelete: "set null" }),
+  stepId: varchar("step_id").references(() => authorityExecutionSteps.id, { onDelete: "set null" }),
+  eventType: varchar("event_type").notNull(),
+  targetFingerprint: varchar("target_fingerprint"),
+  metadata: jsonb("metadata").$type<Record<string, unknown>>().notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("trusted_execution_audit_user_created_idx").on(table.userId, table.createdAt),
+  index("trusted_execution_audit_authority_idx").on(table.authorityId, table.createdAt),
+]);
+
+export type ExecutionAuthority = typeof executionAuthorities.$inferSelect;
+export type AuthorityExecutionStep = typeof authorityExecutionSteps.$inferSelect;
+export type AuthorityExecutionAttempt = typeof authorityExecutionAttempts.$inferSelect;
+export type StandingExecutionGrantHead = typeof standingExecutionGrantHeads.$inferSelect;
+export type StandingExecutionGrantVersion = typeof standingExecutionGrantVersions.$inferSelect;
+export type StandingExecutionUsageAllocation = typeof standingExecutionUsageAllocations.$inferSelect;
+
 // ── Nervous System — Ambient Signal Monitoring ────────────────────────────────
 // Per-user watch topics (keywords, companies, people, industries) that the
 // nervous system scanner monitors every 30 minutes via web search.
