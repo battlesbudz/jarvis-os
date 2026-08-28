@@ -431,8 +431,13 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /const beforeFocus = extractFocusedFieldText\(beforeFocusResult\.data\)[\s\S]*const focusVerified = focusedFieldIsSearch \|\| \(focusChanged && isSearchActivity\)[\s\S]*if \(focusVerified\)/,
+  /const beforeFocus = extractFocusedFieldText\(beforeFocusResult\.data\)[\s\S]*const transitionedDedicatedSearchField = focusChanged && isSearchActivity && hasStableFocusIdentity[\s\S]*const focusVerified = focusedFieldIsSearch \|\| transitionedDedicatedSearchField[\s\S]*if \(focusVerified\)/,
   "in-app search must verify search-field identity or a focus transition before clearing and typing",
+);
+assert.match(
+  inAppSearchSource,
+  /dedicatedSearchActivityFocus[\s\S]*matchesFocusIdentity[\s\S]*isDedicatedSearchActivity\(JSON\.stringify\(activityCheck\.data \|\| ""\)\)[\s\S]*finalFocusCheck[\s\S]*dedicatedSearchActivityFocus/,
+  "a transition-verified field in a dedicated search activity must retain the same stable identity through step 4",
 );
 assert.match(
   inAppSearchSource,
