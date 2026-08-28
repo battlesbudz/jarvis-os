@@ -436,7 +436,7 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /dedicatedSearchActivityFocus[\s\S]*matchesFocusIdentity[\s\S]*isDedicatedSearchActivity\(JSON\.stringify\(activityCheck\.data \|\| ""\)\)[\s\S]*finalFocusCheck[\s\S]*dedicatedSearchActivityFocus/,
+  /isDedicatedSearchActivity[\s\S]*compactScreen\.package !== appPackage[\s\S]*dedicatedSearchActivityFocus[\s\S]*matchesFocusIdentity[\s\S]*isDedicatedSearchActivity\(activityCheck\.data\)[\s\S]*finalFocusCheck[\s\S]*dedicatedSearchActivityFocus/,
   "a transition-verified field in a dedicated search activity must retain the same stable identity through step 4",
 );
 assert.match(

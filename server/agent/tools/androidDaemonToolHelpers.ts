@@ -40,10 +40,12 @@ export async function runAndroidTextInputFallback(
       const pasteData = (pasteResult.data || {}) as Record<string, unknown>;
       const daemonMethod = typeof pasteData.method_used === "string" ? pasteData.method_used : "unknown";
       methodUsed = `android_paste_text:${daemonMethod}`;
-      inputOk = true;
-      daemonVerified = pasteData.verified === true;
       fieldText = typeof pasteData.field_text === "string" ? pasteData.field_text : null;
-      steps.push(`android_paste_text succeeded via ${daemonMethod}. Daemon verified: ${daemonVerified}.`);
+      daemonVerified = pasteData.verified === true || fieldText === text || fieldText?.trim() === text.trim();
+      inputOk = daemonVerified;
+      steps.push(inputOk
+        ? `android_paste_text succeeded via ${daemonMethod}. Daemon verified: true.`
+        : `android_paste_text process succeeded via ${daemonMethod}, but text was not verified. Moving to Level 3.`);
     } else {
       steps.push(`android_paste_text failed (${pasteResult.error || "unknown"}). Moving to Level 3.`);
     }

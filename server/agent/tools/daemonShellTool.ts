@@ -1125,10 +1125,19 @@ export const androidSearchInAppTool: AgentTool = {
     type FocusIdentity = { resourceId?: string; hint?: string };
     let dedicatedSearchActivityFocus: FocusIdentity | null = null;
 
-    const isDedicatedSearchActivity = (raw: string): boolean =>
-      screenContains(raw, ["\"cancel\"", "cancel\""]) &&
+    const isDedicatedSearchActivity = (data: unknown): boolean => {
+      let compactScreen: Record<string, unknown> | null = null;
+      if (data && typeof data === "object") {
+        compactScreen = data as Record<string, unknown>;
+      } else if (typeof data === "string") {
+        try { compactScreen = JSON.parse(data) as Record<string, unknown>; } catch { return false; }
+      }
+      if (!compactScreen || compactScreen.package !== appPackage) return false;
+      const raw = JSON.stringify(compactScreen);
+      return screenContains(raw, ["\"cancel\"", "cancel\""]) &&
       !screenContains(raw, ["cancel subscription", "cancel order", "cancel payment", "cancel booking"]) &&
       screenContains(raw, SEARCH_KEYWORDS);
+    };
 
     const matchesFocusIdentity = (
       field: ReturnType<typeof extractFocusedFieldText>,
@@ -1146,7 +1155,7 @@ export const androidSearchInAppTool: AgentTool = {
         return false;
       }
       const activityCheck = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      if (!activityCheck.ok || !isDedicatedSearchActivity(JSON.stringify(activityCheck.data || ""))) return false;
+      if (!activityCheck.ok || !isDedicatedSearchActivity(activityCheck.data)) return false;
       // Re-read focus after the screen snapshot so the identity check is the last
       // operation before the caller clears or types.
       const finalFocusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
@@ -1163,7 +1172,7 @@ export const androidSearchInAppTool: AgentTool = {
       if (!initialField.focused || (!initialField.resourceId && !initialField.hint)) return false;
       const identity: FocusIdentity = { resourceId: initialField.resourceId, hint: initialField.hint };
       const activityCheck = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      if (!activityCheck.ok || !isDedicatedSearchActivity(JSON.stringify(activityCheck.data || ""))) return false;
+      if (!activityCheck.ok || !isDedicatedSearchActivity(activityCheck.data)) return false;
       const finalFocusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
       if (!finalFocusCheck.ok || !matchesFocusIdentity(extractFocusedFieldText(finalFocusCheck.data), identity)) {
         return false;
@@ -1745,7 +1754,7 @@ export const androidSearchInAppTool: AgentTool = {
           // Acceptable weaker signal: screen transitioned to a dedicated search activity.
           // "Cancel" (standalone) + a search keyword is specific to search UX patterns
           // in apps like Facebook, Instagram, Twitter. Excludes generic commerce "cancel".
-          isSearchActivity = isDedicatedSearchActivity(afterRaw);
+          isSearchActivity = isDedicatedSearchActivity(afterTap.data);
           screenRaw = afterRaw;
         }
         const hasStableFocusIdentity = !!focusedField.resourceId || !!focusedField.hint;

@@ -17,7 +17,8 @@ assert.ok(
     helperSource.includes('type: "android_paste_text"') &&
     helperSource.includes('methodUsed = `android_paste_text:${retryMethod}:L3`') &&
     helperSource.includes('options.beforePaste && !(await options.beforePaste())') &&
-    helperSource.includes('paste aborted because the target field could not be revalidated safely'),
+    helperSource.includes('paste aborted because the target field could not be revalidated safely') &&
+    helperSource.includes('text was not verified. Moving to Level 3'),
   "helper should preserve the three-level Android text input fallback chain",
 );
 assert.ok(
