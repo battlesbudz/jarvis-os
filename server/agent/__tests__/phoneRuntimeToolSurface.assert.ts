@@ -436,8 +436,13 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /isDedicatedSearchActivity[\s\S]*compactScreen\.package !== appPackage[\s\S]*dedicatedSearchActivityFocus[\s\S]*matchesFocusIdentity[\s\S]*isDedicatedSearchActivity\(activityCheck\.data\)[\s\S]*finalFocusCheck[\s\S]*dedicatedSearchActivityFocus/,
-  "a transition-verified field in a dedicated search activity must retain the same stable identity through step 4",
+  /acceptedAppPackages[\s\S]*screenMatchesResolvedApp[\s\S]*resolvedAppPackage = packageName[\s\S]*focusedSearchFieldStillVerified[\s\S]*screenMatchesResolvedApp\(screenCheck\.data\)[\s\S]*isFocusedSearchField\(focusedField\)/,
+  "every focused-field fast path must verify and lock the expected resolved foreground package",
+);
+assert.match(
+  inAppSearchSource,
+  /const openedPackage = \(openResult\.data[\s\S]*acceptedAppPackages\.has\(openedPackage\)[\s\S]*resolvedAppPackage = openedPackage/,
+  "in-app search must honor the package actually resolved by Android's app-opening fallback",
 );
 assert.match(
   inAppSearchSource,

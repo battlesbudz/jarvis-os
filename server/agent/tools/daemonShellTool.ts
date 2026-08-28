@@ -1094,6 +1094,40 @@ export const androidSearchInAppTool: AgentTool = {
     // understand what happened at each stage and which step to retry.
     const stepLog: Array<{ step: number; outcome: string; detail?: string }> = [];
 
+    const packageAliases: Record<string, string[]> = {
+      "com.facebook.katana": ["com.facebook.lite", "com.facebook.mlite"],
+      "com.facebook.lite": ["com.facebook.katana"],
+      "com.twitter.android": ["com.twitter.android.lite", "com.atebits.tweetie2"],
+      "com.twitter.android.lite": ["com.twitter.android"],
+      "com.reddit.frontpage": ["com.reddit.frontpage.debug"],
+      "com.tiktok.tiktok": ["com.ss.android.ugc.trill", "com.zhiliaoapp.musically"],
+      "com.ss.android.ugc.trill": ["com.tiktok.tiktok", "com.zhiliaoapp.musically"],
+      "com.google.android.apps.messaging": ["com.samsung.android.messaging"],
+      "com.samsung.android.messaging": ["com.google.android.apps.messaging"],
+      "com.microsoft.teams": ["com.microsoft.teams2"],
+      "com.snapchat.android": ["com.snapchat.android.debug"],
+      "com.discord": ["com.discord.development"],
+      "com.linkedin.android": ["com.linkedin.android.lite"],
+      "com.amazon.mShop.android.shopping": ["com.amazon.windowshop"],
+      "com.pinterest": ["com.pinterest.twa"],
+    };
+    const acceptedAppPackages = new Set([appPackage, ...(packageAliases[appPackage] ?? [])]);
+    let resolvedAppPackage: string | null = null;
+
+    const parseCompactScreen = (data: unknown): Record<string, unknown> | null => {
+      if (data && typeof data === "object") return data as Record<string, unknown>;
+      if (typeof data !== "string") return null;
+      try { return JSON.parse(data) as Record<string, unknown>; } catch { return null; }
+    };
+
+    const screenMatchesResolvedApp = (data: unknown): boolean => {
+      const packageName = parseCompactScreen(data)?.package;
+      if (typeof packageName !== "string" || !acceptedAppPackages.has(packageName)) return false;
+      if (resolvedAppPackage && packageName !== resolvedAppPackage) return false;
+      resolvedAppPackage = packageName;
+      return true;
+    };
+
     // Build the search-keyword list once     shared across steps 2 and 3
     const SEARCH_KEYWORDS = ["search", "find", "lookup", "query"];
     if (searchBarHint) SEARCH_KEYWORDS.unshift(searchBarHint.toLowerCase());
@@ -1131,13 +1165,8 @@ export const androidSearchInAppTool: AgentTool = {
     let dedicatedSearchActivityFocus: FocusIdentity | null = null;
 
     const isDedicatedSearchActivity = (data: unknown): boolean => {
-      let compactScreen: Record<string, unknown> | null = null;
-      if (data && typeof data === "object") {
-        compactScreen = data as Record<string, unknown>;
-      } else if (typeof data === "string") {
-        try { compactScreen = JSON.parse(data) as Record<string, unknown>; } catch { return false; }
-      }
-      if (!compactScreen || compactScreen.package !== appPackage) return false;
+      const compactScreen = parseCompactScreen(data);
+      if (!compactScreen || !screenMatchesResolvedApp(compactScreen)) return false;
       const raw = JSON.stringify(compactScreen);
       return screenContains(raw, ["\"cancel\"", "cancel\""]) &&
       !screenContains(raw, ["cancel subscription", "cancel order", "cancel payment", "cancel booking"]) &&
@@ -1152,6 +1181,10 @@ export const androidSearchInAppTool: AgentTool = {
       (!identity.hint || field.hint === identity.hint);
 
     const focusedSearchFieldStillVerified = async (): Promise<boolean> => {
+      // Package verification precedes every focus fast path; the final focus read
+      // remains the last operation before the caller clears or types.
+      const screenCheck = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
+      if (!screenCheck.ok || !screenMatchesResolvedApp(screenCheck.data)) return false;
       const focusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
       if (!focusCheck.ok) return false;
       const focusedField = extractFocusedFieldText(focusCheck.data);
@@ -1159,15 +1192,7 @@ export const androidSearchInAppTool: AgentTool = {
       if (!dedicatedSearchActivityFocus || !matchesFocusIdentity(focusedField, dedicatedSearchActivityFocus)) {
         return false;
       }
-      const activityCheck = await sendDaemonOp(ctx.userId, { type: "android_read_screen" }, 15000);
-      if (!activityCheck.ok || !isDedicatedSearchActivity(activityCheck.data)) return false;
-      // Re-read focus after the screen snapshot so the identity check is the last
-      // operation before the caller clears or types.
-      const finalFocusCheck = await sendDaemonOp(ctx.userId, { type: "android_get_focused_field" }, 8000);
-      return finalFocusCheck.ok && matchesFocusIdentity(
-        extractFocusedFieldText(finalFocusCheck.data),
-        dedicatedSearchActivityFocus,
-      );
+      return isDedicatedSearchActivity(screenCheck.data);
     };
 
     const rebuildDedicatedSearchActivityFocus = async (): Promise<boolean> => {
@@ -1411,6 +1436,19 @@ export const androidSearchInAppTool: AgentTool = {
           }),
         };
       }
+      const openedPackage = (openResult.data as Record<string, unknown> | null)?.package;
+      if (typeof openedPackage !== "string" || !acceptedAppPackages.has(openedPackage)) {
+        return {
+          ok: false,
+          content: JSON.stringify({
+            ok: false,
+            step_reached: 1,
+            error_at_step: "open_app_package",
+            error: `${appName} reported an unexpected resolved package after launch.`,
+          }),
+        };
+      }
+      resolvedAppPackage = openedPackage;
 
       // Poll read_screen until no loading spinner or until 12s elapses
       const loadStartedAt = Date.now();
