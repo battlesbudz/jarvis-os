@@ -563,7 +563,12 @@ async function verifyAndroidTextInput(options: VerifyAndroidTextInputOptions): P
     } else {
       const escalateResult = await sendDaemonOp(
         options.userId,
-        { type: "android_paste_text", text: options.expectedText, fieldDescription: options.fieldDescription },
+        {
+          type: "android_paste_text",
+          text: options.expectedText,
+          fieldDescription: options.fieldDescription,
+          forceClipboardOnly: true,
+        },
         15000,
       );
       if (escalateResult.ok) {

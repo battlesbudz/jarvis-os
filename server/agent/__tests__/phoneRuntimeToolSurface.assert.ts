@@ -481,8 +481,8 @@ assert.match(
 );
 assert.match(
   daemonShellSource,
-  /beforeEscalating\?: \(\) => Promise<boolean>[\s\S]*Paste escalation aborted because the existing field text could not be cleared safely/,
-  "paste escalation must abort when the field cannot be confirmed empty",
+  /beforeEscalating\?: \(\) => Promise<boolean>[\s\S]*Paste escalation aborted because the existing field text could not be cleared safely[\s\S]*forceClipboardOnly: true/,
+  "paste escalation must abort when the field cannot be confirmed empty and use a real clipboard-only fallback",
 );
 assert.match(
   inAppSearchSource,

@@ -42,9 +42,12 @@ export async function runAndroidTextInputFallback(
       methodUsed = `android_paste_text:${daemonMethod}`;
       fieldText = typeof pasteData.field_text === "string" ? pasteData.field_text : null;
       daemonVerified = pasteData.verified === true || fieldText === text || fieldText?.trim() === text.trim();
-      inputOk = daemonVerified;
+      // Only retry an unverified append-capable paste when the caller can first
+      // clear and revalidate the target. Other callers preserve the old behavior
+      // and leave final verification to their own focused-field checks.
+      inputOk = daemonVerified || !options.beforePaste;
       steps.push(inputOk
-        ? `android_paste_text succeeded via ${daemonMethod}. Daemon verified: true.`
+        ? `android_paste_text succeeded via ${daemonMethod}. Daemon verified: ${daemonVerified}.`
         : `android_paste_text process succeeded via ${daemonMethod}, but text was not verified. Moving to Level 3.`);
     } else {
       steps.push(`android_paste_text failed (${pasteResult.error || "unknown"}). Moving to Level 3.`);
@@ -57,7 +60,11 @@ export async function runAndroidTextInputFallback(
       return { methodUsed, inputOk, daemonVerified, fieldText };
     }
     steps.push("Level 3 - android_paste_text retry (clipboard-only path)...");
-    const retryResult = await sendDaemonOp(userId, { type: "android_paste_text", text, fieldDescription }, 15000);
+    const retryResult = await sendDaemonOp(
+      userId,
+      { type: "android_paste_text", text, fieldDescription, forceClipboardOnly: true },
+      15000,
+    );
     if (retryResult.ok) {
       const retryData = (retryResult.data || {}) as Record<string, unknown>;
       const retryMethod = typeof retryData.method_used === "string" ? retryData.method_used : "unknown";
