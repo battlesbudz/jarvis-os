@@ -471,8 +471,8 @@ assert.match(
 );
 assert.match(
   inAppSearchSource,
-  /fieldText\.trim\(\) === searchQuery\.trim\(\)[\s\S]*focusedFieldTextMatches === null && screenContainsQuery/,
-  "in-app search must reject appended stale text and only fall back to compact screen verification when field text is unavailable",
+  /fieldText\.trim\(\) === searchQuery\.trim\(\)[\s\S]*normalizedQuery\.length > 0[\s\S]*` \$\{normalizedScreen\} `\.includes\(` \$\{normalizedQuery\} `\)[\s\S]*focusedFieldTextMatches === null && screenContainsQuery/,
+  "in-app search must reject appended stale text and require the complete bounded query when falling back to compact screen verification",
 );
 assert.match(
   inAppSearchSource,

@@ -1762,11 +1762,20 @@ export const androidSearchInAppTool: AgentTool = {
       let typeVerified = inputVerified;
       if (afterType.ok) {
         const afterTypeRaw = JSON.stringify(afterType.data || "");
-        const queryWords = searchQuery.split(/\s+/).filter((w) => w.length > 1);
-        const screenContainsQuery = queryWords.length === 0 ||
-          queryWords.some((w) => afterTypeRaw.toLowerCase().includes(w.toLowerCase()));
+        const normalizeVisibleText = (value: string) => value
+          .normalize("NFKC")
+          .toLowerCase()
+          .replace(/[^\p{L}\p{N}]+/gu, " ")
+          .trim()
+          .replace(/\s+/g, " ");
+        const normalizedQuery = normalizeVisibleText(searchQuery);
+        const normalizedScreen = normalizeVisibleText(afterTypeRaw);
+        const screenContainsQuery = normalizedQuery.length > 0 &&
+          ` ${normalizedScreen} `.includes(` ${normalizedQuery} `);
         // When the focused field exposes its value, require an exact replacement.
-        // Only use compact screen text as a fallback when field text is unavailable.
+        // Only use compact screen text as a fallback when field text is unavailable,
+        // and require the complete normalized query as a bounded phrase. A single
+        // incidental token elsewhere on screen must not authorize submission.
         typeVerified = typeVerified || (focusedFieldTextMatches === null && screenContainsQuery);
         screenRaw = afterTypeRaw;
       }
