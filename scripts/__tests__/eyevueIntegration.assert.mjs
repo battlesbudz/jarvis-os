@@ -41,6 +41,8 @@ assert.match(service, /photo = photoAssembler\.append\(value\)[\s\S]*pendingPhot
 assert.match(service, /private fun closeConnection\(preservePendingPhoto:[\s\S]*abandonedPhoto !== preservePendingPhoto[\s\S]*EYEVUE_CONNECTION_LOST[\s\S]*latch\?\.countDown\(\)[\s\S]*gatt = null[\s\S]*decoder\.reset\(\)[\s\S]*photoAssembler\.reset\(\)/);
 assert.match(protocol, /class EyevueFrameDecoder[\s\S]*fun reset\(\)[\s\S]*bytes\.reset\(\)/);
 assert.match(protocol, /fun reset\(\)[\s\S]*active = false[\s\S]*image\.reset\(\)/);
+assert.match(protocol, /MAX_PHOTO_BYTES = 20 \* 1024 \* 1024/);
+assert.match(protocol, /chunkSize > maxPhotoBytes - image\.size\(\)[\s\S]*reset\(\)/);
 assert.match(service, /val takeNew = op\.optBoolean\("lookAgain", false\)/);
 assert.doesNotMatch(service, /lookAgain[\s\S]{0,100}\|\|[\s\S]{0,100}lastPhotoPath/);
 assert.match(service, /status != BluetoothGatt\.GATT_SUCCESS[\s\S]*failGattSetup/);
@@ -78,6 +80,8 @@ assert.doesNotMatch(inference, /catch \(e: LocalGemmaDeadlineExceededException\)
 assert.match(inference, /catch \(e: Throwable\)[\s\S]*abortRequested\(\)[\s\S]*LocalGemmaDeadlineExceededException/);
 assert.match(inference, /conversation\.cancelProcess\(\)/);
 assert.match(inference, /stalledEngines\.forEach \{ closeEngineAsync\(it, active\.requestId\) \}/);
+assert.match(inference, /warmEngineReleaseRequested\.set\(true\)[\s\S]*releaseWarmEngineIfIdle\(\)/);
+assert.match(inference, /operationAdmission\.releaseGeneration\(requestId\)[\s\S]*releaseWarmEngineIfIdle\(\)/);
 assert.match(inference, /visionBackend/);
 assert.match(manifest, /BLUETOOTH_SCAN/);
 assert.match(manifest, /foregroundServiceType="connectedDevice"/);

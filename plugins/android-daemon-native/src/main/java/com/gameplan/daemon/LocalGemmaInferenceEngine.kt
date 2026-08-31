@@ -236,6 +236,7 @@ object LocalGemmaInferenceEngine {
     private val operationAdmission = LocalGemmaOperationAdmission()
     private val activeRequests = ConcurrentHashMap<String, ActiveRequest>()
     private val completedRequests = AtomicLong(0)
+    private val warmEngineReleaseRequested = AtomicBoolean(false)
 
     @Volatile private var engineState: EngineState? = null
     @Volatile private var lastEngineError: String? = null
@@ -459,6 +460,7 @@ object LocalGemmaInferenceEngine {
                 } finally {
                     activeRequests.remove(requestId, active)
                     operationAdmission.releaseGeneration(requestId)
+                    releaseWarmEngineIfIdle()
                 }
             }
         }
@@ -671,9 +673,17 @@ object LocalGemmaInferenceEngine {
     }
 
     fun releaseWarmEngine() {
+        warmEngineReleaseRequested.set(true)
+        releaseWarmEngineIfIdle()
+    }
+
+    private fun releaseWarmEngineIfIdle() {
         if (!operationAdmission.tryAcquireMaintenance()) return
         try {
-            releaseEngine(clearLastError = false)
+            if (warmEngineReleaseRequested.get()) {
+                releaseEngine(clearLastError = false)
+                warmEngineReleaseRequested.set(false)
+            }
         } finally {
             operationAdmission.releaseMaintenance()
         }

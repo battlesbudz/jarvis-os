@@ -61,6 +61,19 @@ class EyevueProtocolTest {
         assertNull(assembler.append(photoPacket(EyevueProtocol.CMD_PHOTO_END)))
     }
 
+    @Test
+    fun `oversized AA15 photo is discarded until the next start packet`() {
+        val assembler = EyevuePhotoAssembler(maxPhotoBytes = 4)
+        assertNull(assembler.append(photoPacket(EyevueProtocol.CMD_WAKE_START)))
+        assertNull(assembler.append(photoPacket(EyevueProtocol.CMD_PHOTO_DATA, byteArrayOf(1, 2, 3))))
+        assertNull(assembler.append(photoPacket(EyevueProtocol.CMD_PHOTO_DATA, byteArrayOf(4, 5))))
+        assertNull(assembler.append(photoPacket(EyevueProtocol.CMD_PHOTO_END)))
+
+        assertNull(assembler.append(photoPacket(EyevueProtocol.CMD_WAKE_START)))
+        assertNull(assembler.append(photoPacket(EyevueProtocol.CMD_PHOTO_DATA, byteArrayOf(6, 7))))
+        assertArrayEquals(byteArrayOf(6, 7), assembler.append(photoPacket(EyevueProtocol.CMD_PHOTO_END)))
+    }
+
     private fun photoPacket(command: Int, image: ByteArray = byteArrayOf()): ByteArray {
         val packet = ByteArray(12 + image.size)
         packet[0] = 0xAB.toByte()

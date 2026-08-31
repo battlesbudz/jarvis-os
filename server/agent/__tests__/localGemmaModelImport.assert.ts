@@ -173,6 +173,8 @@ assert.match(nativeInferenceEngine, /if \(cachePolicy == "none"\) return LITERT_
 assert.match(nativeInferenceEngine, /\.put\("requestedBackend", active\.backend\)/);
 assert.match(nativeInferenceEngine, /\.put\("lastEngineError", lastEngineError \?: JSONObject\.NULL\)/);
 assert.match(nativeInferenceEngine, /fun releaseWarmEngine\(\)/);
+assert.match(nativeInferenceEngine, /warmEngineReleaseRequested\.set\(true\)[\s\S]*releaseWarmEngineIfIdle\(\)/);
+assert.match(nativeInferenceEngine, /operationAdmission\.releaseGeneration\(requestId\)[\s\S]*releaseWarmEngineIfIdle\(\)/);
 assert.match(nativeInferenceEngine, /tryAcquireAndPublishGeneration\(active\.requestId\)[\s\S]*activeRequests\[active\.requestId\] = active/);
 assert.match(nativeInferenceEngine, /operationAdmission\.tryAcquireMaintenance\(\)/);
 assert.match(nativeInferenceEngine, /operationAdmission\.releaseMaintenance\(\)/);

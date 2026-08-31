@@ -87,7 +87,17 @@ class EyevueFrameDecoder {
     }
 }
 
-class EyevuePhotoAssembler {
+class EyevuePhotoAssembler(
+    private val maxPhotoBytes: Int = MAX_PHOTO_BYTES,
+) {
+    companion object {
+        const val MAX_PHOTO_BYTES = 20 * 1024 * 1024
+    }
+
+    init {
+        require(maxPhotoBytes > 0)
+    }
+
     private val image = ByteArrayOutputStream()
     private var active = false
     fun reset() {
@@ -101,7 +111,14 @@ class EyevuePhotoAssembler {
             EyevueProtocol.CMD_WAKE_START -> { image.reset(); active = true; null }
             EyevueProtocol.CMD_PHOTO_DATA -> {
                 val end = packet.size - 3
-                if (active && end > 9) image.write(packet, 9, end - 9)
+                val chunkSize = end - 9
+                if (active && chunkSize > 0) {
+                    if (chunkSize > maxPhotoBytes - image.size()) {
+                        reset()
+                    } else {
+                        image.write(packet, 9, chunkSize)
+                    }
+                }
                 null
             }
             EyevueProtocol.CMD_PHOTO_END -> {
