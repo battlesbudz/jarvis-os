@@ -7,6 +7,8 @@ const service = read("plugins/android-daemon-native/src/main/java/com/gameplan/d
 const boot = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/BootReceiver.kt");
 const inference = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/LocalGemmaInferenceEngine.kt");
 const wake = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/WakeWordService.kt");
+const playback = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/NativeTalkModePlaybackBridge.kt");
+const generatedPlayback = read("android/app/src/main/java/com/gameplan/daemon/NativeTalkModePlaybackBridge.kt");
 const manifest = read("android/app/src/main/AndroidManifest.xml");
 const tool = read("server/agent/tools/daemon.ts");
 const settings = read("components/androidDaemon/AndroidDeviceControlCard.tsx");
@@ -103,6 +105,9 @@ assert.match(agentApproval, /!autoApprove && !req\.suppressDeliverable/);
 assert.match(coachConfirmation, /gate\?\.userId !== userId \|\| gate\.status !== "approved" \|\| gate\.expiresAt\.getTime\(\) <= Date\.now\(\)/);
 assert.match(settings, /eyeVue Companion/);
 assert.match(settings, /eyevuePermissionGranted !== true[\s\S]*requestEyevuePermissions/);
+assert.match(settings, /nativeRecognitionReady[\s\S]*nativeSpeechStatus\?\.available === true[\s\S]*speechRecognitionAvailable !== false/);
+assert.match(settings, /wearableVoiceReady[\s\S]*nativeRecognitionReady[\s\S]*wearableAudioAvailable === true/);
+assert.match(settings, /wearableVoiceDetail[\s\S]*nativeSpeechStatus\?\.message/);
 assert.match(nativeModule, /reactApplicationContext\.currentActivity/);
 assert.match(nativeModule, /Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.S[\s\S]*ACCESS_FINE_LOCATION/);
 assert.match(bridge, /android_eyevue_discard_photo/);
@@ -116,6 +121,11 @@ assert.doesNotMatch(bridge, /android_eyevue_(?:status|disconnect):\s*"android_ca
 assert.match(bridge, /m\.type === "eyevue_vision_delay"[\s\S]*type: "notify"[\s\S]*Jarvis local vision/);
 assert.match(tool, /ctx\.state\.eyeVueCapturedImagePath[\s\S]*imagePath: boundImagePath/);
 assert.match(coachAgent, /eyeVueCapturedImagePath: input\.eyeVueCapturedImagePath/);
+assert.equal(playback, generatedPlayback, "NativeTalkModePlaybackBridge.kt must stay mirrored between plugin and generated Android trees");
+assert.match(playback, /WEARABLE_PLAYBACK_RECOVERY_TIMEOUT_MS = 10_000L/);
+assert.match(playback, /waitForWearableRoute[\s\S]*route\.active[\s\S]*System\.currentTimeMillis\(\) >= deadlineMs/);
+assert.match(playback, /could not restore the glasses speaker within 10 seconds/);
+assert.match(playback, /cancelWearableRecoveryWait\(\)[\s\S]*WearableAudioRouteManager\.release/);
 
 for (const name of ["BootReceiver.kt", "EyevueProtocol.kt", "EyevueGlassesService.kt", "LocalGemmaInferenceEngine.kt"]) {
   assert.equal(
