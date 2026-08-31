@@ -27,10 +27,45 @@ const DEFAULT_MAX_ESTIMATED_TOKENS = 12_000;
 const MAX_SINGLE_MESSAGE_CHARS = 32_000;
 const SUMMARY_PREFIX = "UNTRUSTED CONTEXT: Prior session summary";
 const OVERSIZED_MESSAGE_NOTICE = "\n\n[... middle of oversized message omitted ...]\n\n";
+const USER_ATTACHMENT_BLOCK = { start: "\n\n<user_attachments>\n", end: "\n\n</user_attachments>" };
 const SERVER_CONTEXT_BLOCKS = [
-  { start: "\n\n<user_attachments>\n", end: "\n\n</user_attachments>" },
+  USER_ATTACHMENT_BLOCK,
   { start: "\n\n<youtube_transcripts>\n", end: "\n\n</youtube_transcripts>" },
 ];
+
+function stripTrailingServerBlocks(
+  content: string,
+  blocks: ReadonlyArray<{ start: string; end: string }>,
+): string {
+  let identity = content;
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (const block of blocks) {
+      if (!identity.endsWith(block.end)) continue;
+      // Server wrappers are appended outside user-controlled content. Start at
+      // the outermost marker so legacy unescaped nested delimiters fail closed.
+      const start = identity.indexOf(block.start);
+      if (start === -1) continue;
+      identity = identity.slice(0, start);
+      stripped = true;
+      break;
+    }
+  }
+  return identity;
+}
+
+/**
+ * Attachment extraction/capability belongs to the turn that submitted the bytes.
+ * Recovered session/chat history may contain the server-generated attachment block
+ * for that older turn, but retaining that marker would make a later ordinary voice
+ * turn look like it currently requires an attachment/vision provider. YouTube
+ * transcript context is deliberately left intact because transcript follow-ups are
+ * an explicit cross-turn feature.
+ */
+export function stripRecoveredAttachmentContext(content: string): string {
+  return stripTrailingServerBlocks(content, [USER_ATTACHMENT_BLOCK]);
+}
 
 function boundRawMessageContent(content: string, maxChars = MAX_SINGLE_MESSAGE_CHARS): string {
   if (content.length <= maxChars) return content;
@@ -63,6 +98,7 @@ export function boundMessageContent(content: string, preserveServerContext = fal
 function normalizeVisibleMessages(
   messages: unknown[],
   preserveServerContext = false,
+  stripRecoveredAttachments = false,
 ): Array<{ role: "user" | "assistant"; content: string }> {
   const normalized: Array<{ role: "user" | "assistant"; content: string }> = [];
   for (const value of messages) {
@@ -70,31 +106,19 @@ function normalizeVisibleMessages(
     const candidate = value as { role?: unknown; content?: unknown };
     if (candidate.role !== "user" && candidate.role !== "assistant") continue;
     if (typeof candidate.content !== "string" || !candidate.content.trim()) continue;
+    const content = stripRecoveredAttachments
+      ? stripRecoveredAttachmentContext(candidate.content)
+      : candidate.content;
     normalized.push({
       role: candidate.role,
-      content: boundMessageContent(candidate.content, preserveServerContext),
+      content: boundMessageContent(content, preserveServerContext),
     });
   }
   return normalized;
 }
 
 export function stripServerContext(content: string): string {
-  let identity = content;
-  let stripped = true;
-  while (stripped) {
-    stripped = false;
-    for (const block of SERVER_CONTEXT_BLOCKS) {
-      if (!identity.endsWith(block.end)) continue;
-      // Server wrappers are appended outside user-controlled content. Start at
-      // the outermost marker so legacy unescaped nested delimiters fail closed.
-      const start = identity.indexOf(block.start);
-      if (start === -1) continue;
-      identity = identity.slice(0, start);
-      stripped = true;
-      break;
-    }
-  }
-  return identity;
+  return stripTrailingServerBlocks(content, SERVER_CONTEXT_BLOCKS);
 }
 
 function messageComparisonKey(message: { role: "user" | "assistant"; content: string }): string {
@@ -214,8 +238,8 @@ function summarizedMessageCount(messages: Array<{ content: string }>): number {
  */
 export function assembleCoachContext(input: AssembleCoachContextInput): AssembledCoachContext {
   const client = normalizeVisibleMessages(input.clientMessages);
-  const recovered = normalizeVisibleMessages(input.recoveredSessionMessages ?? [], true);
-  const fallback = normalizeVisibleMessages(input.fallbackMessages ?? [], true);
+  const recovered = normalizeVisibleMessages(input.recoveredSessionMessages ?? [], true, true);
+  const fallback = normalizeVisibleMessages(input.fallbackMessages ?? [], true, true);
   const authoritative = recovered.length > 0 ? recovered : fallback;
   const merged = mergeOverlappingCoachMessages(authoritative, client);
   if (input.latestUserContext) {
