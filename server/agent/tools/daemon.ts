@@ -61,7 +61,7 @@ function isAndroidAction(value: string): boolean {
 }
 
 // Map android action -> permission key
-function androidPermKey(action: string): AndroidDaemonAction | null {
+function androidPermKey(action: string, args: ToolArgs): AndroidDaemonAction | null {
   if (action === "android_screenshot") return "android_screenshot";
   if (action === "android_read_screen") return "android_read_screen";
   if (action === "android_screen_context") return "android_read_screen";
@@ -81,7 +81,14 @@ function androidPermKey(action: string): AndroidDaemonAction | null {
   if (action === "android_view_hierarchy") return "android_read_screen";
   if (action === "android_paste_text") return "android_tap_type";
   if (action === "android_get_focused_field") return "android_tap_type";
-  if (action === "android_eyevue_status" || action === "android_eyevue_command" || action === "android_eyevue_look") return "android_camera";
+  if (action === "android_eyevue_status") return null;
+  if (action === "android_eyevue_command") {
+    const command = String(args.command || "");
+    return command === "photo" || command === "video_start" || command === "audio_start"
+      ? "android_camera"
+      : null;
+  }
+  if (action === "android_eyevue_look") return "android_camera";
   return null;
 }
 
@@ -262,7 +269,7 @@ Android device actions run immediately without confirmation, including navigatio
       if (!androidActive) {
         return { ok: false, content: jsonErrorContent("No Android device control connection is active. Ask the user to open the main Jarvis Android app, go to Profile -> Android Device, and tap Enable Device Control.") };
       }
-      const permKey = androidPermKey(rawAction);
+      const permKey = androidPermKey(rawAction, args);
       if (permKey && !(await isAndroidDaemonActionAllowed(ctx.userId, permKey))) {
         return { ok: false, content: jsonErrorContent(`Android action '${rawAction}' is not permitted. Ask the user to enable it in Profile → Connected Channels → Android Device → Permissions.`) };
       }
