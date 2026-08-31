@@ -19,6 +19,8 @@ internal class NativeTalkModePlaybackBridge(
 ) {
     companion object {
         private const val WEARABLE_PLAYBACK_OWNER_PREFIX = "native_tts_playback:"
+        private const val WEARABLE_PLAYBACK_RECOVERY_TIMEOUT_MS = 10_000L
+        private const val WEARABLE_PLAYBACK_RECOVERY_POLL_MS = 250L
     }
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -27,6 +29,7 @@ internal class NativeTalkModePlaybackBridge(
     private var generation = 0
     private var owner: String? = null
     private var wearablePlaybackOwner: String? = null
+    private var wearableRecoveryRunnable: Runnable? = null
     private var spokenText = ""
     private var baseOffset = 0
     private var acknowledgedOffset = 0
@@ -56,16 +59,17 @@ internal class NativeTalkModePlaybackBridge(
                 return@runOnMain
             }
 
-            // Recognition owns the wearable route while listening, but it releases that
-            // owner as soon as the user's turn is committed. Playback starts afterwards.
-            // Hold an independent route owner for the entire TTS utterance so Android
-            // cannot switch the glasses back to the phone between capture and response.
+            // Recognition releases its route owner when the user's turn commits. Playback
+            // therefore owns the wearable independently for its complete audible lifetime.
+            // If Android loses that route, give the route manager up to ten seconds to
+            // recover it instead of silently falling back to the phone speaker.
             val routeOwner = "$WEARABLE_PLAYBACK_OWNER_PREFIX$ownerId"
             wearablePlaybackOwner = routeOwner
+            val recoveryDeadline = System.currentTimeMillis() + WEARABLE_PLAYBACK_RECOVERY_TIMEOUT_MS
             WearableAudioRouteManager.acquire(context, routeOwner) {
                 runOnMain {
                     if (owner != ownerId || wearablePlaybackOwner != routeOwner) return@runOnMain
-                    ensureTts { engine -> if (!tentativeInterruption) speakRemaining(engine) }
+                    waitForWearableRoute(ownerId, routeOwner, recoveryDeadline)
                 }
             }
         }
@@ -109,6 +113,37 @@ internal class NativeTalkModePlaybackBridge(
             tts?.shutdown()
             tts = null
         }
+    }
+
+    private fun waitForWearableRoute(ownerId: String, routeOwner: String, deadlineMs: Long) {
+        if (owner != ownerId || wearablePlaybackOwner != routeOwner) return
+        val route = WearableAudioRouteManager.snapshot(context)
+        if (route.active) {
+            cancelWearableRecoveryWait()
+            ensureTts { engine -> if (!tentativeInterruption) speakRemaining(engine) }
+            return
+        }
+        if (!route.available) {
+            cancelWearableRecoveryWait()
+            finish("error", "Bluetooth wearable audio is not connected.")
+            return
+        }
+        if (System.currentTimeMillis() >= deadlineMs) {
+            cancelWearableRecoveryWait()
+            finish("error", "Jarvis could not restore the glasses speaker within 10 seconds.")
+            return
+        }
+        val retry = Runnable {
+            wearableRecoveryRunnable = null
+            waitForWearableRoute(ownerId, routeOwner, deadlineMs)
+        }
+        wearableRecoveryRunnable = retry
+        mainHandler.postDelayed(retry, WEARABLE_PLAYBACK_RECOVERY_POLL_MS)
+    }
+
+    private fun cancelWearableRecoveryWait() {
+        wearableRecoveryRunnable?.let { mainHandler.removeCallbacks(it) }
+        wearableRecoveryRunnable = null
     }
 
     private fun ensureTts(ready: (TextToSpeech) -> Unit) {
@@ -183,7 +218,6 @@ internal class NativeTalkModePlaybackBridge(
             override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) {
                 runOnMain {
                     if (!isCurrent(activeOwner, currentGeneration) || tentativeInterruption) return@runOnMain
-                    // Range start is the last position known to have crossed the audible frontier.
                     acknowledgedOffset = (baseOffset + start).coerceIn(acknowledgedOffset, spokenText.length)
                 }
             }
@@ -213,6 +247,7 @@ internal class NativeTalkModePlaybackBridge(
         val completedOwner = owner
         val completedOffset = acknowledgedOffset.coerceIn(0, spokenText.length)
         val completedRouteOwner = wearablePlaybackOwner
+        cancelWearableRecoveryWait()
         owner = null
         wearablePlaybackOwner = null
         spokenText = ""
