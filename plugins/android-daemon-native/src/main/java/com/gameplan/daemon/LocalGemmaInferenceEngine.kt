@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.os.SystemClock
 import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Contents
@@ -11,7 +12,6 @@ import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.ExperimentalApi
 import com.google.ai.edge.litertlm.ExperimentalFlags
-import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.SamplerConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -23,6 +23,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
@@ -250,6 +251,15 @@ object LocalGemmaInferenceEngine {
 
     fun generate(context: Context, model: String, modelFile: File, modelRevision: String, op: JSONObject): OpResult {
         val rawPrompt = op.optString("prompt", "")
+        val imagePaths = buildList {
+            op.optString("imagePath", "").takeIf { it.isNotBlank() }?.let(::add)
+            op.optJSONArray("imagePaths")?.let { paths ->
+                for (index in 0 until paths.length()) paths.optString(index).takeIf { it.isNotBlank() }?.let(::add)
+            }
+        }.distinct()
+        imagePaths.firstOrNull { !File(it).isFile }?.let {
+            return OpResult(false, error = "LOCAL_MODEL_IMAGE_MISSING: $it")
+        }
         val requestId = op.optString("requestId", "").ifBlank { UUID.randomUUID().toString() }
         var backendName = normalizeBackend(op.optString("backend", DEFAULT_BACKEND))
         val allowCpuFallback = op.optBoolean("allowCpuFallback", DEFAULT_ALLOW_CPU_FALLBACK)
@@ -268,6 +278,19 @@ object LocalGemmaInferenceEngine {
         val job = Job()
         val active = ActiveRequest(requestId, model, modelFile.absolutePath, modelRevision, backendName, cachePolicy, startedAtMs, job)
         registerActiveRequest(active)?.let { return it }
+        if (imagePaths.isNotEmpty()) {
+            android.os.Handler(context.mainLooper).postDelayed({
+                if (activeRequests.containsKey(requestId)) {
+                    WebSocketService.sendEvent(
+                        JSONObject()
+                            .put("type", "eyevue_vision_delay")
+                            .put("requestId", requestId)
+                            .put("message", "Local vision is taking longer than expected.")
+                            .toString(),
+                    )
+                }
+            }, 15_000L)
+        }
 
         var wakeCaptureWasRequested = false
         var generationSucceeded = false
@@ -310,6 +333,7 @@ object LocalGemmaInferenceEngine {
                         active = active,
                         job = job,
                         prompt = prompt,
+                        imagePaths = imagePaths,
                         maxCompletionTokens = maxCompletionTokens,
                         onEngineResolved = { resolvedBackend, speculativeDecodingEnabled ->
                             resolvedAttemptBackend = resolvedBackend
@@ -336,6 +360,8 @@ object LocalGemmaInferenceEngine {
                             .put("contextTokens", contextTokens)
                             .put("maxCompletionTokens", maxCompletionTokens)
                             .put("inputChars", prompt.length)
+                            .put("imageCount", imagePaths.size)
+                            .put("vision", imagePaths.isNotEmpty())
                             .put("inputTrimmed", prompt.length != rawPrompt.length)
                             .put("engineKeptWarm", keepEngineWarm)
                             .put("generationRetries", generationRetries)
@@ -646,6 +672,7 @@ object LocalGemmaInferenceEngine {
         active: ActiveRequest,
         job: Job,
         prompt: String,
+        imagePaths: List<String>,
         maxCompletionTokens: Int,
         onEngineResolved: (String, Boolean) -> Unit,
     ): GenerationAttemptResult {
@@ -654,6 +681,7 @@ object LocalGemmaInferenceEngine {
         val attemptJob = SupervisorJob(job)
         val text = try {
             runBlocking(attemptJob) {
+                withTimeout(if (imagePaths.isNotEmpty()) 30_000L else Long.MAX_VALUE) {
                 generationMutex.withLock {
                     val resolvedEngine = ensureEngine(context, modelPath, modelRevision, backendName, allowCpuFallback, speculativeDecodingPreference, cachePolicy, contextTokens, memorySnapshot(context))
                     resolvedBackendName = resolvedEngine.backendName
@@ -662,7 +690,12 @@ object LocalGemmaInferenceEngine {
                         .use { conversation ->
                             active.conversation = conversation
                             val chunks = StringBuilder()
-                            conversation.sendMessageAsync(Message.user(prompt))
+                            val userContents = if (imagePaths.isEmpty()) {
+                                Contents.of(Content.Text(prompt))
+                            } else {
+                                Contents.of(imagePaths.map { Content.ImageFile(File(it).absolutePath) } + Content.Text(prompt))
+                            }
+                            conversation.sendMessageAsync(userContents, emptyMap<String, Any>())
                                 .takeWhile { message ->
                                     val chunk = message.toString()
                                     chunks.append(chunk)
@@ -678,6 +711,7 @@ object LocalGemmaInferenceEngine {
                                 .collect {}
                             chunks.toString()
                         }
+                }
                 }
             }
         } finally {
@@ -865,6 +899,7 @@ object LocalGemmaInferenceEngine {
                             EngineConfig(
                                 modelPath = modelPath,
                                 backend = backendFor(context, candidateBackendName),
+                                visionBackend = Backend.CPU(Runtime.getRuntime().availableProcessors().coerceIn(2, 8)),
                                 maxNumTokens = contextTokens,
                                 cacheDir = cacheDirFor(context, modelRevision, candidateBackendName, speculativeDecodingEnabled, contextTokens, cachePolicy),
                             )

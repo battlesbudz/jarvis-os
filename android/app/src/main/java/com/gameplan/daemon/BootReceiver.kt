@@ -42,5 +42,11 @@ class BootReceiver : BroadcastReceiver() {
             Log.i("JarvisBoot", "Skipping auto-reconnect — missing credentials " +
                 "(url=${serverUrl.isNotEmpty()}, id=${daemonId.isNotEmpty()}, secret=${reconnectSecret.isNotEmpty()})")
         }
+
+        // The glasses are a local companion and must reconnect even when the
+        // server daemon has not yet authenticated after a reboot.
+        if (EyevueGlassesService.isEnabled(context)) {
+            EyevueGlassesService.start(context)
+        }
     }
 }

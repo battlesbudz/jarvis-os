@@ -54,6 +54,7 @@
 
 - [ ] Define a formal wearable OS event schema and route all daemon, voice, vision, notification, and agent events through it.
 - [ ] Create a real device adapter interface for wearable hardware capabilities.
+  - eyeVue/CYO3 first adapter is implemented behind Android daemon operations; keep this open until the adapter contract is generalized and verified on physical hardware.
 - [ ] Add first XR target adapter, likely VITURE/Android-compatible before Vision Pro.
 - [ ] Build a wearable HUD runtime for persistent notifications, agent status, and lightweight overlays.
 - [ ] Design a low-friction wearable voice loop with interrupt handling, wake state, and clear fallback states.
@@ -547,6 +548,7 @@ Goal: persistent intelligence layer.
 - [ ] Treat the existing Android daemon as the first wearable edge adapter.
 - [ ] Add explicit device capabilities to daemon handshake metadata.
 - [ ] Add a `VISION_FRAME_CAPTURED` event for manual camera/frame capture.
+  - eyeVue now emits `eyevue_photo_captured` as the hardware-specific precursor; promote it to the canonical event after the CYO3 button-path acceptance test.
 - [ ] Add proof-of-concept notification forwarding to a wearable display path.
 
 ### Step 3 - Voice Loop Hardening
@@ -570,6 +572,7 @@ Goal: persistent intelligence layer.
 ### Step 6 - Vision-Aware Manual Capture
 
 - [ ] Manual "Jarvis, look at this" flow.
+  - eyeVue local still-image flow is implemented with Gemma E4B, last-frame reuse, and explicit `look again`; physical-hardware validation remains.
 - [ ] Capture a frame from device/Android path.
 - [ ] Run image/screen understanding.
 - [ ] Store result as reviewable, privacy-scoped context.

@@ -185,6 +185,25 @@ export function AndroidDeviceControlCard({
       enabled: nativeSpeechStatus?.wearableAudioAvailable,
     },
     {
+      key: "eyevue-permission",
+      label: "eyeVue Nearby Devices",
+      detail: "Bluetooth permission for automatic eyeVue discovery and reconnection.",
+      enabled: status?.eyevuePermissionGranted,
+      action: () => AndroidDaemonNative?.requestEyevuePermissions?.() ?? Promise.resolve(),
+    },
+    {
+      key: "eyevue-companion",
+      label: "eyeVue Companion",
+      detail: status?.eyevueConnected
+        ? `${status.eyevueDeviceName || "eyeVue"} connected. “Hey, Star” starts Jarvis.`
+        : status?.eyevueLastError || "Make Jarvis the primary companion; your native buttons and internal storage stay unchanged.",
+      enabled: status?.eyevueConnected,
+      action: async () => {
+        if (status?.eyevueConnected || status?.eyevueEnabled) await AndroidDaemonNative?.disconnectEyevue?.();
+        else await AndroidDaemonNative?.enableEyevue?.("");
+      },
+    },
+    {
       key: "voice-overlay",
       label: "Voice Overlay",
       detail: "Floating mic while JARVIS listens outside the app.",
@@ -213,6 +232,11 @@ export function AndroidDeviceControlCard({
     needsNotificationPermission,
     notificationServiceDisconnected,
     status?.voiceOverlayPermission,
+    status?.eyevuePermissionGranted,
+    status?.eyevueConnected,
+    status?.eyevueEnabled,
+    status?.eyevueDeviceName,
+    status?.eyevueLastError,
   ]);
 
   const runPermissionAction = useCallback(async (row: PermissionRow) => {

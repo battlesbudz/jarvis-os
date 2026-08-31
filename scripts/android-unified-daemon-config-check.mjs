@@ -794,8 +794,8 @@ for (const [contents, source] of [
 }
 assertIncludes(appBuildGradle, "com.google.ai.edge.litertlm:litertlm-android", "android/app/build.gradle");
 assertIncludes(plugin, "com.google.ai.edge.litertlm:litertlm-android", "plugins/withJarvisAndroidDaemon.js");
-assertIncludes(appBuildGradle, "com.google.ai.edge.litertlm:litertlm-android:0.13.1", "android/app/build.gradle");
-assertIncludes(plugin, "com.google.ai.edge.litertlm:litertlm-android:0.13.1", "plugins/withJarvisAndroidDaemon.js");
+assertIncludes(appBuildGradle, "com.google.ai.edge.litertlm:litertlm-android:0.16.0", "android/app/build.gradle");
+assertIncludes(plugin, "com.google.ai.edge.litertlm:litertlm-android:0.16.0", "plugins/withJarvisAndroidDaemon.js");
 for (const [contents, source] of [
   [localGemmaInferenceEngine, "LocalGemmaInferenceEngine.kt"],
   [pluginTemplateLocalGemmaInferenceEngine, "plugins/android-daemon-native/LocalGemmaInferenceEngine.kt"],

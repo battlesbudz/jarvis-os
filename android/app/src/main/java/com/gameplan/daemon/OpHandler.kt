@@ -194,6 +194,11 @@ object OpHandler {
                 "android_local_model_smoke_test" -> LocalGemmaModelManager.smokeTest(context, op)
                 "android_local_model_generate" -> LocalGemmaModelManager.generate(context, op)
                 "android_local_model_cancel" -> LocalGemmaModelManager.cancel(op)
+                "android_eyevue_status",
+                "android_eyevue_enable",
+                "android_eyevue_disconnect",
+                "android_eyevue_command",
+                "android_eyevue_look" -> EyevueCommandHandler.handle(context, op)
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
             val durationMs = SystemClock.elapsedRealtime() - startMs
