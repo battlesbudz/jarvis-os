@@ -14,6 +14,8 @@ import {
 } from "../../daemon/bridge";
 import { checkAndIncrementScreenshotBudget } from "./daemonShellTool";
 import { runAndroidOpenNotification } from "./androidAppRuntime";
+import { approvalReceiptCoversToolCall } from "../approvalReceipt";
+import { eyevueCaptureApprovalText, isEyevueCaptureAction } from "../approvalToolRisk";
 
 const DESKTOP_ACTIONS: readonly DaemonAction[] = ["shell", "notify", "file_read", "file_write", "file_list", "desktop_screenshot", "desktop_read_screen"] as const;
 const ANDROID_ACTIONS: readonly string[] = [
@@ -45,6 +47,9 @@ const ANDROID_ACTIONS: readonly string[] = [
   "android_view_hierarchy",
   "android_paste_text",
   "android_get_focused_field",
+  "android_eyevue_status",
+  "android_eyevue_command",
+  "android_eyevue_look",
 ] as const;
 
 function isDesktopAction(value: string): value is DaemonAction {
@@ -76,6 +81,7 @@ function androidPermKey(action: string): AndroidDaemonAction | null {
   if (action === "android_view_hierarchy") return "android_read_screen";
   if (action === "android_paste_text") return "android_tap_type";
   if (action === "android_get_focused_field") return "android_tap_type";
+  if (action === "android_eyevue_status" || action === "android_eyevue_command" || action === "android_eyevue_look") return "android_camera";
   return null;
 }
 
@@ -140,6 +146,9 @@ ANDROID actions (available when an Android device daemon is paired):
 - android_view_hierarchy: dump the full UI element hierarchy using the accessibility tree; returns a JSON array of every on-screen element with resource-id, content-desc, text, bounds ([x1,y1][x2,y2] pixel coordinates), and clickable/focusable/scrollable flags; use this when android_read_screen doesn't expose element coordinates or when you need to find unlabeled UI elements like icon-only buttons
 - android_paste_text: paste text into the currently focused field using clipboard paste as primary method and adb shell input text as fallback — requires text; optional fieldDescription for logging; returns { ok, verified, method_used, field_text }. Use this when android_type fails silently or when the field uses a custom input method (e.g. Facebook search bar). NOTE: For the Facebook search bar and other fields with custom IMEs, android_type may silently fail — use android_paste_text instead, then follow immediately with android_press_key {key: 'enter'} to submit.
 - android_get_focused_field: lightweight accessibility check that returns the currently focused input field's text, hint, and resource-id without doing a full hierarchy dump — use before typing to confirm focus
+- android_eyevue_status: read the eyeVue glasses connection, battery, and storage status
+- android_eyevue_command: control eyeVue media using command battery, storage, photo, video_start, video_stop, audio_start, or audio_stop. Starting a photo, video, or audio capture requires a durable user approval; passive status and stop commands do not. Photo waits for the AA15 image and leaves the original on the glasses. Ask where to save photos/finished recordings; do not copy them to Gallery or MemoryOS without an explicit answer.
+- android_eyevue_look: answer a visual question with local Phone Gemma. It only analyzes the current temporary eyeVue image by default and never captures implicitly. If no image exists and the user explicitly asks for a new look, set lookAgain=true; that new capture requires durable user approval. It never uses cloud vision. If local vision fails, ask whether to save the image and ask separately before cloud fallback.
 
 VISUAL BROWSING WORKFLOW — follow this for any task that involves reading or screenshotting content in an app or browser:
 1. Navigate: android_browse or android_open_app
@@ -180,6 +189,7 @@ Android device actions run immediately without confirmation, including navigatio
           "android_location_get", "android_sms_send", "android_screen_record",
           "android_view_hierarchy",
           "android_paste_text", "android_get_focused_field",
+          "android_eyevue_status", "android_eyevue_command", "android_eyevue_look",
         ],
       },
       cmd: { type: "string", description: "Shell command (when action is 'shell')" },
@@ -218,6 +228,9 @@ Android device actions run immediately without confirmation, including navigatio
       fps: { type: "number", description: "Frames per second for screen recording (when action is 'android_screen_record', default 15)" },
       fieldDescription: { type: "string", description: "Human-readable label for the target field — used for logging only (when action is 'android_paste_text')" },
       operatorAction: { type: "object", description: "Structured operator action payload when action is 'android_operator_action'. Example: { type: 'tap_element', elementId: 3 }" },
+      command: { type: "string", enum: ["battery", "storage", "photo", "video_start", "video_stop", "audio_start", "audio_stop"], description: "eyeVue media/status command when action is android_eyevue_command" },
+      question: { type: "string", description: "User's explicit visual question for android_eyevue_look" },
+      lookAgain: { type: "boolean", description: "Capture a new eyeVue image only when the user says look again" },
     },
     required: ["action"],
   },
@@ -225,6 +238,20 @@ Android device actions run immediately without confirmation, including navigatio
     const rawAction = String(args.action || "");
     const androidActive = isAndroidDaemonActive(ctx.userId);
     const desktopActive = isDesktopDaemonActive(ctx.userId);
+
+    if (
+      isEyevueCaptureAction("daemon_action", args) &&
+      !approvalReceiptCoversToolCall(ctx.approvalReceipt, {
+        userId: ctx.userId,
+        toolName: "daemon_action",
+        originalUserText: eyevueCaptureApprovalText("daemon_action", args),
+      })
+    ) {
+      return {
+        ok: false,
+        content: jsonErrorContent("Wearable photo, video, and audio capture requires a current durable approval receipt."),
+      };
+    }
 
     if (!isUserPaired(ctx.userId)) {
       return { ok: false, content: jsonErrorContent("No daemon paired. Ask the user to pair either the desktop daemon (Profile -> Connected Channels -> Desktop Daemon) or Android device control in the main Jarvis Android app (Profile -> Android Device).") };
@@ -494,6 +521,24 @@ Android device actions run immediately without confirmation, including navigatio
         };
       } else if (rawAction === "android_get_focused_field") {
         op = { type: "android_get_focused_field" };
+      } else if (rawAction === "android_eyevue_status") {
+        op = { type: "android_eyevue_status" };
+      } else if (rawAction === "android_eyevue_command") {
+        const command = String(args.command || "") as "battery" | "storage" | "photo" | "video_start" | "video_stop" | "audio_start" | "audio_stop";
+        if (!["battery", "storage", "photo", "video_start", "video_stop", "audio_start", "audio_stop"].includes(command)) {
+          return { ok: false, content: jsonErrorContent("valid eyeVue command required") };
+        }
+        op = { type: "android_eyevue_command", command, waitForPhoto: command === "photo" };
+      } else if (rawAction === "android_eyevue_look") {
+        const boundImagePath = typeof ctx.state.eyeVueCapturedImagePath === "string"
+          ? ctx.state.eyeVueCapturedImagePath.trim()
+          : "";
+        op = {
+          type: "android_eyevue_look",
+          question: args.question ? String(args.question) : undefined,
+          lookAgain: args.lookAgain === true,
+          ...(boundImagePath ? { imagePath: boundImagePath } : {}),
+        };
       } else if (rawAction === "android_return_to_jarvis") {
         op = { type: "android_return_to_jarvis" };
       } else if (rawAction === "android_wait") {
@@ -522,7 +567,10 @@ Android device actions run immediately without confirmation, including navigatio
         ? Math.min(typeof args.durationMs === "number" ? args.durationMs : 5000, 30000) + 15000
         : isScreenRec
           ? Math.min(typeof args.durationMs === "number" ? args.durationMs : 10000, 60000) + 20000
-          : rawAction === "android_location_get" ? 20000 : 30000;
+          : rawAction === "android_location_get" ? 20000
+          : rawAction === "android_eyevue_look" ? 70000
+          : rawAction === "android_eyevue_command" && args.command === "photo" ? 45000
+          : 30000;
 
       const result = await sendDaemonOp(ctx.userId, op, opTimeout);
 

@@ -33,6 +33,9 @@ interface VoiceSessionControlMsg {
   confirmationToken?: string;
   reactActive?: boolean;
 }
+interface EyevuePhotoCapturedMsg { type: "eyevue_photo_captured"; imagePath?: string; source?: string; origin?: "camera_button" }
+interface EyevueBatteryLowMsg { type: "eyevue_battery_low"; percent?: number; threshold?: number }
+interface EyevueVisionDelayMsg { type: "eyevue_vision_delay"; requestId?: string; message?: string }
 
 export type DaemonOp =
   | { type: "ping" }
@@ -58,6 +61,12 @@ export type DaemonOp =
   | { type: "android_local_model_smoke_test"; model?: string }
   | { type: "android_local_model_generate"; requestId?: string; model: string; prompt: string; contextTokens?: number; maxTokens?: number; backend?: string; allowCpuFallback?: boolean; speculativeDecoding?: boolean; temperature?: number }
   | { type: "android_local_model_cancel"; requestId?: string }
+  | { type: "android_eyevue_status" }
+  | { type: "android_eyevue_enable"; address?: string }
+  | { type: "android_eyevue_disconnect" }
+  | { type: "android_eyevue_command"; command: "battery" | "storage" | "photo" | "video_start" | "video_stop" | "audio_start" | "audio_stop"; waitForPhoto?: boolean }
+  | { type: "android_eyevue_look"; question?: string; lookAgain?: boolean; imagePath?: string }
+  | { type: "android_eyevue_discard_photo"; imagePath: string }
   | { type: "android_tap"; x: number; y: number }
   | { type: "android_type"; text: string; submit?: boolean; expectedPackage?: string; expectedResourceId?: string; expectedHint?: string }
   | { type: "android_swipe"; x1: number; y1: number; x2: number; y2: number; durationMs?: number }
@@ -374,7 +383,11 @@ async function recoverDaemonVoiceAfterFailure(
   await Promise.allSettled(recoveryOps);
 }
 
-async function processDaemonUtterance(userId: string, utterance: string): Promise<void> {
+async function processDaemonUtterance(
+  userId: string,
+  utterance: string,
+  options: { eyeVueCapturedImagePath?: string } = {},
+): Promise<void> {
   const voiceTurnGeneration = currentVoiceTurnGeneration(userId);
   let playbackAttempted = false;
   try {
@@ -398,6 +411,7 @@ async function processDaemonUtterance(userId: string, utterance: string): Promis
         channelName: "Voice",
         sdkSessionId: storedSessionId,
         observeStatusCheck: true,
+        eyeVueCapturedImagePath: options.eyeVueCapturedImagePath,
       });
       if (isDaemonVoiceTurnCancelled(userId, voiceTurnGeneration)) return;
       if (result.sdkSessionId) {
@@ -994,6 +1008,11 @@ export async function sendDaemonOp(
       android_local_model_smoke_test: "android_local_model",
       android_local_model_generate: "android_local_model",
       android_local_model_cancel:   "android_local_model",
+      android_eyevue_status:        "android_camera",
+      android_eyevue_enable:        "android_camera",
+      android_eyevue_disconnect:    "android_camera",
+      android_eyevue_command:       "android_camera",
+      android_eyevue_look:          "android_camera",
     };
     const requiredPerm = op.type === "android_operator_action"
       ? operatorActionPermKey(op.action)
@@ -1244,7 +1263,7 @@ export function startDaemonBridge(server: HttpServer): void {
         return;
       }
       interface WakeWordTriggeredMsg { type: "wake_word_triggered"; phrase?: string; transcript?: string }
-      const m = msg as PairMsg | AndroidAppBootstrapMsg | ReconnectMsg | ResultMsg | PingMsg | NotificationEventMsg | WakeWordTriggeredMsg;
+      const m = msg as PairMsg | AndroidAppBootstrapMsg | ReconnectMsg | ResultMsg | PingMsg | NotificationEventMsg | WakeWordTriggeredMsg | EyevuePhotoCapturedMsg | EyevueBatteryLowMsg | EyevueVisionDelayMsg;
 
       // Reconnect using stored daemonId + reconnectSecret (proof-of-possession).
       // The secret was issued server-side during pair; we compare sha256(provided) to stored hash.
@@ -1557,6 +1576,56 @@ export function startDaemonBridge(server: HttpServer): void {
             console.error(`[daemon] voice_user_utterance processing failed: ${err}`)
           );
         }
+        return;
+      }
+
+      // A physical eyeVue camera-button capture is already cached on the phone.
+      // Start a normal Jarvis turn; the eyeVue look tool reuses that image locally.
+      if (m.type === "eyevue_photo_captured" && pairedUserId) {
+        const cameraTurnUserId = pairedUserId;
+        const capturedImagePath = typeof m.imagePath === "string" ? m.imagePath.trim() : "";
+        if (!capturedImagePath) {
+          console.error("[daemon] eyeVue camera-button turn skipped: capture path was missing");
+          return;
+        }
+        processDaemonUtterance(
+          cameraTurnUserId,
+          "I pressed the eyeVue camera button. Use android_eyevue_look without lookAgain. Describe what I am seeing at moderate detail, mention clear hazards, readable text, and people without identifying them, then ask if I want to know anything else.",
+          { eyeVueCapturedImagePath: capturedImagePath },
+        ).finally(async () => {
+          const cleanup = await sendDaemonOp(
+            cameraTurnUserId,
+            { type: "android_eyevue_discard_photo", imagePath: capturedImagePath },
+            5_000,
+            "android",
+          );
+          if (!cleanup.ok) {
+            console.error(`[daemon] eyeVue camera-button photo cleanup failed: ${cleanup.error ?? "unknown daemon error"}`);
+          }
+        }).catch(err => console.error(`[daemon] eyeVue camera-button turn failed: ${err}`));
+        return;
+      }
+
+      if (m.type === "eyevue_vision_delay" && pairedUserId) {
+        const message = typeof m.message === "string" && m.message.trim()
+          ? m.message.trim()
+          : "Local vision is taking longer than expected.";
+        const notice = await sendDaemonOp(
+          pairedUserId,
+          { type: "notify", title: "Jarvis local vision", body: message },
+          5_000,
+          "android",
+        );
+        if (!notice.ok) {
+          console.error(`[daemon] eyeVue vision-delay notification failed: ${notice.error ?? "unknown daemon error"}`);
+        }
+        return;
+      }
+
+      if (m.type === "eyevue_battery_low" && pairedUserId) {
+        const percent = Math.max(0, Math.min(100, Number(m.percent ?? 0)));
+        processDaemonUtterance(pairedUserId, `System eyeVue status: the glasses battery is at ${percent} percent. Briefly warn me once.`)
+          .catch(err => console.error(`[daemon] eyeVue low-battery announcement failed: ${err}`));
         return;
       }
 

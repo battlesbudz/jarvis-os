@@ -23,7 +23,7 @@ const DAEMON_GRADLE_DEPENDENCIES = [
   'implementation("org.java-websocket:Java-WebSocket:1.5.4")',
   'implementation("org.json:json:20231013")',
   'implementation("com.google.android.gms:play-services-location:21.2.0")',
-  'implementation("com.google.ai.edge.litertlm:litertlm-android:0.13.1")',
+  'implementation("com.google.ai.edge.litertlm:litertlm-android:0.16.0")',
   'implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")',
 ];
 
@@ -180,6 +180,14 @@ function getDaemonServices() {
         "android:enabled": "true",
         "android:exported": "false",
         "android:foregroundServiceType": "dataSync",
+      },
+    },
+    {
+      $: {
+        "android:name": ".daemon.EyevueGlassesService",
+        "android:enabled": "true",
+        "android:exported": "false",
+        "android:foregroundServiceType": "connectedDevice",
       },
     },
     {
@@ -465,6 +473,11 @@ function getDaemonPermissions() {
     "android.permission.FOREGROUND_SERVICE",
     "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
     "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+    "android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE",
+    { name: "android.permission.BLUETOOTH", maxSdkVersion: "30" },
+    { name: "android.permission.BLUETOOTH_ADMIN", maxSdkVersion: "30" },
+    "android.permission.BLUETOOTH_CONNECT",
+    "android.permission.BLUETOOTH_SCAN",
     "android.permission.RECORD_AUDIO",
     "android.permission.RECEIVE_BOOT_COMPLETED",
     "android.permission.WAKE_LOCK",

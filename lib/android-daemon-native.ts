@@ -26,6 +26,25 @@ export type AndroidDaemonStatus = {
   voiceSessionState?: "idle" | "listening" | "speaking" | "working" | "approval" | "paused";
   voiceOverlayPermission?: boolean;
   serverUrl?: string;
+  eyevueEnabled?: boolean;
+  eyevueConnected?: boolean;
+  eyevueDeviceName?: string | null;
+  eyevueLastError?: string | null;
+  eyevuePermissionGranted?: boolean;
+};
+
+export type AndroidEyevueStatus = {
+  available: boolean;
+  enabled: boolean;
+  connected: boolean;
+  address?: string | null;
+  deviceName?: string | null;
+  batteryPercent?: number | null;
+  capacityRaw?: string | null;
+  lastPhotoPath?: string | null;
+  lastError?: string | null;
+  wakePhrase?: "Hey, Star";
+  nativeStoragePreserved?: boolean;
 };
 
 export type AndroidLocalGemmaValidationOptions = {
@@ -171,11 +190,16 @@ const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
       openAllFilesAccessSettings(): Promise<void>;
       requestCameraPermission(): Promise<void>;
       requestMicrophonePermission(): Promise<void>;
+      requestEyevuePermissions?(): Promise<void>;
       requestScreenRecordPermission(): Promise<void>;
       getLocalGemmaStatus?(model: string): Promise<string | Record<string, unknown>>;
       validateLocalGemmaModel?(model: string): Promise<string | Record<string, unknown>>;
       validateLocalGemmaModelWithOptions?(model: string, optionsJson: string): Promise<string | Record<string, unknown>>;
       smokeTestLocalGemmaModel?(model: string, optionsJson: string): Promise<string | Record<string, unknown>>;
+      getEyevueStatus?(): Promise<string | Record<string, unknown>>;
+      enableEyevue?(address: string): Promise<string | Record<string, unknown>>;
+      disconnectEyevue?(): Promise<string | Record<string, unknown>>;
+      sendEyevueCommand?(command: string, waitForPhoto: boolean): Promise<string | Record<string, unknown>>;
       getNativeSpeechStatus?(locale: string): Promise<AndroidNativeSpeechStatus>;
       startNativeSpeechRecognition?(optionsJson: string): Promise<AndroidNativeSpeechStatus>;
       stopNativeSpeechRecognition?(): Promise<AndroidNativeSpeechStatus>;
@@ -240,6 +264,33 @@ export async function smokeTestAndroidLocalGemmaModel(model: string, options: An
   const parsed = parseNativeJsonResult(await NativeJarvisDaemon.smokeTestLocalGemmaModel(model, JSON.stringify(options)));
   if (!parsed) throw new Error("Phone Gemma smoke test returned an empty result.");
   return parsed;
+}
+
+export async function getAndroidEyevueStatus(): Promise<AndroidEyevueStatus | null> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.getEyevueStatus) return null;
+  return parseNativeJsonResult(await NativeJarvisDaemon.getEyevueStatus()) as AndroidEyevueStatus | null;
+}
+
+export async function enableAndroidEyevue(address = ""): Promise<AndroidEyevueStatus> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.enableEyevue) throw new Error("eyeVue support is unavailable in this APK.");
+  const result = parseNativeJsonResult(await NativeJarvisDaemon.enableEyevue(address));
+  if (!result) throw new Error("eyeVue setup returned no status.");
+  return result as AndroidEyevueStatus;
+}
+
+export async function disconnectAndroidEyevue(): Promise<AndroidEyevueStatus | null> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.disconnectEyevue) return null;
+  return parseNativeJsonResult(await NativeJarvisDaemon.disconnectEyevue()) as AndroidEyevueStatus | null;
+}
+
+export async function sendAndroidEyevueCommand(
+  command: "battery" | "storage" | "photo" | "video_start" | "video_stop" | "audio_start" | "audio_stop",
+  waitForPhoto = command === "photo",
+): Promise<AndroidEyevueStatus> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.sendEyevueCommand) throw new Error("eyeVue support is unavailable in this APK.");
+  const result = parseNativeJsonResult(await NativeJarvisDaemon.sendEyevueCommand(command, waitForPhoto));
+  if (!result) throw new Error("eyeVue command returned no status.");
+  return result as AndroidEyevueStatus;
 }
 
 export async function startAndroidOutsideAppVoiceSession(): Promise<AndroidDaemonStatus | null> {

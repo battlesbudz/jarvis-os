@@ -5,6 +5,8 @@ import { getTool } from "../agent/tools/index";
 import type { ToolContext } from "../agent/types";
 import { createApprovalReceipt } from "../agent/approvalReceipt";
 import { recordPhoneRuntimeToolResult } from "../agent/phoneRuntimeOperationStore";
+import { eyevueCaptureApprovalText, isEyevueCaptureAction } from "../agent/approvalToolRisk";
+import { getCoachAppAgentId } from "../agent/coreAgentIds";
 
 export type PendingConfirmation = {
   userId: string;
@@ -91,6 +93,34 @@ export async function executePendingCoachAction({
     throw confirmationError("Confirmation token has expired", 400);
   }
   pendingConfirmations.delete(token);
+  let durableApprovalReceipt: ToolContext["approvalReceipt"];
+  if (isEyevueCaptureAction(pending.tool, pending.args)) {
+    const { requestApproval, approveGate, getGate } = await import("../agent/agentApproval");
+    const createdGate = await requestApproval({
+      agentId: getCoachAppAgentId(userId),
+      userId,
+      toolName: pending.tool,
+      toolArgs: pending.args,
+      description: `Approved ${eyevueCaptureApprovalText(pending.tool, pending.args) ?? "eyeVue capture"} from app chat.`,
+      ttlMs: 5 * 60 * 1000,
+      initiatedBy: "user",
+      suppressDeliverable: true,
+    });
+    if (createdGate.status === "pending" && !(await approveGate(createdGate.id, userId))) {
+      throw confirmationError("Durable approval expired before it could be recorded", 409);
+    }
+    const gate = await getGate(createdGate.id);
+    if (gate?.userId !== userId || gate.status !== "approved" || gate.expiresAt.getTime() <= Date.now()) {
+      throw confirmationError("Durable approval is no longer valid", 409);
+    }
+    durableApprovalReceipt = createApprovalReceipt({
+      gateId: gate.id,
+      userId,
+      toolName: pending.tool,
+      originalUserText: eyevueCaptureApprovalText(pending.tool, pending.args) ?? String(pending.args?.action || pending.tool),
+      expiresAt: gate.expiresAt,
+    });
+  }
   let result: CoachToolResult;
   if (pending.tool === "connected_accounts_execute") {
     result = await executeAgentTool("connected_accounts_execute", pending.args, userId, "Connected account action");
@@ -109,7 +139,7 @@ export async function executePendingCoachAction({
       }),
     );
   } else if (isAndroidAgentToolConfirmation(pending)) {
-    result = await executeAgentTool(pending.tool, pending.args, userId, "Android action");
+    result = await executeAgentTool(pending.tool, pending.args, userId, "Android action", durableApprovalReceipt);
   } else {
     result = await executeCoachTool(pending.tool, pending.args, userId);
   }

@@ -459,6 +459,10 @@ class OutsideAppVoiceSessionService : Service() {
         JarvisVoicePlaybackController.stopActivePlayback(rearmTalkMode = false)
         endTalkModeCapture()
         TalkModeAudioSession.end()
+        // Phone Gemma may stay warm for eyeVue follow-up questions, but never
+        // beyond the user's explicit Talk Mode boundary ("Goodbye").
+        LocalGemmaInferenceEngine.releaseWarmEngine()
+        EyevueGlassesService.discardTemporaryPhoto()
         sendVoiceSessionEvent("end")
         approvalPrompt = ""
         approvalToken = ""

@@ -57,6 +57,7 @@ import { registerBrainDumpRoutes } from "./routes/brainDumpRoutes";
 import { registerCoachAudioRoutes } from "./routes/coachAudioRoutes";
 import { executePendingCoachAction, registerCoachActionConfirmationRoutes, type PendingConfirmation } from "./routes/coachActionConfirmationRoutes";
 import { codexDelegationRequiresConfirmation } from "./agent/codexDelegationPolicy";
+import { isEyevueCaptureAction } from "./agent/approvalToolRisk";
 import { registerCoachInsightRoutes } from "./routes/coachInsightRoutes";
 import { registerCoachSessionRoutes } from "./routes/coachSessionRoutes";
 import { listPendingPersonalCommitments } from "./commitments/dbCommitmentRepository";
@@ -2689,9 +2690,11 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               : null;
             const codexDelegationApprovalRequired = tc.function.name === 'delegate_to_codex' &&
               codexDelegationRequiresConfirmation(args);
+            const eyeVueCaptureApprovalRequired = isEyevueCaptureAction(tc.function.name, args);
             const isHighStakes = tc.function.name === 'send_email' ||
               (tc.function.name === 'connected_accounts_execute' && connectedAccountPermission?.approvalRequired === true && args.dry_run !== true) ||
               (tc.function.name === 'daemon_action' && ['shell', 'file_write'].includes(String(args.action || ''))) ||
+              eyeVueCaptureApprovalRequired ||
               codexDelegationApprovalRequired;
 
             if (isHighStakes) {
@@ -2724,6 +2727,10 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 preview.reason = 'Codex requested permission to modify the workspace or an external system.';
               } else {
                 preview.action = String(args.action || '');
+                if (eyeVueCaptureApprovalRequired) {
+                  preview.capture = String(args.command || (args.lookAgain === true ? 'fresh photo for local vision' : 'wearable media'));
+                  preview.reason = 'Wearable camera and microphone capture requires explicit approval.';
+                }
                 if (args.cmd) preview.cmd = String(args.cmd);
                 if (args.path) preview.path = String(args.path);
                 if (args.content) preview.content = String(args.content).slice(0, 200);

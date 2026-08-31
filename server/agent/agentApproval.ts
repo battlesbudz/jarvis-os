@@ -15,7 +15,7 @@
  */
 import { db } from "../db";
 import { agentApprovalGates, deliverables } from "@shared/schema";
-import { eq, and, lt, sql } from "drizzle-orm";
+import { eq, and, gt, lt, sql } from "drizzle-orm";
 import { logAgentEvent } from "./agentLogger";
 import { EventEmitter } from "events";
 import { toolCallHooks, HOOK_PRIORITY } from "./toolCallHooks";
@@ -53,6 +53,8 @@ export interface ApprovalRequest {
   initiatedBy?: 'user' | 'jarvis';
   /** Background worker job that should surface this gate as a runtime checkpoint. */
   workerJobId?: string;
+  /** Skip standalone approval/deliverable UI when another explicit confirmation surface owns the decision. */
+  suppressDeliverable?: boolean;
 }
 
 // ── Tools that always require approval ────────────────────────────────────────
@@ -189,7 +191,7 @@ export async function requestApproval(req: ApprovalRequest): Promise<ApprovalGat
 
   // Only create a deliverable for gates that require user review.
   // Auto-approved (Jarvis-initiated) gates are silently resolved — no inbox item created.
-  if (!autoApprove) {
+  if (!autoApprove && !req.suppressDeliverable) {
     try {
       const schema = await import("@shared/schema");
       await db.insert(schema.deliverables).values({
@@ -308,6 +310,7 @@ export async function approveGate(gateId: string, resolvedBy: string): Promise<b
           eq(agentApprovalGates.id, gateId),
           eq(agentApprovalGates.userId, resolvedBy),
           eq(agentApprovalGates.status, "pending"),
+          gt(agentApprovalGates.expiresAt, now),
         ),
       );
     const rows = result.rowCount ?? 0;

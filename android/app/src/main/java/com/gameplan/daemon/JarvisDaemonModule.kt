@@ -1,10 +1,12 @@
 package com.gameplan.daemon
 
 import android.content.Context
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.app.ActivityCompat
 import com.facebook.react.common.LifecycleState
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -280,6 +282,30 @@ class JarvisDaemonModule(
     }
 
     @ReactMethod
+    fun requestEyevuePermissions(promise: Promise) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || EyevueGlassesService.hasBluetoothPermission(reactApplicationContext)) {
+            promise.resolve(null)
+            return
+        }
+        val activity = reactApplicationContext.currentActivity
+        if (activity == null) {
+            openAppDetailsSettings(promise)
+            return
+        }
+        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        ActivityCompat.requestPermissions(
+            activity,
+            permissions,
+            7304,
+        )
+        promise.resolve(null)
+    }
+
+    @ReactMethod
     fun requestScreenRecordPermission(promise: Promise) {
         promise.reject(
             "E_JARVIS_DAEMON_SCREEN_RECORD_SETUP",
@@ -330,6 +356,40 @@ class JarvisDaemonModule(
         } else {
             promise.reject("E_LOCAL_GEMMA_SMOKE_TEST", result.error ?: "Phone Gemma smoke test failed.")
         }
+    }
+
+    @ReactMethod
+    fun getEyevueStatus(promise: Promise) {
+        promise.resolve(EyevueGlassesService.status(reactApplicationContext).json().toString())
+    }
+
+    @ReactMethod
+    fun enableEyevue(address: String, promise: Promise) {
+        if (!EyevueGlassesService.start(reactApplicationContext, address.takeIf { it.isNotBlank() })) {
+            promise.reject("E_EYEVUE_PERMISSION", "Grant Nearby Devices before enabling the eyeVue companion.")
+            return
+        }
+        promise.resolve(EyevueGlassesService.status(reactApplicationContext).json().put("status", "connecting").toString())
+    }
+
+    @ReactMethod
+    fun disconnectEyevue(promise: Promise) {
+        try {
+            reactApplicationContext.startService(
+                Intent(reactApplicationContext, EyevueGlassesService::class.java).setAction(EyevueGlassesService.ACTION_DISCONNECT),
+            )
+        } catch (err: Exception) {
+            promise.reject("E_EYEVUE_DISCONNECT", err.message, err)
+            return
+        }
+        promise.resolve(JSONObject().put("connected", false).put("enabled", false).toString())
+    }
+
+    @ReactMethod
+    fun sendEyevueCommand(command: String, waitForPhoto: Boolean, promise: Promise) {
+        val result = EyevueGlassesService.command(reactApplicationContext, command, waitForPhoto)
+        if (result.ok) promise.resolve((result.data as? JSONObject)?.toString() ?: "{}")
+        else promise.reject("E_EYEVUE_COMMAND", result.error ?: "eyeVue command failed.")
     }
 
     @ReactMethod
@@ -589,6 +649,15 @@ class JarvisDaemonModule(
         map.putString(
             "serverUrl",
             JarvisConfig.normalizeServerUrl(prefs.getString(WebSocketService.PREF_SERVER_URL, "")),
+        )
+        val eyevue = EyevueGlassesService.status(reactApplicationContext)
+        map.putBoolean("eyevueEnabled", eyevue.enabled)
+        map.putBoolean("eyevueConnected", eyevue.connected)
+        map.putString("eyevueDeviceName", eyevue.deviceName)
+        map.putString("eyevueLastError", eyevue.lastError)
+        map.putBoolean(
+            "eyevuePermissionGranted",
+            EyevueGlassesService.hasBluetoothPermission(reactApplicationContext),
         )
         return map
     }
