@@ -17,11 +17,16 @@ internal class NativeTalkModePlaybackBridge(
     private val context: ReactApplicationContext,
     private val consumeSuppression: (String) -> Boolean = { false },
 ) {
+    companion object {
+        private const val WEARABLE_PLAYBACK_OWNER_PREFIX = "native_tts_playback:"
+    }
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private var tts: TextToSpeech? = null
     private var initializing = false
     private var generation = 0
     private var owner: String? = null
+    private var wearablePlaybackOwner: String? = null
     private var spokenText = ""
     private var baseOffset = 0
     private var acknowledgedOffset = 0
@@ -50,7 +55,19 @@ internal class NativeTalkModePlaybackBridge(
                 finish(if (session.state == TalkModeAudioState.ENDED) "ended" else "stopped")
                 return@runOnMain
             }
-            ensureTts { engine -> if (!tentativeInterruption) speakRemaining(engine) }
+
+            // Recognition owns the wearable route while listening, but it releases that
+            // owner as soon as the user's turn is committed. Playback starts afterwards.
+            // Hold an independent route owner for the entire TTS utterance so Android
+            // cannot switch the glasses back to the phone between capture and response.
+            val routeOwner = "$WEARABLE_PLAYBACK_OWNER_PREFIX$ownerId"
+            wearablePlaybackOwner = routeOwner
+            WearableAudioRouteManager.acquire(context, routeOwner) {
+                runOnMain {
+                    if (owner != ownerId || wearablePlaybackOwner != routeOwner) return@runOnMain
+                    ensureTts { engine -> if (!tentativeInterruption) speakRemaining(engine) }
+                }
+            }
         }
     }
 
@@ -195,11 +212,16 @@ internal class NativeTalkModePlaybackBridge(
     private fun finish(status: String, error: String? = null) {
         val completedOwner = owner
         val completedOffset = acknowledgedOffset.coerceIn(0, spokenText.length)
+        val completedRouteOwner = wearablePlaybackOwner
         owner = null
+        wearablePlaybackOwner = null
         spokenText = ""
         baseOffset = 0
         acknowledgedOffset = 0
         tentativeInterruption = false
+        if (completedRouteOwner != null) {
+            WearableAudioRouteManager.release(completedRouteOwner)
+        }
         if (completedOwner != null) {
             if (status == "done") TalkModeAudioSession.finishPlayback(completedOwner)
             else if (
