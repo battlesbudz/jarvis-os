@@ -26,6 +26,8 @@ assert.match(service, /fun start\([\s\S]*hasBluetoothPermission\(context\)[\s\S]
 assert.match(service, /ACCESS_FINE_LOCATION/);
 assert.match(service, /scheduleTemporaryPhotoExpiry\(file\.absolutePath, origin\)/);
 assert.match(service, /TEMPORARY_PHOTO_TTL_MS/);
+assert.match(service, /onCreate\(\)[\s\S]*purgeCachedPhotosOnStartup\(\)/);
+assert.match(service, /purgeCachedPhotosOnStartup[\s\S]*startup_sweep/);
 assert.match(service, /!file\.exists\(\) \|\| file\.delete\(\)[\s\S]*if \(!deleted\)[\s\S]*return false/);
 assert.match(wake, /ACTION_EXTERNAL_WAKE/);
 assert.match(wake, /ACTION_EXTERNAL_WAKE[\s\S]*enteringTalkMode[\s\S]*destroyRecognizer\(\)[\s\S]*startListening\(\)/);
@@ -36,6 +38,8 @@ assert.match(inference, /visionDeadlineAtElapsedMs[\s\S]*remainingMs[\s\S]*futur
 assert.match(inference, /quarantineTimedOutNativeAttempt/);
 assert.match(inference, /releaseEngineForGeneration\(active, imagePaths\.isNotEmpty\(\), throwOnDeadline = true\)/);
 assert.match(inference, /future\.get\(remainingMs, TimeUnit\.MILLISECONDS\)[\s\S]*closeEngineAsync/);
+assert.match(inference, /closeTimedOut[\s\S]*active\.engine = null[\s\S]*executor\.shutdown\(\)/);
+assert.doesNotMatch(inference, /catch \(_: TimeoutException\)[\s\S]{0,500}future\.cancel\(true\)[\s\S]{0,500}closeEngineAsync/);
 assert.match(inference, /catch \(e: Throwable\)[\s\S]*abortRequested\(\)[\s\S]*LocalGemmaDeadlineExceededException/);
 assert.match(inference, /conversation\.cancelProcess\(\)/);
 assert.match(inference, /stalledEngine\.close\(\)/);

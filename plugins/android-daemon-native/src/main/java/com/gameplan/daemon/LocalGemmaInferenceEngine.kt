@@ -828,6 +828,9 @@ object LocalGemmaInferenceEngine {
                 start()
             }
         }
+        // Ownership of this engine has moved to the single quarantine close
+        // task above. Final cleanup must not close the same native object again.
+        active.engine = null
         DaemonLog.add("local_gemma: quarantined timed-out native request=${shortRequestId(active.requestId)}")
     }
 
@@ -957,6 +960,7 @@ object LocalGemmaInferenceEngine {
         if (remainingMs <= 0L) {
             active.deadlineExceeded.set(true)
             engineMutex.compareAndSet(closeMutex, Mutex())
+            active.engine = null
             closeEngineAsync(engineToClose, active.requestId)
             if (throwOnDeadline) throw LocalGemmaDeadlineExceededException()
             return
@@ -972,17 +976,20 @@ object LocalGemmaInferenceEngine {
                 }
             }
         }
+        var closeTimedOut = false
         try {
             future.get(remainingMs, TimeUnit.MILLISECONDS)
             active.engine = null
         } catch (_: TimeoutException) {
+            closeTimedOut = true
             active.deadlineExceeded.set(true)
-            future.cancel(true)
             engineMutex.compareAndSet(closeMutex, Mutex())
-            closeEngineAsync(engineToClose, active.requestId)
+            // The submitted native close is already the sole owner. Leave it
+            // running in quarantine and remove the engine from later cleanup.
+            active.engine = null
             if (throwOnDeadline) throw LocalGemmaDeadlineExceededException()
         } finally {
-            executor.shutdownNow()
+            if (closeTimedOut) executor.shutdown() else executor.shutdownNow()
         }
     }
 

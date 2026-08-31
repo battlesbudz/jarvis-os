@@ -156,6 +156,7 @@ class EyevueGlassesService : Service() {
         super.onCreate()
         instance = this
         createChannel()
+        purgeCachedPhotosOnStartup()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -420,6 +421,15 @@ class EyevueGlassesService : Service() {
         } else {
             DaemonLog.add("eyevue: orphan cleanup failed reason=$reason after ${attempt + 1} attempts")
         }
+    }
+
+    private fun purgeCachedPhotosOnStartup() {
+        val directory = File(cacheDir, "eyevue")
+        directory.listFiles()?.filter { it.isFile }?.forEach { cachedPhoto ->
+            deleteFileWithRetry(cachedPhoto.absolutePath, "startup_sweep")
+        }
+        snapshot = snapshot.copy(lastPhotoPath = null)
+        DaemonLog.add("eyevue: startup temporary-photo cache sweep completed")
     }
 
     private fun runCommand(name: String, waitForPhoto: Boolean): OpResult {
