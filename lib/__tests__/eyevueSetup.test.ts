@@ -3,6 +3,7 @@ import { deriveEyeVueVoiceReadiness, eyeVueAudioEndpointMatches } from "../eyevu
 
 assert.equal(eyeVueAudioEndpointMatches("eyeVue CYO3", "EYEVUE-CYO3"), true);
 assert.equal(eyeVueAudioEndpointMatches("eyeVue CYO3", "Galaxy Buds"), false);
+assert.equal(eyeVueAudioEndpointMatches("eyeVue CYO3", null), false);
 
 const missingSpeech = deriveEyeVueVoiceReadiness({
   nativeSpeechAvailable: false,
@@ -27,6 +28,17 @@ const wrongHeadset = deriveEyeVueVoiceReadiness({
 assert.equal(wrongHeadset.ready, false);
 assert.match(wrongHeadset.detail, /Galaxy Buds/);
 assert.match(wrongHeadset.detail, /eyeVue CYO3/);
+
+const missingAudioEndpoint = deriveEyeVueVoiceReadiness({
+  nativeSpeechAvailable: true,
+  speechRecognitionAvailable: true,
+  wearableAudioAvailable: true,
+  wearableAudioDeviceName: null,
+  eyevueConnected: true,
+  eyevueDeviceName: "eyeVue CYO3",
+});
+assert.equal(missingAudioEndpoint.ready, false);
+assert.equal(missingAudioEndpoint.endpointMatches, false);
 
 const ready = deriveEyeVueVoiceReadiness({
   nativeSpeechAvailable: true,
