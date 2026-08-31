@@ -287,9 +287,14 @@ object LocalGemmaInferenceEngine {
         val temperature = op.optDouble("temperature", DEFAULT_TEMPERATURE).coerceIn(0.0, 2.0)
         val systemInstruction = op.optString("systemInstruction", "").trim()
         val startedAtMs = System.currentTimeMillis()
+        val visionDeadlineAtElapsedMs = if (imagePaths.isNotEmpty()) {
+            SystemClock.elapsedRealtime() + VISION_DEADLINE_MS
+        } else {
+            Long.MAX_VALUE
+        }
 
         val job = Job()
-        val active = ActiveRequest(requestId, model, modelFile.absolutePath, modelRevision, backendName, cachePolicy, startedAtMs, job)
+        val active = ActiveRequest(requestId, model, modelFile.absolutePath, modelRevision, backendName, cachePolicy, startedAtMs, job, visionDeadlineAtElapsedMs)
         registerActiveRequest(active)?.let { return it }
         if (imagePaths.isNotEmpty()) {
             android.os.Handler(context.mainLooper).postDelayed({
@@ -752,7 +757,12 @@ object LocalGemmaInferenceEngine {
             }
         }
         val text = try {
-            if (imagePaths.isNotEmpty()) future.get(VISION_DEADLINE_MS, TimeUnit.MILLISECONDS) else future.get()
+            if (imagePaths.isNotEmpty()) {
+                val remainingMs = (active.visionDeadlineAtElapsedMs - SystemClock.elapsedRealtime()).coerceAtLeast(1L)
+                future.get(remainingMs, TimeUnit.MILLISECONDS)
+            } else {
+                future.get()
+            }
         } catch (_: TimeoutException) {
             active.deadlineExceeded.set(true)
             active.job.cancel()
@@ -971,6 +981,7 @@ object LocalGemmaInferenceEngine {
                 }
 
                 for (speculativeDecodingEnabled in speculativeDecodingCandidates(speculativeDecodingPreference)) {
+                    if (abortRequested()) throw LocalGemmaDeadlineExceededException()
                     var engine: Engine? = null
                     try {
                         configureExperimentalFlags(speculativeDecodingEnabled)
@@ -985,6 +996,10 @@ object LocalGemmaInferenceEngine {
                         )
                         engine = initializedEngine
                         onEngineCreated(initializedEngine)
+                        if (abortRequested()) {
+                            runCatching { initializedEngine.close() }
+                            throw LocalGemmaDeadlineExceededException()
+                        }
                         initializedEngine.initialize()
                         if (abortRequested()) {
                             runCatching { initializedEngine.close() }
@@ -1001,6 +1016,10 @@ object LocalGemmaInferenceEngine {
                         engine?.let { failedEngine -> runCatching { failedEngine.close() } }
                         throw e
                     } catch (e: Throwable) {
+                        if (abortRequested()) {
+                            engine?.let { failedEngine -> runCatching { failedEngine.close() } }
+                            throw LocalGemmaDeadlineExceededException()
+                        }
                         lastFailure = e
                         failures.add("$candidateBackendName: ${decodingModeName(speculativeDecodingEnabled)}: ${formatEngineError(e)}")
                         engine?.let { failedEngine ->
@@ -1196,6 +1215,7 @@ object LocalGemmaInferenceEngine {
         val cachePolicy: String,
         val startedAtMs: Long,
         val job: Job,
+        val visionDeadlineAtElapsedMs: Long,
         @Volatile var lastChunkAtMs: Long = 0L,
         @Volatile var outputChars: Int = 0,
         @Volatile var conversation: Conversation? = null,

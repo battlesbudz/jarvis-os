@@ -2,13 +2,11 @@ package com.gameplan.daemon
 
 import android.content.Context
 import android.Manifest
-import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import com.facebook.react.common.LifecycleState
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -285,7 +283,7 @@ class JarvisDaemonModule(
 
     @ReactMethod
     fun requestEyevuePermissions(promise: Promise) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || EyevueGlassesService.hasBluetoothPermission(reactApplicationContext)) {
             promise.resolve(null)
             return
         }
@@ -294,9 +292,14 @@ class JarvisDaemonModule(
             openAppDetailsSettings(promise)
             return
         }
+        val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
         ActivityCompat.requestPermissions(
             activity,
-            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT),
+            permissions,
             7304,
         )
         promise.resolve(null)
@@ -654,9 +657,7 @@ class JarvisDaemonModule(
         map.putString("eyevueLastError", eyevue.lastError)
         map.putBoolean(
             "eyevuePermissionGranted",
-            Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
-                ContextCompat.checkSelfPermission(reactApplicationContext, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
-                ContextCompat.checkSelfPermission(reactApplicationContext, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED,
+            EyevueGlassesService.hasBluetoothPermission(reactApplicationContext),
         )
         return map
     }

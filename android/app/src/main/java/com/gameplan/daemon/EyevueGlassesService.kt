@@ -76,6 +76,7 @@ class EyevueGlassesService : Service() {
         private const val NOTIFICATION_ID = 3014
         private const val RECONNECT_MS = 5_000L
         private const val PHOTO_REQUEST_ORIGIN_RETENTION_MS = 35_000L
+        private const val CAMERA_BUTTON_PHOTO_TTL_MS = 120_000L
 
         @Volatile private var instance: EyevueGlassesService? = null
         @Volatile private var snapshot = EyevueSnapshot(false, false, null, null, null, null, null, null)
@@ -105,9 +106,14 @@ class EyevueGlassesService : Service() {
             return true
         }
 
-        fun hasBluetoothPermission(context: Context) = Build.VERSION.SDK_INT < 31 ||
-            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+        fun hasBluetoothPermission(context: Context) = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ->
+                ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+                    ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ->
+                ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            else -> true
+        }
 
         fun start(context: Context, address: String? = null): Boolean {
             if (!hasBluetoothPermission(context)) {
@@ -368,6 +374,14 @@ class EyevueGlassesService : Service() {
                     .put("origin", origin)
                     .toString(),
             )
+            // The server normally discards this exact path when the camera-button
+            // turn finishes. This device-local TTL is the privacy fallback when
+            // the WebSocket disconnects before that cleanup op can arrive.
+            android.os.Handler(mainLooper).postDelayed({
+                if (discardTemporaryPhoto(file.absolutePath)) {
+                    DaemonLog.add("eyevue: expired camera-button temporary photo after ${CAMERA_BUTTON_PHOTO_TTL_MS}ms")
+                }
+            }, CAMERA_BUTTON_PHOTO_TTL_MS)
         }
     }
 
