@@ -97,17 +97,27 @@ export async function executePendingCoachAction({
   let durableApprovalReceipt: ToolContext["approvalReceipt"];
   if (pending.approvalGateId) {
     const { approveGate, getGate } = await import("../agent/agentApproval");
-    const newlyApproved = await approveGate(pending.approvalGateId, userId);
-    const gate = await getGate(pending.approvalGateId);
-    if ((!newlyApproved && gate?.status !== "approved") || gate?.userId !== userId) {
+    const gateBeforeApproval = await getGate(pending.approvalGateId);
+    if (
+      gateBeforeApproval?.userId !== userId ||
+      gateBeforeApproval.expiresAt.getTime() <= Date.now() ||
+      !["pending", "approved"].includes(gateBeforeApproval.status)
+    ) {
       throw confirmationError("Durable approval could not be recorded", 409);
+    }
+    if (gateBeforeApproval.status === "pending" && !(await approveGate(pending.approvalGateId, userId))) {
+      throw confirmationError("Durable approval expired before it could be recorded", 409);
+    }
+    const gate = await getGate(pending.approvalGateId);
+    if (gate?.userId !== userId || gate.status !== "approved" || gate.expiresAt.getTime() <= Date.now()) {
+      throw confirmationError("Durable approval is no longer valid", 409);
     }
     durableApprovalReceipt = createApprovalReceipt({
       gateId: pending.approvalGateId,
       userId,
       toolName: pending.tool,
       originalUserText: eyevueCaptureApprovalText(pending.tool, pending.args) ?? String(pending.args?.action || pending.tool),
-      expiresAt: new Date(pending.expiresAt),
+      expiresAt: gate.expiresAt,
     });
   }
   let result: CoachToolResult;

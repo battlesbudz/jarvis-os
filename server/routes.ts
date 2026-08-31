@@ -2737,6 +2737,7 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               }
               const confirmToken = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
               let durableApprovalGateId: string | undefined;
+              let durableApprovalExpiresAtMs: number | undefined;
               if (eyeVueCaptureApprovalRequired) {
                 const { requestApproval } = await import("./agent/agentApproval");
                 const gate = await requestApproval({
@@ -2749,12 +2750,13 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                   initiatedBy: "user",
                 });
                 durableApprovalGateId = gate.id;
+                durableApprovalExpiresAtMs = gate.expiresAt.getTime();
               }
               pendingConfirmations.set(confirmToken, {
                 userId,
                 tool: tc.function.name,
                 args,
-                expiresAt: Date.now() + 5 * 60 * 1000,
+                expiresAt: Math.min(Date.now() + 5 * 60 * 1000, durableApprovalExpiresAtMs ?? Number.POSITIVE_INFINITY),
                 operationId: activePhoneRuntimeOperation?.id,
                 ...(durableApprovalGateId ? { approvalGateId: durableApprovalGateId } : {}),
               });

@@ -16,6 +16,7 @@ const nativeModule = read("plugins/android-daemon-native/src/main/java/com/gamep
 const approvalRisk = read("server/agent/approvalToolRisk.ts");
 const coachConfirmation = read("server/routes/coachActionConfirmationRoutes.ts");
 const approvalReceipt = read("server/agent/approvalReceipt.ts");
+const agentApproval = read("server/agent/agentApproval.ts");
 
 assert.match(protocol, /0000aa12-0000-1000-8000-00805f9b34fb/);
 assert.match(protocol, /fun stopVendorVoice\(\)/);
@@ -74,6 +75,9 @@ assert.match(tool, /originalUserText: eyevueCaptureApprovalText\("daemon_action"
 assert.match(approvalReceipt, /call\.originalUserText && call\.originalUserText !== receipt\.originalUserText/);
 assert.match(routes, /eyeVueCaptureApprovalRequired = isEyevueCaptureAction[\s\S]*requestApproval[\s\S]*approvalGateId/);
 assert.match(coachConfirmation, /approveGate\(pending\.approvalGateId, userId\)[\s\S]*createApprovalReceipt[\s\S]*durableApprovalReceipt/);
+assert.match(agentApproval, /gt\(agentApprovalGates\.expiresAt, now\)/);
+assert.match(routes, /expiresAt: Math\.min\([\s\S]*durableApprovalExpiresAtMs/);
+assert.match(coachConfirmation, /gateBeforeApproval\.expiresAt\.getTime\(\) <= Date\.now\(\)[\s\S]*expiresAt: gate\.expiresAt/);
 assert.match(settings, /eyeVue Companion/);
 assert.match(settings, /eyevuePermissionGranted !== true[\s\S]*requestEyevuePermissions/);
 assert.match(nativeModule, /reactApplicationContext\.currentActivity/);

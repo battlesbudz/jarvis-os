@@ -15,7 +15,7 @@
  */
 import { db } from "../db";
 import { agentApprovalGates, deliverables } from "@shared/schema";
-import { eq, and, lt, sql } from "drizzle-orm";
+import { eq, and, gt, lt, sql } from "drizzle-orm";
 import { logAgentEvent } from "./agentLogger";
 import { EventEmitter } from "events";
 import { toolCallHooks, HOOK_PRIORITY } from "./toolCallHooks";
@@ -308,6 +308,7 @@ export async function approveGate(gateId: string, resolvedBy: string): Promise<b
           eq(agentApprovalGates.id, gateId),
           eq(agentApprovalGates.userId, resolvedBy),
           eq(agentApprovalGates.status, "pending"),
+          gt(agentApprovalGates.expiresAt, now),
         ),
       );
     const rows = result.rowCount ?? 0;
