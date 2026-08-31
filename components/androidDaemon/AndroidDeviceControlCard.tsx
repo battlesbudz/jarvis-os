@@ -87,6 +87,13 @@ export function AndroidDeviceControlCard({
   const anyBusy = busy !== null;
   const alreadyConnected = healthy;
   const canDisconnect = !anyBusy && (nativeAvailable || !!onUnpair);
+  const nativeRecognitionReady = nativeSpeechStatus?.available === true && nativeSpeechStatus?.speechRecognitionAvailable !== false;
+  const wearableVoiceReady = nativeRecognitionReady && nativeSpeechStatus?.wearableAudioAvailable === true;
+  const wearableVoiceDetail = wearableVoiceReady
+    ? "Wearable microphone and speaker route ready."
+    : nativeRecognitionReady
+      ? nativeSpeechStatus?.wearableAudioMessage || "Connect eyeVue first, then verify Jarvis can use the glasses microphone and speaker."
+      : nativeSpeechStatus?.message || "Native speech recognition must be available before wearable voice can be ready.";
 
   const enableDeviceControl = useCallback(async () => {
     if (!AndroidDaemonNative || !nativeAvailable || anyBusy || alreadyConnected) return;
@@ -101,8 +108,7 @@ export function AndroidDeviceControlCard({
       setStatus(next);
       await onRefreshChannels?.();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to enable Android device control.";
-      setError(message);
+      setError(err instanceof Error ? err.message : "Unable to enable Android device control.");
     } finally {
       setBusy(null);
     }
@@ -113,17 +119,12 @@ export function AndroidDeviceControlCard({
     setBusy("disconnect");
     setError(null);
     try {
-      if (nativeAvailable && AndroidDaemonNative) {
-        await AndroidDaemonNative.disconnect();
-      }
+      if (nativeAvailable && AndroidDaemonNative) await AndroidDaemonNative.disconnect();
       await onUnpair?.();
-      if (nativeAvailable) {
-        await refreshNativeStatus();
-      }
+      if (nativeAvailable) await refreshNativeStatus();
       await onRefreshChannels?.();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to disconnect Android device control.";
-      setError(message);
+      setError(err instanceof Error ? err.message : "Unable to disconnect Android device control.");
     } finally {
       setBusy(null);
     }
@@ -143,14 +144,14 @@ export function AndroidDeviceControlCard({
       detail: !healthy
         ? "Connect Device Control to check Notification Access."
         : notificationPermissionUnknown
-        ? "This APK does not report the Android notification permission separately. Update the app to diagnose it."
-        : needsNotificationPermission
-        ? "Android notification access is not granted. Tap to open Device & App Notifications."
-        : notificationServiceDisconnected
-        ? `Access is granted, but Android has not connected the listener${status?.notificationRebindRequested ? "; Jarvis requested a rebind" : ""}.`
-        : status?.notificationPermissionGranted === true && status?.notificationServiceConnected === true
-        ? `Permission granted and listener connected${typeof status?.notificationCacheCount === "number" ? `; ${status.notificationCacheCount} cached` : ""}.`
-        : "Notification Access status is unavailable on this device.",
+          ? "This APK does not report the Android notification permission separately. Update the app to diagnose it."
+          : needsNotificationPermission
+            ? "Android notification access is not granted. Tap to open Device & App Notifications."
+            : notificationServiceDisconnected
+              ? `Access is granted, but Android has not connected the listener${status?.notificationRebindRequested ? "; Jarvis requested a rebind" : ""}.`
+              : status?.notificationPermissionGranted === true && status?.notificationServiceConnected === true
+                ? `Permission granted and listener connected${typeof status?.notificationCacheCount === "number" ? `; ${status.notificationCacheCount} cached` : ""}.`
+                : "Notification Access status is unavailable on this device.",
       enabled: status?.notificationPermissionGranted === true && status?.notificationServiceConnected === true,
       action: () => AndroidDaemonNative?.openNotificationListenerSettings() ?? Promise.resolve(),
     },
@@ -176,13 +177,13 @@ export function AndroidDeviceControlCard({
       key: "local-voice",
       label: "Local Voice",
       detail: nativeSpeechStatus?.message ?? "Device speech-to-text and text-to-speech readiness.",
-      enabled: nativeSpeechStatus?.available,
+      enabled: nativeRecognitionReady,
     },
     {
       key: "wearable-voice",
       label: "Wearable Voice",
-      detail: nativeSpeechStatus?.wearableAudioMessage ?? "Bluetooth glasses and headset routing for Jarvis voice sessions.",
-      enabled: nativeSpeechStatus?.wearableAudioAvailable,
+      detail: wearableVoiceDetail,
+      enabled: wearableVoiceReady,
     },
     {
       key: "eyevue-permission",
@@ -218,26 +219,15 @@ export function AndroidDeviceControlCard({
       disabled: true,
     },
   ], [
-    nativeSpeechStatus?.available,
-    nativeSpeechStatus?.message,
     healthy,
-    nativeSpeechStatus?.wearableAudioAvailable,
-    nativeSpeechStatus?.wearableAudioMessage,
-    status?.accessibilityEnabled,
-    status?.notificationListenerActive,
-    status?.notificationPermissionGranted,
-    status?.notificationServiceConnected,
-    status?.notificationRebindRequested,
-    status?.notificationCacheCount,
-    notificationPermissionUnknown,
+    nativeRecognitionReady,
+    nativeSpeechStatus?.message,
     needsNotificationPermission,
+    notificationPermissionUnknown,
     notificationServiceDisconnected,
-    status?.voiceOverlayPermission,
-    status?.eyevuePermissionGranted,
-    status?.eyevueConnected,
-    status?.eyevueEnabled,
-    status?.eyevueDeviceName,
-    status?.eyevueLastError,
+    status,
+    wearableVoiceDetail,
+    wearableVoiceReady,
   ]);
 
   const runPermissionAction = useCallback(async (row: PermissionRow) => {
@@ -248,8 +238,7 @@ export function AndroidDeviceControlCard({
       await row.action();
       await refreshNativeStatus();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "This permission must be granted from Android settings.";
-      setError(message);
+      setError(err instanceof Error ? err.message : "This permission must be granted from Android settings.");
     } finally {
       setBusy(null);
     }
@@ -261,52 +250,30 @@ export function AndroidDeviceControlCard({
       const baseUrl = getApiUrl().replace(/\/+$/, "");
       await Linking.openURL(`${baseUrl}/api/download/android`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Unable to open Android APK download.";
-      setError(message);
+      setError(err instanceof Error ? err.message : "Unable to open Android APK download.");
     }
   }, []);
 
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        <View style={styles.icon}>
-          <Ionicons name="phone-portrait-outline" size={20} color="#34A853" />
-        </View>
+        <View style={styles.icon}><Ionicons name="phone-portrait-outline" size={20} color="#34A853" /></View>
         <View style={styles.headerText}>
           <Text style={styles.title}>Android Device</Text>
           <Text style={styles.subtitle}>
             {needsAccessibility
               ? "Connected - enable Accessibility for app control."
               : checkingAccessibility
-              ? "Connected - checking Accessibility setup."
-              : healthy
-              ? `Connected${hostname ? ` - ${hostname}` : ""}`
-              : description}
+                ? "Connected - checking Accessibility setup."
+                : healthy
+                  ? `Connected${hostname ? ` - ${hostname}` : ""}`
+                  : description}
           </Text>
         </View>
-        <View style={[
-          styles.statusPill,
-          statusReady ? styles.statusPillGood : needsAccessibility ? styles.statusPillWarning : styles.statusPillNeutral,
-        ]}>
-          <Ionicons
-            name={statusReady ? "checkmark-circle" : needsAccessibility ? "alert-circle-outline" : "ellipse-outline"}
-            size={13}
-            color={statusReady ? Colors.success : needsAccessibility ? Colors.warning : Colors.textSecondary}
-          />
-          <Text
-            numberOfLines={1}
-            style={[
-              styles.statusText,
-              statusReady ? styles.statusTextGood : needsAccessibility ? styles.statusTextWarning : undefined,
-            ]}
-          >
-            {statusReady
-              ? "Ready"
-              : needsAccessibility
-              ? "Accessibility"
-              : checkingAccessibility
-              ? "Checking"
-              : status?.status ?? "Checking"}
+        <View style={[styles.statusPill, statusReady ? styles.statusPillGood : needsAccessibility ? styles.statusPillWarning : styles.statusPillNeutral]}>
+          <Ionicons name={statusReady ? "checkmark-circle" : needsAccessibility ? "alert-circle-outline" : "ellipse-outline"} size={13} color={statusReady ? Colors.success : needsAccessibility ? Colors.warning : Colors.textSecondary} />
+          <Text numberOfLines={1} style={[styles.statusText, statusReady ? styles.statusTextGood : needsAccessibility ? styles.statusTextWarning : undefined]}>
+            {statusReady ? "Ready" : needsAccessibility ? "Accessibility" : checkingAccessibility ? "Checking" : status?.status ?? "Checking"}
           </Text>
         </View>
       </View>
@@ -333,25 +300,11 @@ export function AndroidDeviceControlCard({
 
       <View style={styles.setup}>
         <View style={styles.enableCopy}>
-          <Text style={styles.enableTitle}>
-            {needsAccessibility ? "Finish Android control setup" : "Device control runs inside this app"}
-          </Text>
-          <Text style={styles.enableDetail}>
-            {needsAccessibility
-              ? "Turn on Accessibility below so Jarvis can operate the phone."
-              : "Jarvis uses your signed-in session to connect this phone locally."}
-          </Text>
+          <Text style={styles.enableTitle}>{needsAccessibility ? "Finish Android control setup" : "Device control runs inside this app"}</Text>
+          <Text style={styles.enableDetail}>{needsAccessibility ? "Turn on Accessibility below so Jarvis can operate the phone." : "Jarvis uses your signed-in session to connect this phone locally."}</Text>
         </View>
-        <Pressable
-          style={[styles.primaryButton, (!nativeAvailable || anyBusy || alreadyConnected) && styles.disabledButton]}
-          onPress={enableDeviceControl}
-          disabled={!nativeAvailable || anyBusy || alreadyConnected}
-        >
-          {busy === "enable" ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Ionicons name="shield-checkmark-outline" size={15} color="#fff" />
-          )}
+        <Pressable style={[styles.primaryButton, (!nativeAvailable || anyBusy || alreadyConnected) && styles.disabledButton]} onPress={enableDeviceControl} disabled={!nativeAvailable || anyBusy || alreadyConnected}>
+          {busy === "enable" ? <ActivityIndicator size="small" color="#fff" /> : <Ionicons name="shield-checkmark-outline" size={15} color="#fff" />}
           <Text style={styles.primaryButtonText}>Enable Device Control</Text>
         </Pressable>
       </View>
@@ -363,155 +316,73 @@ export function AndroidDeviceControlCard({
               <Text style={styles.enableTitle}>Connect eyeVue glasses</Text>
               <Text style={styles.enableDetail}>Finish these three steps in order. Jarvis will keep checking the connection for you.</Text>
             </View>
-            <Ionicons
-              name={status?.eyevueConnected && nativeSpeechStatus?.wearableAudioAvailable ? "checkmark-circle" : "glasses-outline"}
-              size={20}
-              color={status?.eyevueConnected && nativeSpeechStatus?.wearableAudioAvailable ? Colors.success : Colors.textSecondary}
-            />
+            <Ionicons name={status?.eyevueConnected && wearableVoiceReady ? "checkmark-circle" : "glasses-outline"} size={20} color={status?.eyevueConnected && wearableVoiceReady ? Colors.success : Colors.textSecondary} />
           </View>
 
-          <Pressable
-            style={styles.eyeVueStep}
-            onPress={() => runPermissionAction({
-              key: "eyevue-setup-permission",
-              label: "Nearby Devices",
-              detail: "Allow Bluetooth discovery.",
-              enabled: status?.eyevuePermissionGranted,
-              action: () => AndroidDaemonNative?.requestEyevuePermissions?.() ?? Promise.resolve(),
-            })}
-            disabled={anyBusy || status?.eyevuePermissionGranted === true}
-          >
+          <Pressable style={styles.eyeVueStep} onPress={() => runPermissionAction({
+            key: "eyevue-setup-permission",
+            label: "Nearby Devices",
+            detail: "Allow Bluetooth discovery.",
+            enabled: status?.eyevuePermissionGranted,
+            action: () => AndroidDaemonNative?.requestEyevuePermissions?.() ?? Promise.resolve(),
+          })} disabled={anyBusy || status?.eyevuePermissionGranted === true}>
             <Text style={styles.eyeVueStepNumber}>1</Text>
             <View style={styles.permissionCopy}>
               <Text style={styles.permissionLabel}>Allow Nearby Devices</Text>
-              <Text style={styles.permissionDetail}>
-                {status?.eyevuePermissionGranted === true
-                  ? "Permission granted."
-                  : "Required so Jarvis can discover and reconnect to eyeVue over Bluetooth."}
-              </Text>
+              <Text style={styles.permissionDetail}>{status?.eyevuePermissionGranted === true ? "Permission granted." : "Required so Jarvis can discover and reconnect to eyeVue over Bluetooth."}</Text>
             </View>
-            {busy === "eyevue-setup-permission" ? (
-              <ActivityIndicator size="small" color="#34A853" />
-            ) : (
-              <Ionicons
-                name={status?.eyevuePermissionGranted === true ? "checkmark-circle" : "chevron-forward"}
-                size={18}
-                color={status?.eyevuePermissionGranted === true ? Colors.success : Colors.textTertiary}
-              />
-            )}
+            {busy === "eyevue-setup-permission" ? <ActivityIndicator size="small" color="#34A853" /> : <Ionicons name={status?.eyevuePermissionGranted === true ? "checkmark-circle" : "chevron-forward"} size={18} color={status?.eyevuePermissionGranted === true ? Colors.success : Colors.textTertiary} />}
           </Pressable>
 
-          <Pressable
-            style={[styles.eyeVueStep, status?.eyevuePermissionGranted !== true && styles.disabledPermissionRow]}
-            onPress={() => runPermissionAction({
-              key: "eyevue-setup-connect",
-              label: "Connect eyeVue",
-              detail: "Enable the eyeVue companion.",
-              enabled: status?.eyevueConnected,
-              action: () => AndroidDaemonNative?.enableEyevue?.("") ?? Promise.resolve(),
-            })}
-            disabled={anyBusy || status?.eyevuePermissionGranted !== true || status?.eyevueConnected === true}
-          >
+          <Pressable style={[styles.eyeVueStep, status?.eyevuePermissionGranted !== true && styles.disabledPermissionRow]} onPress={() => runPermissionAction({
+            key: "eyevue-setup-connect",
+            label: "Connect eyeVue",
+            detail: "Enable the eyeVue companion.",
+            enabled: status?.eyevueConnected,
+            action: () => AndroidDaemonNative?.enableEyevue?.("") ?? Promise.resolve(),
+          })} disabled={anyBusy || status?.eyevuePermissionGranted !== true || status?.eyevueConnected === true}>
             <Text style={styles.eyeVueStepNumber}>2</Text>
             <View style={styles.permissionCopy}>
               <Text style={styles.permissionLabel}>Connect eyeVue</Text>
-              <Text style={styles.permissionDetail}>
-                {status?.eyevueConnected
-                  ? `${status.eyevueDeviceName || "eyeVue"} connected.`
-                  : status?.eyevueLastError || "Turn the glasses on and connect Jarvis as the eyeVue companion."}
-              </Text>
+              <Text style={styles.permissionDetail}>{status?.eyevueConnected ? `${status.eyevueDeviceName || "eyeVue"} connected.` : status?.eyevueLastError || "Turn the glasses on and connect Jarvis as the eyeVue companion."}</Text>
             </View>
-            {busy === "eyevue-setup-connect" ? (
-              <ActivityIndicator size="small" color="#34A853" />
-            ) : (
-              <Ionicons
-                name={status?.eyevueConnected ? "checkmark-circle" : "chevron-forward"}
-                size={18}
-                color={status?.eyevueConnected ? Colors.success : Colors.textTertiary}
-              />
-            )}
+            {busy === "eyevue-setup-connect" ? <ActivityIndicator size="small" color="#34A853" /> : <Ionicons name={status?.eyevueConnected ? "checkmark-circle" : "chevron-forward"} size={18} color={status?.eyevueConnected ? Colors.success : Colors.textTertiary} />}
           </Pressable>
 
-          <Pressable
-            style={[styles.eyeVueStep, status?.eyevueConnected !== true && styles.disabledPermissionRow]}
-            onPress={() => runPermissionAction({
-              key: "eyevue-setup-voice",
-              label: "Wearable Voice",
-              detail: "Refresh wearable audio readiness.",
-              enabled: nativeSpeechStatus?.wearableAudioAvailable,
-              action: async () => { await refreshNativeStatus(); },
-            })}
-            disabled={anyBusy || status?.eyevueConnected !== true || nativeSpeechStatus?.wearableAudioAvailable === true}
-          >
+          <Pressable style={[styles.eyeVueStep, status?.eyevueConnected !== true && styles.disabledPermissionRow]} onPress={() => runPermissionAction({
+            key: "eyevue-setup-voice",
+            label: "Wearable Voice",
+            detail: "Refresh wearable voice readiness.",
+            enabled: wearableVoiceReady,
+            action: async () => { await refreshNativeStatus(); },
+          })} disabled={anyBusy || status?.eyevueConnected !== true || wearableVoiceReady}>
             <Text style={styles.eyeVueStepNumber}>3</Text>
             <View style={styles.permissionCopy}>
               <Text style={styles.permissionLabel}>Verify Jarvis voice</Text>
-              <Text style={styles.permissionDetail}>
-                {nativeSpeechStatus?.wearableAudioAvailable === true
-                  ? "Wearable microphone and speaker route ready."
-                  : nativeSpeechStatus?.wearableAudioMessage || "Connect eyeVue first, then verify Jarvis can use the glasses microphone and speaker."}
-              </Text>
+              <Text style={styles.permissionDetail}>{wearableVoiceDetail}</Text>
             </View>
-            {busy === "eyevue-setup-voice" ? (
-              <ActivityIndicator size="small" color="#34A853" />
-            ) : (
-              <Ionicons
-                name={nativeSpeechStatus?.wearableAudioAvailable === true ? "checkmark-circle" : "refresh-outline"}
-                size={18}
-                color={nativeSpeechStatus?.wearableAudioAvailable === true ? Colors.success : Colors.textTertiary}
-              />
-            )}
+            {busy === "eyevue-setup-voice" ? <ActivityIndicator size="small" color="#34A853" /> : <Ionicons name={wearableVoiceReady ? "checkmark-circle" : "refresh-outline"} size={18} color={wearableVoiceReady ? Colors.success : Colors.textTertiary} />}
           </Pressable>
         </View>
       )}
 
       <View style={styles.permissionList}>
         {permissionRows.map((row) => (
-          <Pressable
-            key={row.key}
-            style={[styles.permissionRow, row.disabled && styles.disabledPermissionRow]}
-            onPress={() => runPermissionAction(row)}
-            disabled={!nativeAvailable || anyBusy || row.disabled}
-          >
+          <Pressable key={row.key} style={[styles.permissionRow, row.disabled && styles.disabledPermissionRow]} onPress={() => runPermissionAction(row)} disabled={!nativeAvailable || anyBusy || row.disabled}>
             <View style={styles.permissionCopy}>
               <Text style={styles.permissionLabel}>{row.label}</Text>
               <Text style={styles.permissionDetail}>{row.detail}</Text>
             </View>
-            {busy === row.key ? (
-              <ActivityIndicator size="small" color="#34A853" />
-            ) : row.disabled ? (
-              <Ionicons name="time-outline" size={18} color={Colors.textTertiary} />
-            ) : row.enabled !== undefined ? (
-              <Ionicons
-                name={row.enabled ? "checkmark-circle" : "alert-circle-outline"}
-                size={18}
-                color={row.enabled ? Colors.success : Colors.warning}
-              />
-            ) : (
-              <Ionicons name="chevron-forward" size={17} color={Colors.textTertiary} />
-            )}
+            {busy === row.key ? <ActivityIndicator size="small" color="#34A853" /> : row.disabled ? <Ionicons name="time-outline" size={18} color={Colors.textTertiary} /> : row.enabled !== undefined ? <Ionicons name={row.enabled ? "checkmark-circle" : "alert-circle-outline"} size={18} color={row.enabled ? Colors.success : Colors.warning} /> : <Ionicons name="chevron-forward" size={17} color={Colors.textTertiary} />}
           </Pressable>
         ))}
       </View>
 
-      {error ? (
-        <View style={styles.errorBox}>
-          <Ionicons name="warning-outline" size={14} color={Colors.warning} />
-          <Text style={styles.errorText}>{error}</Text>
-        </View>
-      ) : null}
+      {error ? <View style={styles.errorBox}><Ionicons name="warning-outline" size={14} color={Colors.warning} /><Text style={styles.errorText}>{error}</Text></View> : null}
 
       {alreadyConnected && (
-        <Pressable
-          style={[styles.disconnectButton, !canDisconnect && styles.disabledButton]}
-          onPress={disconnect}
-          disabled={!canDisconnect}
-        >
-          {busy === "disconnect" ? (
-            <ActivityIndicator size="small" color={Colors.textSecondary} />
-          ) : (
-            <Ionicons name="unlink-outline" size={15} color={Colors.textSecondary} />
-          )}
+        <Pressable style={[styles.disconnectButton, !canDisconnect && styles.disabledButton]} onPress={disconnect} disabled={!canDisconnect}>
+          {busy === "disconnect" ? <ActivityIndicator size="small" color={Colors.textSecondary} /> : <Ionicons name="unlink-outline" size={15} color={Colors.textSecondary} />}
           <Text style={styles.disconnectText}>Disconnect</Text>
         </Pressable>
       )}
@@ -520,248 +391,42 @@ export function AndroidDeviceControlCard({
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: Colors.card,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 16,
-    gap: 12,
-  },
-  icon: {
-    width: 42,
-    height: 42,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "#34A85318",
-  },
-  headerText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  title: {
-    fontSize: 15,
-    fontFamily: "Inter_500Medium",
-    color: Colors.text,
-  },
-  subtitle: {
-    fontSize: 12,
-    fontFamily: "Inter_400Regular",
-    color: Colors.textSecondary,
-    marginTop: 2,
-  },
-  statusPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: 8,
-    paddingVertical: 5,
-    maxWidth: 126,
-  },
-  statusPillGood: {
-    backgroundColor: Colors.successDim,
-    borderColor: Colors.success,
-  },
-  statusPillNeutral: {
-    backgroundColor: Colors.surfaceAlt,
-    borderColor: Colors.border,
-  },
-  statusPillWarning: {
-    backgroundColor: Colors.warningDim,
-    borderColor: Colors.warning,
-  },
-  statusText: {
-    fontSize: 11,
-    fontFamily: "Inter_500Medium",
-    color: Colors.textSecondary,
-  },
-  statusTextGood: {
-    color: Colors.success,
-  },
-  statusTextWarning: {
-    color: Colors.warning,
-  },
-  notice: {
-    marginHorizontal: 16,
-    marginBottom: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.warning,
-    backgroundColor: Colors.warningDim,
-    padding: 10,
-  },
-  noticeText: {
-    fontSize: 12,
-    lineHeight: 17,
-    fontFamily: "Inter_400Regular",
-    color: Colors.warningLight,
-  },
-  installButton: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    marginTop: 8,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: Colors.warning,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  installButtonText: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.warningLight,
-  },
-  setup: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    paddingHorizontal: 16,
-    paddingBottom: 14,
-  },
-  enableCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  enableTitle: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.text,
-  },
-  enableDetail: {
-    marginTop: 2,
-    fontSize: 11,
-    lineHeight: 16,
-    fontFamily: "Inter_400Regular",
-    color: Colors.textSecondary,
-  },
-  primaryButton: {
-    minHeight: 34,
-    borderRadius: 8,
-    backgroundColor: "#34A853",
-    alignItems: "center",
-    justifyContent: "center",
-    flexDirection: "row",
-    gap: 5,
-    paddingHorizontal: 12,
-  },
-  primaryButtonText: {
-    fontSize: 12,
-    fontFamily: "Inter_600SemiBold",
-    color: "#fff",
-  },
-  disabledButton: {
-    opacity: 0.55,
-  },
-  eyeVueSetup: {
-    marginHorizontal: 16,
-    marginBottom: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    overflow: "hidden",
-  },
-  eyeVueSetupHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-    padding: 12,
-    backgroundColor: Colors.surfaceAlt,
-  },
-  eyeVueStep: {
-    minHeight: 62,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  eyeVueStepNumber: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    textAlign: "center",
-    lineHeight: 22,
-    fontSize: 11,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.text,
-    backgroundColor: Colors.surfaceAlt,
-  },
-  permissionList: {
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-  },
-  permissionRow: {
-    minHeight: 58,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  disabledPermissionRow: {
-    opacity: 0.65,
-  },
-  permissionCopy: {
-    flex: 1,
-    minWidth: 0,
-  },
-  permissionLabel: {
-    fontSize: 13,
-    fontFamily: "Inter_600SemiBold",
-    color: Colors.text,
-  },
-  permissionDetail: {
-    marginTop: 2,
-    fontSize: 11,
-    lineHeight: 16,
-    fontFamily: "Inter_400Regular",
-    color: Colors.textSecondary,
-  },
-  errorBox: {
-    margin: 16,
-    marginTop: 12,
-    flexDirection: "row",
-    gap: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.warning,
-    backgroundColor: Colors.warningDim,
-    padding: 10,
-  },
-  errorText: {
-    flex: 1,
-    fontSize: 11,
-    lineHeight: 16,
-    fontFamily: "Inter_400Regular",
-    color: Colors.warningLight,
-  },
-  disconnectButton: {
-    marginHorizontal: 16,
-    marginBottom: 14,
-    flexDirection: "row",
-    gap: 6,
-    alignItems: "center",
-    justifyContent: "center",
-    minHeight: 34,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  disconnectText: {
-    fontSize: 12,
-    fontFamily: "Inter_500Medium",
-    color: Colors.textSecondary,
-  },
+  card: { backgroundColor: Colors.card, borderTopWidth: 1, borderTopColor: Colors.border },
+  header: { flexDirection: "row", alignItems: "center", padding: 16, gap: 12 },
+  icon: { width: 42, height: 42, borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#34A85318" },
+  headerText: { flex: 1, minWidth: 0 },
+  title: { fontSize: 15, fontFamily: "Inter_500Medium", color: Colors.text },
+  subtitle: { fontSize: 12, fontFamily: "Inter_400Regular", color: Colors.textSecondary, marginTop: 2 },
+  statusPill: { flexDirection: "row", alignItems: "center", gap: 4, borderRadius: 8, borderWidth: 1, paddingHorizontal: 8, paddingVertical: 5, maxWidth: 126 },
+  statusPillGood: { backgroundColor: Colors.successDim, borderColor: Colors.success },
+  statusPillNeutral: { backgroundColor: Colors.surfaceAlt, borderColor: Colors.border },
+  statusPillWarning: { backgroundColor: Colors.warningDim, borderColor: Colors.warning },
+  statusText: { fontSize: 11, fontFamily: "Inter_500Medium", color: Colors.textSecondary },
+  statusTextGood: { color: Colors.success },
+  statusTextWarning: { color: Colors.warning },
+  notice: { marginHorizontal: 16, marginBottom: 12, borderRadius: 8, borderWidth: 1, borderColor: Colors.warning, backgroundColor: Colors.warningDim, padding: 10 },
+  noticeText: { fontSize: 12, lineHeight: 17, fontFamily: "Inter_400Regular", color: Colors.warningLight },
+  installButton: { alignSelf: "flex-start", flexDirection: "row", alignItems: "center", gap: 6, marginTop: 8, borderRadius: 6, borderWidth: 1, borderColor: Colors.warning, paddingHorizontal: 10, paddingVertical: 6 },
+  installButtonText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: Colors.warningLight },
+  setup: { flexDirection: "row", alignItems: "center", gap: 12, paddingHorizontal: 16, paddingBottom: 14 },
+  enableCopy: { flex: 1, minWidth: 0 },
+  enableTitle: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.text },
+  enableDetail: { marginTop: 2, fontSize: 11, lineHeight: 16, fontFamily: "Inter_400Regular", color: Colors.textSecondary },
+  primaryButton: { minHeight: 34, borderRadius: 8, backgroundColor: "#34A853", alignItems: "center", justifyContent: "center", flexDirection: "row", gap: 5, paddingHorizontal: 12 },
+  primaryButtonText: { fontSize: 12, fontFamily: "Inter_600SemiBold", color: "#fff" },
+  disabledButton: { opacity: 0.55 },
+  eyeVueSetup: { marginHorizontal: 16, marginBottom: 14, borderRadius: 10, borderWidth: 1, borderColor: Colors.border, overflow: "hidden" },
+  eyeVueSetupHeader: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, backgroundColor: Colors.surfaceAlt },
+  eyeVueStep: { minHeight: 62, paddingHorizontal: 12, paddingVertical: 10, borderTopWidth: 1, borderTopColor: Colors.border, flexDirection: "row", alignItems: "center", gap: 10 },
+  eyeVueStepNumber: { width: 22, height: 22, borderRadius: 11, textAlign: "center", lineHeight: 22, fontSize: 11, fontFamily: "Inter_600SemiBold", color: Colors.text, backgroundColor: Colors.surfaceAlt },
+  permissionList: { borderTopWidth: 1, borderTopColor: Colors.border },
+  permissionRow: { minHeight: 58, paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.border, flexDirection: "row", alignItems: "center", gap: 12 },
+  disabledPermissionRow: { opacity: 0.65 },
+  permissionCopy: { flex: 1, minWidth: 0 },
+  permissionLabel: { fontSize: 13, fontFamily: "Inter_600SemiBold", color: Colors.text },
+  permissionDetail: { marginTop: 2, fontSize: 11, lineHeight: 16, fontFamily: "Inter_400Regular", color: Colors.textSecondary },
+  errorBox: { margin: 16, marginTop: 12, flexDirection: "row", gap: 8, borderRadius: 8, borderWidth: 1, borderColor: Colors.warning, backgroundColor: Colors.warningDim, padding: 10 },
+  errorText: { flex: 1, fontSize: 11, lineHeight: 16, fontFamily: "Inter_400Regular", color: Colors.warningLight },
+  disconnectButton: { marginHorizontal: 16, marginBottom: 14, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", minHeight: 34, borderRadius: 8, borderWidth: 1, borderColor: Colors.border },
+  disconnectText: { fontSize: 12, fontFamily: "Inter_500Medium", color: Colors.textSecondary },
 });
