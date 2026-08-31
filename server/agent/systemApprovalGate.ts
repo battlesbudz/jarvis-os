@@ -3,7 +3,7 @@ import type { ApprovalReceipt } from "./approvalReceipt";
 import { withApprovalMarkerForTool } from "./approvalMarkers";
 import { notifyApprovalRequest as notifyApprovalRequestForGate } from "./approvalNotifications";
 import { approvalReceiptCoversToolCall, createApprovalReceipt } from "./approvalReceipt";
-import { requiresApproval as defaultRequiresApproval } from "./approvalToolRisk";
+import { eyevueCaptureApprovalText, requiresApproval as defaultRequiresApproval } from "./approvalToolRisk";
 import { isCloudBackgroundApprovalReady } from "./cloudBackgroundEscalation";
 import { getModelProvider } from "@shared/modelProviderCatalog";
 
@@ -106,6 +106,8 @@ function systemApprovalDescription(agentName: string, toolName: string, params: 
 }
 
 function approvalOriginalText(toolName: string, params: Record<string, unknown>): string {
+  const eyeVueCapture = eyevueCaptureApprovalText(toolName, params);
+  if (eyeVueCapture) return eyeVueCapture;
   for (const key of ["task", "prompt", "description", "action", "cmd"]) {
     const value = params[key];
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -128,7 +130,11 @@ export function createSystemApprovalOnBeforeTool(opts: SystemApprovalGateOptions
       return { allowed: true, params };
     }
 
-    if (approvalReceiptCoversToolCall(opts.approvalReceipt, { userId: opts.userId, toolName })) {
+    if (approvalReceiptCoversToolCall(opts.approvalReceipt, {
+      userId: opts.userId,
+      toolName,
+      originalUserText: eyevueCaptureApprovalText(toolName, params),
+    })) {
       return {
         allowed: true,
         params: withApprovalMarkerForTool(toolName, params, opts.approvalReceipt?.gateId),

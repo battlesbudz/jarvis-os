@@ -14,6 +14,8 @@ import {
 } from "../../daemon/bridge";
 import { checkAndIncrementScreenshotBudget } from "./daemonShellTool";
 import { runAndroidOpenNotification } from "./androidAppRuntime";
+import { approvalReceiptCoversToolCall } from "../approvalReceipt";
+import { eyevueCaptureApprovalText, isEyevueCaptureAction } from "../approvalToolRisk";
 
 const DESKTOP_ACTIONS: readonly DaemonAction[] = ["shell", "notify", "file_read", "file_write", "file_list", "desktop_screenshot", "desktop_read_screen"] as const;
 const ANDROID_ACTIONS: readonly string[] = [
@@ -236,6 +238,20 @@ Android device actions run immediately without confirmation, including navigatio
     const rawAction = String(args.action || "");
     const androidActive = isAndroidDaemonActive(ctx.userId);
     const desktopActive = isDesktopDaemonActive(ctx.userId);
+
+    if (
+      isEyevueCaptureAction("daemon_action", args) &&
+      !approvalReceiptCoversToolCall(ctx.approvalReceipt, {
+        userId: ctx.userId,
+        toolName: "daemon_action",
+        originalUserText: eyevueCaptureApprovalText("daemon_action", args),
+      })
+    ) {
+      return {
+        ok: false,
+        content: jsonErrorContent("Wearable photo, video, and audio capture requires a current durable approval receipt."),
+      };
+    }
 
     if (!isUserPaired(ctx.userId)) {
       return { ok: false, content: jsonErrorContent("No daemon paired. Ask the user to pair either the desktop daemon (Profile -> Connected Channels -> Desktop Daemon) or Android device control in the main Jarvis Android app (Profile -> Android Device).") };

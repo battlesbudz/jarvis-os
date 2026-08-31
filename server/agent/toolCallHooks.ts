@@ -22,6 +22,7 @@
 import type { ApprovalReceipt } from "./approvalReceipt";
 import { approvalReceiptCoversToolCall, createApprovalReceipt } from "./approvalReceipt";
 import { withApprovalMarkerForTool } from "./approvalMarkers";
+import { eyevueCaptureApprovalText } from "./approvalToolRisk";
 
 export type ToolCallHookContext = {
   toolName: string;
@@ -89,6 +90,8 @@ type ApprovalFlowResult = {
 };
 
 function approvalOriginalText(toolName: string, params: Record<string, unknown>): string {
+  const eyeVueCapture = eyevueCaptureApprovalText(toolName, params);
+  if (eyeVueCapture) return eyeVueCapture;
   for (const key of ["task", "prompt", "description", "action", "cmd"]) {
     const value = params[key];
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -223,7 +226,11 @@ async function runApprovalFlowWithOriginNotification(
   ctx: ToolCallHookContext,
   approval: NonNullable<ToolCallHookResult["requireApproval"]>,
 ): Promise<ApprovalFlowResult> {
-  if (approvalReceiptCoversToolCall(ctx.approvalReceipt, { userId: ctx.userId, toolName: ctx.toolName })) {
+  if (approvalReceiptCoversToolCall(ctx.approvalReceipt, {
+    userId: ctx.userId,
+    toolName: ctx.toolName,
+    originalUserText: eyevueCaptureApprovalText(ctx.toolName, ctx.params),
+  })) {
     console.log(
       `[ToolCallHooks] approval receipt accepted: gate=${ctx.approvalReceipt?.gateId} tool=${ctx.toolName}`,
     );
@@ -342,7 +349,11 @@ async function runApprovalFlow(
   ctx: ToolCallHookContext,
   approval: NonNullable<ToolCallHookResult["requireApproval"]>,
 ): Promise<boolean> {
-  if (approvalReceiptCoversToolCall(ctx.approvalReceipt, { userId: ctx.userId, toolName: ctx.toolName })) {
+  if (approvalReceiptCoversToolCall(ctx.approvalReceipt, {
+    userId: ctx.userId,
+    toolName: ctx.toolName,
+    originalUserText: eyevueCaptureApprovalText(ctx.toolName, ctx.params),
+  })) {
     console.log(
       `[ToolCallHooks] approval receipt accepted: gate=${ctx.approvalReceipt?.gateId} tool=${ctx.toolName}`,
     );

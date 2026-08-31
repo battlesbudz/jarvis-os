@@ -248,6 +248,14 @@ async function run() {
       !approvalReceiptCoversToolCall(receipt, { userId: "user-test", toolName: "discord_post" }),
       "TH-17: receipt does not cover a different tool",
     );
+    assert(
+      approvalReceiptCoversToolCall(receipt, { userId: "user-test", toolName: "send_email", originalUserText: "Send the email" }),
+      "TH-17: receipt covers the matching exact action scope",
+    );
+    assert(
+      !approvalReceiptCoversToolCall(receipt, { userId: "user-test", toolName: "send_email", originalUserText: "Send a different email" }),
+      "TH-17: receipt does not cover a different exact action scope",
+    );
   }
 
   // TH-18: Receipt-approved connected account execution receives an explicit approval marker

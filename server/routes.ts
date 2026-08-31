@@ -57,6 +57,7 @@ import { registerBrainDumpRoutes } from "./routes/brainDumpRoutes";
 import { registerCoachAudioRoutes } from "./routes/coachAudioRoutes";
 import { executePendingCoachAction, registerCoachActionConfirmationRoutes, type PendingConfirmation } from "./routes/coachActionConfirmationRoutes";
 import { codexDelegationRequiresConfirmation } from "./agent/codexDelegationPolicy";
+import { isEyevueCaptureAction } from "./agent/approvalToolRisk";
 import { registerCoachInsightRoutes } from "./routes/coachInsightRoutes";
 import { registerCoachSessionRoutes } from "./routes/coachSessionRoutes";
 import { listPendingPersonalCommitments } from "./commitments/dbCommitmentRepository";
@@ -2689,9 +2690,11 @@ You can extend yourself by building new tools directly. Generate the complete Ty
               : null;
             const codexDelegationApprovalRequired = tc.function.name === 'delegate_to_codex' &&
               codexDelegationRequiresConfirmation(args);
+            const eyeVueCaptureApprovalRequired = isEyevueCaptureAction(tc.function.name, args);
             const isHighStakes = tc.function.name === 'send_email' ||
               (tc.function.name === 'connected_accounts_execute' && connectedAccountPermission?.approvalRequired === true && args.dry_run !== true) ||
               (tc.function.name === 'daemon_action' && ['shell', 'file_write'].includes(String(args.action || ''))) ||
+              eyeVueCaptureApprovalRequired ||
               codexDelegationApprovalRequired;
 
             if (isHighStakes) {
@@ -2724,17 +2727,36 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 preview.reason = 'Codex requested permission to modify the workspace or an external system.';
               } else {
                 preview.action = String(args.action || '');
+                if (eyeVueCaptureApprovalRequired) {
+                  preview.capture = String(args.command || (args.lookAgain === true ? 'fresh photo for local vision' : 'wearable media'));
+                  preview.reason = 'Wearable camera and microphone capture requires explicit approval.';
+                }
                 if (args.cmd) preview.cmd = String(args.cmd);
                 if (args.path) preview.path = String(args.path);
                 if (args.content) preview.content = String(args.content).slice(0, 200);
               }
               const confirmToken = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+              let durableApprovalGateId: string | undefined;
+              if (eyeVueCaptureApprovalRequired) {
+                const { requestApproval } = await import("./agent/agentApproval");
+                const gate = await requestApproval({
+                  agentId: getCoachAppAgentId(userId),
+                  userId,
+                  toolName: tc.function.name,
+                  toolArgs: args,
+                  description: `Approve eyeVue ${preview.capture || 'media'} capture from app chat.`,
+                  ttlMs: 5 * 60 * 1000,
+                  initiatedBy: "user",
+                });
+                durableApprovalGateId = gate.id;
+              }
               pendingConfirmations.set(confirmToken, {
                 userId,
                 tool: tc.function.name,
                 args,
                 expiresAt: Date.now() + 5 * 60 * 1000,
                 operationId: activePhoneRuntimeOperation?.id,
+                ...(durableApprovalGateId ? { approvalGateId: durableApprovalGateId } : {}),
               });
               const turnPersisted = attachmentContextPersisted;
               try {
@@ -3403,6 +3425,10 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const pending = pendingConfirmations.get(token);
       if (pending?.userId === userId) {
         handledConfirmation = true;
+        if (pending.approvalGateId) {
+          const { rejectGate } = await import("./agent/agentApproval");
+          await rejectGate(pending.approvalGateId, userId);
+        }
         pendingConfirmations.delete(token);
         await saveApprovalOutcome("Got it - I won't proceed with that action.");
       } else {

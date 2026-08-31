@@ -13,6 +13,8 @@ export interface ApprovalReceipt {
 export interface ApprovalReceiptToolCall {
   userId?: string;
   toolName: string;
+  /** Optional exact action scope for sensitive multi-action tools. */
+  originalUserText?: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -86,6 +88,7 @@ export function approvalReceiptCoversToolCall(
   if (!receipt) return false;
   if (!call.userId || call.userId !== receipt.userId) return false;
   if (call.toolName !== receipt.toolName) return false;
+  if (call.originalUserText && call.originalUserText !== receipt.originalUserText) return false;
   if (receipt.expiresAt && Date.parse(receipt.expiresAt) < now.getTime()) return false;
   return true;
 }

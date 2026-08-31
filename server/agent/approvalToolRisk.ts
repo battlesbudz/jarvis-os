@@ -39,11 +39,18 @@ const HIGH_RISK_TOOLS = new Set([
 const EYEVUE_CAPTURE_COMMANDS = new Set(["photo", "video_start", "audio_start"]);
 
 /** Wearable capture must have a durable human approval before daemon dispatch. */
-function isEyevueCaptureAction(toolName: string, toolArgs?: Record<string, unknown>): boolean {
-  if (toolName !== "daemon_action") return false;
+export function isEyevueCaptureAction(toolName: string, toolArgs?: Record<string, unknown>): boolean {
+  return eyevueCaptureApprovalText(toolName, toolArgs) !== undefined;
+}
+
+/** Stable receipt scope for one exact wearable capture operation. */
+export function eyevueCaptureApprovalText(toolName: string, toolArgs?: Record<string, unknown>): string | undefined {
+  if (toolName !== "daemon_action") return undefined;
   const action = String(toolArgs?.action || "");
-  if (action === "android_eyevue_look") return toolArgs?.lookAgain === true;
-  return action === "android_eyevue_command" && EYEVUE_CAPTURE_COMMANDS.has(String(toolArgs?.command || ""));
+  if (action === "android_eyevue_look" && toolArgs?.lookAgain === true) return `${action}:lookAgain`;
+  const command = String(toolArgs?.command || "");
+  if (action === "android_eyevue_command" && EYEVUE_CAPTURE_COMMANDS.has(command)) return `${action}:${command}`;
+  return undefined;
 }
 
 /** Return true if this tool requires an approval gate before running. */
