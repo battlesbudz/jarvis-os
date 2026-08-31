@@ -10,6 +10,7 @@ const manifest = read("android/app/src/main/AndroidManifest.xml");
 const tool = read("server/agent/tools/daemon.ts");
 const settings = read("components/androidDaemon/AndroidDeviceControlCard.tsx");
 const bridge = read("server/daemon/bridge.ts");
+const nativeModule = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisDaemonModule.kt");
 
 assert.match(protocol, /0000aa12-0000-1000-8000-00805f9b34fb/);
 assert.match(protocol, /fun stopVendorVoice\(\)/);
@@ -37,6 +38,7 @@ assert.match(tool, /android_eyevue_look/);
 assert.match(tool, /lookAgain=true only when the user says/);
 assert.match(settings, /eyeVue Companion/);
 assert.match(settings, /eyevuePermissionGranted !== true[\s\S]*requestEyevuePermissions/);
+assert.match(nativeModule, /reactApplicationContext\.currentActivity/);
 assert.match(bridge, /android_eyevue_discard_photo/);
 assert.match(bridge, /processDaemonUtterance\([\s\S]*\.finally\(async \(\) =>[\s\S]*android_eyevue_discard_photo/);
 

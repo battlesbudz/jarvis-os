@@ -289,7 +289,7 @@ class JarvisDaemonModule(
             promise.resolve(null)
             return
         }
-        val activity = currentActivity
+        val activity = reactApplicationContext.currentActivity
         if (activity == null) {
             openAppDetailsSettings(promise)
             return
