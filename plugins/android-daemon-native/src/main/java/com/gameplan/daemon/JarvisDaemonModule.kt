@@ -362,7 +362,10 @@ class JarvisDaemonModule(
 
     @ReactMethod
     fun enableEyevue(address: String, promise: Promise) {
-        EyevueGlassesService.start(reactApplicationContext, address.takeIf { it.isNotBlank() })
+        if (!EyevueGlassesService.start(reactApplicationContext, address.takeIf { it.isNotBlank() })) {
+            promise.reject("E_EYEVUE_PERMISSION", "Grant Nearby Devices before enabling the eyeVue companion.")
+            return
+        }
         promise.resolve(EyevueGlassesService.status(reactApplicationContext).json().put("status", "connecting").toString())
     }
 

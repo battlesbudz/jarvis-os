@@ -198,7 +198,8 @@ object OpHandler {
                 "android_eyevue_enable",
                 "android_eyevue_disconnect",
                 "android_eyevue_command",
-                "android_eyevue_look" -> EyevueCommandHandler.handle(context, op)
+                "android_eyevue_look",
+                "android_eyevue_discard_photo" -> EyevueCommandHandler.handle(context, op)
                 else -> OpResult(false, error = "Unknown op type: $type")
             }
             val durationMs = SystemClock.elapsedRealtime() - startMs

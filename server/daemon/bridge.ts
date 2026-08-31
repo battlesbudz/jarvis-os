@@ -33,7 +33,7 @@ interface VoiceSessionControlMsg {
   confirmationToken?: string;
   reactActive?: boolean;
 }
-interface EyevuePhotoCapturedMsg { type: "eyevue_photo_captured"; imagePath?: string; source?: string }
+interface EyevuePhotoCapturedMsg { type: "eyevue_photo_captured"; imagePath?: string; source?: string; origin?: "camera_button" }
 interface EyevueBatteryLowMsg { type: "eyevue_battery_low"; percent?: number; threshold?: number }
 
 export type DaemonOp =
@@ -65,6 +65,7 @@ export type DaemonOp =
   | { type: "android_eyevue_disconnect" }
   | { type: "android_eyevue_command"; command: "battery" | "storage" | "photo" | "video_start" | "video_stop" | "audio_start" | "audio_stop"; waitForPhoto?: boolean }
   | { type: "android_eyevue_look"; question?: string; lookAgain?: boolean }
+  | { type: "android_eyevue_discard_photo"; imagePath: string }
   | { type: "android_tap"; x: number; y: number }
   | { type: "android_type"; text: string; submit?: boolean; expectedPackage?: string; expectedResourceId?: string; expectedHint?: string }
   | { type: "android_swipe"; x1: number; y1: number; x2: number; y2: number; durationMs?: number }
@@ -1575,10 +1576,26 @@ export function startDaemonBridge(server: HttpServer): void {
       // A physical eyeVue camera-button capture is already cached on the phone.
       // Start a normal Jarvis turn; the eyeVue look tool reuses that image locally.
       if (m.type === "eyevue_photo_captured" && pairedUserId) {
+        const cameraTurnUserId = pairedUserId;
+        const capturedImagePath = typeof m.imagePath === "string" ? m.imagePath.trim() : "";
         processDaemonUtterance(
-          pairedUserId,
+          cameraTurnUserId,
           "I pressed the eyeVue camera button. Use android_eyevue_look without lookAgain. Describe what I am seeing at moderate detail, mention clear hazards, readable text, and people without identifying them, then ask if I want to know anything else.",
-        ).catch(err => console.error(`[daemon] eyeVue camera-button turn failed: ${err}`));
+        ).finally(async () => {
+          if (!capturedImagePath) {
+            console.error("[daemon] eyeVue camera-button photo cleanup skipped: capture path was missing");
+            return;
+          }
+          const cleanup = await sendDaemonOp(
+            cameraTurnUserId,
+            { type: "android_eyevue_discard_photo", imagePath: capturedImagePath },
+            5_000,
+            "android",
+          );
+          if (!cleanup.ok) {
+            console.error(`[daemon] eyeVue camera-button photo cleanup failed: ${cleanup.error ?? "unknown daemon error"}`);
+          }
+        }).catch(err => console.error(`[daemon] eyeVue camera-button turn failed: ${err}`));
         return;
       }
 

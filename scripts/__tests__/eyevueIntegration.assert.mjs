@@ -9,6 +9,7 @@ const wake = read("plugins/android-daemon-native/src/main/java/com/gameplan/daem
 const manifest = read("android/app/src/main/AndroidManifest.xml");
 const tool = read("server/agent/tools/daemon.ts");
 const settings = read("components/androidDaemon/AndroidDeviceControlCard.tsx");
+const bridge = read("server/daemon/bridge.ts");
 
 assert.match(protocol, /0000aa12-0000-1000-8000-00805f9b34fb/);
 assert.match(protocol, /fun stopVendorVoice\(\)/);
@@ -18,16 +19,26 @@ assert.match(service, /pendingPhoto.*30, TimeUnit\.SECONDS/s);
 assert.match(service, /percent <= 20/);
 assert.match(service, /percent <= 10/);
 assert.match(service, /temporary copy retained for active visual turn/);
+assert.match(service, /requestedCapture == null[\s\S]*eyevue_photo_captured/);
+assert.match(service, /status != BluetoothGatt\.GATT_SUCCESS[\s\S]*failGattSetup/);
+assert.match(service, /fun start\([\s\S]*hasBluetoothPermission\(context\)[\s\S]*return false/);
 assert.match(wake, /ACTION_EXTERNAL_WAKE/);
 assert.match(inference, /Content\.ImageFile/);
 assert.match(inference, /15_000L/);
 assert.match(inference, /30_000L/);
+assert.match(inference, /future\.get\(VISION_DEADLINE_MS, TimeUnit\.MILLISECONDS\)/);
+assert.match(inference, /quarantineTimedOutNativeAttempt/);
+assert.match(inference, /conversation\.cancelProcess\(\)/);
+assert.match(inference, /stalledEngine\.close\(\)/);
 assert.match(inference, /visionBackend/);
 assert.match(manifest, /BLUETOOTH_SCAN/);
 assert.match(manifest, /foregroundServiceType="connectedDevice"/);
 assert.match(tool, /android_eyevue_look/);
 assert.match(tool, /lookAgain=true only when the user says/);
 assert.match(settings, /eyeVue Companion/);
+assert.match(settings, /eyevuePermissionGranted !== true[\s\S]*requestEyevuePermissions/);
+assert.match(bridge, /android_eyevue_discard_photo/);
+assert.match(bridge, /processDaemonUtterance\([\s\S]*\.finally\(async \(\) =>[\s\S]*android_eyevue_discard_photo/);
 
 for (const name of ["EyevueProtocol.kt", "EyevueGlassesService.kt"]) {
   assert.equal(

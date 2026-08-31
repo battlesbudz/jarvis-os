@@ -31,6 +31,10 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
+private data class PendingEyevuePhotoRequest(
+    val latch: CountDownLatch?,
+)
+
 data class EyevueSnapshot(
     val enabled: Boolean,
     val connected: Boolean,
@@ -71,6 +75,7 @@ class EyevueGlassesService : Service() {
         private const val CHANNEL = "jarvis_eyevue_connection"
         private const val NOTIFICATION_ID = 3014
         private const val RECONNECT_MS = 5_000L
+        private const val PHOTO_REQUEST_ORIGIN_RETENTION_MS = 35_000L
 
         @Volatile private var instance: EyevueGlassesService? = null
         @Volatile private var snapshot = EyevueSnapshot(false, false, null, null, null, null, null, null)
@@ -90,17 +95,32 @@ class EyevueGlassesService : Service() {
             return service.runCommand(name, waitForPhoto)
         }
 
-        fun discardTemporaryPhoto() {
-            snapshot.lastPhotoPath?.let { runCatching { File(it).delete() } }
-            snapshot = snapshot.copy(lastPhotoPath = null)
+        fun discardTemporaryPhoto(expectedPath: String? = null): Boolean {
+            val currentPath = snapshot.lastPhotoPath ?: return false
+            if (expectedPath != null && expectedPath != currentPath) return false
+            runCatching { File(currentPath).delete() }
+            if (snapshot.lastPhotoPath == currentPath) {
+                snapshot = snapshot.copy(lastPhotoPath = null)
+            }
+            return true
         }
 
-        fun start(context: Context, address: String? = null) {
+        fun hasBluetoothPermission(context: Context) = Build.VERSION.SDK_INT < 31 ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+
+        fun start(context: Context, address: String? = null): Boolean {
+            if (!hasBluetoothPermission(context)) {
+                snapshot = snapshot.copy(connected = false, lastError = "Nearby devices permission is required before enabling eyeVue.")
+                DaemonLog.add("eyevue: foreground service start blocked until Nearby Devices is granted")
+                return false
+            }
             val intent = Intent(context, EyevueGlassesService::class.java).apply {
                 action = ACTION_ENABLE
                 address?.let { putExtra(EXTRA_ADDRESS, it) }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
+            return true
         }
     }
 
@@ -108,7 +128,7 @@ class EyevueGlassesService : Service() {
     private val connecting = AtomicBoolean(false)
     private val decoder = EyevueFrameDecoder()
     private val photoAssembler = EyevuePhotoAssembler()
-    private val pendingPhoto = AtomicReference<CountDownLatch?>(null)
+    private val pendingPhoto = AtomicReference<PendingEyevuePhotoRequest?>(null)
     private var gatt: BluetoothGatt? = null
     private var write: BluetoothGattCharacteristic? = null
     private var notify: BluetoothGattCharacteristic? = null
@@ -126,7 +146,8 @@ class EyevueGlassesService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action ?: ACTION_RECONNECT) {
+        val action = intent?.action ?: ACTION_RECONNECT
+        when (action) {
             ACTION_DISCONNECT -> {
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_ENABLED, false).apply()
                 closeConnection()
@@ -141,6 +162,12 @@ class EyevueGlassesService : Service() {
                     .apply { if (address.isNotBlank()) putString(PREF_ADDRESS, address) }
                     .apply()
             }
+        }
+        if (!hasBluetoothPermission(this)) {
+            snapshot = snapshot.copy(connected = false, lastError = "Nearby devices permission is required before enabling eyeVue.")
+            DaemonLog.add("eyevue: stopped before connected-device foreground start because Nearby Devices is missing")
+            stopSelf()
+            return START_NOT_STICKY
         }
         startForeground(NOTIFICATION_ID, notification("Looking for eyeVue glasses…"))
         scheduleConnect(0)
@@ -237,18 +264,25 @@ class EyevueGlassesService : Service() {
             notify = service?.getCharacteristic(EyevueProtocol.COMMAND_NOTIFY_UUID)
             photoNotify = service?.getCharacteristic(EyevueProtocol.PHOTO_NOTIFY_UUID)
             if (status != BluetoothGatt.GATT_SUCCESS || write == null || notify == null || photoNotify == null) {
-                updateError("This Bluetooth device does not expose the eyeVue AA12 service.")
-                closeConnection()
+                failGattSetup(callbackGatt, "This Bluetooth device does not expose the eyeVue AA12 service; reconnecting.")
                 return
             }
-            enableNotification(callbackGatt, notify!!)
+            if (!enableNotification(callbackGatt, notify!!)) {
+                failGattSetup(callbackGatt, "eyeVue command notifications could not be enabled.")
+            }
         }
 
         @SuppressLint("MissingPermission")
         override fun onDescriptorWrite(callbackGatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-            if (descriptor.characteristic.uuid == EyevueProtocol.COMMAND_NOTIFY_UUID && status == BluetoothGatt.GATT_SUCCESS) {
-                enableNotification(callbackGatt, photoNotify!!)
-            } else if (descriptor.characteristic.uuid == EyevueProtocol.PHOTO_NOTIFY_UUID && status == BluetoothGatt.GATT_SUCCESS) {
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                failGattSetup(callbackGatt, "eyeVue notification setup failed ($status); reconnecting.")
+                return
+            }
+            if (descriptor.characteristic.uuid == EyevueProtocol.COMMAND_NOTIFY_UUID) {
+                if (!enableNotification(callbackGatt, photoNotify!!)) {
+                    failGattSetup(callbackGatt, "eyeVue photo notifications could not be enabled.")
+                }
+            } else if (descriptor.characteristic.uuid == EyevueProtocol.PHOTO_NOTIFY_UUID) {
                 connecting.set(false)
                 snapshot = snapshot.copy(connected = true, lastError = null)
                 updateNotification("eyeVue connected — Hey, Star starts Jarvis")
@@ -319,11 +353,22 @@ class EyevueGlassesService : Service() {
         val directory = File(cacheDir, "eyevue").apply { mkdirs() }
         val file = File(directory, "capture-${System.currentTimeMillis()}.jpg")
         file.writeBytes(bytes)
-        snapshot.lastPhotoPath?.let { old -> if (pendingPhoto.get() == null) File(old).delete() }
+        val requestedCapture = pendingPhoto.getAndSet(null)
+        snapshot.lastPhotoPath?.let { old -> runCatching { File(old).delete() } }
         snapshot = snapshot.copy(lastPhotoPath = file.absolutePath)
-        pendingPhoto.getAndSet(null)?.countDown()
-        DaemonLog.add("eyevue: photo received bytes=${bytes.size}; temporary copy retained for active visual turn")
-        WebSocketService.sendEvent(JSONObject().put("type", "eyevue_photo_captured").put("imagePath", file.absolutePath).put("source", "glasses").toString())
+        requestedCapture?.latch?.countDown()
+        val origin = if (requestedCapture == null) "camera_button" else "jarvis_request"
+        DaemonLog.add("eyevue: photo received bytes=${bytes.size} origin=$origin; temporary copy retained for active visual turn")
+        if (requestedCapture == null) {
+            WebSocketService.sendEvent(
+                JSONObject()
+                    .put("type", "eyevue_photo_captured")
+                    .put("imagePath", file.absolutePath)
+                    .put("source", "glasses")
+                    .put("origin", origin)
+                    .toString(),
+            )
+        }
     }
 
     private fun runCommand(name: String, waitForPhoto: Boolean): OpResult {
@@ -338,10 +383,21 @@ class EyevueGlassesService : Service() {
             "audio_stop" -> EyevueProtocol.audio(false)
             else -> return OpResult(false, error = "EYEVUE_COMMAND_UNKNOWN: $name")
         }
-        val latch = if (name == "photo" && waitForPhoto) CountDownLatch(1).also(pendingPhoto::set) else null
-        if (!writePacket(packet)) return OpResult(false, error = "EYEVUE_WRITE_FAILED: The command could not be sent.")
+        val latch = if (name == "photo" && waitForPhoto) CountDownLatch(1) else null
+        val photoRequest = if (name == "photo") PendingEyevuePhotoRequest(latch) else null
+        if (photoRequest != null && !pendingPhoto.compareAndSet(null, photoRequest)) {
+            return OpResult(false, error = "EYEVUE_PHOTO_BUSY: A requested photo is already awaiting its AA15 response.")
+        }
+        if (photoRequest != null) {
+            android.os.Handler(mainLooper).postDelayed({
+                pendingPhoto.compareAndSet(photoRequest, null)
+            }, PHOTO_REQUEST_ORIGIN_RETENTION_MS)
+        }
+        if (!writePacket(packet)) {
+            photoRequest?.let { pendingPhoto.compareAndSet(it, null) }
+            return OpResult(false, error = "EYEVUE_WRITE_FAILED: The command could not be sent.")
+        }
         if (latch != null && !latch.await(30, TimeUnit.SECONDS)) {
-            pendingPhoto.compareAndSet(latch, null)
             return OpResult(false, error = "EYEVUE_PHOTO_TIMEOUT: No image arrived within 30 seconds. Ask whether to save/retry or use cloud vision.")
         }
         return OpResult(true, status(this).json().put("command", name).put("savePromptRequired", name in setOf("photo", "video_stop", "audio_stop")))
@@ -361,12 +417,26 @@ class EyevueGlassesService : Service() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun enableNotification(currentGatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-        currentGatt.setCharacteristicNotification(characteristic, true)
-        characteristic.getDescriptor(EyevueProtocol.CCCD_UUID)?.let { descriptor ->
-            if (Build.VERSION.SDK_INT >= 33) currentGatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-            else @Suppress("DEPRECATION") run { descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE; currentGatt.writeDescriptor(descriptor) }
+    private fun enableNotification(currentGatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic): Boolean {
+        if (!currentGatt.setCharacteristicNotification(characteristic, true)) return false
+        val descriptor = characteristic.getDescriptor(EyevueProtocol.CCCD_UUID) ?: return false
+        return if (Build.VERSION.SDK_INT >= 33) {
+            currentGatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE) == BluetoothGatt.GATT_SUCCESS
+        } else {
+            @Suppress("DEPRECATION")
+            run { descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE; currentGatt.writeDescriptor(descriptor) }
         }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun failGattSetup(callbackGatt: BluetoothGatt, message: String) {
+        if (gatt === callbackGatt) {
+            closeConnection()
+        } else {
+            runCatching { callbackGatt.disconnect(); callbackGatt.close() }
+        }
+        updateError(message)
+        scheduleConnect(RECONNECT_MS)
     }
 
     @SuppressLint("MissingPermission")
@@ -387,9 +457,7 @@ class EyevueGlassesService : Service() {
         "eyevue" in it || "eye vue" in it || "cyo3" in it || it.startsWith("sk-")
     } == true
 
-    private fun hasBluetoothPermission() = Build.VERSION.SDK_INT < 31 ||
-        ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
-        ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+    private fun hasBluetoothPermission() = Companion.hasBluetoothPermission(this)
 
     private fun updateError(message: String) {
         connecting.set(false)
@@ -447,8 +515,11 @@ object EyevueCommandHandler {
     fun handle(context: Context, op: JSONObject): OpResult = when (op.optString("type")) {
         "android_eyevue_status" -> OpResult(true, EyevueGlassesService.status(context).json())
         "android_eyevue_enable" -> {
-            EyevueGlassesService.start(context, op.optString("address").takeIf { it.isNotBlank() })
-            OpResult(true, EyevueGlassesService.status(context).json().put("status", "connecting"))
+            if (!EyevueGlassesService.start(context, op.optString("address").takeIf { it.isNotBlank() })) {
+                OpResult(false, error = "EYEVUE_PERMISSION_REQUIRED: Grant Nearby Devices before enabling the eyeVue companion.")
+            } else {
+                OpResult(true, EyevueGlassesService.status(context).json().put("status", "connecting"))
+            }
         }
         "android_eyevue_disconnect" -> {
             context.startService(Intent(context, EyevueGlassesService::class.java).setAction(EyevueGlassesService.ACTION_DISCONNECT))
@@ -456,6 +527,14 @@ object EyevueCommandHandler {
         }
         "android_eyevue_command" -> EyevueGlassesService.command(context, op.optString("command"), op.optBoolean("waitForPhoto", false))
         "android_eyevue_look" -> look(context, op)
+        "android_eyevue_discard_photo" -> {
+            val expectedPath = op.optString("imagePath").takeIf { it.isNotBlank() }
+            if (expectedPath == null) {
+                OpResult(false, error = "EYEVUE_IMAGE_PATH_REQUIRED: Refusing to discard an unspecified temporary photo.")
+            } else {
+                OpResult(true, JSONObject().put("discarded", EyevueGlassesService.discardTemporaryPhoto(expectedPath)))
+            }
+        }
         else -> OpResult(false, error = "Unsupported eyeVue operation.")
     }
 

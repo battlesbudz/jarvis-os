@@ -200,6 +200,7 @@ export function AndroidDeviceControlCard({
       enabled: status?.eyevueConnected,
       action: async () => {
         if (status?.eyevueConnected || status?.eyevueEnabled) await AndroidDaemonNative?.disconnectEyevue?.();
+        else if (status?.eyevuePermissionGranted !== true) await AndroidDaemonNative?.requestEyevuePermissions?.();
         else await AndroidDaemonNative?.enableEyevue?.("");
       },
     },

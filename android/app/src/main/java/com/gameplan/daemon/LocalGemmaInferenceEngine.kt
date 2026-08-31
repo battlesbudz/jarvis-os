@@ -23,14 +23,23 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
+
+private class LocalGemmaDeadlineExceededException : RuntimeException(
+    "Native local vision exceeded its 30-second deadline.",
+)
 
 internal enum class LocalGemmaMemoryBlockReason(val wireName: String) {
     ANDROID_LOW_MEMORY("android_low_memory"),
@@ -217,9 +226,13 @@ object LocalGemmaInferenceEngine {
     private const val DEFAULT_TOP_P = 0.95
     private const val DEFAULT_TEMPERATURE = 0.8
     private const val CANCELLATION_TIMEOUT_MS = 4_000L
+    private const val VISION_DEADLINE_MS = 30_000L
 
-    private val engineMutex = Mutex()
-    private val generationMutex = Mutex()
+    // A timed-out native call may ignore coroutine cancellation while holding a
+    // lock. Atomic lock references let the timeout path quarantine that native
+    // attempt so the next admitted request is not serialized behind it.
+    private val engineMutex = AtomicReference(Mutex())
+    private val generationMutex = AtomicReference(Mutex())
     private val operationAdmission = LocalGemmaOperationAdmission()
     private val activeRequests = ConcurrentHashMap<String, ActiveRequest>()
     private val completedRequests = AtomicLong(0)
@@ -382,6 +395,8 @@ object LocalGemmaInferenceEngine {
                             "local_gemma: done request=${shortRequestId(requestId)} backend=$backendName chars=${attempt.text.length} retries=$generationRetries durationMs=${System.currentTimeMillis() - startedAtMs}"
                         )
                     }
+                } catch (e: LocalGemmaDeadlineExceededException) {
+                    throw e
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Throwable) {
@@ -417,6 +432,9 @@ object LocalGemmaInferenceEngine {
                 }
             }
             generationResult
+        } catch (e: LocalGemmaDeadlineExceededException) {
+            DaemonLog.add("local_gemma: vision deadline exceeded request=${shortRequestId(requestId)}")
+            OpResult(false, error = "LOCAL_MODEL_VISION_TIMEOUT: Local vision was cancelled after 30 seconds. Ask whether to retry or save the image.")
         } catch (e: CancellationException) {
             DaemonLog.add("local_gemma: cancelled request=${shortRequestId(requestId)}")
             OpResult(false, error = "LOCAL_MODEL_CANCELLED: request $requestId was cancelled.")
@@ -467,7 +485,7 @@ object LocalGemmaInferenceEngine {
                 var resolvedBackend = backendName
                 var resolvedSpeculativeDecoding = false
                 runBlocking {
-                    generationMutex.withLock {
+                    generationMutex.get().withLock {
                         val state = ensureEngine(
                             context = context,
                             modelPath = modelFile.absolutePath,
@@ -636,8 +654,8 @@ object LocalGemmaInferenceEngine {
             }
             activeRequests.values.toList().forEach { it.job.cancelAndJoin() }
             operationAdmission.awaitShutdownDrain()
-            generationMutex.withLock {
-                engineMutex.withLock {
+            generationMutex.get().withLock {
+                engineMutex.get().withLock {
                     val closingEngine = engineState?.engine
                     engineState = null
                     lastEngineError = null
@@ -679,11 +697,30 @@ object LocalGemmaInferenceEngine {
         var finishReason = "stop"
         var resolvedBackendName = backendName
         val attemptJob = SupervisorJob(job)
-        val text = try {
+        val attemptGenerationMutex = generationMutex.get()
+        val attemptEngineMutex = engineMutex.get()
+        val executor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "jarvis-local-gemma-${active.requestId.take(8)}").apply { isDaemon = true }
+        }
+        val future = executor.submit<String> {
             runBlocking(attemptJob) {
-                withTimeout(if (imagePaths.isNotEmpty()) 30_000L else Long.MAX_VALUE) {
-                generationMutex.withLock {
-                    val resolvedEngine = ensureEngine(context, modelPath, modelRevision, backendName, allowCpuFallback, speculativeDecodingPreference, cachePolicy, contextTokens, memorySnapshot(context))
+                attemptGenerationMutex.withLock {
+                    val resolvedEngine = ensureEngine(
+                        context,
+                        modelPath,
+                        modelRevision,
+                        backendName,
+                        allowCpuFallback,
+                        speculativeDecodingPreference,
+                        cachePolicy,
+                        contextTokens,
+                        memorySnapshot(context),
+                        engineLock = attemptEngineMutex,
+                        abortRequested = active.deadlineExceeded::get,
+                        onEngineCreated = { active.engine = it },
+                    )
+                    if (active.deadlineExceeded.get()) throw LocalGemmaDeadlineExceededException()
+                    active.engine = resolvedEngine.engine
                     resolvedBackendName = resolvedEngine.backendName
                     onEngineResolved(resolvedBackendName, resolvedEngine.speculativeDecodingEnabled)
                     resolvedEngine.engine.createConversation(buildConversationConfig(systemInstruction, topK, topP, temperature))
@@ -712,10 +749,21 @@ object LocalGemmaInferenceEngine {
                             chunks.toString()
                         }
                 }
-                }
             }
+        }
+        val text = try {
+            if (imagePaths.isNotEmpty()) future.get(VISION_DEADLINE_MS, TimeUnit.MILLISECONDS) else future.get()
+        } catch (_: TimeoutException) {
+            active.deadlineExceeded.set(true)
+            active.job.cancel()
+            future.cancel(true)
+            quarantineTimedOutNativeAttempt(active, attemptGenerationMutex, attemptEngineMutex)
+            throw LocalGemmaDeadlineExceededException()
+        } catch (e: ExecutionException) {
+            throw e.cause ?: e
         } finally {
             attemptJob.cancel()
+            executor.shutdownNow()
         }
         val state = engineState
         return GenerationAttemptResult(text, resolvedBackendName, state?.speculativeDecodingEnabled ?: false, finishReason)
@@ -747,6 +795,30 @@ object LocalGemmaInferenceEngine {
             LocalGemmaGenerationAdmissionResult.ACQUIRED -> Unit
         }
         return null
+    }
+
+    private fun quarantineTimedOutNativeAttempt(
+        active: ActiveRequest,
+        stalledGenerationMutex: Mutex,
+        stalledEngineMutex: Mutex,
+    ) {
+        generationMutex.compareAndSet(stalledGenerationMutex, Mutex())
+        engineMutex.compareAndSet(stalledEngineMutex, Mutex())
+        engineState = null
+
+        active.conversation?.let { conversation ->
+            Thread({ runCatching { conversation.cancelProcess() } }, "jarvis-local-gemma-timeout-cancel").apply {
+                isDaemon = true
+                start()
+            }
+        }
+        active.engine?.let { stalledEngine ->
+            Thread({ runCatching { stalledEngine.close() } }, "jarvis-local-gemma-timeout-close").apply {
+                isDaemon = true
+                start()
+            }
+        }
+        DaemonLog.add("local_gemma: quarantined timed-out native request=${shortRequestId(active.requestId)}")
     }
 
     private fun memorySnapshot(context: Context): MemorySnapshot {
@@ -847,7 +919,7 @@ object LocalGemmaInferenceEngine {
 
     private fun releaseEngine(clearLastError: Boolean) {
         runBlocking {
-            engineMutex.withLock {
+            engineMutex.get().withLock {
                 engineState?.let { state ->
                     try { state.engine.close() } catch (_: Throwable) {}
                 }
@@ -867,17 +939,22 @@ object LocalGemmaInferenceEngine {
         cachePolicy: String,
         contextTokens: Int,
         memory: MemorySnapshot,
+        engineLock: Mutex = engineMutex.get(),
+        abortRequested: () -> Boolean = { false },
+        onEngineCreated: (Engine) -> Unit = {},
     ): EngineState {
         val candidateBackends = backendCandidates(backendName, memory, allowCpuFallback)
         val reusableBackends = reusableBackendsFor(backendName, candidateBackends)
         val current = engineState
         if (current != null && canReuseEngine(current, modelPath, modelRevision, reusableBackends, speculativeDecodingPreference, cachePolicy, contextTokens)) {
+            onEngineCreated(current.engine)
             return current
         }
 
-        return engineMutex.withLock {
+        return engineLock.withLock {
             val lockedCurrent = engineState
             if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, reusableBackends, speculativeDecodingPreference, cachePolicy, contextTokens)) {
+                onEngineCreated(lockedCurrent.engine)
                 return@withLock lockedCurrent
             }
 
@@ -886,8 +963,10 @@ object LocalGemmaInferenceEngine {
             var lastFailure: Throwable? = null
 
             for (candidateBackendName in candidateBackends) {
+                if (abortRequested()) throw LocalGemmaDeadlineExceededException()
                 if (lockedCurrent != null && canReuseEngine(lockedCurrent, modelPath, modelRevision, listOf(candidateBackendName), speculativeDecodingPreference, cachePolicy, contextTokens)) {
                     lastEngineError = null
+                    onEngineCreated(lockedCurrent.engine)
                     return@withLock lockedCurrent
                 }
 
@@ -905,7 +984,12 @@ object LocalGemmaInferenceEngine {
                             )
                         )
                         engine = initializedEngine
+                        onEngineCreated(initializedEngine)
                         initializedEngine.initialize()
+                        if (abortRequested()) {
+                            runCatching { initializedEngine.close() }
+                            throw LocalGemmaDeadlineExceededException()
+                        }
                         val nextState = EngineState(modelPath, modelRevision, candidateBackendName, speculativeDecodingEnabled, cachePolicy, contextTokens, initializedEngine)
                         engineState = nextState
                         lastEngineError = null
@@ -913,6 +997,9 @@ object LocalGemmaInferenceEngine {
                             try { previous.close() } catch (_: Throwable) {}
                         }
                         return@withLock nextState
+                    } catch (e: LocalGemmaDeadlineExceededException) {
+                        engine?.let { failedEngine -> runCatching { failedEngine.close() } }
+                        throw e
                     } catch (e: Throwable) {
                         lastFailure = e
                         failures.add("$candidateBackendName: ${decodingModeName(speculativeDecodingEnabled)}: ${formatEngineError(e)}")
@@ -1112,5 +1199,7 @@ object LocalGemmaInferenceEngine {
         @Volatile var lastChunkAtMs: Long = 0L,
         @Volatile var outputChars: Int = 0,
         @Volatile var conversation: Conversation? = null,
+        @Volatile var engine: Engine? = null,
+        val deadlineExceeded: AtomicBoolean = AtomicBoolean(false),
     )
 }
