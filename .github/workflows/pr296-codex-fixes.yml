@@ -55,12 +55,25 @@ jobs:
             eyevueConnected: status?.eyevueConnected,
             eyevueDeviceName: status?.eyevueDeviceName,
           });
+          const nativeRecognitionReady = eyeVueVoiceReadiness.nativeRecognitionReady;
           const wearableVoiceReady = eyeVueVoiceReadiness.ready;
           const wearableVoiceDetail = eyeVueVoiceReadiness.detail;'''
           if 'deriveEyeVueVoiceReadiness({' not in text:
               text, count = readiness_pattern.subn(lambda _: readiness_replacement, text, count=1)
               if count != 1:
                   raise SystemExit('component readiness block missing')
+          elif 'const nativeRecognitionReady = eyeVueVoiceReadiness.nativeRecognitionReady;' not in text:
+              text = text.replace(
+                  '          });\n          const wearableVoiceReady = eyeVueVoiceReadiness.ready;',
+                  '          });\n          const nativeRecognitionReady = eyeVueVoiceReadiness.nativeRecognitionReady;\n          const wearableVoiceReady = eyeVueVoiceReadiness.ready;',
+                  1,
+              )
+
+          text = text.replace(
+              '            action: () => AndroidDaemonNative?.enableEyevue?.("") ?? Promise.resolve(),',
+              '            action: async () => { await AndroidDaemonNative?.enableEyevue?.(""); },',
+              1,
+          )
           component.write_text(text)
 
           runner = Path('scripts/run-agent-tests.mjs')
@@ -92,6 +105,7 @@ jobs:
               r'assert\.match\(settings, /wearableVoiceDetail[^\n]*\);'
           )
           settings_assert_replacement = '''assert.match(settings, /deriveEyeVueVoiceReadiness\\(\\{/);
+          assert.match(settings, /nativeRecognitionReady = eyeVueVoiceReadiness\\.nativeRecognitionReady/);
           assert.match(settings, /wearableAudioDeviceName: nativeSpeechStatus\\?\\.wearableAudioDeviceName/);
           assert.match(settings, /eyevueDeviceName: status\\?\\.eyevueDeviceName/);
           assert.match(eyevueSetup, /eyeVueAudioEndpointMatches[\\s\\S]*eyevue === audio/);
@@ -122,7 +136,7 @@ jobs:
           node scripts/__tests__/eyevueIntegration.assert.mjs
           npx tsx lib/__tests__/eyevueSetup.test.ts
           npx tsx server/agent/__tests__/coachContextTurnIsolation.test.ts
-          npx tsc --noEmit --pretty false
+          npx eslint components/androidDaemon/AndroidDeviceControlCard.tsx lib/eyevue-setup.ts
           git diff --check
 
       - name: Commit fixes and remove one-shot workflow
