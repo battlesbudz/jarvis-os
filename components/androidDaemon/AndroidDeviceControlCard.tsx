@@ -356,6 +356,115 @@ export function AndroidDeviceControlCard({
         </Pressable>
       </View>
 
+      {nativeAvailable && (
+        <View style={styles.eyeVueSetup}>
+          <View style={styles.eyeVueSetupHeader}>
+            <View style={styles.enableCopy}>
+              <Text style={styles.enableTitle}>Connect eyeVue glasses</Text>
+              <Text style={styles.enableDetail}>Finish these three steps in order. Jarvis will keep checking the connection for you.</Text>
+            </View>
+            <Ionicons
+              name={status?.eyevueConnected && nativeSpeechStatus?.wearableAudioAvailable ? "checkmark-circle" : "glasses-outline"}
+              size={20}
+              color={status?.eyevueConnected && nativeSpeechStatus?.wearableAudioAvailable ? Colors.success : Colors.textSecondary}
+            />
+          </View>
+
+          <Pressable
+            style={styles.eyeVueStep}
+            onPress={() => runPermissionAction({
+              key: "eyevue-setup-permission",
+              label: "Nearby Devices",
+              detail: "Allow Bluetooth discovery.",
+              enabled: status?.eyevuePermissionGranted,
+              action: () => AndroidDaemonNative?.requestEyevuePermissions?.() ?? Promise.resolve(),
+            })}
+            disabled={anyBusy || status?.eyevuePermissionGranted === true}
+          >
+            <Text style={styles.eyeVueStepNumber}>1</Text>
+            <View style={styles.permissionCopy}>
+              <Text style={styles.permissionLabel}>Allow Nearby Devices</Text>
+              <Text style={styles.permissionDetail}>
+                {status?.eyevuePermissionGranted === true
+                  ? "Permission granted."
+                  : "Required so Jarvis can discover and reconnect to eyeVue over Bluetooth."}
+              </Text>
+            </View>
+            {busy === "eyevue-setup-permission" ? (
+              <ActivityIndicator size="small" color="#34A853" />
+            ) : (
+              <Ionicons
+                name={status?.eyevuePermissionGranted === true ? "checkmark-circle" : "chevron-forward"}
+                size={18}
+                color={status?.eyevuePermissionGranted === true ? Colors.success : Colors.textTertiary}
+              />
+            )}
+          </Pressable>
+
+          <Pressable
+            style={[styles.eyeVueStep, status?.eyevuePermissionGranted !== true && styles.disabledPermissionRow]}
+            onPress={() => runPermissionAction({
+              key: "eyevue-setup-connect",
+              label: "Connect eyeVue",
+              detail: "Enable the eyeVue companion.",
+              enabled: status?.eyevueConnected,
+              action: () => AndroidDaemonNative?.enableEyevue?.("") ?? Promise.resolve(),
+            })}
+            disabled={anyBusy || status?.eyevuePermissionGranted !== true || status?.eyevueConnected === true}
+          >
+            <Text style={styles.eyeVueStepNumber}>2</Text>
+            <View style={styles.permissionCopy}>
+              <Text style={styles.permissionLabel}>Connect eyeVue</Text>
+              <Text style={styles.permissionDetail}>
+                {status?.eyevueConnected
+                  ? `${status.eyevueDeviceName || "eyeVue"} connected.`
+                  : status?.eyevueLastError || "Turn the glasses on and connect Jarvis as the eyeVue companion."}
+              </Text>
+            </View>
+            {busy === "eyevue-setup-connect" ? (
+              <ActivityIndicator size="small" color="#34A853" />
+            ) : (
+              <Ionicons
+                name={status?.eyevueConnected ? "checkmark-circle" : "chevron-forward"}
+                size={18}
+                color={status?.eyevueConnected ? Colors.success : Colors.textTertiary}
+              />
+            )}
+          </Pressable>
+
+          <Pressable
+            style={[styles.eyeVueStep, status?.eyevueConnected !== true && styles.disabledPermissionRow]}
+            onPress={() => runPermissionAction({
+              key: "eyevue-setup-voice",
+              label: "Wearable Voice",
+              detail: "Refresh wearable audio readiness.",
+              enabled: nativeSpeechStatus?.wearableAudioAvailable,
+              action: async () => { await refreshNativeStatus(); },
+            })}
+            disabled={anyBusy || status?.eyevueConnected !== true || nativeSpeechStatus?.wearableAudioAvailable === true}
+          >
+            <Text style={styles.eyeVueStepNumber}>3</Text>
+            <View style={styles.permissionCopy}>
+              <Text style={styles.permissionLabel}>Verify Jarvis voice</Text>
+              <Text style={styles.permissionDetail}>
+                {nativeSpeechStatus?.wearableAudioAvailable === true
+                  ? "Wearable microphone and speaker route ready."
+                  : nativeSpeechStatus?.wearableAudioMessage || "Connect eyeVue first, then verify Jarvis can use the glasses microphone and speaker."}
+              </Text>
+            </View>
+            {busy === "eyevue-setup-voice" ? (
+              <ActivityIndicator size="small" color="#34A853" />
+            ) : (
+              <Ionicons
+                name={nativeSpeechStatus?.wearableAudioAvailable === true ? "checkmark-circle" : "refresh-outline"}
+                size={18}
+                color={nativeSpeechStatus?.wearableAudioAvailable === true ? Colors.success : Colors.textTertiary}
+              />
+            )}
+          </Pressable>
+        </View>
+      )}
+
       <View style={styles.permissionList}>
         {permissionRows.map((row) => (
           <Pressable
@@ -550,6 +659,42 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     opacity: 0.55,
+  },
+  eyeVueSetup: {
+    marginHorizontal: 16,
+    marginBottom: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: "hidden",
+  },
+  eyeVueSetupHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 12,
+    backgroundColor: Colors.surfaceAlt,
+  },
+  eyeVueStep: {
+    minHeight: 62,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  eyeVueStepNumber: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    textAlign: "center",
+    lineHeight: 22,
+    fontSize: 11,
+    fontFamily: "Inter_600SemiBold",
+    color: Colors.text,
+    backgroundColor: Colors.surfaceAlt,
   },
   permissionList: {
     borderTopWidth: 1,
