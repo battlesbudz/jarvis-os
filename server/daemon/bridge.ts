@@ -1008,15 +1008,16 @@ export async function sendDaemonOp(
       android_local_model_smoke_test: "android_local_model",
       android_local_model_generate: "android_local_model",
       android_local_model_cancel:   "android_local_model",
-      android_eyevue_status:        "android_camera",
       android_eyevue_enable:        "android_camera",
-      android_eyevue_disconnect:    "android_camera",
-      android_eyevue_command:       "android_camera",
       android_eyevue_look:          "android_camera",
     };
     const requiredPerm = op.type === "android_operator_action"
       ? operatorActionPermKey(op.action)
-      : OP_PERM_MAP[op.type];
+      : op.type === "android_eyevue_command"
+        ? op.command === "photo" || op.command === "video_start" || op.command === "audio_start"
+          ? "android_camera"
+          : null
+        : OP_PERM_MAP[op.type];
     if (requiredPerm) {
       const allowed = await isAndroidDaemonActionAllowed(userId, requiredPerm);
       if (!allowed) {
@@ -1592,17 +1593,7 @@ export function startDaemonBridge(server: HttpServer): void {
           cameraTurnUserId,
           "I pressed the eyeVue camera button. Use android_eyevue_look without lookAgain. Describe what I am seeing at moderate detail, mention clear hazards, readable text, and people without identifying them, then ask if I want to know anything else.",
           { eyeVueCapturedImagePath: capturedImagePath },
-        ).finally(async () => {
-          const cleanup = await sendDaemonOp(
-            cameraTurnUserId,
-            { type: "android_eyevue_discard_photo", imagePath: capturedImagePath },
-            5_000,
-            "android",
-          );
-          if (!cleanup.ok) {
-            console.error(`[daemon] eyeVue camera-button photo cleanup failed: ${cleanup.error ?? "unknown daemon error"}`);
-          }
-        }).catch(err => console.error(`[daemon] eyeVue camera-button turn failed: ${err}`));
+        ).catch(err => console.error(`[daemon] eyeVue camera-button turn failed: ${err}`));
         return;
       }
 

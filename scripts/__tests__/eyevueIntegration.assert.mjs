@@ -18,6 +18,7 @@ const coachConfirmation = read("server/routes/coachActionConfirmationRoutes.ts")
 const approvalReceipt = read("server/agent/approvalReceipt.ts");
 const agentApproval = read("server/agent/agentApproval.ts");
 const coachAgent = read("server/channels/coachAgent.ts");
+const outsideVoice = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OutsideAppVoiceSessionService.kt");
 
 assert.match(protocol, /0000aa12-0000-1000-8000-00805f9b34fb/);
 assert.match(protocol, /fun stopVendorVoice\(\)/);
@@ -105,8 +106,13 @@ assert.match(settings, /eyevuePermissionGranted !== true[\s\S]*requestEyevuePerm
 assert.match(nativeModule, /reactApplicationContext\.currentActivity/);
 assert.match(nativeModule, /Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.S[\s\S]*ACCESS_FINE_LOCATION/);
 assert.match(bridge, /android_eyevue_discard_photo/);
-assert.match(bridge, /processDaemonUtterance\([\s\S]*\.finally\(async \(\) =>[\s\S]*android_eyevue_discard_photo/);
+assert.doesNotMatch(bridge, /processDaemonUtterance\([\s\S]{0,700}\.finally\(async \(\) =>[\s\S]{0,700}android_eyevue_discard_photo/);
 assert.match(bridge, /capturedImagePath[\s\S]*eyeVueCapturedImagePath: capturedImagePath/);
+assert.match(outsideVoice, /endSession\(\)[\s\S]*EyevueGlassesService\.discardTemporaryPhoto\(\)/);
+assert.match(service, /TEMPORARY_PHOTO_TTL_MS = 5 \* 60_000L[\s\S]*scheduleTemporaryPhotoExpiry\(file\.absolutePath, origin\)/);
+assert.match(tool, /action === "android_eyevue_command"[\s\S]*"photo"[\s\S]*"video_start"[\s\S]*"audio_start"[\s\S]*\? "android_camera"[\s\S]*: null/);
+assert.match(bridge, /op\.type === "android_eyevue_command"[\s\S]*op\.command === "photo"[\s\S]*op\.command === "video_start"[\s\S]*op\.command === "audio_start"[\s\S]*\? "android_camera"[\s\S]*: null/);
+assert.doesNotMatch(bridge, /android_eyevue_(?:status|disconnect):\s*"android_camera"/);
 assert.match(bridge, /m\.type === "eyevue_vision_delay"[\s\S]*type: "notify"[\s\S]*Jarvis local vision/);
 assert.match(tool, /ctx\.state\.eyeVueCapturedImagePath[\s\S]*imagePath: boundImagePath/);
 assert.match(coachAgent, /eyeVueCapturedImagePath: input\.eyeVueCapturedImagePath/);
