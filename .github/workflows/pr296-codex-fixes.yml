@@ -58,7 +58,7 @@ jobs:
           const wearableVoiceReady = eyeVueVoiceReadiness.ready;
           const wearableVoiceDetail = eyeVueVoiceReadiness.detail;'''
           if 'deriveEyeVueVoiceReadiness({' not in text:
-              text, count = readiness_pattern.subn(readiness_replacement, text, count=1)
+              text, count = readiness_pattern.subn(lambda _: readiness_replacement, text, count=1)
               if count != 1:
                   raise SystemExit('component readiness block missing')
           component.write_text(text)
@@ -97,7 +97,7 @@ jobs:
           assert.match(eyevueSetup, /eyeVueAudioEndpointMatches[\\s\\S]*eyevue === audio/);
           assert.match(eyevueSetup, /ready =[\\s\\S]*wearableAudioAvailable === true[\\s\\S]*endpointMatches/);'''
           if 'assert.match(eyevueSetup, /eyeVueAudioEndpointMatches' not in text:
-              text, count = settings_assert_pattern.subn(settings_assert_replacement, text, count=1)
+              text, count = settings_assert_pattern.subn(lambda _: settings_assert_replacement, text, count=1)
               if count != 1:
                   raise SystemExit('integration setup assertions missing')
 
