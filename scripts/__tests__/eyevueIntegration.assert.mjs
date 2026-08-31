@@ -17,6 +17,7 @@ const approvalRisk = read("server/agent/approvalToolRisk.ts");
 const coachConfirmation = read("server/routes/coachActionConfirmationRoutes.ts");
 const approvalReceipt = read("server/agent/approvalReceipt.ts");
 const agentApproval = read("server/agent/agentApproval.ts");
+const coachAgent = read("server/channels/coachAgent.ts");
 
 assert.match(protocol, /0000aa12-0000-1000-8000-00805f9b34fb/);
 assert.match(protocol, /fun stopVendorVoice\(\)/);
@@ -31,13 +32,13 @@ assert.match(service, /requestedCapture\?\.timedOut\?\.get\(\) == true[\s\S]*dis
 assert.match(service, /try \{[\s\S]*directory\.mkdirs\(\)[\s\S]*file\.writeBytes\(bytes\)[\s\S]*catch \(error: Throwable\)[\s\S]*requestedCapture\?\.failure\?\.set\(failure\)[\s\S]*requestedCapture\?\.latch\?\.countDown\(\)/);
 assert.match(service, /catch \(error: Throwable\)[\s\S]*deleteFileWithRetry\(file\.absolutePath, "partial-cache-write"\)/);
 assert.match(service, /PHOTO_LATE_RESPONSE_QUARANTINE_MS = 60_000L/);
-assert.match(service, /pendingPhoto\.get\(\) === photoRequest[\s\S]*photoRequest\.timedOut\.set\(true\)[\s\S]*closeConnection\(\)[\s\S]*pendingPhoto\.compareAndSet\(photoRequest, null\)[\s\S]*PHOTO_LATE_RESPONSE_QUARANTINE_MS/);
+assert.match(service, /synchronized\(gattStateLock\)[\s\S]*pendingPhoto\.get\(\) === photoRequest[\s\S]*photoRequest\.timedOut\.set\(true\)[\s\S]*closeConnection\(photoRequest\)[\s\S]*pendingPhoto\.compareAndSet\(photoRequest, null\)[\s\S]*PHOTO_LATE_RESPONSE_QUARANTINE_MS/);
 assert.match(service, /!latch\.await\(30, TimeUnit\.SECONDS\)[\s\S]*photoRequest\?\.timedOut\?\.set\(true\)/);
 assert.match(service, /gattStateLock = Any\(\)/);
 assert.match(service, /onConnectionStateChange\(callbackGatt[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt !== callbackGatt[\s\S]*onServicesDiscovered\(callbackGatt[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt !== callbackGatt[\s\S]*onDescriptorWrite\(callbackGatt[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt !== callbackGatt/);
 assert.match(service, /handleNotification\(callbackGatt[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt !== callbackGatt/);
 assert.match(service, /photo = photoAssembler\.append\(value\)[\s\S]*pendingPhoto\.getAndSet\(null\)[\s\S]*photo\?\.let \{ saveCapturedPhoto\(it, requestedCapture\) \}/);
-assert.match(service, /private fun closeConnection\(\)[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt = null[\s\S]*decoder\.reset\(\)[\s\S]*photoAssembler\.reset\(\)/);
+assert.match(service, /private fun closeConnection\(preservePendingPhoto:[\s\S]*abandonedPhoto !== preservePendingPhoto[\s\S]*EYEVUE_CONNECTION_LOST[\s\S]*latch\?\.countDown\(\)[\s\S]*gatt = null[\s\S]*decoder\.reset\(\)[\s\S]*photoAssembler\.reset\(\)/);
 assert.match(protocol, /class EyevueFrameDecoder[\s\S]*fun reset\(\)[\s\S]*bytes\.reset\(\)/);
 assert.match(protocol, /fun reset\(\)[\s\S]*active = false[\s\S]*image\.reset\(\)/);
 assert.match(service, /val takeNew = op\.optBoolean\("lookAgain", false\)/);
@@ -46,11 +47,14 @@ assert.match(service, /status != BluetoothGatt\.GATT_SUCCESS[\s\S]*failGattSetup
 assert.match(service, /fun start\([\s\S]*hasBluetoothPermission\(context\)[\s\S]*return false/);
 assert.match(service, /ACCESS_FINE_LOCATION/);
 assert.match(service, /scheduleTemporaryPhotoExpiry\(file\.absolutePath, origin\)/);
+assert.doesNotMatch(service, /lastPhotoPath\?\.let \{ old -> deleteFileWithRetry\(old, "replacement"\) \}/);
+assert.match(service, /targetPath = expectedPath \?: currentPath[\s\S]*targetFile\.parentFile != allowedDirectory[\s\S]*targetFile\.delete\(\)/);
+assert.match(service, /boundImagePath = op\.optString\("imagePath"[\s\S]*boundFile\.parentFile != allowedDirectory \|\| !boundFile\.isFile[\s\S]*boundFile\.absolutePath/);
 assert.match(service, /TEMPORARY_PHOTO_TTL_MS/);
 assert.match(service, /fun start\([\s\S]*purgeTemporaryPhotos\(context, "pre_service_start"\)[\s\S]*hasBluetoothPermission\(context\)/);
 assert.match(service, /onCreate\(\)[\s\S]*purgeTemporaryPhotos\(this, "service_start"\)/);
 assert.match(boot, /purgeTemporaryPhotos\(context, "boot"\)[\s\S]*EyevueGlassesService\.start\(context\)/);
-assert.match(service, /!file\.exists\(\) \|\| file\.delete\(\)[\s\S]*if \(!deleted\)[\s\S]*return false/);
+assert.match(service, /!targetFile\.exists\(\) \|\| targetFile\.delete\(\)[\s\S]*if \(!deleted\)[\s\S]*return false/);
 assert.match(wake, /ACTION_EXTERNAL_WAKE/);
 assert.match(wake, /ACTION_EXTERNAL_WAKE[\s\S]*enteringTalkMode[\s\S]*destroyRecognizer\(\)[\s\S]*startListening\(\)/);
 assert.match(inference, /Content\.ImageFile/);
@@ -98,6 +102,10 @@ assert.match(nativeModule, /reactApplicationContext\.currentActivity/);
 assert.match(nativeModule, /Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.S[\s\S]*ACCESS_FINE_LOCATION/);
 assert.match(bridge, /android_eyevue_discard_photo/);
 assert.match(bridge, /processDaemonUtterance\([\s\S]*\.finally\(async \(\) =>[\s\S]*android_eyevue_discard_photo/);
+assert.match(bridge, /capturedImagePath[\s\S]*eyeVueCapturedImagePath: capturedImagePath/);
+assert.match(bridge, /m\.type === "eyevue_vision_delay"[\s\S]*android_notify[\s\S]*Jarvis local vision/);
+assert.match(tool, /ctx\.state\.eyeVueCapturedImagePath[\s\S]*imagePath: boundImagePath/);
+assert.match(coachAgent, /eyeVueCapturedImagePath: input\.eyeVueCapturedImagePath/);
 
 for (const name of ["BootReceiver.kt", "EyevueProtocol.kt", "EyevueGlassesService.kt", "LocalGemmaInferenceEngine.kt"]) {
   assert.equal(

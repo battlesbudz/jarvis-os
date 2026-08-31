@@ -101,17 +101,25 @@ class EyevueGlassesService : Service() {
         }
 
         fun discardTemporaryPhoto(expectedPath: String? = null): Boolean? {
-            val currentPath = snapshot.lastPhotoPath ?: return null
-            if (expectedPath != null && expectedPath != currentPath) return null
+            val currentPath = snapshot.lastPhotoPath
+            val targetPath = expectedPath ?: currentPath ?: return null
+            val allowedDirectory = runCatching {
+                instance?.let { File(it.cacheDir, "eyevue").canonicalFile }
+                    ?: currentPath?.let { File(it).canonicalFile.parentFile }
+            }.getOrNull() ?: return false
+            val targetFile = runCatching { File(targetPath).canonicalFile }.getOrNull() ?: return false
+            if (targetFile.parentFile != allowedDirectory || !targetFile.name.startsWith("capture-") || targetFile.extension != "jpg") {
+                DaemonLog.add("eyevue: refused temporary photo deletion outside the device-local capture cache")
+                return false
+            }
             val deleted = runCatching {
-                val file = File(currentPath)
-                !file.exists() || file.delete()
+                !targetFile.exists() || targetFile.delete()
             }.getOrDefault(false)
             if (!deleted) {
                 DaemonLog.add("eyevue: temporary photo deletion failed; retaining cleanup path")
                 return false
             }
-            if (snapshot.lastPhotoPath == currentPath) {
+            if (snapshot.lastPhotoPath == targetFile.absolutePath) {
                 snapshot = snapshot.copy(lastPhotoPath = null)
             }
             return true
@@ -446,7 +454,6 @@ class EyevueGlassesService : Service() {
             DaemonLog.add("eyevue: photo cache write failed: ${error.message}")
             return
         }
-        snapshot.lastPhotoPath?.let { old -> deleteFileWithRetry(old, "replacement") }
         snapshot = snapshot.copy(lastPhotoPath = file.absolutePath)
         requestedCapture?.latch?.countDown()
         val origin = if (requestedCapture == null) "camera_button" else "jarvis_request"
@@ -500,7 +507,6 @@ class EyevueGlassesService : Service() {
     }
 
     private fun runCommand(name: String, waitForPhoto: Boolean): OpResult {
-        if (snapshot.connected != true) return OpResult(false, error = "EYEVUE_NOT_CONNECTED: The glasses connection is unavailable.")
         val packet = when (name) {
             "battery" -> EyevueProtocol.battery()
             "storage" -> EyevueProtocol.capacity()
@@ -513,23 +519,30 @@ class EyevueGlassesService : Service() {
         }
         val latch = if (name == "photo" && waitForPhoto) CountDownLatch(1) else null
         val photoRequest = if (name == "photo") PendingEyevuePhotoRequest(latch) else null
-        if (photoRequest != null && !pendingPhoto.compareAndSet(null, photoRequest)) {
-            return OpResult(false, error = "EYEVUE_PHOTO_BUSY: A requested photo is already awaiting its AA15 response.")
+        synchronized(gattStateLock) {
+            if (gatt == null || snapshot.connected != true) {
+                return OpResult(false, error = "EYEVUE_NOT_CONNECTED: The glasses connection is unavailable.")
+            }
+            if (photoRequest != null && !pendingPhoto.compareAndSet(null, photoRequest)) {
+                return OpResult(false, error = "EYEVUE_PHOTO_BUSY: A requested photo is already awaiting its AA15 response.")
+            }
+            if (!writePacket(packet)) {
+                photoRequest?.let { pendingPhoto.compareAndSet(it, null) }
+                return OpResult(false, error = "EYEVUE_WRITE_FAILED: The command could not be sent.")
+            }
         }
         if (photoRequest != null) {
             android.os.Handler(mainLooper).postDelayed({
-                if (pendingPhoto.get() === photoRequest) {
-                    photoRequest.timedOut.set(true)
-                    closeConnection()
-                    pendingPhoto.compareAndSet(photoRequest, null)
-                    updateError("eyeVue photo response timed out; reconnecting before another capture.")
-                    scheduleConnect(RECONNECT_MS)
+                synchronized(gattStateLock) {
+                    if (pendingPhoto.get() === photoRequest) {
+                        photoRequest.timedOut.set(true)
+                        closeConnection(photoRequest)
+                        pendingPhoto.compareAndSet(photoRequest, null)
+                        updateError("eyeVue photo response timed out; reconnecting before another capture.")
+                        scheduleConnect(RECONNECT_MS)
+                    }
                 }
             }, PHOTO_LATE_RESPONSE_QUARANTINE_MS)
-        }
-        if (!writePacket(packet)) {
-            photoRequest?.let { pendingPhoto.compareAndSet(it, null) }
-            return OpResult(false, error = "EYEVUE_WRITE_FAILED: The command could not be sent.")
         }
         if (latch != null && !latch.await(30, TimeUnit.SECONDS)) {
             photoRequest?.timedOut?.set(true)
@@ -578,11 +591,16 @@ class EyevueGlassesService : Service() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun closeConnection() {
+    private fun closeConnection(preservePendingPhoto: PendingEyevuePhotoRequest? = null) {
         val manager = getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager
         scanCallback?.let { runCatching { manager?.adapter?.bluetoothLeScanner?.stopScan(it) } }
         scanCallback = null
         synchronized(gattStateLock) {
+            val abandonedPhoto = pendingPhoto.get()
+            if (abandonedPhoto != null && abandonedPhoto !== preservePendingPhoto && pendingPhoto.compareAndSet(abandonedPhoto, null)) {
+                abandonedPhoto.failure.compareAndSet(null, "EYEVUE_CONNECTION_LOST: The glasses disconnected before the requested photo arrived.")
+                abandonedPhoto.latch?.countDown()
+            }
             val closingGatt = gatt
             gatt = null
             write = null
@@ -693,8 +711,19 @@ object EyevueCommandHandler {
             val capture = EyevueGlassesService.command(context, "photo", waitForPhoto = true)
             if (!capture.ok) return capture
         }
-        val imagePath = EyevueGlassesService.status(context).lastPhotoPath
-            ?: return OpResult(false, error = "EYEVUE_IMAGE_UNAVAILABLE: No current temporary image. A new wearable capture requires explicit approval; retry with lookAgain only after approval.")
+        val boundImagePath = op.optString("imagePath", "").trim().takeIf { it.isNotEmpty() }
+        val imagePath = if (!takeNew && boundImagePath != null) {
+            val allowedDirectory = File(context.cacheDir, "eyevue").canonicalFile
+            val boundFile = runCatching { File(boundImagePath).canonicalFile }.getOrNull()
+                ?: return OpResult(false, error = "EYEVUE_IMAGE_UNAVAILABLE: The captured image path is invalid.")
+            if (boundFile.parentFile != allowedDirectory || !boundFile.isFile) {
+                return OpResult(false, error = "EYEVUE_IMAGE_UNAVAILABLE: The captured image is no longer available in the device-local cache.")
+            }
+            boundFile.absolutePath
+        } else {
+            EyevueGlassesService.status(context).lastPhotoPath
+                ?: return OpResult(false, error = "EYEVUE_IMAGE_UNAVAILABLE: No current temporary image. A new wearable capture requires explicit approval; retry with lookAgain only after approval.")
+        }
         val prompt = op.optString("question", "").ifBlank {
             "Describe this scene at moderate detail. Lead with the main scene and important details. " +
                 "Call out immediate hazards or obstacles, important readable text, and people I may be interacting with. " +

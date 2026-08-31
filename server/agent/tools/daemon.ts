@@ -530,7 +530,15 @@ Android device actions run immediately without confirmation, including navigatio
         }
         op = { type: "android_eyevue_command", command, waitForPhoto: command === "photo" };
       } else if (rawAction === "android_eyevue_look") {
-        op = { type: "android_eyevue_look", question: args.question ? String(args.question) : undefined, lookAgain: args.lookAgain === true };
+        const boundImagePath = typeof ctx.state.eyeVueCapturedImagePath === "string"
+          ? ctx.state.eyeVueCapturedImagePath.trim()
+          : "";
+        op = {
+          type: "android_eyevue_look",
+          question: args.question ? String(args.question) : undefined,
+          lookAgain: args.lookAgain === true,
+          ...(boundImagePath ? { imagePath: boundImagePath } : {}),
+        };
       } else if (rawAction === "android_return_to_jarvis") {
         op = { type: "android_return_to_jarvis" };
       } else if (rawAction === "android_wait") {

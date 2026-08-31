@@ -85,6 +85,8 @@ export interface CoachReplyInput {
   extraTools?: import("../agent/types").AgentTool[];
   /** Optional caller abort signal. Used by Telegram to enforce a user-facing SLA. */
   signal?: AbortSignal;
+  /** Exact device-local eyeVue image bound to this camera-button turn. */
+  eyeVueCapturedImagePath?: string;
 }
 
 export interface CoachReplyResult {
@@ -771,6 +773,7 @@ If you skip step 1 (calling discord_request_confirm), the action tool will be re
       todayPlan,
       gmailMessageIds: gmailItems.map((i: { id?: string }) => i.id).filter((id): id is string => !!id),
       pendingAttachments: [],
+      ...(input.eyeVueCapturedImagePath ? { eyeVueCapturedImagePath: input.eyeVueCapturedImagePath } : {}),
       // Forward MCP progress notifications as streaming tokens so channels show live progress
       onProgress: onToken ? (msg: string) => onToken(`[progress] ${msg}`) : undefined,
       // Heartbeat-style status edits (edit the placeholder; does not pollute stream buffer)

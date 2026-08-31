@@ -35,6 +35,7 @@ interface VoiceSessionControlMsg {
 }
 interface EyevuePhotoCapturedMsg { type: "eyevue_photo_captured"; imagePath?: string; source?: string; origin?: "camera_button" }
 interface EyevueBatteryLowMsg { type: "eyevue_battery_low"; percent?: number; threshold?: number }
+interface EyevueVisionDelayMsg { type: "eyevue_vision_delay"; requestId?: string; message?: string }
 
 export type DaemonOp =
   | { type: "ping" }
@@ -64,7 +65,7 @@ export type DaemonOp =
   | { type: "android_eyevue_enable"; address?: string }
   | { type: "android_eyevue_disconnect" }
   | { type: "android_eyevue_command"; command: "battery" | "storage" | "photo" | "video_start" | "video_stop" | "audio_start" | "audio_stop"; waitForPhoto?: boolean }
-  | { type: "android_eyevue_look"; question?: string; lookAgain?: boolean }
+  | { type: "android_eyevue_look"; question?: string; lookAgain?: boolean; imagePath?: string }
   | { type: "android_eyevue_discard_photo"; imagePath: string }
   | { type: "android_tap"; x: number; y: number }
   | { type: "android_type"; text: string; submit?: boolean; expectedPackage?: string; expectedResourceId?: string; expectedHint?: string }
@@ -382,7 +383,11 @@ async function recoverDaemonVoiceAfterFailure(
   await Promise.allSettled(recoveryOps);
 }
 
-async function processDaemonUtterance(userId: string, utterance: string): Promise<void> {
+async function processDaemonUtterance(
+  userId: string,
+  utterance: string,
+  options: { eyeVueCapturedImagePath?: string } = {},
+): Promise<void> {
   const voiceTurnGeneration = currentVoiceTurnGeneration(userId);
   let playbackAttempted = false;
   try {
@@ -406,6 +411,7 @@ async function processDaemonUtterance(userId: string, utterance: string): Promis
         channelName: "Voice",
         sdkSessionId: storedSessionId,
         observeStatusCheck: true,
+        eyeVueCapturedImagePath: options.eyeVueCapturedImagePath,
       });
       if (isDaemonVoiceTurnCancelled(userId, voiceTurnGeneration)) return;
       if (result.sdkSessionId) {
@@ -1257,7 +1263,7 @@ export function startDaemonBridge(server: HttpServer): void {
         return;
       }
       interface WakeWordTriggeredMsg { type: "wake_word_triggered"; phrase?: string; transcript?: string }
-      const m = msg as PairMsg | AndroidAppBootstrapMsg | ReconnectMsg | ResultMsg | PingMsg | NotificationEventMsg | WakeWordTriggeredMsg | EyevuePhotoCapturedMsg | EyevueBatteryLowMsg;
+      const m = msg as PairMsg | AndroidAppBootstrapMsg | ReconnectMsg | ResultMsg | PingMsg | NotificationEventMsg | WakeWordTriggeredMsg | EyevuePhotoCapturedMsg | EyevueBatteryLowMsg | EyevueVisionDelayMsg;
 
       // Reconnect using stored daemonId + reconnectSecret (proof-of-possession).
       // The secret was issued server-side during pair; we compare sha256(provided) to stored hash.
@@ -1578,14 +1584,15 @@ export function startDaemonBridge(server: HttpServer): void {
       if (m.type === "eyevue_photo_captured" && pairedUserId) {
         const cameraTurnUserId = pairedUserId;
         const capturedImagePath = typeof m.imagePath === "string" ? m.imagePath.trim() : "";
+        if (!capturedImagePath) {
+          console.error("[daemon] eyeVue camera-button turn skipped: capture path was missing");
+          return;
+        }
         processDaemonUtterance(
           cameraTurnUserId,
           "I pressed the eyeVue camera button. Use android_eyevue_look without lookAgain. Describe what I am seeing at moderate detail, mention clear hazards, readable text, and people without identifying them, then ask if I want to know anything else.",
+          { eyeVueCapturedImagePath: capturedImagePath },
         ).finally(async () => {
-          if (!capturedImagePath) {
-            console.error("[daemon] eyeVue camera-button photo cleanup skipped: capture path was missing");
-            return;
-          }
           const cleanup = await sendDaemonOp(
             cameraTurnUserId,
             { type: "android_eyevue_discard_photo", imagePath: capturedImagePath },
@@ -1596,6 +1603,22 @@ export function startDaemonBridge(server: HttpServer): void {
             console.error(`[daemon] eyeVue camera-button photo cleanup failed: ${cleanup.error ?? "unknown daemon error"}`);
           }
         }).catch(err => console.error(`[daemon] eyeVue camera-button turn failed: ${err}`));
+        return;
+      }
+
+      if (m.type === "eyevue_vision_delay" && pairedUserId) {
+        const message = typeof m.message === "string" && m.message.trim()
+          ? m.message.trim()
+          : "Local vision is taking longer than expected.";
+        const notice = await sendDaemonOp(
+          pairedUserId,
+          { type: "android_notify", title: "Jarvis local vision", body: message },
+          5_000,
+          "android",
+        );
+        if (!notice.ok) {
+          console.error(`[daemon] eyeVue vision-delay notification failed: ${notice.error ?? "unknown daemon error"}`);
+        }
         return;
       }
 
