@@ -33,8 +33,10 @@ assert.match(service, /catch \(error: Throwable\)[\s\S]*deleteFileWithRetry\(fil
 assert.match(service, /PHOTO_LATE_RESPONSE_QUARANTINE_MS = 60_000L/);
 assert.match(service, /pendingPhoto\.get\(\) === photoRequest[\s\S]*photoRequest\.timedOut\.set\(true\)[\s\S]*closeConnection\(\)[\s\S]*pendingPhoto\.compareAndSet\(photoRequest, null\)[\s\S]*PHOTO_LATE_RESPONSE_QUARANTINE_MS/);
 assert.match(service, /!latch\.await\(30, TimeUnit\.SECONDS\)[\s\S]*photoRequest\?\.timedOut\?\.set\(true\)/);
-assert.match(service, /this@EyevueGlassesService\.gatt !== gatt/);
-assert.match(service, /onConnectionStateChange\(callbackGatt[\s\S]*gatt !== callbackGatt[\s\S]*onServicesDiscovered\(callbackGatt[\s\S]*gatt !== callbackGatt[\s\S]*onDescriptorWrite\(callbackGatt[\s\S]*gatt !== callbackGatt/);
+assert.match(service, /gattStateLock = Any\(\)/);
+assert.match(service, /onConnectionStateChange\(callbackGatt[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt !== callbackGatt[\s\S]*onServicesDiscovered\(callbackGatt[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt !== callbackGatt[\s\S]*onDescriptorWrite\(callbackGatt[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt !== callbackGatt/);
+assert.match(service, /handleNotification\(callbackGatt[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt !== callbackGatt/);
+assert.match(service, /private fun closeConnection\(\)[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt = null[\s\S]*photoAssembler\.reset\(\)/);
 assert.match(protocol, /fun reset\(\)[\s\S]*active = false[\s\S]*image\.reset\(\)/);
 assert.match(service, /val takeNew = op\.optBoolean\("lookAgain", false\)/);
 assert.doesNotMatch(service, /lookAgain[\s\S]{0,100}\|\|[\s\S]{0,100}lastPhotoPath/);

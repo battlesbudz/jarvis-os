@@ -173,6 +173,7 @@ class EyevueGlassesService : Service() {
     private val decoder = EyevueFrameDecoder()
     private val photoAssembler = EyevuePhotoAssembler()
     private val pendingPhoto = AtomicReference<PendingEyevuePhotoRequest?>(null)
+    private val gattStateLock = Any()
     @Volatile private var gatt: BluetoothGatt? = null
     private var write: BluetoothGattCharacteristic? = null
     private var notify: BluetoothGattCharacteristic? = null
@@ -286,81 +287,99 @@ class EyevueGlassesService : Service() {
     private fun connect(device: BluetoothDevice) {
         snapshot = snapshot.copy(address = device.address, deviceName = runCatching { device.name }.getOrNull(), lastError = null)
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_ADDRESS, device.address).apply()
-        gatt = device.connectGatt(this, false, callback, BluetoothDevice.TRANSPORT_LE)
+        synchronized(gattStateLock) {
+            if (gatt != null) return
+            gatt = device.connectGatt(this, false, callback, BluetoothDevice.TRANSPORT_LE)
+        }
     }
 
     private val callback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(callbackGatt: BluetoothGatt, status: Int, newState: Int) {
-            if (this@EyevueGlassesService.gatt !== callbackGatt) return
-            if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
-                if (!callbackGatt.discoverServices()) {
-                    failGattSetup(callbackGatt, "eyeVue service discovery could not be started; reconnecting.")
+            synchronized(gattStateLock) {
+                if (this@EyevueGlassesService.gatt !== callbackGatt) return
+                if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
+                    if (!callbackGatt.discoverServices()) {
+                        failGattSetup(callbackGatt, "eyeVue service discovery could not be started; reconnecting.")
+                    }
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    closeConnection()
+                    snapshot = snapshot.copy(connected = false, lastError = if (status == 0) null else "Bluetooth disconnected ($status).")
+                    updateNotification("eyeVue disconnected; reconnecting…")
+                    scheduleConnect(RECONNECT_MS)
+                } else if (status != BluetoothGatt.GATT_SUCCESS) {
+                    failGattSetup(callbackGatt, "eyeVue connection failed ($status); reconnecting.")
                 }
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                closeConnection()
-                snapshot = snapshot.copy(connected = false, lastError = if (status == 0) null else "Bluetooth disconnected ($status).")
-                updateNotification("eyeVue disconnected; reconnecting…")
-                scheduleConnect(RECONNECT_MS)
-            } else if (status != BluetoothGatt.GATT_SUCCESS) {
-                failGattSetup(callbackGatt, "eyeVue connection failed ($status); reconnecting.")
             }
         }
 
         @SuppressLint("MissingPermission")
         override fun onServicesDiscovered(callbackGatt: BluetoothGatt, status: Int) {
-            if (this@EyevueGlassesService.gatt !== callbackGatt) return
-            val service = callbackGatt.getService(EyevueProtocol.SERVICE_UUID)
-            write = service?.getCharacteristic(EyevueProtocol.COMMAND_WRITE_UUID)
-            notify = service?.getCharacteristic(EyevueProtocol.COMMAND_NOTIFY_UUID)
-            photoNotify = service?.getCharacteristic(EyevueProtocol.PHOTO_NOTIFY_UUID)
-            if (status != BluetoothGatt.GATT_SUCCESS || write == null || notify == null || photoNotify == null) {
-                failGattSetup(callbackGatt, "This Bluetooth device does not expose the eyeVue AA12 service; reconnecting.")
-                return
-            }
-            if (!enableNotification(callbackGatt, notify!!)) {
-                failGattSetup(callbackGatt, "eyeVue command notifications could not be enabled.")
+            synchronized(gattStateLock) {
+                if (this@EyevueGlassesService.gatt !== callbackGatt) return
+                val service = callbackGatt.getService(EyevueProtocol.SERVICE_UUID)
+                val discoveredWrite = service?.getCharacteristic(EyevueProtocol.COMMAND_WRITE_UUID)
+                val discoveredNotify = service?.getCharacteristic(EyevueProtocol.COMMAND_NOTIFY_UUID)
+                val discoveredPhotoNotify = service?.getCharacteristic(EyevueProtocol.PHOTO_NOTIFY_UUID)
+                if (status != BluetoothGatt.GATT_SUCCESS || discoveredWrite == null || discoveredNotify == null || discoveredPhotoNotify == null) {
+                    failGattSetup(callbackGatt, "This Bluetooth device does not expose the eyeVue AA12 service; reconnecting.")
+                    return
+                }
+                write = discoveredWrite
+                notify = discoveredNotify
+                photoNotify = discoveredPhotoNotify
+                if (!enableNotification(callbackGatt, discoveredNotify)) {
+                    failGattSetup(callbackGatt, "eyeVue command notifications could not be enabled.")
+                }
             }
         }
 
         @SuppressLint("MissingPermission")
         override fun onDescriptorWrite(callbackGatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
-            if (this@EyevueGlassesService.gatt !== callbackGatt) return
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                failGattSetup(callbackGatt, "eyeVue notification setup failed ($status); reconnecting.")
-                return
-            }
-            if (descriptor.characteristic.uuid == EyevueProtocol.COMMAND_NOTIFY_UUID) {
-                if (!enableNotification(callbackGatt, photoNotify!!)) {
-                    failGattSetup(callbackGatt, "eyeVue photo notifications could not be enabled.")
+            synchronized(gattStateLock) {
+                if (this@EyevueGlassesService.gatt !== callbackGatt) return
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    failGattSetup(callbackGatt, "eyeVue notification setup failed ($status); reconnecting.")
+                    return
                 }
-            } else if (descriptor.characteristic.uuid == EyevueProtocol.PHOTO_NOTIFY_UUID) {
-                connecting.set(false)
-                snapshot = snapshot.copy(connected = true, lastError = null)
-                updateNotification("eyeVue connected — Hey, Star starts Jarvis")
-                writePacket(EyevueProtocol.battery())
-                writePacket(EyevueProtocol.capacity())
+                if (descriptor.characteristic.uuid == EyevueProtocol.COMMAND_NOTIFY_UUID) {
+                    val currentPhotoNotify = photoNotify
+                    if (currentPhotoNotify == null || !enableNotification(callbackGatt, currentPhotoNotify)) {
+                        failGattSetup(callbackGatt, "eyeVue photo notifications could not be enabled.")
+                    }
+                } else if (descriptor.characteristic.uuid == EyevueProtocol.PHOTO_NOTIFY_UUID) {
+                    connecting.set(false)
+                    snapshot = snapshot.copy(connected = true, lastError = null)
+                    updateNotification("eyeVue connected — Hey, Star starts Jarvis")
+                    writePacket(EyevueProtocol.battery())
+                    writePacket(EyevueProtocol.capacity())
+                }
             }
         }
 
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
-            if (this@EyevueGlassesService.gatt !== gatt) return
-            handleNotification(characteristic, characteristic.value.copyOf())
+            handleNotification(gatt, characteristic, characteristic.value.copyOf())
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-            if (this@EyevueGlassesService.gatt !== gatt) return
-            handleNotification(characteristic, value.copyOf())
+            handleNotification(gatt, characteristic, value.copyOf())
         }
     }
 
-    private fun handleNotification(characteristic: BluetoothGattCharacteristic, value: ByteArray) {
-        if (characteristic.uuid == EyevueProtocol.COMMAND_NOTIFY_UUID) {
-            decoder.append(value).forEach(::handleFrame)
-        } else if (characteristic.uuid == EyevueProtocol.PHOTO_NOTIFY_UUID) {
-            photoAssembler.append(value)?.let(::saveCapturedPhoto)
+    private fun handleNotification(callbackGatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+        var frames = emptyList<EyevueFrame>()
+        var photo: ByteArray? = null
+        synchronized(gattStateLock) {
+            if (gatt !== callbackGatt) return
+            if (characteristic.uuid == EyevueProtocol.COMMAND_NOTIFY_UUID) {
+                frames = decoder.append(value)
+            } else if (characteristic.uuid == EyevueProtocol.PHOTO_NOTIFY_UUID) {
+                photo = photoAssembler.append(value)
+            }
         }
+        frames.forEach(::handleFrame)
+        photo?.let(::saveCapturedPhoto)
     }
 
     private fun handleFrame(frame: EyevueFrame) {
@@ -520,11 +539,11 @@ class EyevueGlassesService : Service() {
     }
 
     @SuppressLint("MissingPermission")
-    private fun writePacket(packet: ByteArray): Boolean {
-        val currentGatt = gatt ?: return false
-        val characteristic = write ?: return false
+    private fun writePacket(packet: ByteArray): Boolean = synchronized(gattStateLock) {
+        val currentGatt = gatt ?: return@synchronized false
+        val characteristic = write ?: return@synchronized false
         characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-        return if (Build.VERSION.SDK_INT >= 33) {
+        if (Build.VERSION.SDK_INT >= 33) {
             currentGatt.writeCharacteristic(characteristic, packet, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT) == BluetoothGatt.GATT_SUCCESS
         } else {
             @Suppress("DEPRECATION")
@@ -546,13 +565,15 @@ class EyevueGlassesService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun failGattSetup(callbackGatt: BluetoothGatt, message: String) {
-        if (gatt !== callbackGatt) {
-            runCatching { callbackGatt.disconnect(); callbackGatt.close() }
-            return
+        synchronized(gattStateLock) {
+            if (gatt !== callbackGatt) {
+                runCatching { callbackGatt.disconnect(); callbackGatt.close() }
+                return
+            }
+            closeConnection()
+            updateError(message)
+            scheduleConnect(RECONNECT_MS)
         }
-        closeConnection()
-        updateError(message)
-        scheduleConnect(RECONNECT_MS)
     }
 
     @SuppressLint("MissingPermission")
@@ -560,14 +581,17 @@ class EyevueGlassesService : Service() {
         val manager = getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager
         scanCallback?.let { runCatching { manager?.adapter?.bluetoothLeScanner?.stopScan(it) } }
         scanCallback = null
-        runCatching { gatt?.disconnect(); gatt?.close() }
-        gatt = null
-        write = null
-        notify = null
-        photoNotify = null
-        photoAssembler.reset()
-        connecting.set(false)
-        snapshot = snapshot.copy(connected = false)
+        synchronized(gattStateLock) {
+            val closingGatt = gatt
+            gatt = null
+            write = null
+            notify = null
+            photoNotify = null
+            photoAssembler.reset()
+            connecting.set(false)
+            snapshot = snapshot.copy(connected = false)
+            runCatching { closingGatt?.disconnect(); closingGatt?.close() }
+        }
     }
 
     private fun isEyevue(name: String?) = name?.lowercase()?.let {
