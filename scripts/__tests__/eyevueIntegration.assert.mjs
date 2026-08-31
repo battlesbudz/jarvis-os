@@ -36,7 +36,9 @@ assert.match(service, /!latch\.await\(30, TimeUnit\.SECONDS\)[\s\S]*photoRequest
 assert.match(service, /gattStateLock = Any\(\)/);
 assert.match(service, /onConnectionStateChange\(callbackGatt[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt !== callbackGatt[\s\S]*onServicesDiscovered\(callbackGatt[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt !== callbackGatt[\s\S]*onDescriptorWrite\(callbackGatt[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt !== callbackGatt/);
 assert.match(service, /handleNotification\(callbackGatt[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt !== callbackGatt/);
-assert.match(service, /private fun closeConnection\(\)[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt = null[\s\S]*photoAssembler\.reset\(\)/);
+assert.match(service, /photo = photoAssembler\.append\(value\)[\s\S]*pendingPhoto\.getAndSet\(null\)[\s\S]*photo\?\.let \{ saveCapturedPhoto\(it, requestedCapture\) \}/);
+assert.match(service, /private fun closeConnection\(\)[\s\S]*synchronized\(gattStateLock\)[\s\S]*gatt = null[\s\S]*decoder\.reset\(\)[\s\S]*photoAssembler\.reset\(\)/);
+assert.match(protocol, /class EyevueFrameDecoder[\s\S]*fun reset\(\)[\s\S]*bytes\.reset\(\)/);
 assert.match(protocol, /fun reset\(\)[\s\S]*active = false[\s\S]*image\.reset\(\)/);
 assert.match(service, /val takeNew = op\.optBoolean\("lookAgain", false\)/);
 assert.doesNotMatch(service, /lookAgain[\s\S]{0,100}\|\|[\s\S]{0,100}lastPhotoPath/);

@@ -63,6 +63,10 @@ object EyevueProtocol {
 /** Handles split AA14 frames and the raw AA15 image stream. */
 class EyevueFrameDecoder {
     private val bytes = ByteArrayOutputStream()
+    fun reset() {
+        bytes.reset()
+    }
+
     fun append(chunk: ByteArray): List<EyevueFrame> {
         bytes.write(chunk)
         val source = bytes.toByteArray()

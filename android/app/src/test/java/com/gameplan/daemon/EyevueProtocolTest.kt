@@ -24,6 +24,19 @@ class EyevueProtocolTest {
         assertArrayEquals(byteArrayOf(1, 75), frame.payload)
     }
 
+    @Test
+    fun `reset drops a partial frame from the previous connection`() {
+        val stale = EyevueProtocol.datagram(EyevueProtocol.CMD_BATTERY, 1, 25)
+        val fresh = EyevueProtocol.datagram(EyevueProtocol.CMD_BATTERY, 1, 75)
+        val decoder = EyevueFrameDecoder()
+        assertEquals(emptyList<EyevueFrame>(), decoder.append(stale.copyOfRange(0, 4)))
+
+        decoder.reset()
+
+        val frame = decoder.append(fresh).single()
+        assertArrayEquals(byteArrayOf(1, 75), frame.payload)
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun `rejects bad protocol checksum`() {
         EyevueProtocol.parse(EyevueProtocol.battery().also { it[it.lastIndex] = 0 })

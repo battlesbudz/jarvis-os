@@ -370,16 +370,18 @@ class EyevueGlassesService : Service() {
     private fun handleNotification(callbackGatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
         var frames = emptyList<EyevueFrame>()
         var photo: ByteArray? = null
+        var requestedCapture: PendingEyevuePhotoRequest? = null
         synchronized(gattStateLock) {
             if (gatt !== callbackGatt) return
             if (characteristic.uuid == EyevueProtocol.COMMAND_NOTIFY_UUID) {
                 frames = decoder.append(value)
             } else if (characteristic.uuid == EyevueProtocol.PHOTO_NOTIFY_UUID) {
                 photo = photoAssembler.append(value)
+                if (photo != null) requestedCapture = pendingPhoto.getAndSet(null)
             }
         }
         frames.forEach(::handleFrame)
-        photo?.let(::saveCapturedPhoto)
+        photo?.let { saveCapturedPhoto(it, requestedCapture) }
     }
 
     private fun handleFrame(frame: EyevueFrame) {
@@ -422,8 +424,7 @@ class EyevueGlassesService : Service() {
         DaemonLog.add("eyevue: rx command=${frame.commandId} bytes=${frame.payload.size}")
     }
 
-    private fun saveCapturedPhoto(bytes: ByteArray) {
-        val requestedCapture = pendingPhoto.getAndSet(null)
+    private fun saveCapturedPhoto(bytes: ByteArray, requestedCapture: PendingEyevuePhotoRequest?) {
         if (requestedCapture?.timedOut?.get() == true) {
             requestedCapture.latch?.countDown()
             DaemonLog.add("eyevue: discarded quarantined AA15 response from timed-out request")
@@ -587,6 +588,7 @@ class EyevueGlassesService : Service() {
             write = null
             notify = null
             photoNotify = null
+            decoder.reset()
             photoAssembler.reset()
             connecting.set(false)
             snapshot = snapshot.copy(connected = false)
