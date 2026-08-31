@@ -1612,7 +1612,7 @@ export function startDaemonBridge(server: HttpServer): void {
           : "Local vision is taking longer than expected.";
         const notice = await sendDaemonOp(
           pairedUserId,
-          { type: "android_notify", title: "Jarvis local vision", body: message },
+          { type: "notify", title: "Jarvis local vision", body: message },
           5_000,
           "android",
         );

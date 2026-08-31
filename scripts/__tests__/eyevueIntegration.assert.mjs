@@ -103,7 +103,7 @@ assert.match(nativeModule, /Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.S[\
 assert.match(bridge, /android_eyevue_discard_photo/);
 assert.match(bridge, /processDaemonUtterance\([\s\S]*\.finally\(async \(\) =>[\s\S]*android_eyevue_discard_photo/);
 assert.match(bridge, /capturedImagePath[\s\S]*eyeVueCapturedImagePath: capturedImagePath/);
-assert.match(bridge, /m\.type === "eyevue_vision_delay"[\s\S]*android_notify[\s\S]*Jarvis local vision/);
+assert.match(bridge, /m\.type === "eyevue_vision_delay"[\s\S]*type: "notify"[\s\S]*Jarvis local vision/);
 assert.match(tool, /ctx\.state\.eyeVueCapturedImagePath[\s\S]*imagePath: boundImagePath/);
 assert.match(coachAgent, /eyeVueCapturedImagePath: input\.eyeVueCapturedImagePath/);
 
