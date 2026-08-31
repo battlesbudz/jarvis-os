@@ -209,9 +209,21 @@ class WakeWordService : Service() {
             ACTION_EXTERNAL_WAKE -> {
                 // eyeVue detects its firmware-owned "Hey, Star" phrase. Treat it as
                 // an authenticated local wearable wake event and always start Jarvis.
+                val enteringTalkMode = !talkModeEnabled
                 talkModeEnabled = true
                 listeningRequested = true
-                if (!active) startListening()
+                if (enteringTalkMode) {
+                    // A recognizer that was already active was opened on the phone
+                    // wake route. Recreate it after Talk Mode claims the wearable
+                    // route so the user's next utterance comes from the glasses.
+                    wakeStartGeneration += 1
+                    active = false
+                    cancelPendingRestart()
+                    destroyRecognizer()
+                    startListening()
+                } else if (!active) {
+                    startListening()
+                }
                 val phrase = intent?.getStringExtra(EXTRA_EXTERNAL_PHRASE)?.ifBlank { "hey star" } ?: "hey star"
                 onWakeWordDetected(phrase.lowercase(Locale.US), phrase.lowercase(Locale.US))
             }

@@ -406,7 +406,7 @@ object LocalGemmaInferenceEngine {
                     throw e
                 } catch (e: Throwable) {
                     if (resolvedAttemptSpeculativeDecoding) {
-                        releaseEngine(clearLastError = false)
+                        releaseEngineForGeneration(active, imagePaths.isNotEmpty(), throwOnDeadline = true)
                         active.conversation = null
                         generationRetries += 1
                         DaemonLog.add(
@@ -417,7 +417,7 @@ object LocalGemmaInferenceEngine {
                         continue
                     }
                     if (isCpuFallbackCandidate(requestedAttemptBackend, resolvedAttemptBackend)) {
-                        releaseEngine(clearLastError = false)
+                        releaseEngineForGeneration(active, imagePaths.isNotEmpty(), throwOnDeadline = true)
                         active.conversation = null
                         val retryMemory = memorySnapshot(context)
                         if (shouldRetryGenerationOnCpu(requestedAttemptBackend, resolvedAttemptBackend, retryMemory, allowCpuFallback)) {
@@ -451,7 +451,7 @@ object LocalGemmaInferenceEngine {
             active.conversation = null
             try {
                 if (!keepEngineWarm || !generationSucceeded) {
-                    releaseEngine(clearLastError = false)
+                    releaseEngineForGeneration(active, imagePaths.isNotEmpty(), throwOnDeadline = false)
                 }
             } finally {
                 try {
@@ -936,6 +936,60 @@ object LocalGemmaInferenceEngine {
                 engineState = null
                 if (clearLastError) lastEngineError = null
             }
+        }
+    }
+
+    private fun releaseEngineForGeneration(
+        active: ActiveRequest,
+        isVision: Boolean,
+        throwOnDeadline: Boolean,
+    ) {
+        if (!isVision) {
+            releaseEngine(clearLastError = false)
+            return
+        }
+
+        val closeMutex = engineMutex.get()
+        val engineToClose = engineState?.engine ?: active.engine ?: return
+        engineState = null
+        active.engine = engineToClose
+        val remainingMs = active.visionDeadlineAtElapsedMs - SystemClock.elapsedRealtime()
+        if (remainingMs <= 0L) {
+            active.deadlineExceeded.set(true)
+            engineMutex.compareAndSet(closeMutex, Mutex())
+            closeEngineAsync(engineToClose, active.requestId)
+            if (throwOnDeadline) throw LocalGemmaDeadlineExceededException()
+            return
+        }
+
+        val executor = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "jarvis-local-gemma-close-${active.requestId.take(8)}").apply { isDaemon = true }
+        }
+        val future = executor.submit {
+            runBlocking {
+                closeMutex.withLock {
+                    runCatching { engineToClose.close() }
+                }
+            }
+        }
+        try {
+            future.get(remainingMs, TimeUnit.MILLISECONDS)
+            active.engine = null
+        } catch (_: TimeoutException) {
+            active.deadlineExceeded.set(true)
+            future.cancel(true)
+            engineMutex.compareAndSet(closeMutex, Mutex())
+            closeEngineAsync(engineToClose, active.requestId)
+            if (throwOnDeadline) throw LocalGemmaDeadlineExceededException()
+        } finally {
+            executor.shutdownNow()
+        }
+    }
+
+    private fun closeEngineAsync(engine: Engine, requestId: String) {
+        Thread({ runCatching { engine.close() } }, "jarvis-local-gemma-quarantine-close-${requestId.take(8)}").apply {
+            isDaemon = true
+            start()
         }
     }
 

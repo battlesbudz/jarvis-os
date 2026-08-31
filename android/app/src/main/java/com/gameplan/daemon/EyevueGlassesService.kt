@@ -76,7 +76,9 @@ class EyevueGlassesService : Service() {
         private const val NOTIFICATION_ID = 3014
         private const val RECONNECT_MS = 5_000L
         private const val PHOTO_REQUEST_ORIGIN_RETENTION_MS = 35_000L
-        private const val CAMERA_BUTTON_PHOTO_TTL_MS = 120_000L
+        private const val TEMPORARY_PHOTO_TTL_MS = 5 * 60_000L
+        private const val PHOTO_DELETE_RETRY_MS = 30_000L
+        private const val PHOTO_DELETE_MAX_ATTEMPTS = 3
 
         @Volatile private var instance: EyevueGlassesService? = null
         @Volatile private var snapshot = EyevueSnapshot(false, false, null, null, null, null, null, null)
@@ -96,10 +98,17 @@ class EyevueGlassesService : Service() {
             return service.runCommand(name, waitForPhoto)
         }
 
-        fun discardTemporaryPhoto(expectedPath: String? = null): Boolean {
-            val currentPath = snapshot.lastPhotoPath ?: return false
-            if (expectedPath != null && expectedPath != currentPath) return false
-            runCatching { File(currentPath).delete() }
+        fun discardTemporaryPhoto(expectedPath: String? = null): Boolean? {
+            val currentPath = snapshot.lastPhotoPath ?: return null
+            if (expectedPath != null && expectedPath != currentPath) return null
+            val deleted = runCatching {
+                val file = File(currentPath)
+                !file.exists() || file.delete()
+            }.getOrDefault(false)
+            if (!deleted) {
+                DaemonLog.add("eyevue: temporary photo deletion failed; retaining cleanup path")
+                return false
+            }
             if (snapshot.lastPhotoPath == currentPath) {
                 snapshot = snapshot.copy(lastPhotoPath = null)
             }
@@ -360,7 +369,7 @@ class EyevueGlassesService : Service() {
         val file = File(directory, "capture-${System.currentTimeMillis()}.jpg")
         file.writeBytes(bytes)
         val requestedCapture = pendingPhoto.getAndSet(null)
-        snapshot.lastPhotoPath?.let { old -> runCatching { File(old).delete() } }
+        snapshot.lastPhotoPath?.let { old -> deleteFileWithRetry(old, "replacement") }
         snapshot = snapshot.copy(lastPhotoPath = file.absolutePath)
         requestedCapture?.latch?.countDown()
         val origin = if (requestedCapture == null) "camera_button" else "jarvis_request"
@@ -374,14 +383,42 @@ class EyevueGlassesService : Service() {
                     .put("origin", origin)
                     .toString(),
             )
-            // The server normally discards this exact path when the camera-button
-            // turn finishes. This device-local TTL is the privacy fallback when
-            // the WebSocket disconnects before that cleanup op can arrive.
-            android.os.Handler(mainLooper).postDelayed({
-                if (discardTemporaryPhoto(file.absolutePath)) {
-                    DaemonLog.add("eyevue: expired camera-button temporary photo after ${CAMERA_BUTTON_PHOTO_TTL_MS}ms")
+        }
+        // All phone-side copies are bounded. Camera-button turns normally delete
+        // sooner through the server's exact-path cleanup; requested photos retain
+        // a short window for visual follow-ups or the user's save destination.
+        scheduleTemporaryPhotoExpiry(file.absolutePath, origin)
+    }
+
+    private fun scheduleTemporaryPhotoExpiry(path: String, origin: String, attempt: Int = 0) {
+        val delayMs = if (attempt == 0) TEMPORARY_PHOTO_TTL_MS else PHOTO_DELETE_RETRY_MS
+        android.os.Handler(mainLooper).postDelayed({
+            when (discardTemporaryPhoto(path)) {
+                true -> DaemonLog.add("eyevue: expired $origin temporary photo after bounded retention")
+                false -> {
+                    if (attempt < PHOTO_DELETE_MAX_ATTEMPTS) {
+                        scheduleTemporaryPhotoExpiry(path, origin, attempt + 1)
+                    } else {
+                        DaemonLog.add("eyevue: temporary photo cleanup still failing after ${attempt + 1} attempts")
+                    }
                 }
-            }, CAMERA_BUTTON_PHOTO_TTL_MS)
+                null -> Unit
+            }
+        }, delayMs)
+    }
+
+    private fun deleteFileWithRetry(path: String, reason: String, attempt: Int = 0) {
+        val deleted = runCatching {
+            val file = File(path)
+            !file.exists() || file.delete()
+        }.getOrDefault(false)
+        if (deleted) return
+        if (attempt < PHOTO_DELETE_MAX_ATTEMPTS) {
+            android.os.Handler(mainLooper).postDelayed({
+                deleteFileWithRetry(path, reason, attempt + 1)
+            }, PHOTO_DELETE_RETRY_MS)
+        } else {
+            DaemonLog.add("eyevue: orphan cleanup failed reason=$reason after ${attempt + 1} attempts")
         }
     }
 
@@ -546,7 +583,10 @@ object EyevueCommandHandler {
             if (expectedPath == null) {
                 OpResult(false, error = "EYEVUE_IMAGE_PATH_REQUIRED: Refusing to discard an unspecified temporary photo.")
             } else {
-                OpResult(true, JSONObject().put("discarded", EyevueGlassesService.discardTemporaryPhoto(expectedPath)))
+                when (val discarded = EyevueGlassesService.discardTemporaryPhoto(expectedPath)) {
+                    false -> OpResult(false, error = "EYEVUE_IMAGE_DELETE_FAILED: The temporary photo remains queued for device-local cleanup.")
+                    else -> OpResult(true, JSONObject().put("discarded", discarded == true))
+                }
             }
         }
         else -> OpResult(false, error = "Unsupported eyeVue operation.")
