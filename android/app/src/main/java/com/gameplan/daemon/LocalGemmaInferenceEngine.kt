@@ -839,6 +839,7 @@ object LocalGemmaInferenceEngine {
     private fun publishEngineForRequest(active: ActiveRequest, engine: Engine) {
         val closeInQuarantine = synchronized(active.engineOwnershipLock) {
             if (active.deadlineExceeded.get()) {
+                if (engineState?.engine === engine) engineState = null
                 active.quarantineCloseClaimed.compareAndSet(false, true)
             } else {
                 active.engine = engine

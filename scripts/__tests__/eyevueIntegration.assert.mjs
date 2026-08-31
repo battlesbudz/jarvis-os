@@ -40,6 +40,7 @@ assert.match(inference, /visionDeadlineAtElapsedMs[\s\S]*remainingMs[\s\S]*futur
 assert.match(inference, /quarantineTimedOutNativeAttempt/);
 assert.match(inference, /catch \(_: TimeoutException\)[\s\S]*quarantineTimedOutNativeAttempt[\s\S]*active\.job\.cancel\(\)/);
 assert.match(inference, /publishEngineForRequest[\s\S]*engineOwnershipLock[\s\S]*quarantineCloseClaimed/);
+assert.match(inference, /deadlineExceeded\.get\(\)[\s\S]*engineState\?\.engine === engine[\s\S]*quarantineCloseClaimed/);
 assert.match(inference, /commitEngineStateForRequest[\s\S]*deadlineExceeded[\s\S]*engineState = state/);
 assert.match(inference, /releaseEngineForGeneration\(active, imagePaths\.isNotEmpty\(\), throwOnDeadline = true\)/);
 assert.match(inference, /future\.get\(remainingMs, TimeUnit\.MILLISECONDS\)[\s\S]*closeEngineAsync/);
