@@ -19,6 +19,7 @@ import {
   type AndroidNativeSpeechStatus,
 } from "@/lib/android-daemon-native";
 import { apiRequest, getApiUrl } from "@/lib/query-client";
+import { deriveEyeVueVoiceReadiness } from "@/lib/eyevue-setup";
 
 type AndroidDeviceControlCardProps = {
   serverConnected: boolean;
@@ -87,13 +88,19 @@ export function AndroidDeviceControlCard({
   const anyBusy = busy !== null;
   const alreadyConnected = healthy;
   const canDisconnect = !anyBusy && (nativeAvailable || !!onUnpair);
-  const nativeRecognitionReady = nativeSpeechStatus?.available === true && nativeSpeechStatus?.speechRecognitionAvailable !== false;
-  const wearableVoiceReady = nativeRecognitionReady && nativeSpeechStatus?.wearableAudioAvailable === true;
-  const wearableVoiceDetail = wearableVoiceReady
-    ? "Wearable microphone and speaker route ready."
-    : nativeRecognitionReady
-      ? nativeSpeechStatus?.wearableAudioMessage || "Connect eyeVue first, then verify Jarvis can use the glasses microphone and speaker."
-      : nativeSpeechStatus?.message || "Native speech recognition must be available before wearable voice can be ready.";
+  const eyeVueVoiceReadiness = deriveEyeVueVoiceReadiness({
+  nativeSpeechAvailable: nativeSpeechStatus?.available,
+  speechRecognitionAvailable: nativeSpeechStatus?.speechRecognitionAvailable,
+  speechMessage: nativeSpeechStatus?.message,
+  wearableAudioAvailable: nativeSpeechStatus?.wearableAudioAvailable,
+  wearableAudioDeviceName: nativeSpeechStatus?.wearableAudioDeviceName,
+  wearableAudioMessage: nativeSpeechStatus?.wearableAudioMessage,
+  eyevueConnected: status?.eyevueConnected,
+  eyevueDeviceName: status?.eyevueDeviceName,
+});
+const nativeRecognitionReady = eyeVueVoiceReadiness.nativeRecognitionReady;
+const wearableVoiceReady = eyeVueVoiceReadiness.ready;
+const wearableVoiceDetail = eyeVueVoiceReadiness.detail;
 
   const enableDeviceControl = useCallback(async () => {
     if (!AndroidDaemonNative || !nativeAvailable || anyBusy || alreadyConnected) return;
@@ -339,7 +346,7 @@ export function AndroidDeviceControlCard({
             label: "Connect eyeVue",
             detail: "Enable the eyeVue companion.",
             enabled: status?.eyevueConnected,
-            action: () => AndroidDaemonNative?.enableEyevue?.("") ?? Promise.resolve(),
+            action: async () => { await AndroidDaemonNative?.enableEyevue?.(""); },
           })} disabled={anyBusy || status?.eyevuePermissionGranted !== true || status?.eyevueConnected === true}>
             <Text style={styles.eyeVueStepNumber}>2</Text>
             <View style={styles.permissionCopy}>

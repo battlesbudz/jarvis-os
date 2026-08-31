@@ -62,11 +62,15 @@ internal class NativeTalkModePlaybackBridge(
 
             val initialRoute = WearableAudioRouteManager.snapshot(context)
             if (!initialRoute.available) {
+                // Ordinary phone-only Talk Mode must keep using Android TTS. The wearable
+                // recovery contract applies only when a wearable route existed for this turn.
                 wearableRequired = false
                 ensureTts { engine -> if (!tentativeInterruption) speakRemaining(engine) }
                 return@runOnMain
             }
 
+            // Recognition releases its route owner when the user's turn commits. Playback
+            // therefore owns the wearable independently for its complete audible lifetime.
             wearableRequired = true
             val routeOwner = "$WEARABLE_PLAYBACK_OWNER_PREFIX$ownerId"
             wearablePlaybackOwner = routeOwner
@@ -174,6 +178,8 @@ internal class NativeTalkModePlaybackBridge(
         }
         val route = WearableAudioRouteManager.snapshot(context)
         if (!route.active) {
+            // Stop before Android can continue the response through the phone. Resume from
+            // the last acknowledged speech range if the glasses route returns in time.
             generation += 1
             tts?.stop()
             baseOffset = acknowledgedOffset.coerceIn(0, spokenText.length)

@@ -119,6 +119,8 @@ const tests = [
   { file: "app/(tabs)/__tests__/chatAttachments.assert.ts" },
   { file: "app/(tabs)/__tests__/voiceApprovalGates.assert.ts" },
   { file: "app/(tabs)/__tests__/settingsAchievementsSection.assert.ts" },
+  { file: "lib/__tests__/eyevueSetup.test.ts" },
+  { file: "server/agent/__tests__/coachContextTurnIsolation.test.ts" },
   { file: "lib/__tests__/authNavigation.test.ts" },
   { file: "lib/__tests__/phoneGemmaRuntime.test.ts" },
   { file: "lib/__tests__/runtimeDiagnosticsUx.assert.ts" },
