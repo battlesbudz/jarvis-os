@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 const read = (path) => readFileSync(path, "utf8");
 const protocol = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/EyevueProtocol.kt");
 const service = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/EyevueGlassesService.kt");
+const boot = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/BootReceiver.kt");
 const inference = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/LocalGemmaInferenceEngine.kt");
 const wake = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/WakeWordService.kt");
 const manifest = read("android/app/src/main/AndroidManifest.xml");
@@ -26,8 +27,9 @@ assert.match(service, /fun start\([\s\S]*hasBluetoothPermission\(context\)[\s\S]
 assert.match(service, /ACCESS_FINE_LOCATION/);
 assert.match(service, /scheduleTemporaryPhotoExpiry\(file\.absolutePath, origin\)/);
 assert.match(service, /TEMPORARY_PHOTO_TTL_MS/);
-assert.match(service, /onCreate\(\)[\s\S]*purgeCachedPhotosOnStartup\(\)/);
-assert.match(service, /purgeCachedPhotosOnStartup[\s\S]*startup_sweep/);
+assert.match(service, /fun start\([\s\S]*purgeTemporaryPhotos\(context, "pre_service_start"\)[\s\S]*hasBluetoothPermission\(context\)/);
+assert.match(service, /onCreate\(\)[\s\S]*purgeTemporaryPhotos\(this, "service_start"\)/);
+assert.match(boot, /purgeTemporaryPhotos\(context, "boot"\)[\s\S]*EyevueGlassesService\.start\(context\)/);
 assert.match(service, /!file\.exists\(\) \|\| file\.delete\(\)[\s\S]*if \(!deleted\)[\s\S]*return false/);
 assert.match(wake, /ACTION_EXTERNAL_WAKE/);
 assert.match(wake, /ACTION_EXTERNAL_WAKE[\s\S]*enteringTalkMode[\s\S]*destroyRecognizer\(\)[\s\S]*startListening\(\)/);
@@ -36,13 +38,17 @@ assert.match(inference, /15_000L/);
 assert.match(inference, /30_000L/);
 assert.match(inference, /visionDeadlineAtElapsedMs[\s\S]*remainingMs[\s\S]*future\.get\(remainingMs, TimeUnit\.MILLISECONDS\)/);
 assert.match(inference, /quarantineTimedOutNativeAttempt/);
+assert.match(inference, /catch \(_: TimeoutException\)[\s\S]*quarantineTimedOutNativeAttempt[\s\S]*active\.job\.cancel\(\)/);
+assert.match(inference, /publishEngineForRequest[\s\S]*engineOwnershipLock[\s\S]*quarantineCloseClaimed/);
+assert.match(inference, /commitEngineStateForRequest[\s\S]*deadlineExceeded[\s\S]*engineState = state/);
 assert.match(inference, /releaseEngineForGeneration\(active, imagePaths\.isNotEmpty\(\), throwOnDeadline = true\)/);
 assert.match(inference, /future\.get\(remainingMs, TimeUnit\.MILLISECONDS\)[\s\S]*closeEngineAsync/);
 assert.match(inference, /closeTimedOut[\s\S]*active\.engine = null[\s\S]*executor\.shutdown\(\)/);
 assert.doesNotMatch(inference, /catch \(_: TimeoutException\)[\s\S]{0,500}future\.cancel\(true\)[\s\S]{0,500}closeEngineAsync/);
+assert.doesNotMatch(inference, /catch \(e: LocalGemmaDeadlineExceededException\)[\s\S]{0,200}\.close\(\)/);
 assert.match(inference, /catch \(e: Throwable\)[\s\S]*abortRequested\(\)[\s\S]*LocalGemmaDeadlineExceededException/);
 assert.match(inference, /conversation\.cancelProcess\(\)/);
-assert.match(inference, /stalledEngine\.close\(\)/);
+assert.match(inference, /stalledEngine\?\.let \{ closeEngineAsync\(it, active\.requestId\) \}/);
 assert.match(inference, /visionBackend/);
 assert.match(manifest, /BLUETOOTH_SCAN/);
 assert.match(manifest, /foregroundServiceType="connectedDevice"/);
@@ -55,7 +61,7 @@ assert.match(nativeModule, /Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.S[\
 assert.match(bridge, /android_eyevue_discard_photo/);
 assert.match(bridge, /processDaemonUtterance\([\s\S]*\.finally\(async \(\) =>[\s\S]*android_eyevue_discard_photo/);
 
-for (const name of ["EyevueProtocol.kt", "EyevueGlassesService.kt"]) {
+for (const name of ["BootReceiver.kt", "EyevueProtocol.kt", "EyevueGlassesService.kt", "LocalGemmaInferenceEngine.kt"]) {
   assert.equal(
     read(`plugins/android-daemon-native/src/main/java/com/gameplan/daemon/${name}`),
     read(`android/app/src/main/java/com/gameplan/daemon/${name}`),

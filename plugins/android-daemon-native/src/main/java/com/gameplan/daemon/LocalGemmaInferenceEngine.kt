@@ -722,10 +722,11 @@ object LocalGemmaInferenceEngine {
                         memorySnapshot(context),
                         engineLock = attemptEngineMutex,
                         abortRequested = active.deadlineExceeded::get,
-                        onEngineCreated = { active.engine = it },
+                        onEngineCreated = { publishEngineForRequest(active, it) },
+                        onEngineReleased = { clearEngineForRequest(active, it) },
+                        commitEngineState = { commitEngineStateForRequest(active, it) },
                     )
                     if (active.deadlineExceeded.get()) throw LocalGemmaDeadlineExceededException()
-                    active.engine = resolvedEngine.engine
                     resolvedBackendName = resolvedEngine.backendName
                     onEngineResolved(resolvedBackendName, resolvedEngine.speculativeDecodingEnabled)
                     resolvedEngine.engine.createConversation(buildConversationConfig(systemInstruction, topK, topP, temperature))
@@ -764,10 +765,9 @@ object LocalGemmaInferenceEngine {
                 future.get()
             }
         } catch (_: TimeoutException) {
-            active.deadlineExceeded.set(true)
+            quarantineTimedOutNativeAttempt(active, attemptGenerationMutex, attemptEngineMutex)
             active.job.cancel()
             future.cancel(true)
-            quarantineTimedOutNativeAttempt(active, attemptGenerationMutex, attemptEngineMutex)
             throw LocalGemmaDeadlineExceededException()
         } catch (e: ExecutionException) {
             throw e.cause ?: e
@@ -812,9 +812,19 @@ object LocalGemmaInferenceEngine {
         stalledGenerationMutex: Mutex,
         stalledEngineMutex: Mutex,
     ) {
+        val stalledEngine = synchronized(active.engineOwnershipLock) {
+            active.deadlineExceeded.set(true)
+            val publishedEngine = active.engine
+            if (engineState?.engine === publishedEngine) engineState = null
+            active.engine = null
+            if (publishedEngine != null && active.quarantineCloseClaimed.compareAndSet(false, true)) {
+                publishedEngine
+            } else {
+                null
+            }
+        }
         generationMutex.compareAndSet(stalledGenerationMutex, Mutex())
         engineMutex.compareAndSet(stalledEngineMutex, Mutex())
-        engineState = null
 
         active.conversation?.let { conversation ->
             Thread({ runCatching { conversation.cancelProcess() } }, "jarvis-local-gemma-timeout-cancel").apply {
@@ -822,16 +832,37 @@ object LocalGemmaInferenceEngine {
                 start()
             }
         }
-        active.engine?.let { stalledEngine ->
-            Thread({ runCatching { stalledEngine.close() } }, "jarvis-local-gemma-timeout-close").apply {
-                isDaemon = true
-                start()
+        stalledEngine?.let { closeEngineAsync(it, active.requestId) }
+        DaemonLog.add("local_gemma: quarantined timed-out native request=${shortRequestId(active.requestId)}")
+    }
+
+    private fun publishEngineForRequest(active: ActiveRequest, engine: Engine) {
+        val closeInQuarantine = synchronized(active.engineOwnershipLock) {
+            if (active.deadlineExceeded.get()) {
+                active.quarantineCloseClaimed.compareAndSet(false, true)
+            } else {
+                active.engine = engine
+                false
             }
         }
-        // Ownership of this engine has moved to the single quarantine close
-        // task above. Final cleanup must not close the same native object again.
-        active.engine = null
-        DaemonLog.add("local_gemma: quarantined timed-out native request=${shortRequestId(active.requestId)}")
+        if (closeInQuarantine) closeEngineAsync(engine, active.requestId)
+    }
+
+    private fun clearEngineForRequest(active: ActiveRequest, engine: Engine) {
+        synchronized(active.engineOwnershipLock) {
+            if (active.engine === engine) active.engine = null
+        }
+    }
+
+    private fun commitEngineStateForRequest(active: ActiveRequest, state: EngineState): Boolean {
+        return synchronized(active.engineOwnershipLock) {
+            if (active.deadlineExceeded.get()) {
+                false
+            } else {
+                engineState = state
+                true
+            }
+        }
     }
 
     private fun memorySnapshot(context: Context): MemorySnapshot {
@@ -1013,6 +1044,11 @@ object LocalGemmaInferenceEngine {
         engineLock: Mutex = engineMutex.get(),
         abortRequested: () -> Boolean = { false },
         onEngineCreated: (Engine) -> Unit = {},
+        onEngineReleased: (Engine) -> Unit = {},
+        commitEngineState: (EngineState) -> Boolean = { state ->
+            engineState = state
+            true
+        },
     ): EngineState {
         val candidateBackends = backendCandidates(backendName, memory, allowCpuFallback)
         val reusableBackends = reusableBackendsFor(backendName, candidateBackends)
@@ -1058,33 +1094,30 @@ object LocalGemmaInferenceEngine {
                         engine = initializedEngine
                         onEngineCreated(initializedEngine)
                         if (abortRequested()) {
-                            runCatching { initializedEngine.close() }
                             throw LocalGemmaDeadlineExceededException()
                         }
                         initializedEngine.initialize()
                         if (abortRequested()) {
-                            runCatching { initializedEngine.close() }
                             throw LocalGemmaDeadlineExceededException()
                         }
                         val nextState = EngineState(modelPath, modelRevision, candidateBackendName, speculativeDecodingEnabled, cachePolicy, contextTokens, initializedEngine)
-                        engineState = nextState
+                        if (!commitEngineState(nextState)) throw LocalGemmaDeadlineExceededException()
                         lastEngineError = null
                         previousEngine?.let { previous ->
                             try { previous.close() } catch (_: Throwable) {}
                         }
                         return@withLock nextState
                     } catch (e: LocalGemmaDeadlineExceededException) {
-                        engine?.let { failedEngine -> runCatching { failedEngine.close() } }
                         throw e
                     } catch (e: Throwable) {
                         if (abortRequested()) {
-                            engine?.let { failedEngine -> runCatching { failedEngine.close() } }
                             throw LocalGemmaDeadlineExceededException()
                         }
                         lastFailure = e
                         failures.add("$candidateBackendName: ${decodingModeName(speculativeDecodingEnabled)}: ${formatEngineError(e)}")
                         engine?.let { failedEngine ->
                             try { failedEngine.close() } catch (_: Throwable) {}
+                            onEngineReleased(failedEngine)
                         }
                     }
                 }
@@ -1282,5 +1315,7 @@ object LocalGemmaInferenceEngine {
         @Volatile var conversation: Conversation? = null,
         @Volatile var engine: Engine? = null,
         val deadlineExceeded: AtomicBoolean = AtomicBoolean(false),
+        val engineOwnershipLock: Any = Any(),
+        val quarantineCloseClaimed: AtomicBoolean = AtomicBoolean(false),
     )
 }

@@ -124,7 +124,34 @@ class EyevueGlassesService : Service() {
             else -> true
         }
 
+        fun purgeTemporaryPhotos(context: Context, reason: String) {
+            val directory = File(context.cacheDir, "eyevue")
+            directory.listFiles()?.filter { it.isFile }?.forEach { cachedPhoto ->
+                deleteCachedFileWithRetry(context, cachedPhoto.absolutePath, reason)
+            }
+            snapshot = snapshot.copy(lastPhotoPath = null)
+            DaemonLog.add("eyevue: temporary-photo cache sweep requested reason=$reason")
+        }
+
+        private fun deleteCachedFileWithRetry(context: Context, path: String, reason: String, attempt: Int = 0) {
+            val deleted = runCatching {
+                val file = File(path)
+                !file.exists() || file.delete()
+            }.getOrDefault(false)
+            if (deleted) return
+            if (attempt < PHOTO_DELETE_MAX_ATTEMPTS) {
+                android.os.Handler(context.mainLooper).postDelayed({
+                    deleteCachedFileWithRetry(context, path, reason, attempt + 1)
+                }, PHOTO_DELETE_RETRY_MS)
+            } else {
+                DaemonLog.add("eyevue: cache sweep failed reason=$reason after ${attempt + 1} attempts")
+            }
+        }
+
         fun start(context: Context, address: String? = null): Boolean {
+            // Cleanup must not depend on BLE permission: a process restart plus
+            // revoked permission must still remove prior temporary captures.
+            if (instance == null) purgeTemporaryPhotos(context, "pre_service_start")
             if (!hasBluetoothPermission(context)) {
                 snapshot = snapshot.copy(connected = false, lastError = "Nearby devices permission is required before enabling eyeVue.")
                 DaemonLog.add("eyevue: foreground service start blocked until Nearby Devices is granted")
@@ -156,7 +183,7 @@ class EyevueGlassesService : Service() {
         super.onCreate()
         instance = this
         createChannel()
-        purgeCachedPhotosOnStartup()
+        purgeTemporaryPhotos(this, "service_start")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -421,15 +448,6 @@ class EyevueGlassesService : Service() {
         } else {
             DaemonLog.add("eyevue: orphan cleanup failed reason=$reason after ${attempt + 1} attempts")
         }
-    }
-
-    private fun purgeCachedPhotosOnStartup() {
-        val directory = File(cacheDir, "eyevue")
-        directory.listFiles()?.filter { it.isFile }?.forEach { cachedPhoto ->
-            deleteFileWithRetry(cachedPhoto.absolutePath, "startup_sweep")
-        }
-        snapshot = snapshot.copy(lastPhotoPath = null)
-        DaemonLog.add("eyevue: startup temporary-photo cache sweep completed")
     }
 
     private fun runCommand(name: String, waitForPhoto: Boolean): OpResult {
