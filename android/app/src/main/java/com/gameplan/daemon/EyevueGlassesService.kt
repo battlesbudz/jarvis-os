@@ -33,6 +33,8 @@ import java.util.concurrent.atomic.AtomicReference
 
 private data class PendingEyevuePhotoRequest(
     val latch: CountDownLatch?,
+    val timedOut: AtomicBoolean = AtomicBoolean(false),
+    val failure: AtomicReference<String?> = AtomicReference(null),
 )
 
 data class EyevueSnapshot(
@@ -75,7 +77,7 @@ class EyevueGlassesService : Service() {
         private const val CHANNEL = "jarvis_eyevue_connection"
         private const val NOTIFICATION_ID = 3014
         private const val RECONNECT_MS = 5_000L
-        private const val PHOTO_REQUEST_ORIGIN_RETENTION_MS = 35_000L
+        private const val PHOTO_LATE_RESPONSE_QUARANTINE_MS = 60_000L
         private const val TEMPORARY_PHOTO_TTL_MS = 5 * 60_000L
         private const val PHOTO_DELETE_RETRY_MS = 30_000L
         private const val PHOTO_DELETE_MAX_ATTEMPTS = 3
@@ -336,10 +338,12 @@ class EyevueGlassesService : Service() {
 
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+            if (this@EyevueGlassesService.gatt !== gatt) return
             handleNotification(characteristic, characteristic.value.copyOf())
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, value: ByteArray) {
+            if (this@EyevueGlassesService.gatt !== gatt) return
             handleNotification(characteristic, value.copyOf())
         }
     }
@@ -393,10 +397,28 @@ class EyevueGlassesService : Service() {
     }
 
     private fun saveCapturedPhoto(bytes: ByteArray) {
-        val directory = File(cacheDir, "eyevue").apply { mkdirs() }
-        val file = File(directory, "capture-${System.currentTimeMillis()}.jpg")
-        file.writeBytes(bytes)
         val requestedCapture = pendingPhoto.getAndSet(null)
+        if (requestedCapture?.timedOut?.get() == true) {
+            requestedCapture.latch?.countDown()
+            DaemonLog.add("eyevue: discarded quarantined AA15 response from timed-out request")
+            return
+        }
+        val directory = File(cacheDir, "eyevue")
+        val file = File(directory, "capture-${System.currentTimeMillis()}.jpg")
+        try {
+            if ((!directory.exists() && !directory.mkdirs()) || !directory.isDirectory) {
+                throw IllegalStateException("eyeVue cache directory is unavailable")
+            }
+            file.writeBytes(bytes)
+        } catch (error: Throwable) {
+            runCatching { file.delete() }
+            val failure = "EYEVUE_IMAGE_CACHE_WRITE_FAILED: The temporary image could not be stored on this device. Free space and retry."
+            requestedCapture?.failure?.set(failure)
+            requestedCapture?.latch?.countDown()
+            snapshot = snapshot.copy(lastError = failure)
+            DaemonLog.add("eyevue: photo cache write failed: ${error.message}")
+            return
+        }
         snapshot.lastPhotoPath?.let { old -> deleteFileWithRetry(old, "replacement") }
         snapshot = snapshot.copy(lastPhotoPath = file.absolutePath)
         requestedCapture?.latch?.countDown()
@@ -469,16 +491,24 @@ class EyevueGlassesService : Service() {
         }
         if (photoRequest != null) {
             android.os.Handler(mainLooper).postDelayed({
-                pendingPhoto.compareAndSet(photoRequest, null)
-            }, PHOTO_REQUEST_ORIGIN_RETENTION_MS)
+                if (pendingPhoto.compareAndSet(photoRequest, null)) {
+                    photoRequest.timedOut.set(true)
+                    photoAssembler.reset()
+                    closeConnection()
+                    updateError("eyeVue photo response timed out; reconnecting before another capture.")
+                    scheduleConnect(RECONNECT_MS)
+                }
+            }, PHOTO_LATE_RESPONSE_QUARANTINE_MS)
         }
         if (!writePacket(packet)) {
             photoRequest?.let { pendingPhoto.compareAndSet(it, null) }
             return OpResult(false, error = "EYEVUE_WRITE_FAILED: The command could not be sent.")
         }
         if (latch != null && !latch.await(30, TimeUnit.SECONDS)) {
+            photoRequest?.timedOut?.set(true)
             return OpResult(false, error = "EYEVUE_PHOTO_TIMEOUT: No image arrived within 30 seconds. Ask whether to save/retry or use cloud vision.")
         }
+        photoRequest?.failure?.get()?.let { return OpResult(false, error = it) }
         return OpResult(true, status(this).json().put("command", name).put("savePromptRequired", name in setOf("photo", "video_stop", "audio_stop")))
     }
 
@@ -528,6 +558,7 @@ class EyevueGlassesService : Service() {
         write = null
         notify = null
         photoNotify = null
+        photoAssembler.reset()
         connecting.set(false)
         snapshot = snapshot.copy(connected = false)
     }

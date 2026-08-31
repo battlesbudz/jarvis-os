@@ -86,6 +86,11 @@ class EyevueFrameDecoder {
 class EyevuePhotoAssembler {
     private val image = ByteArrayOutputStream()
     private var active = false
+    fun reset() {
+        active = false
+        image.reset()
+    }
+
     fun append(packet: ByteArray): ByteArray? {
         if (packet.size < 8) return null
         return when (packet[4].toInt() and 0xff) {

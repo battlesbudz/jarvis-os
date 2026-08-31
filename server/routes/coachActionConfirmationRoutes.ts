@@ -5,7 +5,8 @@ import { getTool } from "../agent/tools/index";
 import type { ToolContext } from "../agent/types";
 import { createApprovalReceipt } from "../agent/approvalReceipt";
 import { recordPhoneRuntimeToolResult } from "../agent/phoneRuntimeOperationStore";
-import { eyevueCaptureApprovalText } from "../agent/approvalToolRisk";
+import { eyevueCaptureApprovalText, isEyevueCaptureAction } from "../agent/approvalToolRisk";
+import { getCoachAppAgentId } from "../agent/coreAgentIds";
 
 export type PendingConfirmation = {
   userId: string;
@@ -13,8 +14,6 @@ export type PendingConfirmation = {
   args: any;
   expiresAt: number;
   operationId?: string;
-  /** Durable approval gate created before a wearable capture confirmation is shown. */
-  approvalGateId?: string;
 };
 
 type CoachToolResult = {
@@ -95,25 +94,27 @@ export async function executePendingCoachAction({
   }
   pendingConfirmations.delete(token);
   let durableApprovalReceipt: ToolContext["approvalReceipt"];
-  if (pending.approvalGateId) {
-    const { approveGate, getGate } = await import("../agent/agentApproval");
-    const gateBeforeApproval = await getGate(pending.approvalGateId);
-    if (
-      gateBeforeApproval?.userId !== userId ||
-      gateBeforeApproval.expiresAt.getTime() <= Date.now() ||
-      !["pending", "approved"].includes(gateBeforeApproval.status)
-    ) {
-      throw confirmationError("Durable approval could not be recorded", 409);
-    }
-    if (gateBeforeApproval.status === "pending" && !(await approveGate(pending.approvalGateId, userId))) {
+  if (isEyevueCaptureAction(pending.tool, pending.args)) {
+    const { requestApproval, approveGate, getGate } = await import("../agent/agentApproval");
+    const createdGate = await requestApproval({
+      agentId: getCoachAppAgentId(userId),
+      userId,
+      toolName: pending.tool,
+      toolArgs: pending.args,
+      description: `Approved ${eyevueCaptureApprovalText(pending.tool, pending.args) ?? "eyeVue capture"} from app chat.`,
+      ttlMs: 5 * 60 * 1000,
+      initiatedBy: "user",
+      suppressDeliverable: true,
+    });
+    if (createdGate.status === "pending" && !(await approveGate(createdGate.id, userId))) {
       throw confirmationError("Durable approval expired before it could be recorded", 409);
     }
-    const gate = await getGate(pending.approvalGateId);
+    const gate = await getGate(createdGate.id);
     if (gate?.userId !== userId || gate.status !== "approved" || gate.expiresAt.getTime() <= Date.now()) {
       throw confirmationError("Durable approval is no longer valid", 409);
     }
     durableApprovalReceipt = createApprovalReceipt({
-      gateId: pending.approvalGateId,
+      gateId: gate.id,
       userId,
       toolName: pending.tool,
       originalUserText: eyevueCaptureApprovalText(pending.tool, pending.args) ?? String(pending.args?.action || pending.tool),
@@ -211,10 +212,6 @@ export function registerCoachActionConfirmationRoutes(
           if (tool === "send_email") preview = { to: a.to || "", subject: a.subject || "" };
           else if (tool === "connected_accounts_execute") preview = { action: a.tool_slug || a.toolSlug || "", platform: a.platform || "" };
           else preview = { action: a.action || "", cmd: a.cmd || "", path: a.path || "" };
-          if (pending.approvalGateId) {
-            const { rejectGate } = await import("../agent/agentApproval");
-            await rejectGate(pending.approvalGateId, userId);
-          }
           pendingConfirmations.delete(token);
         }
       }

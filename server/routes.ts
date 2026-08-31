@@ -2736,29 +2736,12 @@ You can extend yourself by building new tools directly. Generate the complete Ty
                 if (args.content) preview.content = String(args.content).slice(0, 200);
               }
               const confirmToken = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
-              let durableApprovalGateId: string | undefined;
-              let durableApprovalExpiresAtMs: number | undefined;
-              if (eyeVueCaptureApprovalRequired) {
-                const { requestApproval } = await import("./agent/agentApproval");
-                const gate = await requestApproval({
-                  agentId: getCoachAppAgentId(userId),
-                  userId,
-                  toolName: tc.function.name,
-                  toolArgs: args,
-                  description: `Approve eyeVue ${preview.capture || 'media'} capture from app chat.`,
-                  ttlMs: 5 * 60 * 1000,
-                  initiatedBy: "user",
-                });
-                durableApprovalGateId = gate.id;
-                durableApprovalExpiresAtMs = gate.expiresAt.getTime();
-              }
               pendingConfirmations.set(confirmToken, {
                 userId,
                 tool: tc.function.name,
                 args,
-                expiresAt: Math.min(Date.now() + 5 * 60 * 1000, durableApprovalExpiresAtMs ?? Number.POSITIVE_INFINITY),
+                expiresAt: Date.now() + 5 * 60 * 1000,
                 operationId: activePhoneRuntimeOperation?.id,
-                ...(durableApprovalGateId ? { approvalGateId: durableApprovalGateId } : {}),
               });
               const turnPersisted = attachmentContextPersisted;
               try {
@@ -3427,10 +3410,6 @@ You can extend yourself by building new tools directly. Generate the complete Ty
       const pending = pendingConfirmations.get(token);
       if (pending?.userId === userId) {
         handledConfirmation = true;
-        if (pending.approvalGateId) {
-          const { rejectGate } = await import("./agent/agentApproval");
-          await rejectGate(pending.approvalGateId, userId);
-        }
         pendingConfirmations.delete(token);
         await saveApprovalOutcome("Got it - I won't proceed with that action.");
       } else {

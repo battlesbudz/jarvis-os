@@ -37,6 +37,17 @@ class EyevueProtocolTest {
         assertArrayEquals(byteArrayOf(1, 2, 3), assembler.append(photoPacket(EyevueProtocol.CMD_PHOTO_END)))
     }
 
+    @Test
+    fun `reset quarantines an incomplete AA15 photo`() {
+        val assembler = EyevuePhotoAssembler()
+        assertNull(assembler.append(photoPacket(EyevueProtocol.CMD_WAKE_START)))
+        assertNull(assembler.append(photoPacket(EyevueProtocol.CMD_PHOTO_DATA, byteArrayOf(1, 2, 3))))
+
+        assembler.reset()
+
+        assertNull(assembler.append(photoPacket(EyevueProtocol.CMD_PHOTO_END)))
+    }
+
     private fun photoPacket(command: Int, image: ByteArray = byteArrayOf()): ByteArray {
         val packet = ByteArray(12 + image.size)
         packet[0] = 0xAB.toByte()
