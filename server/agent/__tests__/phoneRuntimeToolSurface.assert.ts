@@ -620,6 +620,8 @@ assert.doesNotMatch(approvalToolRiskSource.slice(irreversibleToolsStart), /\.\.\
 assert.doesNotMatch(approvalToolRiskSource, /isAndroidSubmitCapableAction/);
 assert.match(approvalToolRiskSource, /ANDROID_PHONE_RUNTIME_TOOL_NAMES\.includes[\s\S]{0,180}return false/);
 assert.match(approvalToolRiskSource, /startsWith\("android_"\)[\s\S]{0,100}return false/);
+assert.match(approvalToolRiskSource, /EYEVUE_CAPTURE_COMMANDS[\s\S]*android_eyevue_look[\s\S]*android_eyevue_command/);
+assert.match(approvalToolRiskSource, /isEyevueCaptureAction\(toolName, toolArgs\)\) return true/);
 assert.doesNotMatch(daemonActionSource, /Confirmation required before (?:sending|recording)/);
 assert.doesNotMatch(daemonActionSource, /approved:\s*\{\s*type:\s*["']boolean["']/);
 assert.doesNotMatch(daemonActionSource, /if \(!args\.approved\)/);

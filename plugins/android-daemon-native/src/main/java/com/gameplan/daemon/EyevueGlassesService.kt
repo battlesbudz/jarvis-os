@@ -621,13 +621,16 @@ object EyevueCommandHandler {
     }
 
     private fun look(context: Context, op: JSONObject): OpResult {
-        val takeNew = op.optBoolean("lookAgain", false) || EyevueGlassesService.status(context).lastPhotoPath.isNullOrBlank()
+        // Never turn a passive analysis request into an implicit camera action.
+        // The server approval gate only authorizes a fresh capture when
+        // lookAgain=true is present on the approved operation.
+        val takeNew = op.optBoolean("lookAgain", false)
         if (takeNew) {
             val capture = EyevueGlassesService.command(context, "photo", waitForPhoto = true)
             if (!capture.ok) return capture
         }
         val imagePath = EyevueGlassesService.status(context).lastPhotoPath
-            ?: return OpResult(false, error = "EYEVUE_IMAGE_UNAVAILABLE: Ask whether the user wants the image saved or wants to retry.")
+            ?: return OpResult(false, error = "EYEVUE_IMAGE_UNAVAILABLE: No current temporary image. A new wearable capture requires explicit approval; retry with lookAgain only after approval.")
         val prompt = op.optString("question", "").ifBlank {
             "Describe this scene at moderate detail. Lead with the main scene and important details. " +
                 "Call out immediate hazards or obstacles, important readable text, and people I may be interacting with. " +

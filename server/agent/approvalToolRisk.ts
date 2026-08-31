@@ -36,13 +36,24 @@ const HIGH_RISK_TOOLS = new Set([
   "delegate_to_codex",
 ]);
 
+const EYEVUE_CAPTURE_COMMANDS = new Set(["photo", "video_start", "audio_start"]);
+
+/** Wearable capture must have a durable human approval before daemon dispatch. */
+function isEyevueCaptureAction(toolName: string, toolArgs?: Record<string, unknown>): boolean {
+  if (toolName !== "daemon_action") return false;
+  const action = String(toolArgs?.action || "");
+  if (action === "android_eyevue_look") return toolArgs?.lookAgain === true;
+  return action === "android_eyevue_command" && EYEVUE_CAPTURE_COMMANDS.has(String(toolArgs?.command || ""));
+}
+
 /** Return true if this tool requires an approval gate before running. */
 export function requiresApproval(toolName: string, toolArgs?: Record<string, unknown>): boolean {
   if (ANDROID_PHONE_RUNTIME_TOOL_NAMES.includes(toolName as typeof ANDROID_PHONE_RUNTIME_TOOL_NAMES[number])) {
     return false;
   }
-  if (toolName === "daemon_action" && String(toolArgs?.action || "").startsWith("android_")) {
-    return false;
+  if (toolName === "daemon_action") {
+    if (isEyevueCaptureAction(toolName, toolArgs)) return true;
+    if (String(toolArgs?.action || "").startsWith("android_")) return false;
   }
   return HIGH_RISK_TOOLS.has(toolName);
 }
@@ -72,8 +83,9 @@ export function requiresHumanApproval(toolName: string, toolArgs?: Record<string
   if (ANDROID_PHONE_RUNTIME_TOOL_NAMES.includes(toolName as typeof ANDROID_PHONE_RUNTIME_TOOL_NAMES[number])) {
     return false;
   }
-  if (toolName === "daemon_action" && String(toolArgs?.action || "").startsWith("android_")) {
-    return false;
+  if (toolName === "daemon_action") {
+    if (isEyevueCaptureAction(toolName, toolArgs)) return true;
+    if (String(toolArgs?.action || "").startsWith("android_")) return false;
   }
   return STRICTLY_IRREVERSIBLE_TOOLS.has(toolName);
 }

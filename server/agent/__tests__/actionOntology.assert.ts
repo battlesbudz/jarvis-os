@@ -145,6 +145,18 @@ assert.equal(requiresApproval("android_tap_screen", { label: "Send message" }), 
 assert.equal(requiresHumanApproval("android_tap_screen", { label: "Send message" }), false, "submit-capable phone taps do not require human approval");
 assert.equal(requiresApproval("daemon_action", { action: "android_tap", label: "Send message" }), false, "Android daemon actions do not pause for approval");
 assert.equal(requiresHumanApproval("daemon_action", { action: "android_tap", label: "Send message" }), false, "Android daemon actions do not require human approval");
+for (const command of ["photo", "video_start", "audio_start"]) {
+  assert.equal(requiresApproval("daemon_action", { action: "android_eyevue_command", command }), true, `eyeVue ${command} requires approval`);
+  assert.equal(requiresHumanApproval("daemon_action", { action: "android_eyevue_command", command }), true, `eyeVue ${command} requires human approval`);
+}
+for (const command of ["battery", "storage", "video_stop", "audio_stop"]) {
+  assert.equal(requiresApproval("daemon_action", { action: "android_eyevue_command", command }), false, `eyeVue ${command} stays approval-free`);
+  assert.equal(requiresHumanApproval("daemon_action", { action: "android_eyevue_command", command }), false, `eyeVue ${command} stays human-gate-free`);
+}
+assert.equal(requiresApproval("daemon_action", { action: "android_eyevue_look" }), false, "current-image eyeVue analysis stays approval-free");
+assert.equal(requiresHumanApproval("daemon_action", { action: "android_eyevue_look" }), false, "current-image eyeVue analysis stays human-gate-free");
+assert.equal(requiresApproval("daemon_action", { action: "android_eyevue_look", lookAgain: true }), true, "fresh eyeVue look requires approval");
+assert.equal(requiresHumanApproval("daemon_action", { action: "android_eyevue_look", lookAgain: true }), true, "fresh eyeVue look requires human approval");
 assert.equal(requiresApproval("daemon_action", { action: "shell" }), true, "non-Android daemon actions remain gated");
 
 const inconsistentDeviceResolution = resolveToolsForAction({
