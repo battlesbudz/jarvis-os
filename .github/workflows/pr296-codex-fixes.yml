@@ -1,0 +1,128 @@
+name: PR 296 Codex blocker fixes
+
+on:
+  push:
+    branches:
+      - fix/eyevue-real-device-setup-audio-vision
+    paths:
+      - .github/workflows/pr296-codex-fixes.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fixes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/eyevue-real-device-setup-audio-vision
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply review fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          component = Path('components/androidDaemon/AndroidDeviceControlCard.tsx')
+          text = component.read_text()
+          import_anchor = 'import { apiRequest, getApiUrl } from "@/lib/query-client";\n'
+          helper_import = 'import { deriveEyeVueVoiceReadiness } from "@/lib/eyevue-setup";\n'
+          if helper_import not in text:
+              if import_anchor not in text:
+                  raise SystemExit('component import anchor missing')
+              text = text.replace(import_anchor, import_anchor + helper_import, 1)
+          old = '''  const nativeRecognitionReady = nativeSpeechStatus?.available === true && nativeSpeechStatus?.speechRecognitionAvailable !== false;
+          const wearableVoiceReady = nativeRecognitionReady && nativeSpeechStatus?.wearableAudioAvailable === true;
+          const wearableVoiceDetail = wearableVoiceReady
+            ? "Wearable microphone and speaker route ready."
+            : nativeRecognitionReady
+              ? nativeSpeechStatus?.wearableAudioMessage || "Connect eyeVue first, then verify Jarvis can use the glasses microphone and speaker."
+              : nativeSpeechStatus?.message || "Native speech recognition must be available before wearable voice can be ready.";'''
+          new = '''  const eyeVueVoiceReadiness = deriveEyeVueVoiceReadiness({
+            nativeSpeechAvailable: nativeSpeechStatus?.available,
+            speechRecognitionAvailable: nativeSpeechStatus?.speechRecognitionAvailable,
+            speechMessage: nativeSpeechStatus?.message,
+            wearableAudioAvailable: nativeSpeechStatus?.wearableAudioAvailable,
+            wearableAudioDeviceName: nativeSpeechStatus?.wearableAudioDeviceName,
+            wearableAudioMessage: nativeSpeechStatus?.wearableAudioMessage,
+            eyevueConnected: status?.eyevueConnected,
+            eyevueDeviceName: status?.eyevueDeviceName,
+          });
+          const wearableVoiceReady = eyeVueVoiceReadiness.ready;
+          const wearableVoiceDetail = eyeVueVoiceReadiness.detail;'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif 'deriveEyeVueVoiceReadiness({' not in text:
+              raise SystemExit('component readiness block missing')
+          component.write_text(text)
+
+          runner = Path('scripts/run-agent-tests.mjs')
+          text = runner.read_text()
+          anchor = '  { file: "lib/__tests__/authNavigation.test.ts" },\n'
+          additions = (
+              '  { file: "lib/__tests__/eyevueSetup.test.ts" },\n'
+              '  { file: "server/agent/__tests__/coachContextTurnIsolation.test.ts" },\n'
+          )
+          if additions[0] not in text or additions[1] not in text:
+              if anchor not in text:
+                  raise SystemExit('test runner anchor missing')
+              insertion = ''.join(line for line in additions if line not in text)
+              text = text.replace(anchor, insertion + anchor, 1)
+          runner.write_text(text)
+
+          integration = Path('scripts/__tests__/eyevueIntegration.assert.mjs')
+          text = integration.read_text()
+          variable_anchor = 'const settings = read("components/androidDaemon/AndroidDeviceControlCard.tsx");\n'
+          setup_var = 'const eyevueSetup = read("lib/eyevue-setup.ts");\n'
+          if setup_var not in text:
+              if variable_anchor not in text:
+                  raise SystemExit('integration variable anchor missing')
+              text = text.replace(variable_anchor, variable_anchor + setup_var, 1)
+          old_asserts = '''assert.match(settings, /nativeRecognitionReady[\\s\\S]*nativeSpeechStatus\\?\\.available === true[\\s\\S]*speechRecognitionAvailable !== false/);
+          assert.match(settings, /wearableVoiceReady[\\s\\S]*nativeRecognitionReady[\\s\\S]*wearableAudioAvailable === true/);
+          assert.match(settings, /wearableVoiceDetail[\\s\\S]*nativeSpeechStatus\\?\\.message/);'''
+          new_asserts = '''assert.match(settings, /deriveEyeVueVoiceReadiness\\(\\{/);
+          assert.match(settings, /wearableAudioDeviceName: nativeSpeechStatus\\?\\.wearableAudioDeviceName/);
+          assert.match(settings, /eyevueDeviceName: status\\?\\.eyevueDeviceName/);
+          assert.match(eyevueSetup, /eyeVueAudioEndpointMatches[\\s\\S]*eyevue === audio/);
+          assert.match(eyevueSetup, /ready =[\\s\\S]*wearableAudioAvailable === true[\\s\\S]*endpointMatches/);'''
+          if old_asserts in text:
+              text = text.replace(old_asserts, new_asserts, 1)
+          elif 'assert.match(eyevueSetup, /eyeVueAudioEndpointMatches' not in text:
+              raise SystemExit('integration setup assertions missing')
+          text = text.replace(
+              'assert.match(playback, /cancelWearableRecoveryWait\\(\\)[\\s\\S]*WearableAudioRouteManager\\.release/);',
+              'assert.match(playback, /cancelWearableRouteCheck\\(\\)[\\s\\S]*WearableAudioRouteManager\\.release/);\nassert.match(playback, /if \\(!initialRoute\\.available\\)[\\s\\S]*ensureTts/);\nassert.match(playback, /monitorWearableRoute[\\s\\S]*!route\\.active[\\s\\S]*tts\\?\\.stop\\(\\)[\\s\\S]*waitForWearableRoute/);',
+          )
+          integration.write_text(text)
+          PY
+
+          cp plugins/android-daemon-native/src/main/java/com/gameplan/daemon/NativeTalkModePlaybackBridge.kt \
+             android/app/src/main/java/com/gameplan/daemon/NativeTalkModePlaybackBridge.kt
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate focused regressions
+        run: |
+          npm run jarvis:android-daemon:config-check
+          node scripts/__tests__/eyevueIntegration.assert.mjs
+          npx tsx lib/__tests__/eyevueSetup.test.ts
+          npx tsx server/agent/__tests__/coachContextTurnIsolation.test.ts
+          npx tsc --noEmit --pretty false
+          git diff --check
+
+      - name: Commit fixes and remove one-shot workflow
+        run: |
+          git rm .github/workflows/pr296-codex-fixes.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add components/androidDaemon/AndroidDeviceControlCard.tsx scripts/run-agent-tests.mjs scripts/__tests__/eyevueIntegration.assert.mjs android/app/src/main/java/com/gameplan/daemon/NativeTalkModePlaybackBridge.kt lib/eyevue-setup.ts lib/__tests__/eyevueSetup.test.ts server/agent/__tests__/coachContextTurnIsolation.test.ts
+          git commit -m 'Fix PR 296 Codex blockers'
+          git push origin HEAD:fix/eyevue-real-device-setup-audio-vision
