@@ -173,7 +173,7 @@ class EyevueGlassesService : Service() {
     private val decoder = EyevueFrameDecoder()
     private val photoAssembler = EyevuePhotoAssembler()
     private val pendingPhoto = AtomicReference<PendingEyevuePhotoRequest?>(null)
-    private var gatt: BluetoothGatt? = null
+    @Volatile private var gatt: BluetoothGatt? = null
     private var write: BluetoothGattCharacteristic? = null
     private var notify: BluetoothGattCharacteristic? = null
     private var photoNotify: BluetoothGattCharacteristic? = null
@@ -292,18 +292,24 @@ class EyevueGlassesService : Service() {
     private val callback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(callbackGatt: BluetoothGatt, status: Int, newState: Int) {
+            if (this@EyevueGlassesService.gatt !== callbackGatt) return
             if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
-                callbackGatt.discoverServices()
+                if (!callbackGatt.discoverServices()) {
+                    failGattSetup(callbackGatt, "eyeVue service discovery could not be started; reconnecting.")
+                }
             } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                 closeConnection()
                 snapshot = snapshot.copy(connected = false, lastError = if (status == 0) null else "Bluetooth disconnected ($status).")
                 updateNotification("eyeVue disconnected; reconnecting…")
                 scheduleConnect(RECONNECT_MS)
+            } else if (status != BluetoothGatt.GATT_SUCCESS) {
+                failGattSetup(callbackGatt, "eyeVue connection failed ($status); reconnecting.")
             }
         }
 
         @SuppressLint("MissingPermission")
         override fun onServicesDiscovered(callbackGatt: BluetoothGatt, status: Int) {
+            if (this@EyevueGlassesService.gatt !== callbackGatt) return
             val service = callbackGatt.getService(EyevueProtocol.SERVICE_UUID)
             write = service?.getCharacteristic(EyevueProtocol.COMMAND_WRITE_UUID)
             notify = service?.getCharacteristic(EyevueProtocol.COMMAND_NOTIFY_UUID)
@@ -319,6 +325,7 @@ class EyevueGlassesService : Service() {
 
         @SuppressLint("MissingPermission")
         override fun onDescriptorWrite(callbackGatt: BluetoothGatt, descriptor: BluetoothGattDescriptor, status: Int) {
+            if (this@EyevueGlassesService.gatt !== callbackGatt) return
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 failGattSetup(callbackGatt, "eyeVue notification setup failed ($status); reconnecting.")
                 return
@@ -411,7 +418,7 @@ class EyevueGlassesService : Service() {
             }
             file.writeBytes(bytes)
         } catch (error: Throwable) {
-            runCatching { file.delete() }
+            deleteFileWithRetry(file.absolutePath, "partial-cache-write")
             val failure = "EYEVUE_IMAGE_CACHE_WRITE_FAILED: The temporary image could not be stored on this device. Free space and retry."
             requestedCapture?.failure?.set(failure)
             requestedCapture?.latch?.countDown()
@@ -491,10 +498,10 @@ class EyevueGlassesService : Service() {
         }
         if (photoRequest != null) {
             android.os.Handler(mainLooper).postDelayed({
-                if (pendingPhoto.compareAndSet(photoRequest, null)) {
+                if (pendingPhoto.get() === photoRequest) {
                     photoRequest.timedOut.set(true)
-                    photoAssembler.reset()
                     closeConnection()
+                    pendingPhoto.compareAndSet(photoRequest, null)
                     updateError("eyeVue photo response timed out; reconnecting before another capture.")
                     scheduleConnect(RECONNECT_MS)
                 }
@@ -539,11 +546,11 @@ class EyevueGlassesService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun failGattSetup(callbackGatt: BluetoothGatt, message: String) {
-        if (gatt === callbackGatt) {
-            closeConnection()
-        } else {
+        if (gatt !== callbackGatt) {
             runCatching { callbackGatt.disconnect(); callbackGatt.close() }
+            return
         }
+        closeConnection()
         updateError(message)
         scheduleConnect(RECONNECT_MS)
     }
