@@ -133,6 +133,7 @@ assert.match(service, /device\.createBond\(\)/);
 assert.match(connectCard, /scanAndroidEyevueDevices/);
 assert.match(connectCard, /devices\.map\(device/);
 assert.match(connectCard, /enableAndroidEyevue\(device\.address\)/);
+assert.match(connectCard, /disconnectAndroidEyevue\(\)[\s\S]*enableAndroidEyevue\(device\.address\)/);
 assert.match(connectCard, /Choose Jarvis as assistant/);
 assert.match(connectCard, /assistantActive/);
 assert.match(settingsScreen, /Jarvis OS Device Control[\s\S]*<EyevueConnectCard \/>/);

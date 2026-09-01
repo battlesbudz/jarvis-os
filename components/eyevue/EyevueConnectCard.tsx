@@ -14,6 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import Colors from "@/constants/colors";
 import {
   AndroidDaemonNative,
+  disconnectAndroidEyevue,
   enableAndroidEyevue,
   getAndroidDaemonStatus,
   scanAndroidEyevueDevices,
@@ -78,8 +79,11 @@ export function EyevueConnectCard() {
   }), [run, status?.eyevuePermissionGranted]);
 
   const connect = useCallback((device: AndroidEyevueDevice) => run("connect", async () => {
+    // Explicitly tear down the current GATT session before switching selections.
+    // The native service will otherwise keep the old GATT while persisting the new address.
+    if (status?.eyevueConnected === true) await disconnectAndroidEyevue();
     await enableAndroidEyevue(device.address);
-  }), [run]);
+  }), [run, status?.eyevueConnected]);
 
   const chooseAssistant = useCallback(() => run("assistant", async () => {
     if (!AndroidDaemonNative?.openAssistantSettings) throw new Error("Android assistant settings are unavailable in this APK.");
