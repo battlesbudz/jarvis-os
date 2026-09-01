@@ -11,6 +11,7 @@ import android.os.Looper
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * One-shot, user-facing BLE discovery for the eyeVue setup flow.
@@ -23,6 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 object EyevueDeviceScanner {
     private const val SCAN_DURATION_MS = 8_000L
     private val scanInProgress = AtomicBoolean(false)
+    private val scanGeneration = AtomicLong(0L)
 
     @SuppressLint("MissingPermission")
     fun scan(context: Context, finished: (Result<JSONObject>) -> Unit) {
@@ -34,6 +36,7 @@ object EyevueDeviceScanner {
             finished(Result.failure(IllegalStateException("A Bluetooth device scan is already running.")))
             return
         }
+        val generation = scanGeneration.incrementAndGet()
 
         val manager = context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
         val adapter = manager?.adapter
@@ -58,7 +61,7 @@ object EyevueDeviceScanner {
         val handler = Handler(Looper.getMainLooper())
         lateinit var callback: ScanCallback
         val complete = Runnable {
-            if (scanInProgress.compareAndSet(true, false)) {
+            if (scanGeneration.get() == generation && scanInProgress.compareAndSet(true, false)) {
                 runCatching { scanner.stopScan(callback) }
                 finished(Result.success(resultJson(devices.values)))
             }
@@ -83,7 +86,7 @@ object EyevueDeviceScanner {
             }
 
             override fun onScanFailed(errorCode: Int) {
-                if (scanInProgress.compareAndSet(true, false)) {
+                if (scanGeneration.get() == generation && scanInProgress.compareAndSet(true, false)) {
                     finished(Result.failure(IllegalStateException("Bluetooth scan failed ($errorCode).")))
                 }
             }
