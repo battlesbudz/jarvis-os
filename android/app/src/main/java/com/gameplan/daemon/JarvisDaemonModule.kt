@@ -364,7 +364,20 @@ class JarvisDaemonModule(
     }
 
     @ReactMethod
+    fun scanEyevueDevices(promise: Promise) {
+        EyevueDeviceScanner.scan(reactApplicationContext) { result ->
+            result
+                .onSuccess { devices -> promise.resolve(devices.toString()) }
+                .onFailure { error -> promise.reject("E_EYEVUE_SCAN", error.message, error) }
+        }
+    }
+
+    @ReactMethod
     fun enableEyevue(address: String, promise: Promise) {
+        if (address.isBlank()) {
+            promise.reject("E_EYEVUE_SELECTION_REQUIRED", "Scan for nearby devices and choose your glasses first.")
+            return
+        }
         if (!EyevueGlassesService.start(reactApplicationContext, address.takeIf { it.isNotBlank() })) {
             promise.reject("E_EYEVUE_PERMISSION", "Grant Nearby Devices before enabling the eyeVue companion.")
             return

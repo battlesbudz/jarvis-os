@@ -47,6 +47,16 @@ export type AndroidEyevueStatus = {
   nativeStoragePreserved?: boolean;
 };
 
+export type AndroidEyevueDevice = {
+  address: string;
+  name: string;
+  bonded: boolean;
+  pairing: boolean;
+  rssi?: number | null;
+  advertisedAa12: boolean;
+  deviceType: "classic" | "ble" | "dual" | "unknown";
+};
+
 export type AndroidLocalGemmaValidationOptions = {
   backend?: "auto" | "gpu" | "cpu" | "npu";
   contextTokens?: number;
@@ -197,6 +207,7 @@ const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
       validateLocalGemmaModelWithOptions?(model: string, optionsJson: string): Promise<string | Record<string, unknown>>;
       smokeTestLocalGemmaModel?(model: string, optionsJson: string): Promise<string | Record<string, unknown>>;
       getEyevueStatus?(): Promise<string | Record<string, unknown>>;
+      scanEyevueDevices?(): Promise<string | Record<string, unknown>>;
       enableEyevue?(address: string): Promise<string | Record<string, unknown>>;
       disconnectEyevue?(): Promise<string | Record<string, unknown>>;
       sendEyevueCommand?(command: string, waitForPhoto: boolean): Promise<string | Record<string, unknown>>;
@@ -269,6 +280,19 @@ export async function smokeTestAndroidLocalGemmaModel(model: string, options: An
 export async function getAndroidEyevueStatus(): Promise<AndroidEyevueStatus | null> {
   if (Platform.OS !== "android" || !NativeJarvisDaemon?.getEyevueStatus) return null;
   return parseNativeJsonResult(await NativeJarvisDaemon.getEyevueStatus()) as AndroidEyevueStatus | null;
+}
+
+export async function scanAndroidEyevueDevices(): Promise<AndroidEyevueDevice[]> {
+  if (Platform.OS !== "android" || !NativeJarvisDaemon?.scanEyevueDevices) {
+    throw new Error("Glasses discovery is unavailable in this APK.");
+  }
+  const result = parseNativeJsonResult(await NativeJarvisDaemon.scanEyevueDevices());
+  const devices = Array.isArray(result?.devices) ? result.devices : [];
+  return devices.filter((device): device is AndroidEyevueDevice => (
+    !!device && typeof device === "object" &&
+    typeof (device as AndroidEyevueDevice).address === "string" &&
+    typeof (device as AndroidEyevueDevice).name === "string"
+  ));
 }
 
 export async function enableAndroidEyevue(address = ""): Promise<AndroidEyevueStatus> {
