@@ -2161,6 +2161,25 @@ assertRoute(
   assert(plan.blockedToolNames.includes("build_feature"), "Android app creation: blocks the Jarvis self-edit tool");
 }
 for (const request of [
+  "build a budgeting app",
+  "create a fitness tracker app",
+  "build me a native Android app",
+]) {
+  const plan = classifyToolAwareRoute(request);
+  assert(plan.priorityToolNames.includes("start_project"), `Standalone app creation: '${request}' prioritizes start_project`);
+}
+for (const request of [
+  "create a mobile app icon",
+  "create a logo for my mobile app",
+  "create a feature for my web app",
+  "create a new screen in my Android app",
+  "make changes to my web app",
+  "create mobile app icons",
+]) {
+  const plan = classifyToolAwareRoute(request);
+  assert(!plan.priorityToolNames.includes("start_project"), `App-adjacent request: '${request}' does not prioritize start_project`);
+}
+for (const request of [
   "How goes the calculator app?",
   "Work on that calculator app until completion",
   "It's in the project",

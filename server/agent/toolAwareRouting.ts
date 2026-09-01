@@ -334,10 +334,8 @@ function unique<T>(values: T[]): T[] {
 }
 
 function isStandaloneAppCreationRequest(query: string): boolean {
-  const genericAppRequest = /\b(?:build|create|make|start|develop)\b\s+(?:(?:me|us)\s+)?(?:(?:a|an|the|my|our|new)\s+)?(?:(?!feature\b|screen\b|page\b|component\b|route\b|endpoint\b|fix\b|change\b|update\b|inside\b|in\b|for\b|on\b)[\w-]+\s+){0,6}app\b/i;
+  const genericAppRequest = /\b(?:build|create|make|start|develop)\b\s+(?:(?:me|us)\s+)?(?:(?:a|an|the|my|our|new)\s+)?(?:(?!(?:features?|screens?|pages?|components?|routes?|endpoints?|fix(?:es)?|changes?|updates?|icons?|logos?|assets?|inside|in|for|on|of|to)\b)[\w-]+\s+){0,6}app\b(?!['’]s\b|\s+(?:features?|screens?|pages?|components?|routes?|endpoints?|fix(?:es)?|changes?|updates?|icons?|logos?|assets?)\b)/i;
   return (
-    /\b(?:build|create|make|start|develop)\b[\s\S]{0,100}\b(?:android|mobile|iphone|ios|web)\s+app\b/i.test(query) ||
-    /\b(?:build|create|make|start|develop)\b[\s\S]{0,100}\b(?:standalone\s+)?(?:calculator|weather|notes?|todo|to-do)\s+app\b/i.test(query) ||
     genericAppRequest.test(query) ||
     /\b(?:build|create|make|start|develop)\b[\s\S]{0,100}\bgame\b(?!\s+plan)/i.test(query)
   );
