@@ -1,0 +1,100 @@
+name: PR293 routing fix
+
+on:
+  push:
+    branches:
+      - codex/android-project-e2e
+    paths:
+      - .github/workflows/pr293-routing-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/android-project-e2e
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts --engine-strict=false
+      - name: Apply reviewed routing patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          routing = Path('server/agent/toolAwareRouting.ts')
+          text = routing.read_text()
+          old = '''function isStandaloneAppCreationRequest(query: string): boolean {
+            const genericAppRequest = /\\b(?:build|create|make|start|develop)\\b\\s+(?:(?:me|us)\\s+)?(?:(?:a|an|the|my|our|new)\\s+)?(?:(?!feature\\b|screen\\b|page\\b|component\\b|route\\b|endpoint\\b|fix\\b|change\\b|update\\b|inside\\b|in\\b|for\\b|on\\b)[\\w-]+\\s+){0,6}app\\b/i;
+            return (
+              /\\b(?:build|create|make|start|develop)\\b[\\s\\S]{0,100}\\b(?:android|mobile|iphone|ios|web)\\s+app\\b/i.test(query) ||
+              /\\b(?:build|create|make|start|develop)\\b[\\s\\S]{0,100}\\b(?:standalone\\s+)?(?:calculator|weather|notes?|todo|to-do)\\s+app\\b/i.test(query) ||
+              genericAppRequest.test(query) ||
+              /\\b(?:build|create|make|start|develop)\\b[\\s\\S]{0,100}\\bgame\\b(?!\\s+plan)/i.test(query)
+            );
+          }'''
+          new = '''function isStandaloneAppCreationRequest(query: string): boolean {
+            const genericAppRequest = /\\b(?:build|create|make|start|develop)\\b\\s+(?:(?:me|us)\\s+)?(?:(?:a|an|the|my|our|new)\\s+)?(?:(?!(?:features?|screens?|pages?|components?|routes?|endpoints?|fix(?:es)?|changes?|updates?|icons?|logos?|assets?|inside|in|for|on|of|to)\\b)[\\w-]+\\s+){0,6}app\\b(?!['’]s\\b|\\s+(?:features?|screens?|pages?|components?|routes?|endpoints?|fix(?:es)?|changes?|updates?|icons?|logos?|assets?)\\b)/i;
+            return (
+              genericAppRequest.test(query) ||
+              /\\b(?:build|create|make|start|develop)\\b[\\s\\S]{0,100}\\bgame\\b(?!\\s+plan)/i.test(query)
+            );
+          }'''
+          if old not in text:
+              raise SystemExit('expected routing block not found')
+          routing.write_text(text.replace(old, new, 1))
+
+          tests = Path('server/agent/__tests__/toolAwareRouting.assert.ts')
+          text = tests.read_text()
+          anchor = '''  assert(!plan.priorityToolNames.includes("build_feature"), "Android app creation: does not self-edit Jarvis");
+            assert(plan.blockedToolNames.includes("build_feature"), "Android app creation: blocks the Jarvis self-edit tool");
+          }
+          for (const request of [
+            "How goes the calculator app?",'''
+          replacement = '''  assert(!plan.priorityToolNames.includes("build_feature"), "Android app creation: does not self-edit Jarvis");
+            assert(plan.blockedToolNames.includes("build_feature"), "Android app creation: blocks the Jarvis self-edit tool");
+          }
+          for (const request of [
+            "build a budgeting app",
+            "create a fitness tracker app",
+            "build me a native Android app",
+          ]) {
+            const plan = classifyToolAwareRoute(request);
+            assert(plan.priorityToolNames.includes("start_project"), `Standalone app creation: '${request}' prioritizes start_project`);
+          }
+          for (const request of [
+            "create a mobile app icon",
+            "create a logo for my mobile app",
+            "create a feature for my web app",
+            "create a new screen in my Android app",
+            "make changes to my web app",
+            "create mobile app icons",
+          ]) {
+            const plan = classifyToolAwareRoute(request);
+            assert(!plan.priorityToolNames.includes("start_project"), `App-adjacent request: '${request}' does not prioritize start_project`);
+          }
+          for (const request of [
+            "How goes the calculator app?",'''
+          if anchor not in text:
+              raise SystemExit('expected routing test anchor not found')
+          tests.write_text(text.replace(anchor, replacement, 1))
+          PY
+      - run: npx tsx server/agent/__tests__/toolAwareRouting.assert.ts
+      - run: npm run server:build
+      - run: git diff --check
+      - name: Commit patch and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/pr293-routing-fix.yml
+          git add server/agent/toolAwareRouting.ts server/agent/__tests__/toolAwareRouting.assert.ts
+          git commit -m "Tighten standalone app request routing"
+          git push origin HEAD:codex/android-project-e2e
