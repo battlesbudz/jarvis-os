@@ -209,7 +209,14 @@ class EyevueGlassesService : Service() {
             }
             ACTION_ENABLE -> {
                 val address = intent?.getStringExtra(EXTRA_ADDRESS)?.trim().orEmpty()
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                val preferences = getSharedPreferences(PREFS, MODE_PRIVATE)
+                val currentAddress = preferences.getString(PREF_ADDRESS, null)
+                if (address.isNotBlank() && currentAddress != null && currentAddress != address) {
+                    // Make selection changes atomic even while the prior GATT is still connecting.
+                    closeConnection()
+                    connecting.set(false)
+                }
+                preferences.edit()
                     .putBoolean(PREF_ENABLED, true)
                     .apply { if (address.isNotBlank()) putString(PREF_ADDRESS, address) }
                     .apply()
@@ -305,11 +312,15 @@ class EyevueGlassesService : Service() {
         override fun onServicesDiscovered(callbackGatt: BluetoothGatt, status: Int) {
             synchronized(gattStateLock) {
                 if (this@EyevueGlassesService.gatt !== callbackGatt) return
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    failGattSetup(callbackGatt, "eyeVue service discovery failed ($status); retrying.")
+                    return
+                }
                 val service = callbackGatt.getService(EyevueProtocol.SERVICE_UUID)
                 val discoveredWrite = service?.getCharacteristic(EyevueProtocol.COMMAND_WRITE_UUID)
                 val discoveredNotify = service?.getCharacteristic(EyevueProtocol.COMMAND_NOTIFY_UUID)
                 val discoveredPhotoNotify = service?.getCharacteristic(EyevueProtocol.PHOTO_NOTIFY_UUID)
-                if (status != BluetoothGatt.GATT_SUCCESS || discoveredWrite == null || discoveredNotify == null || discoveredPhotoNotify == null) {
+                if (discoveredWrite == null || discoveredNotify == null || discoveredPhotoNotify == null) {
                     closeConnection()
                     rejectSelectedDevice("The selected device is not compatible with the eyeVue control service. Scan and choose the glasses' control connection.")
                     return
