@@ -167,6 +167,7 @@ class WakeWordService : Service() {
     @Volatile private var active = false
     @Volatile private var externalWakeArmed = false
     @Volatile private var ordinaryWakeRequested = false
+    @Volatile private var shutdownAfterExternalTalk = false
     private var restartRunnable: Runnable? = null
     private var nonTalkCooldownRunnable: Runnable? = null
     private var localInferenceRecoveryRunnable: Runnable? = null
@@ -239,13 +240,7 @@ class WakeWordService : Service() {
                 externalWakeArmed = true
                 DaemonLog.add("wake: armed for EYE VUE external wake")
             }
-            ACTION_DISARM_EXTERNAL -> if (externalWakeArmed) {
-                externalWakeArmed = false
-                listeningRequested = false
-                stopListening()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-            }
+            ACTION_DISARM_EXTERNAL -> handleDisarmExternal()
             ACTION_STOP -> {
                 ordinaryWakeRequested = false
                 listeningRequested = false
@@ -266,6 +261,8 @@ class WakeWordService : Service() {
             stopListening()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
+        } else if (!ordinaryWakeRequested && talkModeEnabled) {
+            shutdownAfterExternalTalk = true
         }
         return true
     }
@@ -741,7 +738,12 @@ class WakeWordService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "handleEndTalkModeForUserControl error", e)
             }
-            startListening()
+            if (shutdownAfterExternalTalk) {
+                shutdownAfterExternalTalk = false
+                listeningRequested = false
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            } else startListening()
         }
     }
 
