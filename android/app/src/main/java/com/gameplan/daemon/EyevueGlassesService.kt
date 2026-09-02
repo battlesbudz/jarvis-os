@@ -239,7 +239,12 @@ class EyevueGlassesService : Service() {
                     // Make selection changes atomic even while the prior GATT is still connecting.
                     closeConnection()
                     connecting.set(false)
-                    snapshot = snapshot.copy(wakeEvents = 0, lastWakeAt = null)
+                    snapshot = snapshot.copy(
+                        wakeEvents = 0,
+                        lastWakeAt = null,
+                        wakePacketsReceived = 0,
+                        lastWakePacketAt = null,
+                    )
                 }
                 preferences.edit()
                     .putBoolean(PREF_ENABLED, true)
