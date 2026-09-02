@@ -98,6 +98,8 @@ class WakeWordService : Service() {
             instance?.handlePauseForUserControl()
         }
 
+        fun disarmExternal(): Boolean = instance?.handleDisarmExternal() ?: false
+
         fun pauseForResponse() {
             instance?.handlePauseForResponse()
         }
@@ -164,6 +166,7 @@ class WakeWordService : Service() {
     @Volatile private var listeningRequested = false
     @Volatile private var active = false
     @Volatile private var externalWakeArmed = false
+    @Volatile private var ordinaryWakeRequested = false
     private var restartRunnable: Runnable? = null
     private var nonTalkCooldownRunnable: Runnable? = null
     private var localInferenceRecoveryRunnable: Runnable? = null
@@ -184,6 +187,7 @@ class WakeWordService : Service() {
         startForegroundCompat()
         when (intent?.action ?: ACTION_START) {
             ACTION_START -> {
+                ordinaryWakeRequested = true
                 val words = intent?.getStringArrayExtra(EXTRA_WAKE_WORDS)
                 if (!words.isNullOrEmpty()) wakeWords = words.map { it.lowercase(Locale.US) }
                 talkModeEnabled = intent?.getBooleanExtra(EXTRA_TALK_MODE, false) ?: false
@@ -243,6 +247,7 @@ class WakeWordService : Service() {
                 stopSelf()
             }
             ACTION_STOP -> {
+                ordinaryWakeRequested = false
                 listeningRequested = false
                 WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
                 stopListening()
@@ -251,6 +256,18 @@ class WakeWordService : Service() {
             }
         }
         return START_STICKY
+    }
+
+    private fun handleDisarmExternal(): Boolean {
+        if (!externalWakeArmed) return false
+        externalWakeArmed = false
+        if (!ordinaryWakeRequested && !talkModeEnabled) {
+            listeningRequested = false
+            stopListening()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+        return true
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

@@ -403,7 +403,7 @@ class JarvisDaemonModule(
     @ReactMethod
     fun disconnectEyevue(promise: Promise) {
         try {
-            reactApplicationContext.startService(Intent(reactApplicationContext, WakeWordService::class.java).setAction(WakeWordService.ACTION_DISARM_EXTERNAL))
+            WakeWordService.disarmExternal()
             reactApplicationContext.startService(
                 Intent(reactApplicationContext, EyevueGlassesService::class.java).setAction(EyevueGlassesService.ACTION_DISCONNECT),
             )
