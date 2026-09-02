@@ -34,7 +34,7 @@ assert.match(protocol, /CMD_WAKE_END = 153/);
 assert.match(protocol, /CMD_VOICE_DATA = 70/);
 assert.match(protocol, /fun stopVendorVoice\(\)/);
 assert.match(service, /hey,?\s*star/i);
-assert.match(service, /CMD_WAKE_START -> beginWakeHandoff/);
+assert.match(service, /CMD_WAKE_START -> \\{[\\s\\S]*wakePacketsReceived = snapshot\\.wakePacketsReceived \\+ 1[\\s\\S]*lastWakePacketAt = System\\.currentTimeMillis\\(\\)[\\s\\S]*beginWakeHandoff\\(\\)/);
 assert.match(service, /ACTION_EXTERNAL_WAKE/);
 assert.match(service, /ble_command_notify/);
 assert.match(service, /stopVendorVoice\(\)[\s\S]*WebSocketService\.instance\?\.isConnected/);
