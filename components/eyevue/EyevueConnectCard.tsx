@@ -93,13 +93,11 @@ export function EyevueConnectCard() {
   if (Platform.OS !== "android" || status?.available === false) return null;
 
   const connected = status?.eyevueConnected === true;
-  const assistantReady = status?.assistantActive === true;
-  const fullyReady = connected && assistantReady;
+  const wakeEvents = status?.eyevueWakeEvents ?? 0;
+  const fullyReady = connected;
   const title = connected ? (status?.eyevueDeviceName || "Smart Glasses") : "Smart Glasses";
   const detail = fullyReady
-    ? "Connected · “Hey, Star” opens Jarvis"
-    : connected
-      ? "Connected · finish Hey Star setup"
+    ? (wakeEvents > 0 ? "Connected · Hey Star reached Jarvis" : "Connected · listening for Hey Star")
       : "Discover, choose, and pair your glasses";
 
   return (
@@ -168,10 +166,14 @@ export function EyevueConnectCard() {
               {connected && <Text style={styles.successText}>Connected to {status?.eyevueDeviceName || "your selected glasses"}.</Text>}
             </SetupStep>
 
-            <SetupStep number="3" title="Make Hey Star open Jarvis" complete={assistantReady}>
-              <Text style={styles.stepDetail}>The glasses hand their wake request to Android’s selected assistant. Choose Jarvis so the native “Hey Star” sound opens Jarvis instead of stopping at the system handoff.</Text>
-              {!assistantReady && <ActionButton label="Choose Jarvis as assistant" busy={busy === "assistant"} onPress={chooseAssistant} />}
-              {assistantReady && <Text style={styles.successText}>Jarvis is the active Android assistant.</Text>}
+            <SetupStep number="3" title="Test the EYE VUE wake bridge" complete={connected}>
+              <Text style={styles.stepDetail}>Jarvis listens to the glasses’ BLE control notifications. The EYE VUE firmware recognizes “Hey Star”; Android’s default-assistant setting does not replace this bridge.</Text>
+              {connected && <Text style={styles.successText}>{wakeEvents > 0 ? `Wake received ${wakeEvents} time${wakeEvents === 1 ? "" : "s"}.` : "Say “Hey Star” while this connection stays active."}</Text>}
+            </SetupStep>
+
+            <SetupStep number="4" title="Optional: choose Jarvis as Android assistant" complete={status?.assistantActive === true}>
+              <Text style={styles.stepDetail}>This helps with Android’s normal assistant gesture, but it is not required for EYE VUE’s BLE wake event.</Text>
+              {status?.assistantActive !== true && <ActionButton label="Open Android assistant settings" busy={busy === "assistant"} onPress={chooseAssistant} />}
             </SetupStep>
 
             {error && (
@@ -251,3 +253,4 @@ const styles = StyleSheet.create({
   errorCard: { padding: 12, borderRadius: 10, borderWidth: 1, borderColor: "rgba(239,68,68,0.35)", backgroundColor: "rgba(239,68,68,0.08)", flexDirection: "row", alignItems: "flex-start", gap: 8 },
   errorText: { color: Colors.error, fontSize: 12, lineHeight: 17, flex: 1 },
 });
+

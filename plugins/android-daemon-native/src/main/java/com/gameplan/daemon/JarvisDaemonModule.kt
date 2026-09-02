@@ -668,6 +668,9 @@ class JarvisDaemonModule(
         map.putBoolean("eyevueConnected", eyevue.connected)
         map.putString("eyevueDeviceName", eyevue.deviceName)
         map.putString("eyevueLastError", eyevue.lastError)
+        map.putInt("eyevueWakeEvents", eyevue.wakeEvents.toInt())
+        map.putDouble("eyevueLastWakeAt", eyevue.lastWakeAt?.toDouble() ?: 0.0)
+        map.putString("eyevueWakeBridge", "ble_command_notify")
         map.putBoolean(
             "eyevuePermissionGranted",
             EyevueGlassesService.hasBluetoothPermission(reactApplicationContext),
@@ -675,3 +678,4 @@ class JarvisDaemonModule(
         return map
     }
 }
+

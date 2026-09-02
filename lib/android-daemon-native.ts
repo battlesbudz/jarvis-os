@@ -31,6 +31,9 @@ export type AndroidDaemonStatus = {
   eyevueDeviceName?: string | null;
   eyevueLastError?: string | null;
   eyevuePermissionGranted?: boolean;
+  eyevueWakeEvents?: number;
+  eyevueLastWakeAt?: number | null;
+  eyevueWakeBridge?: string | null;
 };
 
 export type AndroidEyevueStatus = {
@@ -44,6 +47,9 @@ export type AndroidEyevueStatus = {
   lastPhotoPath?: string | null;
   lastError?: string | null;
   wakePhrase?: "Hey, Star";
+  wakeBridge?: "ble_command_notify";
+  wakeEvents?: number;
+  lastWakeAt?: number | null;
   nativeStoragePreserved?: boolean;
 };
 
@@ -557,3 +563,4 @@ export async function recognizeAndroidSpeechOnce(
 }
 
 export const AndroidDaemonNative = NativeJarvisDaemon;
+

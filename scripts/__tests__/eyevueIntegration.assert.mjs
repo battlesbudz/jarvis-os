@@ -29,10 +29,14 @@ const coachAgent = read("server/channels/coachAgent.ts");
 const outsideVoice = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OutsideAppVoiceSessionService.kt");
 
 assert.match(protocol, /0000aa12-0000-1000-8000-00805f9b34fb/);
-assert.match(protocol, /CMD_TRANSFER_START = 151/);
-assert.doesNotMatch(protocol, /CMD_WAKE_START/);
+assert.match(protocol, /CMD_WAKE_START = 151/);
+assert.match(protocol, /CMD_WAKE_END = 153/);
+assert.match(protocol, /CMD_VOICE_DATA = 70/);
 assert.match(protocol, /fun stopVendorVoice\(\)/);
 assert.match(service, /hey,?\s*star/i);
+assert.match(service, /CMD_WAKE_START -> dispatchWakeEvent/);
+assert.match(service, /ACTION_EXTERNAL_WAKE/);
+assert.match(service, /ble_command_notify/);
 assert.match(service, /Jarvis is offline\./);
 assert.match(service, /pendingPhoto.*30, TimeUnit\.SECONDS/s);
 assert.match(service, /percent <= 20/);
@@ -136,7 +140,8 @@ assert.match(connectCard, /scanAndroidEyevueDevices/);
 assert.match(connectCard, /devices\.map\(device/);
 assert.match(connectCard, /enableAndroidEyevue\(device\.address\)/);
 assert.match(connectCard, /disconnectAndroidEyevue\(\)[\s\S]*enableAndroidEyevue\(device\.address\)/);
-assert.match(connectCard, /Choose Jarvis as assistant/);
+assert.match(connectCard, /Open Android assistant settings/);
+assert.match(connectCard, /not required for EYE VUE’s BLE wake event/);
 assert.match(connectCard, /assistantActive/);
 assert.match(settingsScreen, /Jarvis OS Device Control[\s\S]*<EyevueConnectCard \/>/);
 assert.doesNotMatch(missionControl, /EyevueConnectCard/);
@@ -169,3 +174,4 @@ for (const name of ["BootReceiver.kt", "EyevueProtocol.kt", "EyevueGlassesServic
 }
 
 console.log("OK: eyeVue local-first glasses integration contract is wired");
+

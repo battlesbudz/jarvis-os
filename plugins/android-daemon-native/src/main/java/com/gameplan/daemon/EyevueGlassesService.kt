@@ -44,6 +44,8 @@ data class EyevueSnapshot(
     val capacityRaw: String?,
     val lastPhotoPath: String?,
     val lastError: String?,
+    val wakeEvents: Long,
+    val lastWakeAt: Long?,
 ) {
     fun json() = JSONObject()
         .put("available", true)
@@ -56,13 +58,17 @@ data class EyevueSnapshot(
         .put("lastPhotoPath", lastPhotoPath ?: JSONObject.NULL)
         .put("lastError", lastError ?: JSONObject.NULL)
         .put("wakePhrase", "Hey, Star")
+        .put("wakeBridge", "ble_command_notify")
+        .put("wakeEvents", wakeEvents)
+        .put("lastWakeAt", lastWakeAt ?: JSONObject.NULL)
         .put("nativeStoragePreserved", true)
 }
 
 /**
  * Primary connection to the exact device selected in the Jarvis setup flow.
- * Physical media behavior remains unchanged on the glasses. "Hey, Star" reaches
- * Jarvis through Android's selected assistant route instead of a guessed BLE packet.
+ * Physical media behavior remains unchanged on the glasses. EYE VUE's AA14
+ * command notification is bridged into WakeWordService; Android's default
+ * assistant setting is not used as a substitute for this device-owned wake path.
  */
 class EyevueGlassesService : Service() {
     companion object {
@@ -82,7 +88,7 @@ class EyevueGlassesService : Service() {
         private const val PHOTO_DELETE_MAX_ATTEMPTS = 3
 
         @Volatile private var instance: EyevueGlassesService? = null
-        @Volatile private var snapshot = EyevueSnapshot(false, false, null, null, null, null, null, null)
+        @Volatile private var snapshot = EyevueSnapshot(false, false, null, null, null, null, null, null, 0, null)
 
         fun status(context: Context): EyevueSnapshot {
             val prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE)
@@ -187,6 +193,7 @@ class EyevueGlassesService : Service() {
     private var photoNotify: BluetoothGattCharacteristic? = null
     private var warnedAt20 = false
     private var warnedAt10 = false
+    private var lastWakeDispatchAt = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -350,7 +357,7 @@ class EyevueGlassesService : Service() {
                 } else if (descriptor.characteristic.uuid == EyevueProtocol.PHOTO_NOTIFY_UUID) {
                     connecting.set(false)
                     snapshot = snapshot.copy(connected = true, lastError = null)
-                    updateNotification("eyeVue connected — Hey, Star starts Jarvis")
+                    updateNotification("EYE VUE connected — listening for Hey Star")
                     writePacket(EyevueProtocol.battery())
                     writePacket(EyevueProtocol.capacity())
                 }
@@ -386,6 +393,7 @@ class EyevueGlassesService : Service() {
 
     private fun handleFrame(frame: EyevueFrame) {
         when (frame.commandId) {
+            EyevueProtocol.CMD_WAKE_START -> dispatchWakeEvent()
             EyevueProtocol.CMD_BATTERY, 83 -> {
                 val percent = if (frame.commandId == 83) frame.payload.getOrNull(1)?.toInt()?.and(0xff)
                     else frame.payload.takeIf { it.size >= 2 }?.let { ((it[0].toInt() and 0x0f) * 10) + (it[1].toInt() and 0x0f) }
@@ -407,6 +415,29 @@ class EyevueGlassesService : Service() {
             EyevueProtocol.CMD_CAPACITY -> snapshot = snapshot.copy(capacityRaw = frame.payload.joinToString("") { "%02x".format(it) })
         }
         DaemonLog.add("eyevue: rx command=${frame.commandId} bytes=${frame.payload.size}")
+    }
+
+    /** EYE VUE firmware owns Hey Star; AA14 command 151 is its wake result. */
+    private fun dispatchWakeEvent() {
+        val now = System.currentTimeMillis()
+        if (now - lastWakeDispatchAt < 2_000L) {
+            DaemonLog.add("eyevue: duplicate Hey Star event suppressed")
+            return
+        }
+        lastWakeDispatchAt = now
+        snapshot = snapshot.copy(wakeEvents = snapshot.wakeEvents + 1, lastWakeAt = now)
+        val wakeIntent = Intent(this, WakeWordService::class.java).apply {
+            action = WakeWordService.ACTION_EXTERNAL_WAKE
+            putExtra(WakeWordService.EXTRA_EXTERNAL_PHRASE, "hey star")
+        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(wakeIntent) else startService(wakeIntent)
+            DaemonLog.add("eyevue: Hey Star bridged to WakeWordService")
+            updateNotification("EYE VUE wake received — Jarvis is listening")
+        }.onFailure { error ->
+            snapshot = snapshot.copy(lastError = "EYE VUE wake bridge could not start: ${error.message ?: "unknown error"}")
+            DaemonLog.add("eyevue: wake bridge failed: ${error.message}")
+        }
     }
 
     private fun saveCapturedPhoto(bytes: ByteArray, requestedCapture: PendingEyevuePhotoRequest?) {
@@ -725,3 +756,4 @@ object EyevueCommandHandler {
         return OpResult(true, (result.data as? JSONObject ?: JSONObject()).put("imagePath", imagePath).put("temporaryImage", true).put("cloudUsed", false))
     }
 }
+
