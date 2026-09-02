@@ -32,6 +32,8 @@ export type AndroidDaemonStatus = {
   eyevueLastError?: string | null;
   eyevuePermissionGranted?: boolean;
   eyevueWakeEvents?: number;
+  eyevueWakePacketsReceived?: number;
+  eyevueLastWakePacketAt?: number | null;
   eyevueLastWakeAt?: number | null;
   eyevueWakeBridge?: string | null;
 };
