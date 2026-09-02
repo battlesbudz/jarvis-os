@@ -54,6 +54,7 @@ assert.match(service, /wakeEvents = 0, lastWakeAt = null/);
 assert.match(boot, /ACTION_ARM_EXTERNAL/);
 assert.match(wake, /ACTION_DISARM_EXTERNAL/);
 assert.match(nativeModule, /WakeWordService\.disarmExternal\(\)/);
+assert.match(service, /RECORD_AUDIO[\s\S]*armWake\(context\)/);
 assert.match(wake, /fun disarmExternal/);
 assert.match(connectCard, /deriveEyeVueVoiceReadiness/);
 assert.match(connectCard, /voiceReady && wakeEvents > 0/);

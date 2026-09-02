@@ -101,6 +101,13 @@ class EyevueGlassesService : Service() {
 
         fun isEnabled(context: Context) = context.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_ENABLED, false)
 
+        private fun armWake(context: Context) {
+            val intent = Intent(context, WakeWordService::class.java).apply { action = WakeWordService.ACTION_ARM_EXTERNAL }
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
+            }.onFailure { DaemonLog.add("eyevue: wake service arm failed: ${it.message}") }
+        }
+
         fun command(context: Context, name: String, waitForPhoto: Boolean = false): OpResult {
             val service = instance ?: return OpResult(false, error = "EYEVUE_NOT_CONNECTED: Enable eyeVue in Jarvis and keep the glasses nearby.")
             return service.runCommand(name, waitForPhoto)
@@ -173,6 +180,7 @@ class EyevueGlassesService : Service() {
                 DaemonLog.add("eyevue: foreground service start blocked until Nearby Devices is granted")
                 return false
             }
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) armWake(context)
             val intent = Intent(context, EyevueGlassesService::class.java).apply {
                 action = ACTION_ENABLE
                 address?.let { putExtra(EXTRA_ADDRESS, it) }
@@ -212,6 +220,7 @@ class EyevueGlassesService : Service() {
         when (action) {
             ACTION_DISCONNECT -> {
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_ENABLED, false).apply()
+                WakeWordService.disarmExternal()
                 closeConnection()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
