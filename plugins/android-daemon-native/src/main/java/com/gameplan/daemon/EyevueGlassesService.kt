@@ -374,8 +374,9 @@ class EyevueGlassesService : Service() {
             if (pendingWakeAfterStop.compareAndSet(true, false)) {
                 if (status == BluetoothGatt.GATT_SUCCESS) dispatchWakeEventNow()
                 else {
-                    DaemonLog.add("eyevue: vendor voice stop was rejected ($status); starting Jarvis wake handoff anyway")
-                    dispatchWakeEventNow()
+                    pendingWakeAfterStop.set(false)
+                    updateError("EYE VUE voice stream could not be stopped ($status). Say Hey Star again.")
+                    DaemonLog.add("eyevue: vendor voice stop was rejected ($status); wake handoff aborted")
                 }
             }
         }
@@ -450,8 +451,8 @@ class EyevueGlassesService : Service() {
         pendingWakeAfterStop.set(true)
         if (!writePacket(EyevueProtocol.stopVendorVoice())) {
             pendingWakeAfterStop.set(false)
-            DaemonLog.add("eyevue: could not send vendor voice stop; starting Jarvis wake handoff")
-            dispatchWakeEventNow()
+            updateError("EYE VUE voice stream could not be stopped. Say Hey Star again.")
+            DaemonLog.add("eyevue: could not send vendor voice stop; wake handoff aborted")
         }
     }
 

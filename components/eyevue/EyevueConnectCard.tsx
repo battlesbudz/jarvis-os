@@ -104,6 +104,7 @@ export function EyevueConnectCard() {
   const connected = status?.eyevueConnected === true;
   const wakeEvents = status?.eyevueWakeEvents ?? 0;
   const microphoneReady = speechStatus?.microphonePermissionGranted === true;
+  const recognizerReady = speechStatus?.speechRecognitionAvailable === true;
   const fullyReady = connected;
   const title = connected ? (status?.eyevueDeviceName || "Smart Glasses") : "Smart Glasses";
   const detail = fullyReady
@@ -177,7 +178,7 @@ export function EyevueConnectCard() {
               {connected && <Text style={styles.successText}>Connected to {status?.eyevueDeviceName || "your selected glasses"}.</Text>}
             </SetupStep>
 
-            <SetupStep number="3" title="Allow microphone and test wake" complete={wakeEvents > 0 && microphoneReady}>
+            <SetupStep number="3" title="Allow microphone and test wake" complete={wakeEvents > 0 && microphoneReady && recognizerReady}>
               <Text style={styles.stepDetail}>Jarvis listens to the glasses’ BLE control notifications. The EYE VUE firmware recognizes “Hey Star”; Android’s default-assistant setting does not replace this bridge.</Text>
               {connected && <Text style={styles.successText}>{wakeEvents > 0 ? `Wake received ${wakeEvents} time${wakeEvents === 1 ? "" : "s"}.` : "Say “Hey Star” while this connection stays active."}</Text>}
             </SetupStep>

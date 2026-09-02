@@ -3,6 +3,8 @@ package com.gameplan.daemon
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 
@@ -50,6 +52,12 @@ class BootReceiver : BroadcastReceiver() {
         // server daemon has not yet authenticated after a reboot.
         if (EyevueGlassesService.isEnabled(context)) {
             EyevueGlassesService.start(context)
+            if (androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                val wakeIntent = Intent(context, WakeWordService::class.java).apply { action = WakeWordService.ACTION_ARM_EXTERNAL }
+                runCatching {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(wakeIntent) else context.startService(wakeIntent)
+                }.onFailure { Log.w("JarvisBoot", "Could not re-arm EYE VUE wake service", it) }
+            }
         }
     }
 }
