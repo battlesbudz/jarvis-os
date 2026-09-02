@@ -44,6 +44,7 @@ assert.match(service, /gatt !== callbackGatt/);
 assert.match(service, /pendingWakeAfterStop\.set\(false\)/);
 assert.match(wake, /ACTION_ARM_EXTERNAL/);
 assert.match(nativeModule, /ACTION_ARM_EXTERNAL/);
+assert.match(nativeModule, /RECORD_AUDIO[\s\S]*ACTION_ARM_EXTERNAL/);
 assert.match(connectCard, /title="Allow microphone and test wake" complete=\{wakeEvents > 0 && microphoneReady\}/);
 assert.match(connectCard, /Allow microphone/);
 assert.match(settings, /BLE wake bridge/);

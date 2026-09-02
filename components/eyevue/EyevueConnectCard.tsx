@@ -146,16 +146,17 @@ export function EyevueConnectCard() {
           </View>
 
           <ScrollView contentContainerStyle={styles.modalContent}>
-            <SetupStep number="1" title="Allow Nearby Devices" complete={status?.eyevuePermissionGranted === true}>
-              <Text style={styles.stepDetail}>Android must allow Jarvis to scan for nearby Bluetooth devices.</Text>
+            <SetupStep number="1" title="Allow Nearby Devices and microphone" complete={status?.eyevuePermissionGranted === true && microphoneReady}>
+              <Text style={styles.stepDetail}>Android must allow Jarvis to scan for Bluetooth devices and keep its microphone service armed for a locked-screen EYE VUE wake.</Text>
               {status?.eyevuePermissionGranted !== true && (
                 <ActionButton label="Allow Nearby Devices" busy={busy === "permission"} onPress={requestPermission} />
               )}
+              {!microphoneReady && <ActionButton label="Allow microphone" busy={busy === "microphone"} onPress={requestMicrophone} />}
             </SetupStep>
 
             <SetupStep number="2" title="Discover and choose your glasses" complete={connected}>
               <Text style={styles.stepDetail}>Turn the glasses on and put them in pairing mode, then scan. Jarvis will not auto-select a device by its name.</Text>
-              <ActionButton label={busy === "scan" ? "Scanning for 8 seconds…" : "Scan nearby devices"} busy={busy === "scan"} onPress={scan} disabled={status?.eyevuePermissionGranted !== true} />
+              <ActionButton label={busy === "scan" ? "Scanning for 8 seconds…" : "Scan nearby devices"} busy={busy === "scan"} onPress={scan} disabled={status?.eyevuePermissionGranted !== true || !microphoneReady} />
               {devices.length > 0 && (
                 <View style={styles.deviceList}>
                   {devices.map(device => (
@@ -178,7 +179,6 @@ export function EyevueConnectCard() {
 
             <SetupStep number="3" title="Allow microphone and test wake" complete={wakeEvents > 0 && microphoneReady}>
               <Text style={styles.stepDetail}>Jarvis listens to the glasses’ BLE control notifications. The EYE VUE firmware recognizes “Hey Star”; Android’s default-assistant setting does not replace this bridge.</Text>
-              {!microphoneReady && <ActionButton label="Allow microphone" busy={busy === "microphone"} onPress={requestMicrophone} />}
               {connected && <Text style={styles.successText}>{wakeEvents > 0 ? `Wake received ${wakeEvents} time${wakeEvents === 1 ? "" : "s"}.` : "Say “Hey Star” while this connection stays active."}</Text>}
             </SetupStep>
 
