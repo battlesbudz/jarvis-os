@@ -207,6 +207,7 @@ const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
       requestCameraPermission(): Promise<void>;
       requestMicrophonePermission(): Promise<void>;
       requestEyevuePermissions?(): Promise<void>;
+      armEyevueWake?(): Promise<void>;
       requestScreenRecordPermission(): Promise<void>;
       getLocalGemmaStatus?(model: string): Promise<string | Record<string, unknown>>;
       validateLocalGemmaModel?(model: string): Promise<string | Record<string, unknown>>;
@@ -563,4 +564,3 @@ export async function recognizeAndroidSpeechOnce(
 }
 
 export const AndroidDaemonNative = NativeJarvisDaemon;
-

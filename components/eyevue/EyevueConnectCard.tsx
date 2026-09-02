@@ -54,6 +54,11 @@ export function EyevueConnectCard() {
     };
   }, [refresh]);
 
+  useEffect(() => {
+    if (status?.eyevueEnabled !== true || speechStatus?.microphonePermissionGranted !== true) return;
+    AndroidDaemonNative?.armEyevueWake?.().catch(() => {});
+  }, [status?.eyevueEnabled, speechStatus?.microphonePermissionGranted]);
+
   const run = useCallback(async (action: BusyAction, task: () => Promise<void>) => {
     if (busy) return;
     setBusy(action);
@@ -105,10 +110,10 @@ export function EyevueConnectCard() {
   const wakeEvents = status?.eyevueWakeEvents ?? 0;
   const microphoneReady = speechStatus?.microphonePermissionGranted === true;
   const recognizerReady = speechStatus?.speechRecognitionAvailable === true;
-  const fullyReady = connected;
+  const fullyReady = connected && microphoneReady && recognizerReady && wakeEvents > 0;
   const title = connected ? (status?.eyevueDeviceName || "Smart Glasses") : "Smart Glasses";
   const detail = fullyReady
-    ? (wakeEvents > 0 ? "Connected · Hey Star reached Jarvis" : "Connected · listening for Hey Star")
+    ? (fullyReady ? "Connected · Hey Star reached Jarvis" : "Connected · finish EYE VUE wake test")
       : "Discover, choose, and pair your glasses";
 
   return (
