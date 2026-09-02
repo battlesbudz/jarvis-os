@@ -204,6 +204,7 @@ class EyevueGlassesService : Service() {
     private var warnedAt10 = false
     private var lastWakeDispatchAt = 0L
     private var lastWakeDispatchElapsed = 0L
+    private var pendingWakeStopPacket: ByteArray? = null
     private val pendingWakeAfterStop = AtomicBoolean(false)
 
     override fun onCreate() {
@@ -381,7 +382,8 @@ class EyevueGlassesService : Service() {
         override fun onCharacteristicWrite(callbackGatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
             synchronized(gattStateLock) { if (gatt !== callbackGatt) return }
             if (characteristic.uuid != EyevueProtocol.COMMAND_WRITE_UUID) return
-            if (pendingWakeAfterStop.compareAndSet(true, false)) {
+            if (pendingWakeAfterStop.get() && pendingWakeStopPacket?.contentEquals(characteristic.value) == true && pendingWakeAfterStop.compareAndSet(true, false)) {
+                pendingWakeStopPacket = null
                 if (status == BluetoothGatt.GATT_SUCCESS) dispatchWakeEventNow()
                 else {
                     pendingWakeAfterStop.set(false)
@@ -460,9 +462,12 @@ class EyevueGlassesService : Service() {
         // End EYE VUE's firmware-owned voice stream before Android tries to
         // claim the wearable microphone for Jarvis. GATT writes are async, so
         // the handoff is continued from onCharacteristicWrite.
+        val stopPacket = EyevueProtocol.stopVendorVoice()
+        pendingWakeStopPacket = stopPacket
         pendingWakeAfterStop.set(true)
-        if (!writePacket(EyevueProtocol.stopVendorVoice())) {
+        if (!writePacket(stopPacket)) {
             pendingWakeAfterStop.set(false)
+            pendingWakeStopPacket = null
             lastWakeDispatchAt = 0L
             lastWakeDispatchElapsed = 0L
             snapshot = snapshot.copy(lastError = "EYE VUE voice stream could not be stopped. Say Hey Star again.")
@@ -654,7 +659,8 @@ class EyevueGlassesService : Service() {
     @SuppressLint("MissingPermission")
     private fun closeConnection(preservePendingPhoto: PendingEyevuePhotoRequest? = null) {
         synchronized(gattStateLock) {
-            pendingWakeAfterStop.set(false)
+                    pendingWakeAfterStop.set(false)
+                    pendingWakeStopPacket = null
             val abandonedPhoto = pendingPhoto.get()
             if (abandonedPhoto != null && abandonedPhoto !== preservePendingPhoto && pendingPhoto.compareAndSet(abandonedPhoto, null)) {
                 abandonedPhoto.failure.compareAndSet(null, "EYEVUE_CONNECTION_LOST: The glasses disconnected before the requested photo arrived.")
