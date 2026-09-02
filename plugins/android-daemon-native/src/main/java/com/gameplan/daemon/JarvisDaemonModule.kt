@@ -125,6 +125,19 @@ class JarvisDaemonModule(
     }
 
     @ReactMethod
+    fun getEyevueDiagnostics(promise: Promise) {
+        promise.resolve(
+            DaemonLog.getAll()
+                .filter { entry ->
+                    entry.contains("eyevue:") ||
+                        entry.contains("wake:") ||
+                        entry.contains("wearable_audio:")
+                }
+                .joinToString("\n"),
+        )
+    }
+
+    @ReactMethod
     fun enable(serverUrl: String, bootstrapToken: String, promise: Promise) {
         if (serverUrl.isBlank()) {
             promise.reject("E_JARVIS_DAEMON_SERVER_URL", "Server URL is required.")
