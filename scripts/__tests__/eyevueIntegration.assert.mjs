@@ -37,6 +37,9 @@ assert.match(service, /hey,?\s*star/i);
 assert.match(service, /CMD_WAKE_START -> dispatchWakeEvent/);
 assert.match(service, /ACTION_EXTERNAL_WAKE/);
 assert.match(service, /ble_command_notify/);
+assert.match(service, /stopVendorVoice\(\)[\s\S]*WebSocketService\.instance\?\.isConnected/);
+assert.match(service, /SystemClock\.elapsedRealtime\(\)/);
+assert.match(connectCard, /title="Test the EYE VUE wake bridge" complete=\{wakeEvents > 0\}/);
 assert.match(service, /Jarvis is offline\./);
 assert.match(service, /pendingPhoto.*30, TimeUnit\.SECONDS/s);
 assert.match(service, /percent <= 20/);
@@ -174,4 +177,3 @@ for (const name of ["BootReceiver.kt", "EyevueProtocol.kt", "EyevueGlassesServic
 }
 
 console.log("OK: eyeVue local-first glasses integration contract is wired");
-

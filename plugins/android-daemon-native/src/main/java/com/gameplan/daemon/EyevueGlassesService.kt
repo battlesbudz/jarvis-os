@@ -18,6 +18,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -194,6 +195,7 @@ class EyevueGlassesService : Service() {
     private var warnedAt20 = false
     private var warnedAt10 = false
     private var lastWakeDispatchAt = 0L
+    private var lastWakeDispatchElapsed = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -420,12 +422,23 @@ class EyevueGlassesService : Service() {
     /** EYE VUE firmware owns Hey Star; AA14 command 151 is its wake result. */
     private fun dispatchWakeEvent() {
         val now = System.currentTimeMillis()
-        if (now - lastWakeDispatchAt < 2_000L) {
+        val elapsed = SystemClock.elapsedRealtime()
+        if (elapsed - lastWakeDispatchElapsed < 2_000L) {
             DaemonLog.add("eyevue: duplicate Hey Star event suppressed")
             return
         }
         lastWakeDispatchAt = now
+        lastWakeDispatchElapsed = elapsed
         snapshot = snapshot.copy(wakeEvents = snapshot.wakeEvents + 1, lastWakeAt = now)
+        // End EYE VUE's firmware-owned voice stream before Android tries to
+        // claim the wearable microphone for Jarvis.
+        writePacket(EyevueProtocol.stopVendorVoice())
+        if (WebSocketService.instance?.isConnected != true) {
+            DaemonLog.add("eyevue: Hey Star received while Jarvis is offline")
+            speakOffline()
+            updateNotification("EYE VUE wake received — Jarvis is offline")
+            return
+        }
         val wakeIntent = Intent(this, WakeWordService::class.java).apply {
             action = WakeWordService.ACTION_EXTERNAL_WAKE
             putExtra(WakeWordService.EXTRA_EXTERNAL_PHRASE, "hey star")
@@ -756,4 +769,3 @@ object EyevueCommandHandler {
         return OpResult(true, (result.data as? JSONObject ?: JSONObject()).put("imagePath", imagePath).put("temporaryImage", true).put("cloudUsed", false))
     }
 }
-

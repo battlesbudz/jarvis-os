@@ -166,7 +166,7 @@ export function EyevueConnectCard() {
               {connected && <Text style={styles.successText}>Connected to {status?.eyevueDeviceName || "your selected glasses"}.</Text>}
             </SetupStep>
 
-            <SetupStep number="3" title="Test the EYE VUE wake bridge" complete={connected}>
+            <SetupStep number="3" title="Test the EYE VUE wake bridge" complete={wakeEvents > 0}>
               <Text style={styles.stepDetail}>Jarvis listens to the glasses’ BLE control notifications. The EYE VUE firmware recognizes “Hey Star”; Android’s default-assistant setting does not replace this bridge.</Text>
               {connected && <Text style={styles.successText}>{wakeEvents > 0 ? `Wake received ${wakeEvents} time${wakeEvents === 1 ? "" : "s"}.` : "Say “Hey Star” while this connection stays active."}</Text>}
             </SetupStep>
@@ -253,4 +253,3 @@ const styles = StyleSheet.create({
   errorCard: { padding: 12, borderRadius: 10, borderWidth: 1, borderColor: "rgba(239,68,68,0.35)", backgroundColor: "rgba(239,68,68,0.08)", flexDirection: "row", alignItems: "flex-start", gap: 8 },
   errorText: { color: Colors.error, fontSize: 12, lineHeight: 17, flex: 1 },
 });
-
