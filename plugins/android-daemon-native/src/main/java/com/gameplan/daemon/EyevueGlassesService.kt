@@ -676,6 +676,7 @@ class EyevueGlassesService : Service() {
     private fun hasBluetoothPermission() = Companion.hasBluetoothPermission(this)
 
     private fun rejectSelectedDevice(message: String) {
+        WakeWordService.disarmExternal()
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putBoolean(PREF_ENABLED, false)
             .remove(PREF_ADDRESS)
