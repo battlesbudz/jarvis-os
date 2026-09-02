@@ -117,6 +117,7 @@ export function EyevueConnectCard() {
   const eyeVueVoiceReadiness = deriveEyeVueVoiceReadiness({
     nativeSpeechAvailable: speechStatus?.available,
     speechRecognitionAvailable: speechStatus?.speechRecognitionAvailable,
+    wakeRecognizerAvailable: speechStatus?.wakeRecognizerAvailable,
     wearableAudioAvailable: speechStatus?.wearableAudioAvailable,
     wearableAudioDeviceName: speechStatus?.wearableAudioDeviceName,
     eyevueConnected: connected,
