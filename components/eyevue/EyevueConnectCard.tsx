@@ -23,6 +23,7 @@ import {
   getAndroidNativeSpeechStatus,
   type AndroidNativeSpeechStatus,
 } from "@/lib/android-daemon-native";
+import { deriveEyeVueVoiceReadiness } from "@/lib/eyevue-setup";
 
 type BusyAction = "permission" | "microphone" | "scan" | "connect" | "assistant" | null;
 
@@ -38,6 +39,9 @@ export function EyevueConnectCard() {
     const [next, speech] = await Promise.all([getAndroidDaemonStatus(), getAndroidNativeSpeechStatus().catch(() => null)]);
     setStatus(next);
     setSpeechStatus(speech);
+    if (next.eyevueEnabled === true && speech?.microphonePermissionGranted === true) {
+      AndroidDaemonNative?.armEyevueWake?.().catch(() => {});
+    }
     return next;
   }, []);
 
@@ -110,7 +114,15 @@ export function EyevueConnectCard() {
   const wakeEvents = status?.eyevueWakeEvents ?? 0;
   const microphoneReady = speechStatus?.microphonePermissionGranted === true;
   const recognizerReady = speechStatus?.speechRecognitionAvailable === true;
-  const fullyReady = connected && microphoneReady && recognizerReady && wakeEvents > 0;
+  const voiceReady = deriveEyeVueVoiceReadiness({
+    nativeSpeechAvailable: speechStatus?.available,
+    speechRecognitionAvailable: speechStatus?.speechRecognitionAvailable,
+    wearableAudioAvailable: speechStatus?.wearableAudioAvailable,
+    wearableAudioDeviceName: speechStatus?.wearableAudioDeviceName,
+    eyevueConnected: connected,
+    eyevueDeviceName: status?.eyevueDeviceName,
+  }).ready;
+  const fullyReady = connected && microphoneReady && recognizerReady && voiceReady && wakeEvents > 0;
   const title = connected ? (status?.eyevueDeviceName || "Smart Glasses") : "Smart Glasses";
   const detail = fullyReady
     ? "Connected · Hey Star reached Jarvis"
