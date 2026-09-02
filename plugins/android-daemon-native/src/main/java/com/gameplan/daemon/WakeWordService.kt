@@ -73,6 +73,7 @@ class WakeWordService : Service() {
         const val ACTION_UPDATE = "com.gameplan.daemon.WAKE_WORD_UPDATE"
         const val ACTION_EXTERNAL_WAKE = "com.gameplan.daemon.WAKE_WORD_EXTERNAL"
         const val ACTION_ARM_EXTERNAL = "com.gameplan.daemon.WAKE_WORD_ARM_EXTERNAL"
+        const val ACTION_DISARM_EXTERNAL = "com.gameplan.daemon.WAKE_WORD_DISARM_EXTERNAL"
         const val EXTRA_EXTERNAL_PHRASE = "externalPhrase"
         const val EXTRA_WAKE_WORDS = "wake_words"
         const val EXTRA_TALK_MODE = "talk_mode"
@@ -162,6 +163,7 @@ class WakeWordService : Service() {
     @Volatile private var talkModeEnabled = false
     @Volatile private var listeningRequested = false
     @Volatile private var active = false
+    @Volatile private var externalWakeArmed = false
     private var restartRunnable: Runnable? = null
     private var nonTalkCooldownRunnable: Runnable? = null
     private var localInferenceRecoveryRunnable: Runnable? = null
@@ -230,7 +232,15 @@ class WakeWordService : Service() {
             }
             ACTION_ARM_EXTERNAL -> {
                 listeningRequested = true
+                externalWakeArmed = true
                 DaemonLog.add("wake: armed for EYE VUE external wake")
+            }
+            ACTION_DISARM_EXTERNAL -> if (externalWakeArmed) {
+                externalWakeArmed = false
+                listeningRequested = false
+                stopListening()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
             }
             ACTION_STOP -> {
                 listeningRequested = false
