@@ -110,6 +110,21 @@ export function EyevueConnectCard() {
     await AndroidDaemonNative.openAssistantSettings();
   }), [run]);
 
+  if (Platform.OS !== "android" || status?.available === false) return null;
+
+  const connected = status?.eyevueConnected === true;
+  const wakeEvents = status?.eyevueWakeEvents ?? 0;
+  const microphoneReady = speechStatus?.microphonePermissionGranted === true;
+  const recognizerReady = speechStatus?.speechRecognitionAvailable === true;
+  const eyeVueVoiceReadiness = deriveEyeVueVoiceReadiness({
+    nativeSpeechAvailable: speechStatus?.available,
+    speechRecognitionAvailable: speechStatus?.speechRecognitionAvailable,
+    wearableAudioAvailable: speechStatus?.wearableAudioAvailable,
+    wearableAudioDeviceName: speechStatus?.wearableAudioDeviceName,
+    eyevueConnected: connected,
+    eyevueDeviceName: status?.eyevueDeviceName,
+  });
+  const voiceReady = eyeVueVoiceReadiness.ready;
   const copyDiagnostics = useCallback(() => run("diagnostics", async () => {
     const log = await getAndroidEyevueDiagnostics();
     const payload = [
@@ -126,21 +141,6 @@ export function EyevueConnectCard() {
     await Clipboard.setStringAsync(payload);
   }), [run, speechStatus?.microphonePermissionGranted, speechStatus?.speechRecognitionAvailable, status?.eyevueConnected, status?.eyevueDeviceName, voiceReady]);
 
-  if (Platform.OS !== "android" || status?.available === false) return null;
-
-  const connected = status?.eyevueConnected === true;
-  const wakeEvents = status?.eyevueWakeEvents ?? 0;
-  const microphoneReady = speechStatus?.microphonePermissionGranted === true;
-  const recognizerReady = speechStatus?.speechRecognitionAvailable === true;
-  const eyeVueVoiceReadiness = deriveEyeVueVoiceReadiness({
-    nativeSpeechAvailable: speechStatus?.available,
-    speechRecognitionAvailable: speechStatus?.speechRecognitionAvailable,
-    wearableAudioAvailable: speechStatus?.wearableAudioAvailable,
-    wearableAudioDeviceName: speechStatus?.wearableAudioDeviceName,
-    eyevueConnected: connected,
-    eyevueDeviceName: status?.eyevueDeviceName,
-  });
-  const voiceReady = eyeVueVoiceReadiness.ready;
   const fullyReady = connected && microphoneReady && recognizerReady && voiceReady && wakeEvents > 0;
   const title = connected ? (status?.eyevueDeviceName || "Smart Glasses") : "Smart Glasses";
   const detail = fullyReady
