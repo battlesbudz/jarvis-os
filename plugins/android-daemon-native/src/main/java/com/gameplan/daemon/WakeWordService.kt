@@ -72,6 +72,8 @@ class WakeWordService : Service() {
         const val ACTION_STOP = "com.gameplan.daemon.WAKE_WORD_STOP"
         const val ACTION_UPDATE = "com.gameplan.daemon.WAKE_WORD_UPDATE"
         const val ACTION_EXTERNAL_WAKE = "com.gameplan.daemon.WAKE_WORD_EXTERNAL"
+        const val ACTION_ARM_EXTERNAL = "com.gameplan.daemon.WAKE_WORD_ARM_EXTERNAL"
+        const val ACTION_DISARM_EXTERNAL = "com.gameplan.daemon.WAKE_WORD_DISARM_EXTERNAL"
         const val EXTRA_EXTERNAL_PHRASE = "externalPhrase"
         const val EXTRA_WAKE_WORDS = "wake_words"
         const val EXTRA_TALK_MODE = "talk_mode"
@@ -95,6 +97,8 @@ class WakeWordService : Service() {
         fun pauseForUserControl() {
             instance?.handlePauseForUserControl()
         }
+
+        fun disarmExternal(): Boolean = instance?.handleDisarmExternal() ?: false
 
         fun pauseForResponse() {
             instance?.handlePauseForResponse()
@@ -161,6 +165,9 @@ class WakeWordService : Service() {
     @Volatile private var talkModeEnabled = false
     @Volatile private var listeningRequested = false
     @Volatile private var active = false
+    @Volatile private var externalWakeArmed = false
+    @Volatile private var ordinaryWakeRequested = false
+    @Volatile private var shutdownAfterExternalTalk = false
     private var restartRunnable: Runnable? = null
     private var nonTalkCooldownRunnable: Runnable? = null
     private var localInferenceRecoveryRunnable: Runnable? = null
@@ -181,6 +188,8 @@ class WakeWordService : Service() {
         startForegroundCompat()
         when (intent?.action ?: ACTION_START) {
             ACTION_START -> {
+                ordinaryWakeRequested = true
+                shutdownAfterExternalTalk = false
                 val words = intent?.getStringArrayExtra(EXTRA_WAKE_WORDS)
                 if (!words.isNullOrEmpty()) wakeWords = words.map { it.lowercase(Locale.US) }
                 talkModeEnabled = intent?.getBooleanExtra(EXTRA_TALK_MODE, false) ?: false
@@ -189,6 +198,8 @@ class WakeWordService : Service() {
             }
             ACTION_UPDATE -> {
                 val words = intent?.getStringArrayExtra(EXTRA_WAKE_WORDS)
+                ordinaryWakeRequested = true
+                shutdownAfterExternalTalk = false
                 if (!words.isNullOrEmpty()) wakeWords = words.map { it.lowercase(Locale.US) }
                 val previousTalkMode = talkModeEnabled
                 talkModeEnabled = intent?.getBooleanExtra(EXTRA_TALK_MODE, talkModeEnabled) ?: talkModeEnabled
@@ -227,7 +238,15 @@ class WakeWordService : Service() {
                 val phrase = intent?.getStringExtra(EXTRA_EXTERNAL_PHRASE)?.ifBlank { "hey star" } ?: "hey star"
                 onWakeWordDetected(phrase.lowercase(Locale.US), phrase.lowercase(Locale.US))
             }
+            ACTION_ARM_EXTERNAL -> {
+                listeningRequested = true
+                externalWakeArmed = true
+                shutdownAfterExternalTalk = false
+                DaemonLog.add("wake: armed for EYE VUE external wake")
+            }
+            ACTION_DISARM_EXTERNAL -> handleDisarmExternal()
             ACTION_STOP -> {
+                ordinaryWakeRequested = false
                 listeningRequested = false
                 WearableAudioRouteManager.release(WEARABLE_AUDIO_OWNER)
                 stopListening()
@@ -236,6 +255,20 @@ class WakeWordService : Service() {
             }
         }
         return START_STICKY
+    }
+
+    private fun handleDisarmExternal(): Boolean {
+        if (!externalWakeArmed) return false
+        externalWakeArmed = false
+        if (!ordinaryWakeRequested && !talkModeEnabled) {
+            listeningRequested = false
+            stopListening()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        } else if (!ordinaryWakeRequested && talkModeEnabled) {
+            shutdownAfterExternalTalk = true
+        }
+        return true
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -709,7 +742,12 @@ class WakeWordService : Service() {
             } catch (e: Exception) {
                 Log.e(TAG, "handleEndTalkModeForUserControl error", e)
             }
-            startListening()
+            if (shutdownAfterExternalTalk) {
+                shutdownAfterExternalTalk = false
+                listeningRequested = false
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            } else startListening()
         }
     }
 

@@ -20,6 +20,7 @@ assert.equal(missingSpeech.detail, "Microphone permission is required.");
 const wrongHeadset = deriveEyeVueVoiceReadiness({
   nativeSpeechAvailable: true,
   speechRecognitionAvailable: true,
+  wakeRecognizerAvailable: true,
   wearableAudioAvailable: true,
   wearableAudioDeviceName: "Galaxy Buds",
   eyevueConnected: true,
@@ -32,6 +33,7 @@ assert.match(wrongHeadset.detail, /eyeVue CYO3/);
 const missingAudioEndpoint = deriveEyeVueVoiceReadiness({
   nativeSpeechAvailable: true,
   speechRecognitionAvailable: true,
+  wakeRecognizerAvailable: true,
   wearableAudioAvailable: true,
   wearableAudioDeviceName: null,
   eyevueConnected: true,
@@ -43,6 +45,7 @@ assert.equal(missingAudioEndpoint.endpointMatches, false);
 const ready = deriveEyeVueVoiceReadiness({
   nativeSpeechAvailable: true,
   speechRecognitionAvailable: true,
+  wakeRecognizerAvailable: true,
   wearableAudioAvailable: true,
   wearableAudioDeviceName: "eyeVue CYO3",
   eyevueConnected: true,

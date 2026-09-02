@@ -20,7 +20,14 @@ object EyevueProtocol {
     const val CMD_STOP_RECORD = 36
     const val CMD_AUDIO = 52
     const val CMD_STOP_VOICE = 86
-    const val CMD_TRANSFER_START = 151
+    /** AA14 command-channel notification emitted when the glasses accept Hey Star. */
+    const val CMD_WAKE_START = 151
+    /** AA14 command-channel notification emitted when the voice stream ends. */
+    const val CMD_WAKE_END = 153
+    /** AA14 Opus microphone packet notification. */
+    const val CMD_VOICE_DATA = 70
+    /** AA15 uses the same numeric ids for its independent photo framing. */
+    const val CMD_TRANSFER_START = CMD_WAKE_START
     const val CMD_PHOTO_DATA = 152
     const val CMD_PHOTO_END = 153
 
@@ -128,3 +135,4 @@ class EyevuePhotoAssembler(
         }
     }
 }
+

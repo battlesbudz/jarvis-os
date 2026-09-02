@@ -31,6 +31,9 @@ export type AndroidDaemonStatus = {
   eyevueDeviceName?: string | null;
   eyevueLastError?: string | null;
   eyevuePermissionGranted?: boolean;
+  eyevueWakeEvents?: number;
+  eyevueLastWakeAt?: number | null;
+  eyevueWakeBridge?: string | null;
 };
 
 export type AndroidEyevueStatus = {
@@ -44,6 +47,9 @@ export type AndroidEyevueStatus = {
   lastPhotoPath?: string | null;
   lastError?: string | null;
   wakePhrase?: "Hey, Star";
+  wakeBridge?: "ble_command_notify";
+  wakeEvents?: number;
+  lastWakeAt?: number | null;
   nativeStoragePreserved?: boolean;
 };
 
@@ -201,6 +207,7 @@ const NativeJarvisDaemon = NativeModules.JarvisDaemonModule as
       requestCameraPermission(): Promise<void>;
       requestMicrophonePermission(): Promise<void>;
       requestEyevuePermissions?(): Promise<void>;
+      armEyevueWake?(): Promise<void>;
       requestScreenRecordPermission(): Promise<void>;
       getLocalGemmaStatus?(model: string): Promise<string | Record<string, unknown>>;
       validateLocalGemmaModel?(model: string): Promise<string | Record<string, unknown>>;

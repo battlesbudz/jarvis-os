@@ -382,12 +382,28 @@ class JarvisDaemonModule(
             promise.reject("E_EYEVUE_PERMISSION", "Grant Nearby Devices before enabling the eyeVue companion.")
             return
         }
+        if (ContextCompat.checkSelfPermission(reactApplicationContext, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            val armWake = Intent(reactApplicationContext, WakeWordService::class.java).apply { action = WakeWordService.ACTION_ARM_EXTERNAL }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) reactApplicationContext.startForegroundService(armWake) else reactApplicationContext.startService(armWake)
+        }
         promise.resolve(EyevueGlassesService.status(reactApplicationContext).json().put("status", "connecting").toString())
+    }
+
+    @ReactMethod
+    fun armEyevueWake(promise: Promise) {
+        if (ContextCompat.checkSelfPermission(reactApplicationContext, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            promise.reject("E_EYEVUE_MIC_PERMISSION", "Grant microphone permission before arming EYE VUE wake.")
+            return
+        }
+        val intent = Intent(reactApplicationContext, WakeWordService::class.java).apply { action = WakeWordService.ACTION_ARM_EXTERNAL }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) reactApplicationContext.startForegroundService(intent) else reactApplicationContext.startService(intent)
+        promise.resolve(null)
     }
 
     @ReactMethod
     fun disconnectEyevue(promise: Promise) {
         try {
+            WakeWordService.disarmExternal()
             reactApplicationContext.startService(
                 Intent(reactApplicationContext, EyevueGlassesService::class.java).setAction(EyevueGlassesService.ACTION_DISCONNECT),
             )
@@ -668,6 +684,9 @@ class JarvisDaemonModule(
         map.putBoolean("eyevueConnected", eyevue.connected)
         map.putString("eyevueDeviceName", eyevue.deviceName)
         map.putString("eyevueLastError", eyevue.lastError)
+        map.putInt("eyevueWakeEvents", eyevue.wakeEvents.toInt())
+        map.putDouble("eyevueLastWakeAt", eyevue.lastWakeAt?.toDouble() ?: 0.0)
+        map.putString("eyevueWakeBridge", "ble_command_notify")
         map.putBoolean(
             "eyevuePermissionGranted",
             EyevueGlassesService.hasBluetoothPermission(reactApplicationContext),

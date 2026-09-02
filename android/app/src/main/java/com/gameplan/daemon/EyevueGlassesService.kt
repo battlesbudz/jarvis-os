@@ -18,6 +18,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -44,6 +45,8 @@ data class EyevueSnapshot(
     val capacityRaw: String?,
     val lastPhotoPath: String?,
     val lastError: String?,
+    val wakeEvents: Long,
+    val lastWakeAt: Long?,
 ) {
     fun json() = JSONObject()
         .put("available", true)
@@ -56,13 +59,17 @@ data class EyevueSnapshot(
         .put("lastPhotoPath", lastPhotoPath ?: JSONObject.NULL)
         .put("lastError", lastError ?: JSONObject.NULL)
         .put("wakePhrase", "Hey, Star")
+        .put("wakeBridge", "ble_command_notify")
+        .put("wakeEvents", wakeEvents)
+        .put("lastWakeAt", lastWakeAt ?: JSONObject.NULL)
         .put("nativeStoragePreserved", true)
 }
 
 /**
  * Primary connection to the exact device selected in the Jarvis setup flow.
- * Physical media behavior remains unchanged on the glasses. "Hey, Star" reaches
- * Jarvis through Android's selected assistant route instead of a guessed BLE packet.
+ * Physical media behavior remains unchanged on the glasses. EYE VUE's AA14
+ * command notification is bridged into WakeWordService; Android's default
+ * assistant setting is not used as a substitute for this device-owned wake path.
  */
 class EyevueGlassesService : Service() {
     companion object {
@@ -82,7 +89,7 @@ class EyevueGlassesService : Service() {
         private const val PHOTO_DELETE_MAX_ATTEMPTS = 3
 
         @Volatile private var instance: EyevueGlassesService? = null
-        @Volatile private var snapshot = EyevueSnapshot(false, false, null, null, null, null, null, null)
+        @Volatile private var snapshot = EyevueSnapshot(false, false, null, null, null, null, null, null, 0, null)
 
         fun status(context: Context): EyevueSnapshot {
             val prefs = context.getSharedPreferences(PREFS, MODE_PRIVATE)
@@ -93,6 +100,13 @@ class EyevueGlassesService : Service() {
         }
 
         fun isEnabled(context: Context) = context.getSharedPreferences(PREFS, MODE_PRIVATE).getBoolean(PREF_ENABLED, false)
+
+        private fun armWake(context: Context) {
+            val intent = Intent(context, WakeWordService::class.java).apply { action = WakeWordService.ACTION_ARM_EXTERNAL }
+            runCatching {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent) else context.startService(intent)
+            }.onFailure { DaemonLog.add("eyevue: wake service arm failed: ${it.message}") }
+        }
 
         fun command(context: Context, name: String, waitForPhoto: Boolean = false): OpResult {
             val service = instance ?: return OpResult(false, error = "EYEVUE_NOT_CONNECTED: Enable eyeVue in Jarvis and keep the glasses nearby.")
@@ -166,6 +180,7 @@ class EyevueGlassesService : Service() {
                 DaemonLog.add("eyevue: foreground service start blocked until Nearby Devices is granted")
                 return false
             }
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) armWake(context)
             val intent = Intent(context, EyevueGlassesService::class.java).apply {
                 action = ACTION_ENABLE
                 address?.let { putExtra(EXTRA_ADDRESS, it) }
@@ -187,6 +202,10 @@ class EyevueGlassesService : Service() {
     private var photoNotify: BluetoothGattCharacteristic? = null
     private var warnedAt20 = false
     private var warnedAt10 = false
+    private var lastWakeDispatchAt = 0L
+    private var lastWakeDispatchElapsed = 0L
+    private var pendingWakeStopPacket: ByteArray? = null
+    private val pendingWakeAfterStop = AtomicBoolean(false)
 
     override fun onCreate() {
         super.onCreate()
@@ -202,6 +221,7 @@ class EyevueGlassesService : Service() {
         when (action) {
             ACTION_DISCONNECT -> {
                 getSharedPreferences(PREFS, MODE_PRIVATE).edit().putBoolean(PREF_ENABLED, false).apply()
+                WakeWordService.disarmExternal()
                 closeConnection()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -215,6 +235,7 @@ class EyevueGlassesService : Service() {
                     // Make selection changes atomic even while the prior GATT is still connecting.
                     closeConnection()
                     connecting.set(false)
+                    snapshot = snapshot.copy(wakeEvents = 0, lastWakeAt = null)
                 }
                 preferences.edit()
                     .putBoolean(PREF_ENABLED, true)
@@ -350,9 +371,27 @@ class EyevueGlassesService : Service() {
                 } else if (descriptor.characteristic.uuid == EyevueProtocol.PHOTO_NOTIFY_UUID) {
                     connecting.set(false)
                     snapshot = snapshot.copy(connected = true, lastError = null)
-                    updateNotification("eyeVue connected — Hey, Star starts Jarvis")
+                    updateNotification("EYE VUE connected — listening for Hey Star")
                     writePacket(EyevueProtocol.battery())
                     writePacket(EyevueProtocol.capacity())
+                }
+            }
+        }
+
+        @SuppressLint("MissingPermission")
+        override fun onCharacteristicWrite(callbackGatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            synchronized(gattStateLock) { if (gatt !== callbackGatt) return }
+            if (characteristic.uuid != EyevueProtocol.COMMAND_WRITE_UUID) return
+            if (pendingWakeAfterStop.get() && pendingWakeStopPacket?.contentEquals(characteristic.value) == true && pendingWakeAfterStop.compareAndSet(true, false)) {
+                pendingWakeStopPacket = null
+                if (status == BluetoothGatt.GATT_SUCCESS) dispatchWakeEventNow()
+                else {
+                    pendingWakeAfterStop.set(false)
+                    lastWakeDispatchAt = 0L
+                    lastWakeDispatchElapsed = 0L
+                    snapshot = snapshot.copy(lastError = "EYE VUE voice stream could not be stopped ($status). Say Hey Star again.")
+                    updateNotification("EYE VUE connected — wake handoff failed; say Hey Star again")
+                    DaemonLog.add("eyevue: vendor voice stop was rejected ($status); wake handoff aborted")
                 }
             }
         }
@@ -386,6 +425,7 @@ class EyevueGlassesService : Service() {
 
     private fun handleFrame(frame: EyevueFrame) {
         when (frame.commandId) {
+            EyevueProtocol.CMD_WAKE_START -> beginWakeHandoff()
             EyevueProtocol.CMD_BATTERY, 83 -> {
                 val percent = if (frame.commandId == 83) frame.payload.getOrNull(1)?.toInt()?.and(0xff)
                     else frame.payload.takeIf { it.size >= 2 }?.let { ((it[0].toInt() and 0x0f) * 10) + (it[1].toInt() and 0x0f) }
@@ -407,6 +447,55 @@ class EyevueGlassesService : Service() {
             EyevueProtocol.CMD_CAPACITY -> snapshot = snapshot.copy(capacityRaw = frame.payload.joinToString("") { "%02x".format(it) })
         }
         DaemonLog.add("eyevue: rx command=${frame.commandId} bytes=${frame.payload.size}")
+    }
+
+    /** EYE VUE firmware owns Hey Star; AA14 command 151 is its wake result. */
+    private fun beginWakeHandoff() {
+        val now = System.currentTimeMillis()
+        val elapsed = SystemClock.elapsedRealtime()
+        if (elapsed - lastWakeDispatchElapsed < 2_000L) {
+            DaemonLog.add("eyevue: duplicate Hey Star event suppressed")
+            return
+        }
+        lastWakeDispatchAt = now
+        lastWakeDispatchElapsed = elapsed
+        // End EYE VUE's firmware-owned voice stream before Android tries to
+        // claim the wearable microphone for Jarvis. GATT writes are async, so
+        // the handoff is continued from onCharacteristicWrite.
+        val stopPacket = EyevueProtocol.stopVendorVoice()
+        pendingWakeStopPacket = stopPacket
+        pendingWakeAfterStop.set(true)
+        if (!writePacket(stopPacket)) {
+            pendingWakeAfterStop.set(false)
+            pendingWakeStopPacket = null
+            lastWakeDispatchAt = 0L
+            lastWakeDispatchElapsed = 0L
+            snapshot = snapshot.copy(lastError = "EYE VUE voice stream could not be stopped. Say Hey Star again.")
+            updateNotification("EYE VUE connected — wake handoff failed; say Hey Star again")
+            DaemonLog.add("eyevue: could not send vendor voice stop; wake handoff aborted")
+        }
+    }
+
+    private fun dispatchWakeEventNow() {
+        if (WebSocketService.instance?.isConnected != true) {
+            DaemonLog.add("eyevue: Hey Star received while Jarvis is offline")
+            speakOffline()
+            updateNotification("EYE VUE wake received — Jarvis is offline")
+            return
+        }
+        val wakeIntent = Intent(this, WakeWordService::class.java).apply {
+            action = WakeWordService.ACTION_EXTERNAL_WAKE
+            putExtra(WakeWordService.EXTRA_EXTERNAL_PHRASE, "hey star")
+        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(wakeIntent) else startService(wakeIntent)
+            DaemonLog.add("eyevue: Hey Star bridged to WakeWordService")
+            snapshot = snapshot.copy(wakeEvents = snapshot.wakeEvents + 1, lastWakeAt = now)
+            updateNotification("EYE VUE wake received — Jarvis is listening")
+        }.onFailure { error ->
+            snapshot = snapshot.copy(lastError = "EYE VUE wake bridge could not start: ${error.message ?: "unknown error"}")
+            DaemonLog.add("eyevue: wake bridge failed: ${error.message}")
+        }
     }
 
     private fun saveCapturedPhoto(bytes: ByteArray, requestedCapture: PendingEyevuePhotoRequest?) {
@@ -570,6 +659,8 @@ class EyevueGlassesService : Service() {
     @SuppressLint("MissingPermission")
     private fun closeConnection(preservePendingPhoto: PendingEyevuePhotoRequest? = null) {
         synchronized(gattStateLock) {
+                    pendingWakeAfterStop.set(false)
+                    pendingWakeStopPacket = null
             val abandonedPhoto = pendingPhoto.get()
             if (abandonedPhoto != null && abandonedPhoto !== preservePendingPhoto && pendingPhoto.compareAndSet(abandonedPhoto, null)) {
                 abandonedPhoto.failure.compareAndSet(null, "EYEVUE_CONNECTION_LOST: The glasses disconnected before the requested photo arrived.")
@@ -591,6 +682,7 @@ class EyevueGlassesService : Service() {
     private fun hasBluetoothPermission() = Companion.hasBluetoothPermission(this)
 
     private fun rejectSelectedDevice(message: String) {
+        WakeWordService.disarmExternal()
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
             .putBoolean(PREF_ENABLED, false)
             .remove(PREF_ADDRESS)
