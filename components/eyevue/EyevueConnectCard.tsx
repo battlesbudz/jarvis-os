@@ -114,14 +114,15 @@ export function EyevueConnectCard() {
   const wakeEvents = status?.eyevueWakeEvents ?? 0;
   const microphoneReady = speechStatus?.microphonePermissionGranted === true;
   const recognizerReady = speechStatus?.speechRecognitionAvailable === true;
-  const voiceReady = deriveEyeVueVoiceReadiness({
+  const eyeVueVoiceReadiness = deriveEyeVueVoiceReadiness({
     nativeSpeechAvailable: speechStatus?.available,
     speechRecognitionAvailable: speechStatus?.speechRecognitionAvailable,
     wearableAudioAvailable: speechStatus?.wearableAudioAvailable,
     wearableAudioDeviceName: speechStatus?.wearableAudioDeviceName,
     eyevueConnected: connected,
     eyevueDeviceName: status?.eyevueDeviceName,
-  }).ready;
+  });
+  const voiceReady = eyeVueVoiceReadiness.ready;
   const fullyReady = connected && microphoneReady && recognizerReady && voiceReady && wakeEvents > 0;
   const title = connected ? (status?.eyevueDeviceName || "Smart Glasses") : "Smart Glasses";
   const detail = fullyReady
@@ -195,8 +196,9 @@ export function EyevueConnectCard() {
               {connected && <Text style={styles.successText}>Connected to {status?.eyevueDeviceName || "your selected glasses"}.</Text>}
             </SetupStep>
 
-            <SetupStep number="3" title="Allow microphone and test wake" complete={wakeEvents > 0 && microphoneReady && recognizerReady}>
+            <SetupStep number="3" title="Allow microphone and test wake" complete={wakeEvents > 0 && microphoneReady && recognizerReady && voiceReady}>
               <Text style={styles.stepDetail}>Jarvis listens to the glasses’ BLE control notifications. The EYE VUE firmware recognizes “Hey Star”; Android’s default-assistant setting does not replace this bridge.</Text>
+              {connected && !voiceReady && <Text style={styles.stepDetail}>{eyeVueVoiceReadiness.detail}</Text>}
               {connected && <Text style={styles.successText}>{wakeEvents > 0 ? `Wake received ${wakeEvents} time${wakeEvents === 1 ? "" : "s"}.` : "Say “Hey Star” while this connection stays active."}</Text>}
             </SetupStep>
 
