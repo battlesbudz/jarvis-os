@@ -369,6 +369,7 @@ class EyevueGlassesService : Service() {
 
         @SuppressLint("MissingPermission")
         override fun onCharacteristicWrite(callbackGatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            synchronized(gattStateLock) { if (gatt !== callbackGatt) return }
             if (characteristic.uuid != EyevueProtocol.COMMAND_WRITE_UUID) return
             if (pendingWakeAfterStop.compareAndSet(true, false)) {
                 if (status == BluetoothGatt.GATT_SUCCESS) dispatchWakeEventNow()
@@ -636,6 +637,7 @@ class EyevueGlassesService : Service() {
     @SuppressLint("MissingPermission")
     private fun closeConnection(preservePendingPhoto: PendingEyevuePhotoRequest? = null) {
         synchronized(gattStateLock) {
+            pendingWakeAfterStop.set(false)
             val abandonedPhoto = pendingPhoto.get()
             if (abandonedPhoto != null && abandonedPhoto !== preservePendingPhoto && pendingPhoto.compareAndSet(abandonedPhoto, null)) {
                 abandonedPhoto.failure.compareAndSet(null, "EYEVUE_CONNECTION_LOST: The glasses disconnected before the requested photo arrived.")

@@ -72,6 +72,7 @@ class WakeWordService : Service() {
         const val ACTION_STOP = "com.gameplan.daemon.WAKE_WORD_STOP"
         const val ACTION_UPDATE = "com.gameplan.daemon.WAKE_WORD_UPDATE"
         const val ACTION_EXTERNAL_WAKE = "com.gameplan.daemon.WAKE_WORD_EXTERNAL"
+        const val ACTION_ARM_EXTERNAL = "com.gameplan.daemon.WAKE_WORD_ARM_EXTERNAL"
         const val EXTRA_EXTERNAL_PHRASE = "externalPhrase"
         const val EXTRA_WAKE_WORDS = "wake_words"
         const val EXTRA_TALK_MODE = "talk_mode"
@@ -226,6 +227,10 @@ class WakeWordService : Service() {
                 }
                 val phrase = intent?.getStringExtra(EXTRA_EXTERNAL_PHRASE)?.ifBlank { "hey star" } ?: "hey star"
                 onWakeWordDetected(phrase.lowercase(Locale.US), phrase.lowercase(Locale.US))
+            }
+            ACTION_ARM_EXTERNAL -> {
+                listeningRequested = true
+                DaemonLog.add("wake: armed for EYE VUE external wake")
             }
             ACTION_STOP -> {
                 listeningRequested = false

@@ -382,6 +382,8 @@ class JarvisDaemonModule(
             promise.reject("E_EYEVUE_PERMISSION", "Grant Nearby Devices before enabling the eyeVue companion.")
             return
         }
+        val armWake = Intent(reactApplicationContext, WakeWordService::class.java).apply { action = WakeWordService.ACTION_ARM_EXTERNAL }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) reactApplicationContext.startForegroundService(armWake) else reactApplicationContext.startService(armWake)
         promise.resolve(EyevueGlassesService.status(reactApplicationContext).json().put("status", "connecting").toString())
     }
 
@@ -678,4 +680,3 @@ class JarvisDaemonModule(
         return map
     }
 }
-
