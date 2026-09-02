@@ -51,6 +51,7 @@ import { SubsystemErrorSheet } from '@/components/settings/SubsystemErrorSheet';
 import { AchievementsSection } from '@/components/settings/AchievementsSection';
 import { BuildHistorySection } from '@/components/settings/BuildHistorySection';
 import { WakeWordSection } from '@/components/settings/WakeWordSection';
+import { EyevueConnectCard } from '@/components/eyevue/EyevueConnectCard';
 import { drStyles } from '@/components/settings/diagnosticsRunStyles';
 import { tlStyles } from '@/components/settings/threatLogStyles';
 import type {
@@ -2147,6 +2148,7 @@ export default function SettingsScreen() {
               </Text>
             </Pressable>
           </View>
+          <EyevueConnectCard />
           {androidDaemonNeedsAccessibility && (
             <View style={styles.linkCodeBlock}>
               <Text style={styles.linkCodeLabel}>

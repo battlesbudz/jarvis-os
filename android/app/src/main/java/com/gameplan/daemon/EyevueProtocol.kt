@@ -20,7 +20,7 @@ object EyevueProtocol {
     const val CMD_STOP_RECORD = 36
     const val CMD_AUDIO = 52
     const val CMD_STOP_VOICE = 86
-    const val CMD_WAKE_START = 151
+    const val CMD_TRANSFER_START = 151
     const val CMD_PHOTO_DATA = 152
     const val CMD_PHOTO_END = 153
 
@@ -108,7 +108,7 @@ class EyevuePhotoAssembler(
     fun append(packet: ByteArray): ByteArray? {
         if (packet.size < 8) return null
         return when (packet[4].toInt() and 0xff) {
-            EyevueProtocol.CMD_WAKE_START -> { image.reset(); active = true; null }
+            EyevueProtocol.CMD_TRANSFER_START -> { image.reset(); active = true; null }
             EyevueProtocol.CMD_PHOTO_DATA -> {
                 val end = packet.size - 3
                 val chunkSize = end - 9

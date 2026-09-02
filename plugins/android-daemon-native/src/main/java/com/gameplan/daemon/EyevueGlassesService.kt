@@ -13,8 +13,6 @@ import android.bluetooth.BluetoothGattCharacteristic
 import android.bluetooth.BluetoothGattDescriptor
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
-import android.bluetooth.le.ScanCallback
-import android.bluetooth.le.ScanResult
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -62,8 +60,9 @@ data class EyevueSnapshot(
 }
 
 /**
- * Primary eyeVue companion connection. The vendor AI wake event is redirected to
- * Jarvis Talk Mode while physical media behavior remains unchanged on the glasses.
+ * Primary connection to the exact device selected in the Jarvis setup flow.
+ * Physical media behavior remains unchanged on the glasses. "Hey, Star" reaches
+ * Jarvis through Android's selected assistant route instead of a guessed BLE packet.
  */
 class EyevueGlassesService : Service() {
     companion object {
@@ -186,7 +185,6 @@ class EyevueGlassesService : Service() {
     private var write: BluetoothGattCharacteristic? = null
     private var notify: BluetoothGattCharacteristic? = null
     private var photoNotify: BluetoothGattCharacteristic? = null
-    private var scanCallback: ScanCallback? = null
     private var warnedAt20 = false
     private var warnedAt10 = false
 
@@ -211,7 +209,14 @@ class EyevueGlassesService : Service() {
             }
             ACTION_ENABLE -> {
                 val address = intent?.getStringExtra(EXTRA_ADDRESS)?.trim().orEmpty()
-                getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+                val preferences = getSharedPreferences(PREFS, MODE_PRIVATE)
+                val currentAddress = preferences.getString(PREF_ADDRESS, null)
+                if (address.isNotBlank() && currentAddress != null && currentAddress != address) {
+                    // Make selection changes atomic even while the prior GATT is still connecting.
+                    closeConnection()
+                    connecting.set(false)
+                }
+                preferences.edit()
                     .putBoolean(PREF_ENABLED, true)
                     .apply { if (address.isNotBlank()) putString(PREF_ADDRESS, address) }
                     .apply()
@@ -238,11 +243,11 @@ class EyevueGlassesService : Service() {
 
     private fun scheduleConnect(delayMs: Long) {
         if (!isEnabled(this)) return
-        android.os.Handler(mainLooper).postDelayed({ connectSavedOrDiscover() }, delayMs)
+        android.os.Handler(mainLooper).postDelayed({ connectSelectedDevice() }, delayMs)
     }
 
     @SuppressLint("MissingPermission")
-    private fun connectSavedOrDiscover() {
+    private fun connectSelectedDevice() {
         if (!hasBluetoothPermission() || gatt != null || !connecting.compareAndSet(false, true)) {
             if (!hasBluetoothPermission()) updateError("Nearby devices permission is required.")
             return
@@ -256,45 +261,27 @@ class EyevueGlassesService : Service() {
             return
         }
         val saved = getSharedPreferences(PREFS, MODE_PRIVATE).getString(PREF_ADDRESS, null)
-        if (!saved.isNullOrBlank()) {
-            runCatching { adapter.getRemoteDevice(saved) }.getOrNull()?.let { connect(it); return }
-        }
-        adapter.bondedDevices.firstOrNull { isEyevue(it.name) }?.let { connect(it); return }
-        val callback = object : ScanCallback() {
-            override fun onScanResult(callbackType: Int, result: ScanResult) {
-                val device = result.device
-                if (isEyevue(result.scanRecord?.deviceName) || isEyevue(runCatching { device.name }.getOrNull())) {
-                    adapter.bluetoothLeScanner?.stopScan(this)
-                    scanCallback = null
-                    connect(device)
-                }
-            }
-            override fun onScanFailed(errorCode: Int) {
-                scanCallback = null
-                connecting.set(false)
-                updateError("eyeVue Bluetooth scan failed ($errorCode).")
-                scheduleConnect(RECONNECT_MS)
-            }
-        }
-        scanCallback = callback
-        adapter.bluetoothLeScanner?.startScan(callback) ?: run {
+        if (saved.isNullOrBlank()) {
             connecting.set(false)
-            updateError("Bluetooth LE scanning is unavailable.")
+            updateError("No glasses selected. Open Jarvis, tap Connect glasses, and choose the device you want to use.")
+            return
         }
-        android.os.Handler(mainLooper).postDelayed({
-            if (scanCallback === callback) {
-                adapter.bluetoothLeScanner?.stopScan(callback)
-                scanCallback = null
-                connecting.set(false)
-                scheduleConnect(RECONNECT_MS)
-            }
-        }, 10_000)
+        val selected = runCatching { adapter.getRemoteDevice(saved) }.getOrNull()
+        if (selected == null) {
+            rejectSelectedDevice("The selected Bluetooth device is no longer available. Scan and choose your glasses again.")
+            return
+        }
+        connect(selected)
     }
 
     @SuppressLint("MissingPermission")
     private fun connect(device: BluetoothDevice) {
         snapshot = snapshot.copy(address = device.address, deviceName = runCatching { device.name }.getOrNull(), lastError = null)
         getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(PREF_ADDRESS, device.address).apply()
+        if (device.bondState == BluetoothDevice.BOND_NONE) {
+            val pairingStarted = runCatching { device.createBond() }.getOrDefault(false)
+            DaemonLog.add("eyevue: Android pairing ${if (pairingStarted) "started" else "was not required/available"} for selected device")
+        }
         synchronized(gattStateLock) {
             if (gatt != null) return
             gatt = device.connectGatt(this, false, callback, BluetoothDevice.TRANSPORT_LE)
@@ -325,12 +312,17 @@ class EyevueGlassesService : Service() {
         override fun onServicesDiscovered(callbackGatt: BluetoothGatt, status: Int) {
             synchronized(gattStateLock) {
                 if (this@EyevueGlassesService.gatt !== callbackGatt) return
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    failGattSetup(callbackGatt, "eyeVue service discovery failed ($status); retrying.")
+                    return
+                }
                 val service = callbackGatt.getService(EyevueProtocol.SERVICE_UUID)
                 val discoveredWrite = service?.getCharacteristic(EyevueProtocol.COMMAND_WRITE_UUID)
                 val discoveredNotify = service?.getCharacteristic(EyevueProtocol.COMMAND_NOTIFY_UUID)
                 val discoveredPhotoNotify = service?.getCharacteristic(EyevueProtocol.PHOTO_NOTIFY_UUID)
-                if (status != BluetoothGatt.GATT_SUCCESS || discoveredWrite == null || discoveredNotify == null || discoveredPhotoNotify == null) {
-                    failGattSetup(callbackGatt, "This Bluetooth device does not expose the eyeVue AA12 service; reconnecting.")
+                if (discoveredWrite == null || discoveredNotify == null || discoveredPhotoNotify == null) {
+                    closeConnection()
+                    rejectSelectedDevice("The selected device is not compatible with the eyeVue control service. Scan and choose the glasses' control connection.")
                     return
                 }
                 write = discoveredWrite
@@ -394,21 +386,6 @@ class EyevueGlassesService : Service() {
 
     private fun handleFrame(frame: EyevueFrame) {
         when (frame.commandId) {
-            EyevueProtocol.CMD_WAKE_START -> {
-                DaemonLog.add("eyevue: Hey Star wake event")
-                // Stop the glasses' vendor recognition stream while retaining the
-                // firmware wake detector and native action sounds.
-                writePacket(EyevueProtocol.stopVendorVoice())
-                if (WebSocketService.instance?.isConnected != true) {
-                    speakOffline()
-                    return
-                }
-                val intent = Intent(this, WakeWordService::class.java).apply {
-                    action = WakeWordService.ACTION_EXTERNAL_WAKE
-                    putExtra(WakeWordService.EXTRA_EXTERNAL_PHRASE, "hey star")
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
-            }
             EyevueProtocol.CMD_BATTERY, 83 -> {
                 val percent = if (frame.commandId == 83) frame.payload.getOrNull(1)?.toInt()?.and(0xff)
                     else frame.payload.takeIf { it.size >= 2 }?.let { ((it[0].toInt() and 0x0f) * 10) + (it[1].toInt() and 0x0f) }
@@ -592,9 +569,6 @@ class EyevueGlassesService : Service() {
 
     @SuppressLint("MissingPermission")
     private fun closeConnection(preservePendingPhoto: PendingEyevuePhotoRequest? = null) {
-        val manager = getSystemService(BLUETOOTH_SERVICE) as? BluetoothManager
-        scanCallback?.let { runCatching { manager?.adapter?.bluetoothLeScanner?.stopScan(it) } }
-        scanCallback = null
         synchronized(gattStateLock) {
             val abandonedPhoto = pendingPhoto.get()
             if (abandonedPhoto != null && abandonedPhoto !== preservePendingPhoto && pendingPhoto.compareAndSet(abandonedPhoto, null)) {
@@ -614,11 +588,18 @@ class EyevueGlassesService : Service() {
         }
     }
 
-    private fun isEyevue(name: String?) = name?.lowercase()?.let {
-        "eyevue" in it || "eye vue" in it || "cyo3" in it || it.startsWith("sk-")
-    } == true
-
     private fun hasBluetoothPermission() = Companion.hasBluetoothPermission(this)
+
+    private fun rejectSelectedDevice(message: String) {
+        getSharedPreferences(PREFS, MODE_PRIVATE).edit()
+            .putBoolean(PREF_ENABLED, false)
+            .remove(PREF_ADDRESS)
+            .apply()
+        connecting.set(false)
+        snapshot = snapshot.copy(enabled = false, connected = false, address = null, deviceName = null, lastError = message)
+        updateNotification(message)
+        DaemonLog.add("eyevue: $message")
+    }
 
     private fun updateError(message: String) {
         connecting.set(false)

@@ -16,6 +16,11 @@ const eyevueSetup = read("lib/eyevue-setup.ts");
 const bridge = read("server/daemon/bridge.ts");
 const routes = read("server/routes.ts");
 const nativeModule = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/JarvisDaemonModule.kt");
+const scanner = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/EyevueDeviceScanner.kt");
+const connectCard = read("components/eyevue/EyevueConnectCard.tsx");
+const settingsScreen = read("app/(tabs)/settings.tsx");
+const missionControl = read("app/(tabs)/index.tsx");
+const jarvisChat = read("app/(tabs)/insights.tsx");
 const approvalRisk = read("server/agent/approvalToolRisk.ts");
 const coachConfirmation = read("server/routes/coachActionConfirmationRoutes.ts");
 const approvalReceipt = read("server/agent/approvalReceipt.ts");
@@ -24,8 +29,10 @@ const coachAgent = read("server/channels/coachAgent.ts");
 const outsideVoice = read("plugins/android-daemon-native/src/main/java/com/gameplan/daemon/OutsideAppVoiceSessionService.kt");
 
 assert.match(protocol, /0000aa12-0000-1000-8000-00805f9b34fb/);
+assert.match(protocol, /CMD_TRANSFER_START = 151/);
+assert.doesNotMatch(protocol, /CMD_WAKE_START/);
 assert.match(protocol, /fun stopVendorVoice\(\)/);
-assert.match(service, /"hey star"/i);
+assert.match(service, /hey,?\s*star/i);
 assert.match(service, /Jarvis is offline\./);
 assert.match(service, /pendingPhoto.*30, TimeUnit\.SECONDS/s);
 assert.match(service, /percent <= 20/);
@@ -105,7 +112,7 @@ assert.match(agentApproval, /gt\(agentApprovalGates\.expiresAt, now\)/);
 assert.match(agentApproval, /!autoApprove && !req\.suppressDeliverable/);
 assert.match(coachConfirmation, /gate\?\.userId !== userId \|\| gate\.status !== "approved" \|\| gate\.expiresAt\.getTime\(\) <= Date\.now\(\)/);
 assert.match(settings, /eyeVue Companion/);
-assert.match(settings, /eyevuePermissionGranted !== true[\s\S]*requestEyevuePermissions/);
+assert.match(connectCard, /eyevuePermissionGranted !== true[\s\S]*requestEyevuePermissions/);
 assert.match(settings, /deriveEyeVueVoiceReadiness\(\{/);
 assert.match(settings, /nativeRecognitionReady = eyeVueVoiceReadiness\.nativeRecognitionReady/);
 assert.match(settings, /wearableAudioDeviceName: nativeSpeechStatus\?\.wearableAudioDeviceName/);
@@ -114,6 +121,26 @@ assert.match(eyevueSetup, /eyeVueAudioEndpointMatches[\s\S]*eyevue === audio/);
 assert.match(eyevueSetup, /ready =[\s\S]*wearableAudioAvailable === true[\s\S]*endpointMatches/);
 assert.match(nativeModule, /reactApplicationContext\.currentActivity/);
 assert.match(nativeModule, /Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.S[\s\S]*ACCESS_FINE_LOCATION/);
+assert.match(nativeModule, /fun scanEyevueDevices[\s\S]*EyevueDeviceScanner\.scan/);
+assert.match(nativeModule, /E_EYEVUE_SELECTION_REQUIRED/);
+assert.match(scanner, /Discovery intentionally returns every named or bonded device/);
+assert.match(scanner, /adapter\.bondedDevices\.forEach/);
+assert.match(scanner, /scanner\.startScan\(callback\)/);
+assert.doesNotMatch(service, /isEyevue\(name/);
+assert.doesNotMatch(service, /bondedDevices\.firstOrNull/);
+assert.match(service, /No glasses selected[\s\S]*choose the device you want to use/);
+assert.match(service, /device\.createBond\(\)/);
+assert.match(service, /currentAddress != address[\s\S]*closeConnection\(\)[\s\S]*connecting\.set\(false\)/);
+assert.match(service, /status != BluetoothGatt\.GATT_SUCCESS[\s\S]*service discovery failed[\s\S]*failGattSetup/);
+assert.match(connectCard, /scanAndroidEyevueDevices/);
+assert.match(connectCard, /devices\.map\(device/);
+assert.match(connectCard, /enableAndroidEyevue\(device\.address\)/);
+assert.match(connectCard, /disconnectAndroidEyevue\(\)[\s\S]*enableAndroidEyevue\(device\.address\)/);
+assert.match(connectCard, /Choose Jarvis as assistant/);
+assert.match(connectCard, /assistantActive/);
+assert.match(settingsScreen, /Jarvis OS Device Control[\s\S]*<EyevueConnectCard \/>/);
+assert.doesNotMatch(missionControl, /EyevueConnectCard/);
+assert.doesNotMatch(jarvisChat, /EyevueConnectCard/);
 assert.match(bridge, /android_eyevue_discard_photo/);
 assert.doesNotMatch(bridge, /processDaemonUtterance\([\s\S]{0,700}\.finally\(async \(\) =>[\s\S]{0,700}android_eyevue_discard_photo/);
 assert.match(bridge, /capturedImagePath[\s\S]*eyeVueCapturedImagePath: capturedImagePath/);
@@ -133,7 +160,7 @@ assert.match(playback, /cancelWearableRouteCheck\(\)[\s\S]*WearableAudioRouteMan
 assert.match(playback, /if \(!initialRoute\.available\)[\s\S]*ensureTts/);
 assert.match(playback, /monitorWearableRoute[\s\S]*!route\.active[\s\S]*tts\?\.stop\(\)[\s\S]*waitForWearableRoute/);
 
-for (const name of ["BootReceiver.kt", "EyevueProtocol.kt", "EyevueGlassesService.kt", "LocalGemmaInferenceEngine.kt"]) {
+for (const name of ["BootReceiver.kt", "EyevueProtocol.kt", "EyevueGlassesService.kt", "EyevueDeviceScanner.kt", "LocalGemmaInferenceEngine.kt"]) {
   assert.equal(
     read(`plugins/android-daemon-native/src/main/java/com/gameplan/daemon/${name}`),
     read(`android/app/src/main/java/com/gameplan/daemon/${name}`),
