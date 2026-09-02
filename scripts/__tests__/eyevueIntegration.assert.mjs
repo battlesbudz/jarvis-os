@@ -48,6 +48,8 @@ assert.match(nativeModule, /RECORD_AUDIO[\s\S]*ACTION_ARM_EXTERNAL/);
 assert.match(nativeModule, /fun armEyevueWake/);
 assert.match(connectCard, /fullyReady = connected && microphoneReady && recognizerReady && wakeEvents > 0/);
 assert.match(connectCard, /armEyevueWake/);
+assert.match(service, /snapshot = snapshot\.copy\(wakeEvents = snapshot\.wakeEvents \+ 1, lastWakeAt = now\)/);
+assert.match(service, /wakeEvents = 0, lastWakeAt = null/);
 assert.match(boot, /ACTION_ARM_EXTERNAL/);
 assert.match(connectCard, /title="Allow microphone and test wake" complete=\{wakeEvents > 0 && microphoneReady && recognizerReady\}/);
 assert.match(connectCard, /Allow microphone/);

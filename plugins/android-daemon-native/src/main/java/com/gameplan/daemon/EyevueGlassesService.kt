@@ -225,6 +225,7 @@ class EyevueGlassesService : Service() {
                     // Make selection changes atomic even while the prior GATT is still connecting.
                     closeConnection()
                     connecting.set(false)
+                    snapshot = snapshot.copy(wakeEvents = 0, lastWakeAt = null)
                 }
                 preferences.edit()
                     .putBoolean(PREF_ENABLED, true)
@@ -444,7 +445,6 @@ class EyevueGlassesService : Service() {
         }
         lastWakeDispatchAt = now
         lastWakeDispatchElapsed = elapsed
-        snapshot = snapshot.copy(wakeEvents = snapshot.wakeEvents + 1, lastWakeAt = now)
         // End EYE VUE's firmware-owned voice stream before Android tries to
         // claim the wearable microphone for Jarvis. GATT writes are async, so
         // the handoff is continued from onCharacteristicWrite.
@@ -470,6 +470,7 @@ class EyevueGlassesService : Service() {
         runCatching {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(wakeIntent) else startService(wakeIntent)
             DaemonLog.add("eyevue: Hey Star bridged to WakeWordService")
+            snapshot = snapshot.copy(wakeEvents = snapshot.wakeEvents + 1, lastWakeAt = now)
             updateNotification("EYE VUE wake received — Jarvis is listening")
         }.onFailure { error ->
             snapshot = snapshot.copy(lastError = "EYE VUE wake bridge could not start: ${error.message ?: "unknown error"}")

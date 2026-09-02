@@ -113,8 +113,8 @@ export function EyevueConnectCard() {
   const fullyReady = connected && microphoneReady && recognizerReady && wakeEvents > 0;
   const title = connected ? (status?.eyevueDeviceName || "Smart Glasses") : "Smart Glasses";
   const detail = fullyReady
-    ? (fullyReady ? "Connected · Hey Star reached Jarvis" : "Connected · finish EYE VUE wake test")
-      : "Discover, choose, and pair your glasses";
+    ? "Connected · Hey Star reached Jarvis"
+    : connected ? "Connected · finish EYE VUE wake test" : "Discover, choose, and pair your glasses";
 
   return (
     <>
