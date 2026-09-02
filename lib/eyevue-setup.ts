@@ -28,8 +28,9 @@ export function deriveEyeVueVoiceReadiness(input: EyeVueVoiceReadinessInput): {
   endpointMatches: boolean;
   detail: string;
 } {
-  const nativeRecognitionReady =
-    input.nativeSpeechAvailable === true && input.speechRecognitionAvailable !== false;
+  // The external wake service uses Android's standard SpeechRecognizer, not
+  // the optional API-31 on-device bridge exposed by nativeSpeechAvailable.
+  const nativeRecognitionReady = input.speechRecognitionAvailable === true;
   const endpointMatches =
     input.eyevueConnected === true &&
     eyeVueAudioEndpointMatches(input.eyevueDeviceName, input.wearableAudioDeviceName);
