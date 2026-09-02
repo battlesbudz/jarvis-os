@@ -375,7 +375,6 @@ internal class NativeSpeechRecognitionBridge(
         val map = Arguments.createMap()
         map.putBoolean("available", supportsApi && onDeviceAvailable && hasMic)
         map.putBoolean("speechRecognitionAvailable", speechRecognitionAvailable)
-        map.putBoolean("wakeRecognizerAvailable", speechRecognitionAvailable)
         map.putBoolean("onDeviceRecognitionAvailable", onDeviceAvailable)
         map.putBoolean("microphonePermissionGranted", hasMic)
         map.putBoolean("ttsAvailable", true)

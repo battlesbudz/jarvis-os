@@ -85,7 +85,6 @@ export type AndroidOutsideAppVoiceControlEvent = {
 export type AndroidNativeSpeechStatus = {
   available: boolean;
   speechRecognitionAvailable?: boolean;
-  wakeRecognizerAvailable?: boolean;
   onDeviceRecognitionAvailable?: boolean;
   microphonePermissionGranted?: boolean;
   ttsAvailable?: boolean;

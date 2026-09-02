@@ -91,6 +91,7 @@ export function AndroidDeviceControlCard({
   const eyeVueVoiceReadiness = deriveEyeVueVoiceReadiness({
   nativeSpeechAvailable: nativeSpeechStatus?.available,
   speechRecognitionAvailable: nativeSpeechStatus?.speechRecognitionAvailable,
+  wakeRecognizerAvailable: nativeSpeechStatus?.wakeRecognizerAvailable,
   speechMessage: nativeSpeechStatus?.message,
   wearableAudioAvailable: nativeSpeechStatus?.wearableAudioAvailable,
   wearableAudioDeviceName: nativeSpeechStatus?.wearableAudioDeviceName,
