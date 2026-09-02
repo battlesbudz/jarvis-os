@@ -123,7 +123,8 @@ export function EyevueConnectCard() {
     eyevueDeviceName: status?.eyevueDeviceName,
   });
   const voiceReady = eyeVueVoiceReadiness.ready;
-  const fullyReady = connected && microphoneReady && recognizerReady && voiceReady && wakeEvents > 0;
+  const wakeStepComplete = connected && wakeEvents > 0 && microphoneReady && recognizerReady && voiceReady;
+  const fullyReady = wakeStepComplete;
   const title = connected ? (status?.eyevueDeviceName || "Smart Glasses") : "Smart Glasses";
   const detail = fullyReady
     ? "Connected · Hey Star reached Jarvis"
@@ -196,10 +197,11 @@ export function EyevueConnectCard() {
               {connected && <Text style={styles.successText}>Connected to {status?.eyevueDeviceName || "your selected glasses"}.</Text>}
             </SetupStep>
 
-            <SetupStep number="3" title="Allow microphone and test wake" complete={wakeEvents > 0 && microphoneReady && recognizerReady && voiceReady}>
+            <SetupStep number="3" title="Allow microphone and test wake" complete={wakeStepComplete}>
               <Text style={styles.stepDetail}>Jarvis listens to the glasses’ BLE control notifications. The EYE VUE firmware recognizes “Hey Star”; Android’s default-assistant setting does not replace this bridge.</Text>
-              {connected && !voiceReady && <Text style={styles.stepDetail}>{eyeVueVoiceReadiness.detail}</Text>}
-              {connected && <Text style={styles.successText}>{wakeEvents > 0 ? `Wake received ${wakeEvents} time${wakeEvents === 1 ? "" : "s"}.` : "Say “Hey Star” while this connection stays active."}</Text>}
+              {connected && wakeEvents > 0 && !voiceReady && <Text style={styles.errorText}>Wake reached Jarvis, but the EYE VUE audio route is not ready. {eyeVueVoiceReadiness.detail}</Text>}
+              {connected && wakeEvents > 0 && voiceReady && <Text style={styles.successText}>{`Wake received ${wakeEvents} time${wakeEvents === 1 ? "" : "s"} and the glasses audio route is ready.`}</Text>}
+              {connected && wakeEvents === 0 && <Text style={styles.successText}>Say “Hey Star” while this connection stays active.</Text>}
             </SetupStep>
 
             <SetupStep number="4" title="Optional: choose Jarvis as Android assistant" complete={status?.assistantActive === true}>
