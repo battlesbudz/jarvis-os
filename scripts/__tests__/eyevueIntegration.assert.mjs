@@ -40,6 +40,7 @@ assert.match(service, /ble_command_notify/);
 assert.match(service, /stopVendorVoice\(\)[\s\S]*WebSocketService\.instance\?\.isConnected/);
 assert.match(service, /SystemClock\.elapsedRealtime\(\)/);
 assert.match(service, /onCharacteristicWrite[\s\S]*pendingWakeAfterStop[\s\S]*dispatchWakeEventNow/);
+assert.match(service, /pendingWakeStopPacket\?\.contentEquals\(characteristic\.value\)/);
 assert.match(service, /gatt !== callbackGatt/);
 assert.match(service, /pendingWakeAfterStop\.set\(false\)/);
 assert.match(wake, /ACTION_ARM_EXTERNAL/);
