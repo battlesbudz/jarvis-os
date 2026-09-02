@@ -203,7 +203,7 @@ const wearableVoiceDetail = eyeVueVoiceReadiness.detail;
       key: "eyevue-companion",
       label: "eyeVue Companion",
       detail: status?.eyevueConnected
-        ? `${status.eyevueDeviceName || "eyeVue"} connected. Finish the assistant step above so “Hey, Star” starts Jarvis.`
+        ? `${status.eyevueDeviceName || "EYE VUE"} connected. Say “Hey Star” to test the BLE wake bridge; Android assistant selection is optional.`
         : status?.eyevueLastError || "Use Connect glasses above to scan and choose the exact device.",
       enabled: status?.eyevueConnected,
       action: status?.eyevueConnected || status?.eyevueEnabled

@@ -196,6 +196,7 @@ class EyevueGlassesService : Service() {
     private var warnedAt10 = false
     private var lastWakeDispatchAt = 0L
     private var lastWakeDispatchElapsed = 0L
+    private val pendingWakeAfterStop = AtomicBoolean(false)
 
     override fun onCreate() {
         super.onCreate()
@@ -366,6 +367,18 @@ class EyevueGlassesService : Service() {
             }
         }
 
+        @SuppressLint("MissingPermission")
+        override fun onCharacteristicWrite(callbackGatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+            if (characteristic.uuid != EyevueProtocol.COMMAND_WRITE_UUID) return
+            if (pendingWakeAfterStop.compareAndSet(true, false)) {
+                if (status == BluetoothGatt.GATT_SUCCESS) dispatchWakeEventNow()
+                else {
+                    DaemonLog.add("eyevue: vendor voice stop was rejected ($status); starting Jarvis wake handoff anyway")
+                    dispatchWakeEventNow()
+                }
+            }
+        }
+
         @Deprecated("Deprecated in Java")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             handleNotification(gatt, characteristic, characteristic.value.copyOf())
@@ -395,7 +408,7 @@ class EyevueGlassesService : Service() {
 
     private fun handleFrame(frame: EyevueFrame) {
         when (frame.commandId) {
-            EyevueProtocol.CMD_WAKE_START -> dispatchWakeEvent()
+            EyevueProtocol.CMD_WAKE_START -> beginWakeHandoff()
             EyevueProtocol.CMD_BATTERY, 83 -> {
                 val percent = if (frame.commandId == 83) frame.payload.getOrNull(1)?.toInt()?.and(0xff)
                     else frame.payload.takeIf { it.size >= 2 }?.let { ((it[0].toInt() and 0x0f) * 10) + (it[1].toInt() and 0x0f) }
@@ -420,7 +433,7 @@ class EyevueGlassesService : Service() {
     }
 
     /** EYE VUE firmware owns Hey Star; AA14 command 151 is its wake result. */
-    private fun dispatchWakeEvent() {
+    private fun beginWakeHandoff() {
         val now = System.currentTimeMillis()
         val elapsed = SystemClock.elapsedRealtime()
         if (elapsed - lastWakeDispatchElapsed < 2_000L) {
@@ -431,8 +444,17 @@ class EyevueGlassesService : Service() {
         lastWakeDispatchElapsed = elapsed
         snapshot = snapshot.copy(wakeEvents = snapshot.wakeEvents + 1, lastWakeAt = now)
         // End EYE VUE's firmware-owned voice stream before Android tries to
-        // claim the wearable microphone for Jarvis.
-        writePacket(EyevueProtocol.stopVendorVoice())
+        // claim the wearable microphone for Jarvis. GATT writes are async, so
+        // the handoff is continued from onCharacteristicWrite.
+        pendingWakeAfterStop.set(true)
+        if (!writePacket(EyevueProtocol.stopVendorVoice())) {
+            pendingWakeAfterStop.set(false)
+            DaemonLog.add("eyevue: could not send vendor voice stop; starting Jarvis wake handoff")
+            dispatchWakeEventNow()
+        }
+    }
+
+    private fun dispatchWakeEventNow() {
         if (WebSocketService.instance?.isConnected != true) {
             DaemonLog.add("eyevue: Hey Star received while Jarvis is offline")
             speakOffline()

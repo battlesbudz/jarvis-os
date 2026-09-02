@@ -20,20 +20,24 @@ import {
   scanAndroidEyevueDevices,
   type AndroidDaemonStatus,
   type AndroidEyevueDevice,
+  getAndroidNativeSpeechStatus,
+  type AndroidNativeSpeechStatus,
 } from "@/lib/android-daemon-native";
 
-type BusyAction = "permission" | "scan" | "connect" | "assistant" | null;
+type BusyAction = "permission" | "microphone" | "scan" | "connect" | "assistant" | null;
 
 export function EyevueConnectCard() {
   const [status, setStatus] = useState<AndroidDaemonStatus | null>(null);
+  const [speechStatus, setSpeechStatus] = useState<AndroidNativeSpeechStatus | null>(null);
   const [devices, setDevices] = useState<AndroidEyevueDevice[]>([]);
   const [setupVisible, setSetupVisible] = useState(false);
   const [busy, setBusy] = useState<BusyAction>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const next = await getAndroidDaemonStatus();
+    const [next, speech] = await Promise.all([getAndroidDaemonStatus(), getAndroidNativeSpeechStatus().catch(() => null)]);
     setStatus(next);
+    setSpeechStatus(speech);
     return next;
   }, []);
 
@@ -69,6 +73,11 @@ export function EyevueConnectCard() {
     await AndroidDaemonNative.requestEyevuePermissions();
   }), [run]);
 
+  const requestMicrophone = useCallback(() => run("microphone", async () => {
+    if (!AndroidDaemonNative?.requestMicrophonePermission) throw new Error("Microphone setup is unavailable in this APK.");
+    await AndroidDaemonNative.requestMicrophonePermission();
+  }), [run]);
+
   const scan = useCallback(() => run("scan", async () => {
     if (status?.eyevuePermissionGranted !== true) {
       if (!AndroidDaemonNative?.requestEyevuePermissions) throw new Error("Nearby Devices setup is unavailable in this APK.");
@@ -94,6 +103,7 @@ export function EyevueConnectCard() {
 
   const connected = status?.eyevueConnected === true;
   const wakeEvents = status?.eyevueWakeEvents ?? 0;
+  const microphoneReady = speechStatus?.microphonePermissionGranted === true;
   const fullyReady = connected;
   const title = connected ? (status?.eyevueDeviceName || "Smart Glasses") : "Smart Glasses";
   const detail = fullyReady
@@ -166,8 +176,9 @@ export function EyevueConnectCard() {
               {connected && <Text style={styles.successText}>Connected to {status?.eyevueDeviceName || "your selected glasses"}.</Text>}
             </SetupStep>
 
-            <SetupStep number="3" title="Test the EYE VUE wake bridge" complete={wakeEvents > 0}>
+            <SetupStep number="3" title="Allow microphone and test wake" complete={wakeEvents > 0 && microphoneReady}>
               <Text style={styles.stepDetail}>Jarvis listens to the glasses’ BLE control notifications. The EYE VUE firmware recognizes “Hey Star”; Android’s default-assistant setting does not replace this bridge.</Text>
+              {!microphoneReady && <ActionButton label="Allow microphone" busy={busy === "microphone"} onPress={requestMicrophone} />}
               {connected && <Text style={styles.successText}>{wakeEvents > 0 ? `Wake received ${wakeEvents} time${wakeEvents === 1 ? "" : "s"}.` : "Say “Hey Star” while this connection stays active."}</Text>}
             </SetupStep>
 
