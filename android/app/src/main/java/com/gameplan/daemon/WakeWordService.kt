@@ -189,6 +189,7 @@ class WakeWordService : Service() {
         when (intent?.action ?: ACTION_START) {
             ACTION_START -> {
                 ordinaryWakeRequested = true
+                shutdownAfterExternalTalk = false
                 val words = intent?.getStringArrayExtra(EXTRA_WAKE_WORDS)
                 if (!words.isNullOrEmpty()) wakeWords = words.map { it.lowercase(Locale.US) }
                 talkModeEnabled = intent?.getBooleanExtra(EXTRA_TALK_MODE, false) ?: false
@@ -197,6 +198,8 @@ class WakeWordService : Service() {
             }
             ACTION_UPDATE -> {
                 val words = intent?.getStringArrayExtra(EXTRA_WAKE_WORDS)
+                ordinaryWakeRequested = true
+                shutdownAfterExternalTalk = false
                 if (!words.isNullOrEmpty()) wakeWords = words.map { it.lowercase(Locale.US) }
                 val previousTalkMode = talkModeEnabled
                 talkModeEnabled = intent?.getBooleanExtra(EXTRA_TALK_MODE, talkModeEnabled) ?: talkModeEnabled
@@ -238,6 +241,7 @@ class WakeWordService : Service() {
             ACTION_ARM_EXTERNAL -> {
                 listeningRequested = true
                 externalWakeArmed = true
+                shutdownAfterExternalTalk = false
                 DaemonLog.add("wake: armed for EYE VUE external wake")
             }
             ACTION_DISARM_EXTERNAL -> handleDisarmExternal()

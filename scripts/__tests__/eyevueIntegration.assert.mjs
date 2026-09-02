@@ -59,6 +59,7 @@ assert.match(wake, /fun disarmExternal/);
 assert.match(connectCard, /deriveEyeVueVoiceReadiness/);
 assert.match(connectCard, /voiceReady && wakeEvents > 0/);
 assert.match(wake, /shutdownAfterExternalTalk/);
+assert.match(wake, /ACTION_ARM_EXTERNAL[\s\S]*shutdownAfterExternalTalk = false/);
 assert.match(connectCard, /title="Allow microphone and test wake" complete=\{wakeEvents > 0 && microphoneReady && recognizerReady\}/);
 assert.match(connectCard, /Allow microphone/);
 assert.match(settings, /BLE wake bridge/);
