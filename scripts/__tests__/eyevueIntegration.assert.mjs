@@ -160,6 +160,7 @@ assert.match(scanner, /scanner\.startScan\(callback\)/);
 assert.doesNotMatch(service, /isEyevue\(name/);
 assert.doesNotMatch(service, /bondedDevices\.firstOrNull/);
 assert.match(service, /No glasses selected[\s\S]*choose the device you want to use/);
+assert.match(service, /private fun rejectSelectedDevice\(message: String\) \{[\s\S]*WakeWordService\.disarmExternal\(\)/);
 assert.match(service, /device\.createBond\(\)/);
 assert.match(service, /currentAddress != address[\s\S]*closeConnection\(\)[\s\S]*connecting\.set\(false\)/);
 assert.match(service, /status != BluetoothGatt\.GATT_SUCCESS[\s\S]*service discovery failed[\s\S]*failGattSetup/);
