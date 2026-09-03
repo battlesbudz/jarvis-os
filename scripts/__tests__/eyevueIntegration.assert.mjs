@@ -47,6 +47,7 @@ assert.match(wake, /ACTION_ARM_EXTERNAL/);
 assert.match(nativeModule, /ACTION_ARM_EXTERNAL/);
 assert.match(nativeModule, /RECORD_AUDIO[\s\S]*ACTION_ARM_EXTERNAL/);
 assert.match(nativeModule, /fun armEyevueWake/);
+assert.match(nativeModule, /wake: detected[\s\S]*\[redacted\]/);
 assert.match(connectCard, /fullyReady = connected && microphoneReady && recognizerReady && voiceReady && wakeEvents > 0/);
 assert.match(connectCard, /armEyevueWake/);
 assert.match(connectCard, /next\.eyevueEnabled === true[\s\S]*microphonePermissionGranted/);
