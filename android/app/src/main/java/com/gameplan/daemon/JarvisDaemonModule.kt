@@ -141,6 +141,11 @@ class JarvisDaemonModule(
                         entry.contains("wake:") ||
                         entry.contains("wearable_audio:")
                 }
+                .map { entry ->
+                    if (entry.startsWith("wake: detected ")) {
+                        entry.substringBefore(" in \"") + " in \"[redacted]\""
+                    } else entry
+                }
                 .joinToString("\n")).trim(),
         )
     }
